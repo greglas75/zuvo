@@ -212,7 +212,9 @@ of genuine citations while still accepting 39.3% of fabrications**. There is a s
 is nowhere near a gate. No threshold rescues it: 6 of the 29 genuine citations score **zero** in their
 own window, so even "≥1 word" refuses 20.7% of correct evidence. An entry that *describes* a
 defect shares few words with the code that proves it; that is normal writing, not a lie. Rebuild the
-table with `tests/lib/overlap-corpus.py`.
+table with `tests/lib/overlap-corpus.py`, whose docstring also records the corpus's three sampling
+limits — all of which make this a **lower** bound on the failure, since the fabricated citations it
+draws are the easy ones (far away, where a real fabricated line number is usually close).
 
 So **(c) refuses on the basename half alone**, and the keyword score travels in the mode string as
 ` ov=k/n`. The consequence is stated rather than hidden: **a citation of a file the entry names, at a

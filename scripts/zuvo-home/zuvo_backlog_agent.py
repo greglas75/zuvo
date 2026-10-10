@@ -280,10 +280,31 @@ def check_seeds(answers: Dict[str, str], records: Sequence[Row],
     that run were exactly this, and they were the agent's). A closed seed's proof may genuinely be
     unreachable, and no predicate can decide whether amputated prose still states a claim.
 
-    THE GATE SURVIVES THE CONCESSION. A verifier answering `NOT-VERIFIABLE` to everything still misses
-    every live seed — half of every chunk — so the chunk still re-dispatches. The abstention is
-    REPORTED rather than swallowed: `ingest` puts it in `controls`, where a reader counting seed
-    outcomes can see that this chunk passed (d) with an abstention in it.
+    "CLOSED" IS `answers[key] == STALE-FIXED`, AND THAT IS THE DEFINITION RATHER THAN AN INFERENCE.
+    `build_seeds` assigns `STALE-FIXED` to every seed derived from the archive and `STILL-REAL` to
+    every seed derived from a live anchor; the expected verdict IS which half a seed came from. A
+    separate "seed kind" field would be a second spelling of the same fact, travelling in the answer
+    file where it could disagree with it — and four independent reviewers asked about this line, so it
+    is written down here rather than left to be re-derived.
+
+    THE GATE SURVIVES THE CONCESSION, AND IT IS ENFORCED HERE RATHER THAN ASSUMED. A verifier
+    answering `NOT-VERIFIABLE` to everything still misses every LIVE seed, so the chunk re-dispatches —
+    but only while a chunk is guaranteed to HOLD a live seed. Today it is: `build_seeds` caps the
+    closed half at `k // 2` and the live half at `k - k // 2` independently, so `len(rows) == k` can
+    only mean both halves filled, and anything less is a shortfall the caller refuses (measured: an
+    empty live pool yields 2 seeds and `SEED-SHORTFALL`, never a dispatch). That invariant lives in
+    ANOTHER MODULE, though, and this function is the one that depends on it — so a plausible future
+    edit there ("if live is short, take more closed") would silently turn the concession into a way
+    past control (d) altogether. Hence the guard below: the abstention is granted only when the answer
+    key also holds a live seed. It cannot fire today, which is exactly what makes adding it safe, and
+    it fails CLOSED if the invariant it rests on is ever weakened. Found by the cross-model review of
+    this change (4 of 5 providers), whose factual claim — that an all-closed chunk can be dispatched
+    now — was checked and is false; the structural concern behind it is not.
+
+    The abstention is REPORTED rather than swallowed: `ingest` puts it in `controls`, where a reader
+    counting seed outcomes can see that this chunk passed (d) with an abstention in it. It is not a
+    `Reject`, deliberately — `REJECTS` is the vocabulary a caller greps to decide whether to
+    RE-DISPATCH, and an abstention is precisely the outcome that must not trigger one.
     """
     at, _ = key_index(rows)
     by_row: Dict[int, str] = {}
@@ -293,12 +314,15 @@ def check_seeds(answers: Dict[str, str], records: Sequence[Row],
             by_row[i] = str(rec.get("verdict", ""))
     out: List[Reject] = []
     abstained: List[str] = []
+    # Is there a live seed to fall back on? See the docstring: the concession only holds while the
+    # chunk still grades something whose proof is the tree itself.
+    has_live = any(v != zl.VERDICT_STALE_FIXED for v in answers.values())
     for key in sorted(answers):
         i = at.get(str(key))
         if i is None or i not in by_row:
             out.append(Reject(R_SEED, key, "seeded row not answered at all"))
         elif (by_row[i] == zl.VERDICT_NOT_VERIFIABLE
-              and answers[key] == zl.VERDICT_STALE_FIXED):
+              and answers[key] == zl.VERDICT_STALE_FIXED and has_live):
             abstained.append("SEED-ABSTAIN %s answered %s where the repo records %s — an abstention on "
                              "a CLOSED seed, graded as a pass; see check_seeds"
                              % (key, zl.VERDICT_NOT_VERIFIABLE, zl.VERDICT_STALE_FIXED))

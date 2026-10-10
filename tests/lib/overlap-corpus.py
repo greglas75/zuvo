@@ -22,6 +22,23 @@ the file holds the line, yields two citations that differ ONLY in the line cited
 Both populations come from the same entries and the same files and differ only in WHICH line is
 cited, so a threshold that separates them is separating "about this entry" from "merely resolves".
 
+LIMITS OF THIS CORPUS, raised by the cross-model review of the change it justified and kept here
+because both cut the same way — they make the measured failure a LOWER bound, not an overstatement:
+
+  * THE NEGATIVES ARE THE EASY ONES. A fabricated citation here is `--far` lines away, while a real
+    fabricated line number is usually CLOSE to the true one (that is why `WINDOW` exists at all). The
+    words half therefore fails on the easiest negatives it could be given; on near ones it can only do
+    worse. Anyone minded to reinstate a threshold has to beat these numbers, not these conditions.
+  * THE POSITIVES ARE NOISY IN THE DIRECTION OF FAILURE. A "genuine" pair is the `path:line` the entry
+    wrote down, and a line number drifts as the file is edited, so some genuine windows have moved off
+    the code they described. That is precisely the tolerance `WINDOW` exists for and the false
+    rejection this measurement removed — counting it as genuine is the conservative choice, because a
+    control that cannot survive ordinary line drift is a control that refuses correct evidence.
+  * `--fakes` SAMPLES ARE NOT INDEPENDENT. Five fabrications share one entry and one file, so the
+    effective sample size is the CITATION count, not the 5x negative count. That is why the verdict
+    rests on the permutation p-value and on re-running with several `--seed` values rather than on a
+    confidence interval that would read far too tight.
+
 WHAT IT PRINTS. Per window: the AUC (0.5 = a coin flip, ties at 0.5), then, per candidate threshold,
 the share of GENUINE citations the threshold would refuse and the share of FABRICATIONS it would
 accept. A gate needs both columns small at one row. On zuvo-plugin at 2026-10-10 the best row of the

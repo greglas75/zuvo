@@ -1536,8 +1536,14 @@ MUTATIONS = {
     "noclosedadm": (SEEDS, "        why = zsa.closed_derivable(seed_body, tree)", '        why = ""'),
     # The abstention branch: with its guard false, NOT-VERIFIABLE on a closed seed falls through to the
     # miss below — the pre-fix behaviour the first live run measured as punishing the honest answer.
+    # The fail-closed guard on the abstention: without a live seed in the key, NOT-VERIFIABLE is a
+    # miss again. It cannot fire while `build_seeds` fills both halves or refuses, which is what makes
+    # it safe to add — and what makes a mutant the only way to reach it.
+    "noabstainfloor": (AGENT,
+                       'and answers[key] == zl.VERDICT_STALE_FIXED and has_live):',
+                       'and answers[key] == zl.VERDICT_STALE_FIXED):'),
     "noabstain": (AGENT,
-                  '        elif (by_row[i] == zl.VERDICT_NOT_VERIFIABLE\n              and answers[key] == zl.VERDICT_STALE_FIXED):',
+                  '        elif (by_row[i] == zl.VERDICT_NOT_VERIFIABLE\n              and answers[key] == zl.VERDICT_STALE_FIXED and has_live):',
                   "        elif False:"),
     "noliveadm": (SEEDS, "        why = zsa.live_derivable(anchor, tree)", '        why = ""'),
     # The strip moved into the composition helper; the mutant keeps the marker instead of removing it.
@@ -3069,21 +3075,49 @@ def mode_sig(raw_text):
     out("WORDS", " ".join(words))
 
 
+def mode_grade(expected, answered):
+    """Control (d) graded DIRECTLY on an answer key, so a composition a dispatch cannot produce is
+    still reachable. `expected`/`answered` are comma-separated verdicts, one per seed, in order.
+
+    It exists for one assertion: the abstention is granted only when the key also holds a LIVE seed.
+    `build_seeds` cannot emit an all-closed key (it caps each half and the caller refuses a shortfall),
+    so nothing that goes through it can reach the guard — and a guard no test can reach is a guard
+    nobody will keep.
+    """
+    exp = [v for v in expected.split(",") if v]
+    ans = [v for v in answered.split(",") if v]
+    rows = [{"id": "B-seed%d" % i, "keys": ["fp:%012d" % i], "text_sha": "0" * 40}
+            for i in range(len(exp))]
+    answers = {"fp:%012d" % i: v for i, v in enumerate(exp)}
+    recs = [{"key": "fp:%012d" % i, "verdict": v} for i, v in enumerate(ans)]
+    misses, abstained = za.check_seeds(answers, recs, rows)
+    out("NMISS", len(misses))
+    out("NABSTAIN", len(abstained))
+    for r in misses:
+        print("MISS=%s|%s" % (r.code, r.why))
+    for a in abstained:
+        print("ABSTAIN=" + a)
+
+
 def mode_seeds(root, archive, k, bogus=""):
     """The seeds, their answers, the shortfall, the DROPS, and the field set that makes them
     indistinguishable.
 
-    `bogus` prepends ONE live anchor that resolves to nothing. It is the only way to reach
-    `_live_derivable`'s refusal from here: `live_anchors` reads the anchors out of the tree, so every
-    anchor it derives resolves by construction — and the case the predicate exists for is a root
-    mismatch (`cmd_dispatch` derives from `loaded.root`, the verifier resolves against `tree.root`, and
-    `main_root` makes those different directories in every linked worktree), which a probe cannot
-    produce by asking for more anchors.
+    `bogus` shapes the live pool, because `live_anchors` reads it out of the tree and two cases are
+    therefore unreachable from a real repo:
+      `bogus`  — prepend ONE anchor that resolves to nothing. The only way to reach
+                 `live_derivable`'s refusal: every anchor the tree yields resolves by construction,
+                 and the case the predicate exists for is a ROOT mismatch (`cmd_dispatch` derives
+                 from `loaded.root`, the verifier resolves against `tree.root`, and `main_root` makes
+                 those different directories in every linked worktree).
+      `nolive` — an EMPTY live pool, which pins the composition invariant D1e's guard rests on.
     """
     arch = [e.body for e in zb.iter_entries(open(archive, encoding="utf-8").read(),
                                             kinds=zb.DEFAULT_KINDS + (zb.KIND_HEADING,))]
     live = zs.live_anchors(root, int(k))
-    if bogus:
+    if bogus == "nolive":
+        live = []
+    elif bogus:
         live = [("src/vanished.ts", 1, "this anchor resolves to nothing at all")] + list(live)
     tree = zv.Tree(root=root, real=os.path.join(root, "memory", "backlog.md"), archive=archive)
     rows, ans, short, dropped = zs.build_seeds(0, arch, live, (), int(k), tree=tree)
@@ -3120,7 +3154,7 @@ def mode_conserve(dispatch, response):
 
 
 MODES = {"ingest": mode_ingest, "overlap": mode_overlap, "resolve": mode_resolve,
-         "shape": mode_shape, "sig": mode_sig, "seeds": mode_seeds,
+         "shape": mode_shape, "sig": mode_sig, "seeds": mode_seeds, "grade": mode_grade,
          "interleave": mode_interleave, "conserve": mode_conserve}
 MODES[sys.argv[2]](*sys.argv[3:])
 PYEOF
@@ -3854,6 +3888,41 @@ grep -qE '^REJECT=SEED-MISS\|(fp:[0-9a-f]{12}|id:[A-Za-z0-9._-]+).*answered NOT-
 [ "$(iv liveabstain NACCEPTED)" = "0" ] \
   && ok "(D2c) …and that chunk writes ZERO rows, so the live-seed miss still re-dispatches the whole chunk" \
   || no "(D2c) $(iv liveabstain NACCEPTED) row(s) survived a live-seed miss"
+# ------------------------------------------------------------------------------------------------
+# D1d/D1e — THE ABSTENTION FAILS CLOSED WITHOUT A LIVE SEED. The concession in D1b is only safe while
+# a chunk is guaranteed to grade something whose proof is the tree itself. It is today: `build_seeds`
+# caps the closed half at k//2 and the live half at k-k//2 independently, so `len(rows) == k` can only
+# mean both halves filled and anything less is the shortfall the caller refuses — D1f measures that.
+# But the invariant lives in THAT module while `check_seeds` is the one depending on it, so a
+# plausible edit there ("if live is short, take more closed") would turn the concession into a way
+# past control (d) altogether. The cross-model review of this change raised exactly that (4 of 5
+# providers); its factual claim that an all-closed chunk can be dispatched now is FALSE, and D1f
+# asserts so — the structural concern is not, hence the guard and these two cases.
+probe3 "$CTL2" grade "STALE-FIXED,STILL-REAL" "NOT-VERIFIABLE,NOT-VERIFIABLE" >"$T3/grade-mixed.out" 2>&1
+if [ "$(sed -n 's/^NABSTAIN=//p' "$T3/grade-mixed.out" | head -1)" = "1" ] \
+   && [ "$(sed -n 's/^NMISS=//p' "$T3/grade-mixed.out" | head -1)" = "1" ]; then
+  ok "(D1d) a MIXED key answered NOT-VERIFIABLE twice: the closed seed abstains, the live one MISSES — one of each, which is the asymmetry rather than a blanket pass"
+else
+  no "(D1d) mixed key gave NMISS=$(sed -n 's/^NMISS=//p' "$T3/grade-mixed.out" | head -1) NABSTAIN=$(sed -n 's/^NABSTAIN=//p' "$T3/grade-mixed.out" | head -1), wanted 1 and 1"
+fi
+probe3 "$CTL2" grade "STALE-FIXED,STALE-FIXED" "NOT-VERIFIABLE,NOT-VERIFIABLE" >"$T3/grade-closed.out" 2>&1
+if [ "$(sed -n 's/^NABSTAIN=//p' "$T3/grade-closed.out" | head -1)" = "0" ] \
+   && [ "$(sed -n 's/^NMISS=//p' "$T3/grade-closed.out" | head -1)" = "2" ]; then
+  ok "(D1e) an ALL-CLOSED key answered NOT-VERIFIABLE everywhere is 2 MISSES and no abstention — the concession fails CLOSED, so it can never become a complete bypass of (d) if the composition invariant is ever weakened"
+else
+  no "(D1e) all-closed key gave NMISS=$(sed -n 's/^NMISS=//p' "$T3/grade-closed.out" | head -1) NABSTAIN=$(sed -n 's/^NABSTAIN=//p' "$T3/grade-closed.out" | head -1), wanted 2 and 0 — the abstention is a blanket pass for a closed-only chunk"
+fi
+# D1f — and the invariant itself, measured rather than asserted in prose: with an EMPTY live pool the
+# derivation yields k//2 seeds and a SHORTFALL, which the caller refuses (D7 below asserts the refusal
+# end to end). So the all-closed key D1e grades cannot be dispatched, and D1e is defence in depth
+# against a change to the other module rather than a live hole.
+probe3 "$CTL2" seeds "$T3R" "$T3R/memory/backlog-done.md" 4 nolive >"$T3/seeds-nolive.out" 2>&1
+if [ "$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nolive.out" | head -1)" = "2" ] \
+   && [ "$(sed -n 's/^SHORT=//p' "$T3/seeds-nolive.out" | head -1)" != "-" ]; then
+  ok "(D1f) an EMPTY live pool yields 2 seeds and a SHORTFALL, never a dispatchable all-closed chunk — the two halves are capped independently, so a full K means both halves filled"
+else
+  no "(D1f) an empty live pool produced NSEEDS=$(sed -n 's/^NSEEDS=//p' "$T3/seeds-nolive.out" | head -1) SHORT='$(sed -n 's/^SHORT=//p' "$T3/seeds-nolive.out" | head -1)' — a chunk could be dispatched with no live seed, and D1e stops being defence in depth"
+fi
 for f in seedfixed seedreal; do
   [ "$(iv $f NACCEPTED)" = "0" ] \
     && ok "(D3) the '$f' chunk writes ZERO rows — a seed miss re-dispatches the CHUNK, it does not discount one row" \

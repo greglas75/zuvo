@@ -5160,6 +5160,13 @@ skips the BASENAME half, which 21 of this repo's 26 short-signature entries were
 is the next reader's trap. Fixed in passing: the `nobasename` mutation assertion still grepped `basenames
 differ`, the phrasing PR #59 replaced, so `mu3_gone` passed vacuously against a string nothing emitted.
 
+The cross-model review of the change (5 providers) objected twice to the corpus, and both objections cut
+the same way, so they are recorded in the harness rather than argued with: the fabricated citations it
+draws are the EASY negatives (far from the true line, where a real fabricated number is usually close),
+and a "genuine" label tolerates the line drift that `WINDOW` exists for. Both make these numbers a LOWER
+bound on the failure. The `--fakes` samples also share an entry, so the verdict rests on the permutation
+p-value and on re-running with several seeds, never on a confidence interval.
+
 - [x] B-20261009-SEEDS-PUNISH-HONEST-ABSTAIN [P2][test][conf 80] — FIXED
 **Fingerprint:** scripts/zuvo-home/zuvo_backlog_seedshape.py|closed-seed|not-verifiable
 **Source:** first live verify run, 2026-10-06 — reading WHY the 4 remaining known-answer misses missed.
@@ -5197,6 +5204,13 @@ amputated seed text. Both were real:
    quotes, read out of the tree at dispatch and re-checked there, so abstaining on one stays a `SEED-MISS` —
    which is what the other 2 of those 4 misses were, and they were the agent's. The gate survives the
    concession: abstaining on everything still misses every live seed, half of every chunk (D2b/D2c).
+   And it now fails CLOSED: the cross-model review (4 of 5 providers) asked what stops an ALL-CLOSED
+   chunk from passing (d) outright. Checked: nothing can dispatch one — `build_seeds` caps each half
+   independently, so a full K means both halves filled and anything less is the shortfall the caller
+   refuses (D1f measures it). The claim was true but rested on an invariant in ANOTHER module, so
+   `check_seeds` now grants the abstention only when the key also holds a live seed (D1d/D1e). The
+   guard cannot fire today, which is what makes it safe; it exists so a later edit to the pool sizing
+   cannot turn the concession into a way past control (d).
 
 - [ ] B-20261010-GROOM-REFUSAL-PATHS-UNTESTED: the cross-vendor test-audit of tests/hooks/test-backlog-grooming.sh
   (zuvo/audits/test-quality-audit-2026-10-10.md) finds two refusals of scripts/zuvo-home/backlog-groom.py with no
