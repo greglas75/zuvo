@@ -124,8 +124,12 @@ SCORING MATH:
 ### Scoring Q21 — read the number, never estimate it
 
 Q21's text lives in the generated region above; how to *answer* it does not, so it lives
-here. Source of truth: the newest `$ZUVO_DIR/audits/mutation-test-*.json` written by
-`zuvo:mutation-test` (§4.3b of that skill).
+here. Source of truth: the artifact `zuvo:mutation-test` (§4.3b of that skill) wrote, chosen by one rule.
+Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` and zero-byte or
+unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
+audited file lies under it, or each audited file is a `files[].path` entry.
+Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
+No candidate → N/A (no mutation artifact covers these files).
 
 | Condition | Q21 value |
 |---|---|
@@ -133,7 +137,7 @@ here. Source of truth: the newest `$ZUVO_DIR/audits/mutation-test-*.json` writte
 | JSON present, `commit` == HEAD sha7 | score from **`score_triaged`** |
 | JSON present, `commit` != HEAD | `N/A (mutation data STALE — <json sha7>, HEAD is <sha7>)` |
 | JSON present, `tier2_ran: false` | score it, and append `(--quick: survivors never checked against the full suite)` |
-| No JSON at all | `N/A (no mutation run)` — legitimate; Q21 is CONDITIONAL on a runner existing |
+| No candidate (none exists, or none covers the audited files) | `N/A (no mutation artifact covers these files)` — legitimate; Q21 is CONDITIONAL on a runner existing |
 
 **Per-file evidence is mandatory.** Verify that the artifact's changed-tree identity, production
 file path, executed mutation rows and symbol scope match this audit. A current HEAD alone is

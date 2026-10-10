@@ -6,7 +6,9 @@
 #
 # Phases: ar_guard_file_list, ar_collect_input, ar_set_input_cap, ar_set_chunk_boundary,
 # ar_check_material, ar_chunk_input, ar_truncate_input. Functions: build_file_list, collect_input,
-# collect_files_input, _no_material, _ck_count_units, _tamper_capture (called from Main), _tamper_verify.
+# collect_files_input, _no_material, _ck_count_units, _ck_count_hunks, _ck_split_hunks,
+# _ck_split_oversized_sections, _ck_merge_part_note, _ck_build_chunk_note, _tamper_capture (called from Main),
+# _tamper_verify.
 #
 # Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
 # multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
@@ -343,9 +345,11 @@ ar_set_chunk_boundary() {
 # Chunking was caller folklore rediscovered per run; now the script owns it: split
 # the input at file boundaries, re-invoke ITSELF once per chunk (ZUVO_ADV_CHUNK is
 # the recursion guard — a child never chunks again), merge outputs and exit codes.
-# Truncation remains only for: input with fewer than 2 boundaries to cut at, a
-# single section bigger than the cap (the child's truncate path, loud WARN), or an
-# explicit --no-chunk / ZUVO_ADV_NO_CHUNK=1.
+# A diff section bigger than the chunk budget is split again at its `@@` hunks.
+# Truncation remains only for: input with fewer than 2 boundaries or hunks to cut at,
+# a section that cannot be split (a --files section, a diff of one hunk) or a single
+# hunk bigger than the cap (the child's truncate path, loud WARN), or an explicit
+# --no-chunk / ZUVO_ADV_NO_CHUNK=1.
 #
 # 2026-08-03 — document modes were chunk-EXEMPT until now, on the reasoning that a
 # spec/plan is "one artifact, no file boundaries to cut at". That reasoning was
@@ -370,6 +374,7 @@ if chunked_doc_mode; then
   _ck_fence=1   # ignore headings inside ``` / ~~~ blocks (see the awk below)
 fi
 _chunk_headers=0
+_chunk_hunks=0
 return 0
 }
 
@@ -467,13 +472,123 @@ _ck_count_units() {
     END { print n + 0 }' "$@"
 }
 
-# ar_chunk_input — input over the cap with 2+ boundaries: review it chunk by chunk in child runs, then exit with the merged result.
+# _ck_count_hunks — the hunk headers in the diff sections of stdin; an `@@ ` line inside a --files section is
+# that file's text, not a hunk.
+_ck_count_hunks() {
+  awk -v re="$FILE_HEADER_RE" '
+    $0 ~ re          { indiff = ($0 ~ /^diff --git /); next }
+    indiff && /^@@ / { n++ }
+    END { print n + 0 }'
+}
+
+# _ck_split_hunks <section> <budget> — split one file's diff section at its hunks into <section>-pNNNN, each
+# the file header + as many whole hunks as fit <budget> bytes + the section's `=== CONTEXT:` trailer; a hunk
+# that alone overflows gets a part of its own. Beside each part, <dir>/pnote-<name>-pNNNN names its hunks.
+# Prints the number of parts written: 0 when the section has fewer than 2 hunks (nothing is written).
+_ck_split_hunks() {
+  local sec="$1" budget="$2"
+  # LC_ALL=C: length() counts bytes, the unit of the budget and of Pass 2's `wc -c`.
+  LC_ALL=C awk -v budget="$budget" -v out="$sec" -v note="${sec%/*}/pnote-${sec##*/}" '
+    function emit(a, b,   fn, i) {
+      np++
+      fn = sprintf("%s-p%04d", out, np)
+      for (i = 1; i < us[1]; i++) print L[i] > fn
+      for (i = us[a]; i <= ue[b]; i++) print L[i] > fn
+      if (ts) for (i = ts; i <= NR; i++) print L[i] > fn
+      close(fn)
+      fn = sprintf("%s-p%04d", note, np)
+      printf "hunks %d-%d of %d of %s", a, b, nu, path > fn
+      close(fn)
+    }
+    { L[NR] = $0; sz = length($0) + 1 }
+    st < 2 && /^=== CONTEXT: / { st = 2; ts = NR }
+    st == 0 && /^@@ /          { st = 1 }
+    st == 0 { hsz += sz
+              if (/^\+\+\+ b\//) path = substr($0, 7)
+              else if (path == "" && /^--- a\//) path = substr($0, 7)
+              next }
+    st == 1 { if (/^@@ /) us[++nu] = NR; usz[nu] += sz; next }
+            { tsz += sz }
+    END {
+      if (nu < 2) { print 0; exit }
+      for (k = 1; k < nu; k++) ue[k] = us[k + 1] - 1
+      ue[nu] = ts ? ts - 1 : NR
+      if (path == "") path = substr(L[1], 12)
+      if (length(path) > 80) path = "..." substr(path, length(path) - 76)
+      fixed = hsz + tsz; first = 1; cur = usz[1]
+      for (k = 2; k <= nu; k++) {
+        if (fixed + cur + usz[k] > budget) { emit(first, k - 1); first = k; cur = 0 }
+        cur += usz[k]
+      }
+      emit(first, nu)
+      print np
+    }' "$sec"
+}
+
+# _ck_split_oversized_sections <dir> <budget> — Pass 1.5: a diff section over <budget> is split at its hunks
+# (_ck_split_hunks), so one big file is reviewed whole across parts instead of being cut. The parts sort right
+# after the section they replace, which is emptied; a split that fails leaves the section whole and its partial
+# parts empty. Prints the number of sections split.
+_ck_split_oversized_sections() {
+  local dir="$1" budget="$2" sec first parts p nsplit=0
+  for sec in "$dir"/sec-*; do
+    [[ -s "$sec" && $(wc -c < "$sec" | tr -d ' ') -gt $budget ]] || continue
+    first=""; IFS= read -r first < "$sec" || true
+    [[ "$first" == "diff --git "* ]] || continue
+    if parts=$(_ck_split_hunks "$sec" "$budget") && [[ "${parts:-0}" -ge 2 ]]; then
+      : > "$sec"
+      nsplit=$((nsplit + 1))
+    else
+      for p in "$sec"-p*; do if [[ -e "$p" ]]; then : > "$p"; fi; done
+    fi
+  done
+  printf '%s\n' "$nsplit"
+}
+
+# _ck_merge_part_note <dir> <section> <chunk> — a part's hunk note (pnote-*) goes into its chunk's note (cnote-*).
+_ck_merge_part_note() {
+  local dir="$1" sec="$2" chunk="$3" pnote cnote
+  pnote="$dir/pnote-${sec##*/}"
+  [[ -s "$pnote" ]] || return 0
+  cnote="$dir/cnote-${chunk##*/chunk-}"
+  if [[ -s "$cnote" ]]; then printf '; ' >> "$cnote"; fi
+  cat "$pnote" >> "$cnote"
+}
+
+# _ck_build_chunk_note <fence> <i> <n> <cnote> — the context note for part <i> of <n>. A diff part names the
+# hunks its chunk note <cnote> lists, capped so the whole note stays inside CHUNK_NOTE_HEADROOM_CHARS.
+_ck_build_chunk_note() {
+  local fence="$1" i="$2" n="$3" cnote="$4" note ell="..."
+  # The cap holds the closing bracket; a fifth of the headroom stays spare.
+  local note_max=$(( CHUNK_NOTE_HEADROOM_CHARS * 4 / 5 ))
+  # The note must match what was actually split. Telling a plan reviewer that
+  # "sibling FILES are reviewed in other chunks" invites it to report the
+  # document as truncated or to flag cross-references it cannot see; say
+  # plainly that this is one document cut into parts.
+  if [[ "$fence" -eq 1 ]]; then
+    printf '%s' "[part ${i}/${n} of ONE document split at section headings — the other sections are reviewed in sibling parts; do NOT report the document as incomplete/truncated, and do NOT report a section or cross-reference you cannot see here as missing]"
+    return 0
+  fi
+  note="[chunk ${i}/${n} of a larger range — sibling files or hunks of the same file are reviewed in other chunks; do NOT report them as missing"
+  if [[ -s "$cnote" ]]; then
+    note="$note; this chunk holds $(cat "$cnote")"
+    [[ ${#note} -lt $note_max ]] || note="${note:0:$(( note_max - ${#ell} - 1 ))}$ell"
+  fi
+  printf '%s]' "$note"
+}
+
+# ar_chunk_input — input over the cap with 2+ boundaries (or 2+ diff hunks): review it chunk by chunk in child
+# runs, then exit with the merged result.
 ar_chunk_input() {
 if [[ ${#INPUT} -gt $MAX_CHARS && ! "$REVIEW_MODE" =~ $AR_UNCHUNKED_DOC_MODES ]]; then
   _chunk_headers=$(printf '%s\n' "$INPUT" | _ck_count_units)
+  if [[ "$_ck_fence" -eq 0 ]]; then
+    _chunk_hunks=$(printf '%s\n' "$INPUT" | _ck_count_hunks)
+  fi
 fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
-      && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" && "${_chunk_headers:-0}" -ge 2 ]]; then
+      && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" \
+      && ( "${_chunk_headers:-0}" -ge 2 || ( "$_ck_fence" -eq 0 && "${_chunk_hunks:-0}" -ge 2 ) ) ]]; then
   _ck_dir=$(mktemp -d "${TMPDIR:-/tmp}/zuvo-adv-chunks.XXXXXX")
   # Each chunk's review is a child run, started in the background and waited for, so an INT or TERM reaches
   # these traps at once and stops the child (its traps stop its lanes) before its chunk dir is removed.
@@ -502,11 +617,16 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     !(fence && infence) && $0 ~ re { close(fn); n++; fn = sprintf("%s/sec-%04d", dir, n) }
     { print >> fn }
   '
-  # Pass 2: pack sections greedily into chunks of at most MAX_CHARS-CHUNK_NOTE_HEADROOM_CHARS (headroom
-  # for the per-chunk context note). A single section over the cap becomes its own
-  # chunk — the child truncates it with the existing loud WARN; half of one file
-  # still beats none, and every OTHER file keeps a full-fidelity review.
   _ck_budget=$((MAX_CHARS - CHUNK_NOTE_HEADROOM_CHARS))
+  # Pass 1.5: a diff section over the budget is split at its hunks.
+  _ck_nsplit=0
+  if [[ "$_ck_fence" -eq 0 ]]; then
+    _ck_nsplit=$(_ck_split_oversized_sections "$_ck_dir" "$_ck_budget")
+  fi
+  # Pass 2: pack sections and parts greedily into chunks of at most the budget (MAX_CHARS less the headroom
+  # for the per-chunk context note). One still over it — a --files section, a diff of one hunk, a single hunk
+  # over the cap — becomes its own chunk, which the child truncates with the loud WARN; every other file and
+  # hunk keeps a full-fidelity review. A part's hunk note (pnote-*) goes into its chunk's note (cnote-*).
   _ck_n=0; _ck_size=0; _ck_file=""
   for _sec in "$_ck_dir"/sec-*; do
     [[ -s "$_sec" ]] || continue
@@ -516,9 +636,11 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     fi
     cat "$_sec" >> "$_ck_file"
     _ck_size=$((_ck_size + _sec_size))
+    _ck_merge_part_note "$_ck_dir" "$_sec" "$_ck_file"
   done
 
   _ck_bnd_label="file boundaries"
+  [[ "$_ck_nsplit" -eq 0 ]] || _ck_bnd_label="file boundaries, ${_ck_nsplit} oversized file(s) also at hunk boundaries"
   [[ "$_ck_fence" -eq 1 ]] && _ck_bnd_label="section headings (h2+, outside code fences)"
   echo "CHUNKED INPUT: ${#INPUT} chars > ${MAX_CHARS} cap -> ${_ck_n} chunks at ${_ck_bnd_label} (no truncation)" >&2
 
@@ -585,15 +707,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       _ck_env=("ZUVO_RUN_DEADLINE=$_ck_left")
     fi
     _ck_args=("${_ck_base_args[@]}")
-    # The note must match what was actually split. Telling a plan reviewer that
-    # "sibling FILES are reviewed in other chunks" invites it to report the
-    # document as truncated or to flag cross-references it cannot see; say
-    # plainly that this is one document cut into parts.
-    if [[ "$_ck_fence" -eq 1 ]]; then
-      _ck_note="[part ${_ck_i}/${_ck_n} of ONE document split at section headings — the other sections are reviewed in sibling parts; do NOT report the document as incomplete/truncated, and do NOT report a section or cross-reference you cannot see here as missing]"
-    else
-      _ck_note="[chunk ${_ck_i}/${_ck_n} of a larger range — sibling files are reviewed in other chunks; do NOT report them as missing]"
-    fi
+    _ck_note=$(_ck_build_chunk_note "$_ck_fence" "$_ck_i" "$_ck_n" "$_ck_dir/cnote-${_ck##*/chunk-}")
     _ck_args+=(--context "${CONTEXT_HINT:+$CONTEXT_HINT }${_ck_note}")
     if [[ -n "$ARTIFACT_PATH" ]]; then
       _ck_args+=(--artifact "$ARTIFACT_PATH")

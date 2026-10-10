@@ -23,9 +23,19 @@
 # it gets a marker block naming the path, so the reviewer sees it exists and a
 # repo whose only change is one binary/empty file never masquerades as "no changes".
 #
+# Lifecycle context: after the last hunk of a tracked shell script (a sh-family
+# shebang; without one, a .sh/.bash/.zsh/.ksh name) whose post-image defines a
+# trap, a cleanup-named function or a trap handler, a numbered
+# "=== CONTEXT: <path> - ... ===" block repeats those definitions (outside the
+# hunks; at most 40 lines per function, 80 lines / 4000 characters per file;
+# none for a post-image over 1 MiB) up to "=== END CONTEXT ===". It is not diff
+# content: `git apply` skips it.
+# ZUVO_REVIEW_PATCH_NO_CONTEXT=1 turns it off; if it cannot be built, the plain
+# patch is emitted with a warning.
+#
 # Every pathspec-taking git call uses --literal-pathspecs: a filename is a NAME,
 # never a glob or pathspec magic. Without it, scoping to a file literally named
-# `star*.txt` would silently widen the review to every `star…​.txt` in the tree.
+# `star*.txt` would silently widen the review to every `star….txt` in the tree.
 #
 # The index is NEVER written: no `git add`, no `git stash`, no `--intent-to-add`.
 # That is the whole point — a review helper that stages the caller's work would
@@ -71,6 +81,20 @@ Env:
                                      untracked files INCLUDED. Fail-open on
                                      purpose: a typo must not silently shrink
                                      the reviewed surface.
+  ZUVO_REVIEW_PATCH_NO_CONTEXT=1     omit the lifecycle-context blocks (exact
+                                     value "1"; anything else keeps them).
+
+Lifecycle context:
+  After the last hunk of a tracked shell script (a sh-family shebang; without
+  one, a .sh/.bash/.zsh/.ksh name) whose post-image defines a trap, a
+  cleanup-named function (cleanup, teardown, on_exit, stop) or a trap handler,
+  the patch carries those definitions from outside the hunks, numbered by line:
+    === CONTEXT: <path> - lifecycle definitions outside the changed hunks ... ===
+    <line>: <text>
+    === END CONTEXT ===
+  At most 40 lines per function and 80 lines / 4000 characters per file; a
+  script over 1 MiB gets none (a warning names it). It is reference text, not
+  part of the diff; `git apply` ignores it.
 
 Exit:
   0   a patch was emitted on stdout
@@ -217,11 +241,15 @@ done
 #     review to a file literally named `star*.txt` would otherwise silently pull
 #     in every other `star….txt` in the tree. A scoping tool that widens its own
 #     scope on a filename is worse than no scoping at all.
+# The a/ b/ prefixes are fixed so a user's diff.noprefix / diff.mnemonicPrefix
+# cannot change the headers the lifecycle-context pass reads paths from.
+DIFFPFX="--src-prefix=a/ --dst-prefix=b/"
 gitdiff() {
+  # shellcheck disable=SC2086  # DIFFPFX is two fixed words
   if [ "$npaths" -gt 0 ]; then
-    git -C "$top" --literal-pathspecs diff --no-color --no-ext-diff "$@" -- "${rel[@]}"
+    git -C "$top" --literal-pathspecs diff --no-color --no-ext-diff $DIFFPFX "$@" -- "${rel[@]}"
   else
-    git -C "$top" --literal-pathspecs diff --no-color --no-ext-diff "$@" --
+    git -C "$top" --literal-pathspecs diff --no-color --no-ext-diff $DIFFPFX "$@" --
   fi
 }
 gitothers() {
@@ -452,7 +480,7 @@ if [ "${ZUVO_REVIEW_PATCH_NO_UNTRACKED:-0}" != "1" ]; then
     # Explicit rc capture — NEVER `|| true`. `git diff --no-index` returns 1 for
     # "files differ" (the normal case here) but >=2 for real failures; collapsing
     # them would turn an unreadable/corrupt file into a silently truncated patch.
-    git -C "$top" diff --no-index --no-color --no-ext-diff -- /dev/null "$f" \
+    git -C "$top" diff --no-index --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -- /dev/null "$f" \
       > "$TMPD/one" 2> "$TMPD/one.err"
     rc=$?
     if [ "$rc" -ge 2 ]; then
@@ -481,10 +509,194 @@ if [ "${ZUVO_REVIEW_PATCH_NO_UNTRACKED:-0}" != "1" ]; then
   fi
 fi
 
+# ── lifecycle context for shell scripts ──────────────────────────────────────
+# A hunk in a script that defines a trap or a cleanup function cannot be judged
+# without those definitions (is the job it starts ever reaped?), and they usually
+# sit far outside the hunk. One awk pass copies the patch and, after the last hunk
+# of each such tracked script, appends them from the post-image, numbered: trap
+# lines first, then handler bodies, then cleanup-named bodies, so the caps cut
+# bodies before registrations. Every block line starts with "=== " or a digit or
+# "...", so neither git nor the adversarial splitter can read one as diff content.
+# shellcheck disable=SC2016  # an awk program, not a shell expansion
+LC_AWK='
+BEGIN {
+  CAPF = 40; CAPL = 80; CAPC = 4000
+  # The frame of a block: its header and END lines, plus one "... more ... not shown" line of at most MOREC characters.
+  FRAMEL = 3; MOREC = 100
+  # Post-image bytes read per file; past it the file gets no block, so a huge script is never held in memory.
+  MAXPOST = 1048576
+  TAIL = " - lifecycle definitions outside the changed hunks (unchanged; reference only, NOT part of this diff) ==="
+  top = ENVIRON["LC_TOP"]; oddf = ENVIRON["LC_ODD"]
+  while ((getline p < oddf) > 0) odd[p] = 1
+  close(oddf)
+}
+function warn(msg) { print "build-review-patch: warning: " msg | "cat 1>&2" }
+function hasword(t, w,    p, b, prev) {
+  prev = ""
+  while ((p = index(t, w)) > 0) {
+    b = (p == 1) ? prev : substr(t, p - 1, 1)
+    if (b !~ /[A-Za-z0-9_]/ && substr(t, p + length(w), 1) !~ /[A-Za-z0-9_]/) return 1
+    prev = substr(t, p, 1); t = substr(t, p + 1)
+  }
+  return 0
+}
+# A shebang decides when there is one; otherwise the extension must end the path.
+function is_shell(rel, first,    s, nf, f, i, b) {
+  if (substr(first, 1, 2) != "#!") return rel ~ /\.(sh|bash|zsh|ksh)$/
+  s = substr(first, 3); sub(/\r$/, "", s)
+  nf = split(s, f, /[ \t]+/)
+  i = (f[1] == "") ? 2 : 1
+  b = f[i]; sub(/.*\//, "", b)
+  if (b == "env") {
+    i++
+    while (i <= nf && (f[i] ~ /^-/ || f[i] ~ /=/)) i++
+    b = f[i]; sub(/.*\//, "", b)
+  }
+  return b ~ /^(ba|z|k|da)?sh$/
+}
+function funcname(s,    nm) {
+  sub(/^[ \t]+/, "", s)
+  if (s ~ /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/) {
+    sub(/^function[ \t]+/, "", s); nm = s; sub(/[^A-Za-z0-9_].*$/, "", nm); return nm
+  }
+  if (s ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*\([ \t]*\)/) { nm = s; sub(/[ \t]*\(.*$/, "", nm); return nm }
+  return ""
+}
+# Last line of the function opened on line i: the line itself when its closers
+# balance, else the first later line starting with the closer at its indent
+# (")" for a "name() (" subshell body, "}" otherwise).
+function func_end(i,    t, o, c, cl, ind, j) {
+  t = L[i]
+  if (t ~ /\([ \t]*\)[ \t]*\(/) { cl = ")"; o = gsub(/[(]/, "(", t); c = gsub(/[)]/, ")", t) }
+  else { cl = "}"; o = gsub(/[{]/, "{", t); c = gsub(/[}]/, "}", t) }
+  if (o > 0 && o == c) return i
+  ind = L[i]; sub(/[^ \t].*$/, "", ind)
+  for (j = i + 1; j <= nL; j++)
+    if (substr(L[j], 1, length(ind)) == ind && substr(L[j], length(ind) + 1, 1) == cl) return j
+  return nL
+}
+function visible(i,    h) { for (h = 1; h <= nh; h++) if (i >= hs[h] && i <= he[h]) return 1; return 0 }
+function over_post(f) {
+  close(f); nL = 0; split("", L)
+  warn("no lifecycle context for " rel ": its post-image is over " MAXPOST " bytes"); return 0
+}
+function read_post(f,    r, first, line, sz) {
+  nL = 0; split("", L)
+  r = (getline first < f)
+  if (r < 0) { warn("cannot read " rel " (post-image); no lifecycle context for it"); return 0 }
+  if (r == 0 || !is_shell(rel, first)) { close(f); return 0 }
+  L[++nL] = first; sz = length(first) + 1
+  # The first line counts too: a one-line file never enters the loop.
+  if (sz > MAXPOST) return over_post(f)
+  while ((r = (getline line < f)) > 0) {
+    if ((sz += length(line) + 1) > MAXPOST) return over_post(f)
+    L[++nL] = line
+  }
+  close(f)
+  if (r < 0) { warn("cannot read " rel " (post-image); no lifecycle context for it"); return 0 }
+  return 1
+}
+# Marks trap lines (tl) and classifies functions: 2 = a trap names it, 3 = cleanup-named.
+function collect(    i, s, nm, ntr, ncl) {
+  ntr = 0; ncl = 0; nfn = 0; traps = ""
+  split("", tl)
+  for (i = 1; i <= nL; i++) {
+    s = L[i]
+    if (s ~ /^[ \t]*#/) continue
+    if (s ~ /(^|[;&|({])[ \t]*trap([ \t]|$)/ || s ~ /(^|[ \t])(then|do|else)[ \t]+trap([ \t]|$)/) {
+      tl[i] = 1; ntr++; traps = traps "\n" s
+    }
+    nm = funcname(s)
+    if (nm != "") { nfn++; fname[nfn] = nm; fstart[nfn] = i }
+  }
+  for (i = 1; i <= nfn; i++) {
+    fgrp[i] = 0
+    if (fname[i] ~ /(^|_)(cleanup|teardown|on_exit|stop)($|_)/) { ncl++; fgrp[i] = 3 }
+    if (ntr > 0 && hasword(traps, fname[i])) fgrp[i] = 2
+  }
+  return ntr + ncl
+}
+function add(i) {
+  if (i in done) return
+  done[i] = 1
+  if (!visible(i)) C[++m] = i ": " L[i]
+}
+function add_func(k,    e, last, i) {
+  e = func_end(fstart[k]); last = e
+  if (e - fstart[k] + 1 > CAPF) last = fstart[k] + CAPF - 1
+  for (i = fstart[k]; i <= last; i++) add(i)
+  if (last < e) C[++m] = "... " (e - last) " more lines of " fname[k] "() not shown (cap " CAPF " lines per function)"
+}
+function emit_block(    i, k, hdr, endl, budget, used, take) {
+  m = 0; split("", C); split("", done)
+  for (i = 1; i <= nL; i++) if (i in tl) add(i)
+  for (k = 1; k <= nfn; k++) if (fgrp[k] == 2) add_func(k)
+  for (k = 1; k <= nfn; k++) if (fgrp[k] == 3) add_func(k)
+  if (m == 0) return
+  hdr = "=== CONTEXT: " rel TAIL; endl = "=== END CONTEXT ==="
+  budget = CAPC - (length(hdr) + 1) - (length(endl) + 1) - MOREC
+  if (budget <= 0) { warn("no lifecycle context for " rel ": its block cannot fit " CAPC " characters"); return }
+  used = 0
+  for (k = 1; k <= m && k <= CAPL - FRAMEL; k++) {
+    if (used + length(C[k]) + 1 > budget) break
+    used += length(C[k]) + 1
+  }
+  take = k - 1
+  print hdr
+  for (k = 1; k <= take; k++) print C[k]
+  if (take < m) print "... " (m - take) " more context lines not shown (cap " CAPL " lines / " CAPC " characters per file)"
+  print endl
+}
+function flush() {
+  if (rel != "" && !(rel in odd) && !skip && !newfile && nh > 0 && read_post(top "/" rel) && collect() > 0) emit_block()
+  rel = ""; skip = 0; newfile = 0; nh = 0; inhdr = 0
+}
+/^diff --git / { flush(); print; inhdr = 1; next }
+inhdr && /^--- \/dev\/null$/ { newfile = 1 }
+inhdr && /^(index [^ ]+|old mode|new mode|new file mode) 1[26]0000$/ { skip = 1 }
+inhdr && /^\+\+\+ / { rel = (substr($0, 1, 6) == "+++ b/") ? substr($0, 7) : ""; sub(/\t$/, "", rel) }
+/^@@ / {
+  inhdr = 0
+  split($0, hf, " "); t = hf[3]; sub(/^\+/, "", t)
+  if (split(t, hp, ",") > 1) c = hp[2] + 0; else c = 1
+  nh++; hs[nh] = hp[1] + 0; he[nh] = hp[1] + c - 1
+}
+{ print }
+END { flush(); close("cat 1>&2") }
+'
+
+lifecycle_context() {  # replaces OUTF with the annotated copy; any failure keeps the plain patch
+  local ann="$TMPD/annotated" paths="$TMPD/lc-paths" odd="$TMPD/lc-odd" rc p
+  : > "$odd"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    awk '/^diff --git / { h = 1; next } /^@@ / { h = 0 }
+      h && substr($0, 1, 6) == "+++ b/" { p = substr($0, 7); sub(/\t$/, "", p); print p }' "$OUTF" > "$paths"
+    rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    # Only regular files are read: getline blocks on a FIFO and a symlink leads elsewhere.
+    while IFS= read -r p; do
+      if [ -L "$top/$p" ] || [ ! -f "$top/$p" ]; then printf '%s\n' "$p" >> "$odd" || rc=1; fi
+    done < "$paths"
+  fi
+  if [ "$rc" -eq 0 ]; then
+    LC_TOP="$top" LC_ODD="$odd" awk "$LC_AWK" "$OUTF" > "$ann"
+    rc=$?
+  fi
+  # The annotation only ever adds lines, so a shorter copy means a cut-off write.
+  if [ "$rc" -ne 0 ] || [ $(( $(wc -c < "$ann") )) -lt $(( $(wc -c < "$OUTF") )) ]; then
+    err "warning: lifecycle context not added (annotation failed, rc=$rc); emitting the plain patch"
+    return 0
+  fi
+  OUTF="$ann"
+}
+
 # ── emit ─────────────────────────────────────────────────────────────────────
 if [ ! -s "$OUTF" ]; then
   err "no changes to review (clean working tree for the requested scope)"
   exit 3
 fi
+[ "${ZUVO_REVIEW_PATCH_NO_CONTEXT:-0}" = "1" ] || lifecycle_context
 cat "$OUTF" || { err "failed to write the patch to stdout"; exit 2; }
 exit 0
