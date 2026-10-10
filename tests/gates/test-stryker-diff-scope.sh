@@ -157,9 +157,9 @@ else
 fi
 
 printf 'src/c.ts\n' > "$TMP/unchanged.txt"
-rm -f "$R"/.stryker-scoped-*.conf.json
+rm -f "$R"/.stryker-scoped-*
 (cd "$R" && bash "$STRYKER" --files-from "$TMP/unchanged.txt" >/dev/null 2>&1); rc=$?
-n_cfg="$(find "$R" -maxdepth 1 -name '.stryker-scoped-*.conf.json' | wc -l | tr -d ' ')"
+n_cfg="$(find "$R" -maxdepth 1 -name '.stryker-scoped-*' | wc -l | tr -d ' ')"
 [ "$rc" -eq 3 ] && [ "$n_cfg" = "0" ] \
   && pass "--files-from with only unchanged files → exit 3, no config written" \
   || bad "only-unchanged list gave rc=$rc and $n_cfg configs (want 3 and 0)"

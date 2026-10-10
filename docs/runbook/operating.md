@@ -614,3 +614,122 @@ Rules for reading any before/after in this repo:
 - **Cut at the moment the change entered THAT thread**, not at a wall-clock timestamp and not at the
   thread's start.
 - **Normalise whitespace before matching any multi-word marker**, or pick one that cannot wrap.
+
+## 12. Recovering a truncated retros.log
+
+Use this when `append-retro` prints `retros.log lost N rows`, when `~/.zuvo/retros-SHRANK-*.txt`
+appears, or when `sanitize-retros` / `rotate-retros` exits 4. The aim is to rebuild the log as the
+union of a good snapshot and the live file, so rows written after the snapshot survive.
+
+What exit 4 means: `sanitize-retros --apply` or `rotate-retros --apply` refused, because the file it
+would write holds fewer `RETRO:` rows than the `rows=` recorded in `.retros-highwater` beside the log.
+Nothing was modified. Recover first, then rerun. Never edit `.retros-highwater` to make a rewrite pass:
+it is the only record of how many rows the log should hold, and lowering it by hand blesses the loss.
+`rotate-retros` lowers the high-water itself when it legitimately archives rows.
+
+Save this as `recover-retros.sh` and run it with `bash`. It stops, leaving `retros.log` untouched, at the
+first check that fails:
+
+```bash
+#!/usr/bin/env bash
+set -uo pipefail
+Z=${ZUVO_HOME:-$HOME/.zuvo}
+LOG=$Z/retros.log
+LOCK=$Z/.retro.lock.d
+TMP=$LOG.recover.$$
+LIFTED=0
+
+# 1. Take the writers' lock before reading anything: mkdir is the atomic step, the pid file names the
+#    owner. The EXIT trap re-arms the macOS append-only flag if this script lifted it, releases the lock
+#    only while the pid file still holds this shell's pid, and removes the temp files.
+release() {
+  if [ "$LIFTED" = 1 ]; then chflags uappnd "$LOG" 2>/dev/null; fi
+  if [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then rm -f "$LOCK/pid"; rmdir "$LOCK"; fi
+  rm -f "$TMP" "$TMP".*
+}
+trap release EXIT
+tries=0
+until mkdir "$LOCK" 2>/dev/null; do
+  holder=$(cat "$LOCK/pid" 2>/dev/null)
+  case "$holder" in ''|*[!0-9]*) holder= ;; esac
+  stale=0
+  if [ -n "$holder" ]; then
+    ps -p "$holder" >/dev/null 2>&1 || stale=1
+  else
+    mtime=$(stat -c %Y "$LOCK" 2>/dev/null || stat -f %m "$LOCK" 2>/dev/null)
+    if [ -n "$mtime" ] && [ $(( $(date +%s) - mtime )) -gt 30 ]; then stale=1; fi
+  fi
+  if [ "$stale" = 1 ]; then
+    echo "removing the stale lock (holder pid: ${holder:-none})" >&2
+    rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null
+  fi
+  tries=$((tries + 1))
+  if [ "$tries" -ge 30 ]; then
+    echo "$LOCK is still held by pid ${holder:-unknown}: check that process (ps -p) and wait for it." >&2
+    echo "Do not remove the lock while its pid is alive. Nothing was changed." >&2
+    exit 1
+  fi
+  sleep 1
+done
+echo $$ > "$LOCK/pid"
+
+# 2. The floor, read under the lock.
+HW=$(sed -n 's/^rows=//p' "$Z/.retros-highwater" | head -1)
+case "$HW" in ''|*[!0-9]*) HW=0 ;; esac
+
+# 3. Newest intact snapshot whose RETRO row count is >= the high-water (snapshots are only taken at or
+#    above it). A snapshot that fails gzip -t is skipped. To force one: SNAP=<path> bash recover-retros.sh
+if [ -z "${SNAP:-}" ]; then
+  for f in $(ls -t "$Z"/retros-snapshots/retros.log.*.gz 2>/dev/null); do
+    gzip -t "$f" 2>/dev/null || continue
+    n=$(gzip -cd "$f" | grep -c '^RETRO:') || n=0
+    if [ "$n" -ge "$HW" ]; then SNAP=$f; break; fi
+  done
+fi
+if [ -z "${SNAP:-}" ] || ! gzip -t "$SNAP" 2>/dev/null; then
+  echo "no intact snapshot holds >= $HW RETRO rows. Pick one yourself (SNAP=<path> bash recover-retros.sh)" >&2
+  echo "or run fleet-retro-pull.py --restore-self. Nothing was changed." >&2
+  exit 1
+fi
+
+# 4. Union snapshot + live file. Whole-line dedup (sort -u) makes re-running harmless. Rows start with
+#    `RETRO: <ISO-8601 timestamp>`; C-collation order is chronological order as long as every timestamp is
+#    a Z timestamp of the same precision. The header comes from the live log, or from the snapshot if the
+#    live log lost it. Any other non-RETRO line of the live log is kept after the rows and is not counted.
+HEADER=$(sed -n '1{/^#/p}' "$LOG")
+[ -n "$HEADER" ] || HEADER=$(gzip -cd "$SNAP" | sed -n '1{/^#/p}')
+{
+  [ -z "$HEADER" ] || printf '%s\n' "$HEADER"
+  { gzip -cd "$SNAP" | grep '^RETRO:'; grep '^RETRO:' "$LOG"; } | LC_ALL=C sort -u
+  sed '1{/^#/d}' "$LOG" | grep -v '^RETRO:'
+} > "$TMP"
+
+# 4b. A snapshot older than the last rotation still holds rows that rotate-retros moved into
+#     retros-archive-*.log. Drop them, or the next append-retro puts them back into the live log.
+if ls "$Z"/retros-archive-*.log >/dev/null 2>&1; then
+  cat "$Z"/retros-archive-*.log | grep '^RETRO:' | LC_ALL=C sort -u > "$TMP.archived"
+  grep -vxFf "$TMP.archived" "$TMP" > "$TMP.kept"
+  mv "$TMP.kept" "$TMP"
+fi
+
+# 5. Gate: the rebuilt log must reach the high-water, or the live log stays as it is.
+N=$(grep -c '^RETRO:' "$TMP") || N=0
+if [ "$N" -lt "$HW" ]; then
+  echo "refusing: the rebuilt log holds $N RETRO rows, below the high-water of $HW. $LOG untouched." >&2
+  exit 1
+fi
+
+# 6. Replace atomically (temp file in the same directory, so mv is a rename). On macOS the live log carries
+#    the append-only flag (uappnd): lift it for the mv; the trap arms it again on whatever is there after.
+chflags nouappnd "$LOG" 2>/dev/null && LIFTED=1
+mv "$TMP" "$LOG" || { echo "mv failed; $LOG unchanged" >&2; exit 1; }
+
+# 7. Only after a successful replace: clear the incident sentinel so a later truncation is recorded as
+#    its own incident. The trap then re-arms the flag and releases the lock.
+rm -f "$Z/.retros-shrink-marker"
+echo "recovered: $N RETRO rows in $LOG"
+```
+
+The next `append-retro` finds the log at or above the high-water and takes a fresh snapshot. If a
+`retros.md` section was lost too, `append-retro` unions it from `retros-snapshots/retros.md.*.gz` on its
+own. Run the script again after a failure: it holds nothing between runs.

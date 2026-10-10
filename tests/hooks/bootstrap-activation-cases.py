@@ -150,7 +150,7 @@ def check_mutation_helpers(base):
     result = subprocess.run(["bash", "-c", command, "mutation-install-test", str(installer)],
                             cwd=ROOT, env=env, text=True, capture_output=True, timeout=COMMAND_TIMEOUT)
     require(result.returncode == 0, (result.stdout, result.stderr))
-    for name in ("stryker-scoped-config.sh", "mutation-survivor-reprobe.sh"):
+    for name in ("stryker-scoped-config.sh", "mutation-survivor-reprobe.sh", "stryker-run-watchdog.sh"):
         installed = home / ".codex/scripts" / name
         require(installed.is_file(), "Codex mutation helper missing: " + name)
         require(installed.read_bytes() == (ROOT / "scripts" / name).read_bytes(),
@@ -159,6 +159,26 @@ def check_mutation_helpers(base):
                                      text=True, capture_output=True, timeout=COMMAND_TIMEOUT)
         require(help_result.returncode == 0 and "Usage:" in help_result.stdout,
                 (name, help_result.stdout, help_result.stderr))
+    lib = home / ".codex/scripts/lib/stryker-vitest.cjs"
+    require(lib.is_file() and lib.read_bytes() == (ROOT / "scripts/lib/stryker-vitest.cjs").read_bytes(),
+            "Codex mutation helper lib missing or stale: lib/stryker-vitest.cjs")
+    # Byte-identical copies are not proof the INSTALLED scoper works: run it from where Codex runs it.
+    # Without its watchdog and lib beside it, it refuses (exit 2) instead of emitting a run_command.
+    proj = base / "installed scoper project"
+    (proj / "src").mkdir(parents=True)
+    (proj / "package.json").write_text('{"name":"p","devDependencies":{"vitest":"^4"}}\n')
+    (proj / "vitest.config.ts").write_text("export default { test: { include: ['src/**/*.test.ts'] } };\n")
+    (proj / "src/a.ts").write_text("export const a = 1;\n")
+    (proj / "src/a.test.ts").write_text("export {};\n")
+    run = subprocess.run(["bash", str(home / ".codex/scripts/stryker-scoped-config.sh"), "--repo", str(proj),
+                          "--whole-files", "--runner", "vitest", "--file", "src/a.ts"],
+                         env=env, text=True, capture_output=True, timeout=COMMAND_TIMEOUT)
+    require(run.returncode == 0, ("installed scoper failed", run.stdout, run.stderr))
+    keys = dict(line.split("=", 1) for line in run.stdout.splitlines() if "=" in line)
+    require(keys.get("vitest_config") == "vitest.config.ts", ("installed scoper: vitest_config", run.stdout))
+    watchdog = re.search(r"bash \./(\.stryker-scoped-\S+\.watchdog\.sh) ", keys.get("run_command", ""))
+    require(watchdog is not None and (proj / watchdog.group(1)).is_file(),
+            ("installed scoper: run_command without its watchdog copy", keys.get("run_command")))
     print("PASS: actual Codex script install delivers executable mutation helpers")
 
 
