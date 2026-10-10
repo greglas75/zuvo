@@ -198,7 +198,12 @@ facade's spec, 7 created modules with no spec at all.
 **The score must carry a digit** and the artifact must EXIST. `WARN:substituted-inline` matched the
 `test_quality` shape check perfectly when a field run invented it; a mutation run's own output is a
 number, so this field demands one. Take both from the run's artifact
-(`$ZUVO_DIR/audits/mutation-test-<date>.json` → `score_triaged`, `engine`), never from memory.
+(chosen by one rule, then `score_triaged`, `engine`), never from memory.
+Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` and zero-byte or
+unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
+audited file lies under it, or each audited file is a `files[].path` entry.
+Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
+No candidate → the field cannot be filled: re-run `zuvo:mutation-test` over the audited files. A missing artifact has no `N/A`.
 
 **`N/A` needs a reason.** A bare `N/A` is blocked: the only honest N/A cases are nameable ones
 (the project has no test runner, the scope came out empty), and an unexplained one is how a skipped

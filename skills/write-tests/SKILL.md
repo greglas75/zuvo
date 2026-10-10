@@ -697,6 +697,19 @@ when a detected runner could not be scoped, timed out, or exited non-zero.
 `x << 1`). An equivalent mutant is recorded `equivalent` with the reason and does NOT block
 completion — the same triage as `zuvo:mutation-test` § 4.2. Only a survivor triaged `gap` is a gap.
 
+**A perTest survivor is `unconfirmed`, and the verdict still counts it.** Under the default
+`coverageAnalysis: perTest`, Stryker can attribute a mutant to the wrong tests (module-level code
+is the known case), so each printed survivor's gap ends with the
+`~/.zuvo/mutation-survivor-reprobe.sh` command that applies it physically and runs the suite (the
+rest are in `<manifest>.survivors.json`). Run it with a `--test-cmd` that runs these specs, then
+record its output: `~/.zuvo/verify-tests --manifest <m> --record-reprobe <file>` (or `-` for
+stdin). SURVIVED makes the row `confirmed` and KILLED makes it `refuted`; an inconclusive probe
+(ERROR, or `restored=no`, which also warns and exits 3: the production file was left mutated, so
+restore it first) leaves it
+`unconfirmed` with the reason. Only an `unconfirmed` row moves, once. These are labels, not a
+verdict: a `refuted` survivor is triage evidence, never a pass. The mutation check still reports
+FAIL, and only the triage above (the survivor recorded with its reason) lets the file complete.
+
 **The full survivor list is already on disk — never re-run the mutator to get it.** The block
 prints the five highest-risk survivors; every one of them, with the boundary obligation on its
 line, is written to `<manifest>.survivors.json` and the path is named in the block. Measured on

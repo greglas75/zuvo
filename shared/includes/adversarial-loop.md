@@ -213,8 +213,8 @@ or one that ignores the code, which is how this went unnoticed — reports a gre
 no model ever saw. That is the exact failure the loop exists to prevent, with the loop supplying
 the green: a 50583-char patch on 2026-07-31 dropped its single largest file and exited 0 with a
 normal verdict. Chunking now handles most oversized inputs without dropping anything, so 4 fires
-only where there is nothing to split on (`--mode tests`, a single file over the cap, chunking
-disabled) — rarer, not safer.
+only where there is nothing to split on (`--mode tests`, a single hunk or a `--files` section over
+the cap, chunking disabled) — rarer, not safer.
 
 Defence in depth: `pg_artifact_proven` REFUSES an artifact carrying `input_truncated=true`
 outright, so the gates do not depend on any individual call-site having checked the code.

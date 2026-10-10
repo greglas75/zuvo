@@ -373,6 +373,19 @@ grep -q "5 more survivors" "$TMP/out" \
   && pass "survivors past the cap are counted, not dropped" || bad "remaining survivors not reported"
 [ ! -d "$R/.stryker-tmp" ] && pass "runner debris is cleared" || bad ".stryker-tmp left behind"
 
+# --coverage-analysis must travel from the flag to Stryker and to the verdict line.
+# Bug: main() parses the flag and drops it, so the run is silently perTest.
+R="$TMP/r9-mode"; mkrepo "$R" with-stryker
+: > "$JEST_CFG_CANARY"
+STUB_GATE=pass STUB_SURVIVORS=1 vt "$R" --coverage-analysis off
+grep -qE "^  mutation .*\[coverageAnalysis=off\]$" "$TMP/out" \
+  && pass "--coverage-analysis off is recorded on the mutation line" \
+  || bad "--coverage-analysis off lost before the verdict: $(grep -m1 '^  mutation' "$TMP/out")"
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["cfg"]["coverageAnalysis"] == "off"' \
+  "$JEST_CFG_CANARY" 2>/dev/null \
+  && pass "--coverage-analysis off reaches the Stryker config" \
+  || bad "Stryker config did not get coverageAnalysis=off: $(head -c 200 "$JEST_CFG_CANARY")"
+
 # ── (10) budget: the helper stops on its own ─────────────────────────────────────────────
 R="$TMP/r10"; mkrepo "$R"
 for _ in 1 2; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
