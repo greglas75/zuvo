@@ -1581,7 +1581,7 @@ not execute it. The adversarial suite was therefore run separately for this push
 **Fix:** expose `zms_timeout_bin` as public and route the driver's six other call sites through it; or state in the lane table why only codex/claude get the wider fallback.
 **Defer-reason:** structural-refactor (multi-site) — six call sites across two files.
 
-## B-20260925-ADV-CHUNK-TRUNCATES-SINGLE-FILE — the driver truncates an oversized single file instead of splitting it, and the gate blames the wrong thing
+## B-20260925-ADV-CHUNK-TRUNCATES-SINGLE-FILE — PARTIAL (2807e11 splits a single file at its hunks; b875e78 makes the gate message name the truncation; RD-1040): the driver truncates an oversized single file instead of splitting it, and the gate blames the wrong thing
 
 **File:** scripts/adversarial-review.sh (chunker), hooks/lib/pipeline-gate-lib.sh (pg_artifact_proven)
 **Fingerprint:** scripts/adversarial-review.sh|correctness|single-file-truncation-and-misleading-gate
@@ -1590,6 +1590,7 @@ not execute it. The adversarial suite was therefore run separately for this push
 Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the truncation marker BEFORE it counts providers, but the refusal reads `<2 'REVIEW BY:' lines` — so a proof with 32 providers is reported as having fewer than two. And `review-artifact-sync.sh --check` called the same file `OK (REVIEW BY x55)` while the push gate refused it: two readers of one artifact giving opposite answers, which is what finally forced reading the gate's source.
 **Fix:** hunk-split inside the chunker when one file exceeds the cap; for a NEW file (one `@@ -0,0 +1,N @@` hunk, no boundary at all — the documented staircase in adversarial-loop.md stops at hunk boundaries and does not cover this) split the hunk body and recompute the header. Make the gate's message name the truncation and list the omitted files. Make the two readers agree, or have the lenient one say which check it does not perform.
 **Defer-reason:** tooling fix outside the reviewed diff; worked around by hand this run.
+**Remaining:** a single hunk over the cap is still truncated (owner decision); `diff -u` input without `diff --git` headers is not split.
 
 ## B-20260925-CODEX-READ-ACCESS-UNENFORCED — `--access read` bounds claude but not codex
 
@@ -3080,7 +3081,8 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
   - tests/skill-suite/test-comment-pass-wiring.sh
 
 ### Tooling and process gaps hit during the session (out of scope: other skills, scripts or repos)
-- [ ] B-20261005-CP-ADV-HUNK-SPLIT: scripts/adversarial-review.sh truncates a single file diff over the 30k cap (EXIT 4) instead of splitting it at `@@` hunks. It also chunks only at `diff --git` boundaries, so `diff -u` input is never split; the T9 delta review lost its test-file half this way.
+- [ ] B-20261005-CP-ADV-HUNK-SPLIT [PARTIAL — 2807e11 splits a single file at its hunks, RD-1040]: scripts/adversarial-review.sh truncates a single file diff over the 30k cap (EXIT 4) instead of splitting it at `@@` hunks. It also chunks only at `diff --git` boundaries, so `diff -u` input is never split; the T9 delta review lost its test-file half this way.
+  Remaining: a single hunk over the cap is still truncated (owner decision); `diff -u` input without `diff --git` headers is not split. The gate message names truncation (b875e78).
 - [ ] B-20261005-CP-ADV-SHARDS: skills/review/SKILL.md 1.6 has no recipe for diffs above about 150k characters. Sequential chunks took about 12 min each (23 chunks ≈ 4.5 h). The session hand-rolled 4 parallel shards, each with its own --artifact, then concatenated the artifacts into the proof. Add a `--shards N` option or document the recipe.
 - [ ] B-20261005-CP-TF-ABLATE-CMD [repo i9-farma]: tf-ablate runs only jest, vitest, pytest and codeception. Add `--runner cmd --test-cmd <cmd>`, so bash/bats suites get one farm reservation and parallel sandboxes.
   - Until then, document the reprobe-per-mutant recipe in skills/mutation-test/SKILL.md 1.3.
@@ -5185,3 +5187,14 @@ than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists a
   depend on each other (Q19), no declared test level (Q20), no generated-input test for the pure boundary
   helpers (Q22), and Q7/Q11 module-wide. Pre-existing; the table-row boundary build did not touch the file. |
   severity: low | category: Test | conf: 75
+
+## RD-1040 review-pipeline tooling gaps (recorded 2026-10-10; fixed on fix/rd-1040-review-pipeline)
+
+
+
+
+
+
+
+
+- [ ] **B-20260920-APPEND-RUNLOG-CANNOT-IDENTIFY-ITS-INCLUDES-TRACKER [tooling][confidence 50]** — file: `~/.zuvo/append-runlog:1` (rule tooling-gap). Every run line was written with `INCLUDES` left as `-` because the wrapper found 33-34 include trackers in /tmp and could not tell which belonged to the run; the field is silently empty in the fleet log for anyone who does not set `ZUVO_INCLUDES_FILE`, which makes "which includes did this skill actually load" unanswerable after the fact. Recipe: have the skill runtime export `ZUVO_INCLUDES_FILE` per invocation, or key the tracker on the session id the wrapper already knows; also reap trackers older than a day. Source: RD-1040 (RDesigner backlog, fix/maxdiff-v2-backlog session, 2026-09-20). Duplicate of B-20260925-APPEND-RUNLOG-INCLUDES-AUTO, fixed by 15eb10b4 in open PR #65 (RD-1039); stays OPEN until PR #65 merges, then close both.
