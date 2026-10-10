@@ -202,7 +202,7 @@ function resolve({ repo, files, override, tests }) {
   const src = config ? fs.readFileSync(path.join(repo, config), 'utf8') : '';
   const own = config ? parseTestInclude(src) : { kind: 'default' };
   const ownExclude = config ? parseTestInclude(src, 'exclude') : { kind: 'default' };
-  // `!pattern` in exclude RE-includes; only plain patterns exclude.
+  // `!pattern` (a re-include) is ignored: a re-included test may be dropped, never wrongly added.
   own.exclude = ownExclude.kind === 'list' ? ownExclude.globs.filter((g) => !g.startsWith('!')) : [];
   const warnings = [];
   if (config && ownExclude.kind === 'unknown') {
