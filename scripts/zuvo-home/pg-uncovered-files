@@ -36,6 +36,8 @@ if [ -z "$_puf_lib" ]; then
 fi
 # Only the library itself may vouch for its load; an inherited flag would hide a truncated one.
 unset PG_LIB_LOADED
+# The LOCAL gate's answer: the CI proof waiver and an inherited cutoff would both read as covered.
+unset PG_PROOF_OPTIONAL PG_REVIEW_PROOF_CUTOFF
 # shellcheck source=/dev/null
 . "$_puf_lib"
 # Without path_contained every proof is refused, so every file would be listed as uncovered.

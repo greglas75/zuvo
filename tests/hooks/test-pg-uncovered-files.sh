@@ -70,6 +70,50 @@ row repo-root-env "$TMP/notrepo" 0 "src/b.ts" "PG_REPO_ROOT is ignored" -- env P
 [ ! -e "$TMP/leak..$BB" ] \
   && ok "the option-shaped range wrote no file" || bad "the option-shaped range was handed to git as --output"
 
+# GX: src/c.ts changed, cited by an artifact whose proof is absent — only the local proof rule leaves it uncovered.
+GX="$TMP/gx"
+newrepo "$GX"
+mkdir -p src memory/reviews; echo "export const c=1" > src/c.ts; git add -A; commit base
+echo "export const c=2" >> src/c.ts; git add src; commit c-only
+GR="$(git rev-parse HEAD~1)..$(git rev-parse HEAD)"
+printf '<!-- zuvo-review -->\nrange: %s\nfiles: src/c.ts\nadversarial: zuvo/proofs/GONE.txt\n' "$GR" > memory/reviews/gone.md
+cd "$TMP" || exit 1
+row env-proof-optional "$GX" 0 "src/c.ts" "an exported PG_PROOF_OPTIONAL=1 waived the missing proof and read as covered" \
+  -- env PG_PROOF_OPTIONAL=1 bash "$PUF" "$GR"
+row env-proof-cutoff "$GX" 0 "src/c.ts" "an exported PG_REVIEW_PROOF_CUTOFF grandfathered the proofless artifact into covered" \
+  -- env PG_REVIEW_PROOF_CUTOFF=99999999999 bash "$PUF" "$GR"
+
+echo "=== the @unpushed sentinel: a failing rev-list is an error, an empty one is nothing to review ==="
+# UX: every commit already on a remote-tracking ref, so nothing is un-pushed.
+UX="$TMP/ux"
+newrepo "$UX"
+mkdir -p src; echo "export const u=1" > src/u.ts; git add -A; commit base
+git update-ref refs/remotes/origin/main HEAD
+cd "$TMP" || exit 1
+RLSHIM="$TMP/rlshim"; mkdir -p "$RLSHIM"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = rev-list ] && exit 128; done\nexec %s "$@"\n' "$(command -v git)" > "$RLSHIM/git"
+chmod +x "$RLSHIM/git"
+row unpushed "$FX" 0 "src/b.ts" "the @unpushed walk lost the un-pushed uncovered file" \
+  -- bash -c '. "$1"; pg_uncovered_files "$2"' _ "$LIB" "@unpushed..HEAD"
+row unpushed-revlist-fails "$FX" 2 "" "a failing rev-list on @unpushed read as no production files (rc 3)" \
+  -- env PATH="$RLSHIM:$PATH" bash -c '. "$1"; pg_uncovered_files "$2"' _ "$LIB" "@unpushed..HEAD"
+row unpushed-none "$UX" 3 "" "nothing un-pushed must stay rc 3, not become an error" \
+  -- bash -c '. "$1"; pg_uncovered_files "$2"' _ "$LIB" "@unpushed..HEAD"
+
+echo "=== the library itself never hands an option-shaped range to git ==="
+# optrow <id> <want_rc> <want_stdout> <leak-name> <bug> -- <function> <range>: the lib called directly, as the
+# bash -c hint does; the range's --output= value must never become a file.
+optrow() {
+  local id="$1" wrc="$2" want="$3" leak="$TMP/$4" bug="$5" got rc; shift 6
+  got="$(cd "$FX" && bash -c '. "$1"; shift; "$@"' _ "$LIB" "$@" 2>/dev/null)"; rc=$?
+  if [ "$rc" = "$wrc" ] && [ "$got" = "$want" ] && [ ! -e "$leak" ]; then ok "$id: rc=$rc [$got], no file written — $bug"
+  else bad "$id: want rc=$wrc [$want] and no $leak, got rc=$rc [$got], file written: $([ -e "$leak" ] && echo yes || echo no) — $bug"; fi
+}
+optrow changed-base 1 "" "leakA..$BB" "a dash-led base reached git diff as --output" -- pg_changed_production "--output=$TMP/leakA..$BB"
+optrow changed-tip 1 "" "leakB" "a dash-led @unpushed tip reached git rev-list as an option" -- pg_changed_production "@unpushed..--output=$TMP/leakB"
+optrow lines-base 0 "0" "leakC..$BB" "a dash-led base reached git diff --numstat as --output" -- pg_changed_lines "--output=$TMP/leakC..$BB"
+optrow uncovered-base 2 "" "leakD..$BB" "a dash-led base was not refused as could-not-compute" -- pg_uncovered_files "--output=$TMP/leakD..$BB"
+
 # Bug: a range holding whitespace reached the library, which refuses it silently (rc 2, no text), so a
 # typo'd range read the same as an unresolvable one.
 err="$(cd "$FX" && bash "$PUF" "$B0..$BB extra" 2>&1 >/dev/null)"; rc=$?
@@ -174,6 +218,11 @@ case "$(hint_cmd "$HP" "$HR")" in
   "bash -c "*) ok "a helper without its sibling gate lib is not named as the command" ;;
   *) bad "a partial ~/.zuvo install (no pipeline-gate-lib.sh) was named as the command — it exits 2" ;;
 esac
+HC="$TMP/nocontainhome"; mkdir -p "$HC/.zuvo"; cp "$PUF" "$LIB" "$HC/.zuvo/"; chmod +x "$HC/.zuvo/pg-uncovered-files"
+case "$(hint_cmd "$HC" "$HR")" in
+  "bash -c "*) ok "a helper without path-contain.sh beside it is not named as the command" ;;
+  *) bad "a ~/.zuvo install missing path-contain.sh was named as the command — it exits 2" ;;
+esac
 HD="$TMP/dirhome"; mkdir -p "$HD/.zuvo/pg-uncovered-files"
 case "$(hint_cmd "$HD" "$HR")" in
   "bash -c "*) ok "a directory named pg-uncovered-files is not named as the command" ;;
@@ -185,6 +234,19 @@ echo "=== installed layout: the ~/.zuvo helpers run on a fresh machine ==="
 # wrapper that runs the real install.sh, then the installed helpers, and prints LEG lines into the
 # scenario's output. HOME for pg-uncovered-files is an empty dir, so only the flat sibling lib counts
 # (the claude target also installs ~/.claude/hooks/lib, which would mask a missing ~/.zuvo copy).
+# stale-leg <install.sh> <hooks/lib name>: install_zuvo_home again with that file's copy corrupted, so the
+# installed copy differs from the source the way a failed or interrupted copy leaves it.
+STALE_LEG="$TMP/stale-leg.sh"
+cat > "$STALE_LEG" <<'LEG'
+. "$1" probe >/dev/null 2>&1
+STALE_NAME="$2"
+cp() { case "$1" in */hooks/lib/"$STALE_NAME") printf 'stale\n' > "$2" ;; *) command cp "$@" ;; esac; }
+INSTALL_VERIFY_MISSING=0
+install_zuvo_home >/dev/null 2>&1 || :
+kept=no; if [ -e "$HOME/.zuvo/$STALE_NAME" ]; then kept=yes; fi
+printf 'LEG stale-%s missing=%s kept=%s detail=[%s]\n' "$STALE_NAME" "$INSTALL_VERIFY_MISSING" "$kept" \
+  "$(printf '%s' "$INSTALL_VERIFY_DETAIL" | tr '\n' ' ')"
+LEG
 WRAP="$TMP/install-wrapper.sh"
 {
   printf '#!/usr/bin/env bash\n'
@@ -196,15 +258,14 @@ WRAP="$TMP/install-wrapper.sh"
   printf 'out="$(cd %q && env GIT_CONFIG_GLOBAL=/dev/null PG_REVIEW_PROOF_CUTOFF=1 "$HOME/.zuvo/review-artifact-sync.sh" --check 2>&1)"; crc=$?\n' "$FX"
   printf 'echo "LEG check rc=$crc out=[$(printf "%%s" "$out" | tr "\\n" " ")]"\n'
   printf '"$HOME/.zuvo/mutation-survivor-reprobe.sh" --help >/dev/null 2>&1; echo "LEG reprobe rc=$?"\n'
-  # A stale or failed copy of a flat gate dependency must be counted, not just warned about.
-  printf 'out="$( . %q probe >/dev/null 2>&1; cp() { case "$1" in */hooks/lib/path-contain.sh) printf "stale\\n" > "$2" ;; *) command cp "$@" ;; esac; }; INSTALL_VERIFY_MISSING=0; install_zuvo_home >/dev/null 2>&1; echo "$INSTALL_VERIFY_MISSING|$INSTALL_VERIFY_DETAIL" )"\n' "$ROOT/scripts/install.sh"
-  printf 'echo "LEG stale missing=${out%%%%|*} detail=[${out#*|}]"\n'
+  printf 'bash %q %q path-contain.sh\n' "$STALE_LEG" "$ROOT/scripts/install.sh"
+  printf 'bash %q %q pipeline-gate-lib.sh\n' "$STALE_LEG" "$ROOT/scripts/install.sh"
   printf 'exit "$rc"\n'
 } > "$WRAP"
 MAN="$TMP/manifest.out"
 ZUVO_MANIFEST_INSTALL="$WRAP" bash "$ROOT/tests/lib/install-manifest.sh" nosettings > "$MAN" 2>&1
 leg() { awk -v k="LEG $1 " 'index($0, k) == 1 { print; exit }' "$MAN"; }
-l_inst="$(leg install)"; l_puf="$(leg puf)"; l_chk="$(leg check)"; l_stale="$(leg stale)"; l_rep="$(leg reprobe)"
+l_inst="$(leg install)"; l_puf="$(leg puf)"; l_chk="$(leg check)"; l_rep="$(leg reprobe)"
 [ "$l_inst" = "LEG install rc=0" ] && ok "sandbox install.sh claude exits 0" \
   || { bad "sandbox install: [$l_inst]"; tail -20 "$MAN"; }
 [ "$l_puf" = "LEG puf rc=0 out=[src/b.ts]" ] \
@@ -221,10 +282,17 @@ esac
   && ok "installed ~/.zuvo/mutation-survivor-reprobe.sh --help exits 0" \
   || bad "installed reprobe helper: [$l_rep] — the survivor gap names a helper the install never ships"
 
-case "$l_stale" in
-  "LEG stale missing=0 "*|"") bad "a stale ~/.zuvo/path-contain.sh copy went uncounted: [$l_stale] — the fresh-machine exit-2 bug would recur silently" ;;
-  *"path-contain.sh"*) ok "a stale ~/.zuvo/path-contain.sh copy is counted as INSTALL INCOMPLETE and named" ;;
-  *) bad "stale path-contain.sh counted but not named: [$l_stale]" ;;
-esac
+# stale_outcome <name> — a corrupted copy is counted, named in the summary, and not left in place to be loaded.
+stale_outcome() {
+  local l; l="$(leg "stale-$1")"
+  case "$l" in
+    "LEG stale-$1 missing=0 "*|"") bad "a stale ~/.zuvo/$1 copy went uncounted: [$l] — the helpers beside it would load it silently" ;;
+    *" kept=yes "*) bad "a stale ~/.zuvo/$1 copy was counted but left in place for the helpers to load: [$l]" ;;
+    *" kept=no detail=["*"gate library dependency: "*"/.zuvo/$1"*) ok "a stale ~/.zuvo/$1 copy is counted as INSTALL INCOMPLETE, named, and removed" ;;
+    *) bad "stale $1 counted but not named: [$l]" ;;
+  esac
+}
+stale_outcome path-contain.sh
+stale_outcome pipeline-gate-lib.sh
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

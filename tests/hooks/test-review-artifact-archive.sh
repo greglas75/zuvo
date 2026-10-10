@@ -116,6 +116,22 @@ if cmp -s "$REPO/zuvo/proofs/x/p.txt" "$AR/kkk..lll-legacy/p.txt" && [ ! -e "$RE
   pass "a legacy-keyed archive restores the first ref only"
 else bad "legacy restore: first ref not restored, or its file handed to the second ref too"; fi
 
+# legacy_restore <case> <header> — a legacy archive holding p.txt for the artifact's first ref; prints
+# whether --restore put it back at zuvo/proofs/x/p.txt.
+legacy_restore() {
+  fresh "$1"; mkdir -p "$AR/kkk..lll-$1"
+  printf 'REVIEW BY: l1\nREVIEW BY: l2\n' > "$AR/kkk..lll-$1/p.txt"
+  write_art "kkk..lll-$1" "$2"
+  bash "$SYNC" --restore "$REPO" --slug "kkk..lll-$1" >/dev/null 2>&1
+  cmp -s "$REPO/zuvo/proofs/x/p.txt" "$AR/kkk..lll-$1/p.txt" && echo restored || echo missing
+}
+# Bug: the legacy lookup compared the raw header value, so a backticked or CRLF first ref never matched its
+# own cleaned ref and the archived proof was reported as lost.
+[ "$(legacy_restore c-legacy-tick 'adversarial: `zuvo/proofs/x/p.txt`')" = restored ] \
+  && pass "a backticked first ref still finds its legacy archive" || bad "legacy restore missed a backticked first ref"
+[ "$(legacy_restore c-legacy-crlf 'adversarial: zuvo/proofs/x/p.txt\r')" = restored ] \
+  && pass "a CRLF first ref still finds its legacy archive" || bad "legacy restore missed a CRLF first ref"
+
 # Escaping second ref. Bug guarded: containment checked on the first ref only, so a later `../` ref
 # reads outside the repo on archive and writes outside it on restore.
 fresh c-escape
@@ -135,9 +151,12 @@ bash "$SYNC" --restore "$REPO" --slug ooo..ppp-escape >/dev/null 2>&1
 fresh c-cap
 caps=""; i=1; while [ "$i" -le 17 ]; do caps="${caps}adversarial: zuvo/proofs/cap$i.txt\n"; i=$((i + 1)); done
 write_art qqq..rrr-cap "$caps"
-out="$(bash "$SYNC" --archive "$REPO" --slug qqq..rrr-cap 2>&1)"
-printf '%s' "$out" | grep -q 'qqq..rrr-cap.md.*cap' && pass "an over-cap proof header is named in the archive output" \
-  || bad "an over-cap proof header archived nothing and said nothing: $out"
+out="$(bash "$SYNC" --archive "$REPO" --slug qqq..rrr-cap 2>&1)"; rc=$?
+want="WARN qqq..rrr-cap.md: proof header over the gate's caps (refs, comma items or characters) — its proofs are skipped; the gate refuses it
+archived to $ZUVO_REVIEW_ARCHIVE/c-cap: 1 artifact(s), 0 proof(s); 0 proof ref(s) ALREADY missing"
+[ "$rc" = 0 ] && [ "$out" = "$want" ] && [ ! -e "$AR/qqq..rrr-cap" ] \
+  && pass "an over-cap proof header is named, the artifact counted, and no proof archived" \
+  || bad "over-cap archive: want rc=0 [$want] and no proofs dir, got rc=$rc [$out]"
 
 # A different proof already archived under the same key. Bug: the archive overwrote it, so a re-run
 # with a changed proof destroyed the evidence of the review that was archived first.

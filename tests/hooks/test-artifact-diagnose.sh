@@ -239,33 +239,33 @@ fi
 echo "=== check answers with the push gate's own verdict ==="
 # art <ref-lines> — memory/reviews/t.md covering src/mod.ts, with the given proof header line(s).
 art(){ printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\n%b\n' "$BASE" "$HEAD" "$1" > memory/reviews/t.md; }
-# chk <id> <cutoff> <want_rc> <want_output> <bug> — runs --check on t.md alone; the whole output must match.
+# chk <id> <want_rc> <want_output> <bug> — runs --check on t.md alone; the whole output must match.
 chk(){
   local out rc
-  out="$(PG_REVIEW_PROOF_CUTOFF="$2" bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
-  if [ "$rc" -eq "$3" ] && [ "$out" = "$4" ]; then ok "$1: rc=$rc — $5"
-  else bad "$1: want rc=$3 [$4], got rc=$rc [$out] — $5"; fi
+  out="$(bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
+  if [ "$rc" -eq "$2" ] && [ "$out" = "$3" ]; then ok "$1: rc=$rc — $4"
+  else bad "$1: want rc=$2 [$3], got rc=$rc [$out] — $4"; fi
 }
 F="FAIL memory/reviews/t.md:"
 TRUNC_TAIL="is truncated (input_truncated=true) — the reviewers never saw the whole change; re-run the review"
 blind_proof(){ printf 'artifact_kind=adversarial-review\ncreated_at=2026-09-27T00:00:00Z\nstatus=ok\nmode=blind-audit\nREVIEW BY: A\nREVIEW BY: B\n---\nbody\n' > zuvo/proofs/adv.txt; }
 
 newrepo; proof 2; printf 'input_truncated=true\n' >> zuvo/proofs/adv.txt; art 'adversarial: zuvo/proofs/adv.txt'
-chk truncated 1 1 "$F proof 'zuvo/proofs/adv.txt' $TRUNC_TAIL" \
+chk truncated 1 "$F proof 'zuvo/proofs/adv.txt' $TRUNC_TAIL" \
   "a truncated review passed --check while the gate refused it"
 newrepo; blind_proof; art 'adversarial: zuvo/proofs/adv.txt'
-chk blind-audit 1 1 "$F proof 'zuvo/proofs/adv.txt' is a blind-audit record (a blind-audit record, not a review) — cite the review's own adversarial output" \
+chk blind-audit 1 "$F proof 'zuvo/proofs/adv.txt' is a blind-audit record, not a review — cite the review's own adversarial output" \
   "a blind-audit record passed --check while the gate refused it"
 newrepo; proof 2; art 'verdict: PASS'
-chk no-ref 1 1 "$F no adversarial: proof line (no adversarial: proof path in the header) — post-cutoff artifacts without one grant no coverage" \
+chk no-ref 1 "$F no adversarial: proof line (no adversarial: proof path in the header) — post-cutoff artifacts without one grant no coverage" \
   "a post-cutoff artifact without a proof ref was only a WARN"
 newrepo; proof 2; cp zuvo/proofs/adv.txt zuvo/proofs/b.txt; printf 'input_truncated=true\n' >> zuvo/proofs/b.txt
 art 'adversarial: zuvo/proofs/adv.txt, zuvo/proofs/b.txt'
-chk two-ref-comma 1 1 "$F proof 'zuvo/proofs/b.txt' $TRUNC_TAIL" \
+chk two-ref-comma 1 "$F proof 'zuvo/proofs/b.txt' $TRUNC_TAIL" \
   "only the first of two comma-listed proofs was checked"
 newrepo; proof 2; printf 'REVIEW BY: P0\n' > zuvo/proofs/w.txt
 art 'adversarial: zuvo/proofs/adv.txt\nadversarial: zuvo/proofs/w.txt'
-chk two-ref-lines 1 1 "$F proof 'zuvo/proofs/w.txt' is weak: 1 REVIEW BY: line(s), no single-provider note — proof-of-work will reject it" \
+chk two-ref-lines 1 "$F proof 'zuvo/proofs/w.txt' is weak: 1 REVIEW BY: line(s), no single-provider note — proof-of-work will reject it" \
   "a weak proof on a second adversarial: line was never read"
 newrepo; art 'adversarial: zuvo/proofs/GONE.txt'
 out="$(PG_PROOF_OPTIONAL=1 PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
@@ -277,17 +277,38 @@ out="$(PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"
 [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'a\[31mx.txt' && ! printf '%s' "$out" | grep -q "$ESC" \
   && ok "an ESC byte in a ref never reaches the --check output" \
   || bad "control bytes in --check output (rc=$rc): $(printf '%s' "$out" | od -c | head -5)"
-newrepo; art 'adversarial: zuvo/proofs/GONE.txt'
-chk grandfathered 9999999999 0 'OK   memory/reviews/t.md (grandfathered: artifact older than the proof cutoff)' \
+newrepo; art 'adversarial: zuvo/proofs/GONE.txt'; touch -t 201901010000 memory/reviews/t.md
+chk grandfathered 0 'OK   memory/reviews/t.md (grandfathered: artifact older than the proof cutoff)' \
   "a grandfathered artifact was held to a stricter rule than the gate"
+newrepo; art 'adversarial: zuvo/proofs/GONE.txt'
+out="$(PG_REVIEW_PROOF_CUTOFF=99999999999 bash "$SYNC" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
+[ "$rc" -eq 1 ] && [ "$out" = "$F proof 'zuvo/proofs/GONE.txt' is not in THIS checkout — the gate refuses it here; sync the pair (--from <checkout> --to .) or --restore" ] \
+  && ok "an exported PG_REVIEW_PROOF_CUTOFF does not grandfather a fresh artifact in --check" \
+  || bad "an inherited cutoff grandfathered a fresh proofless artifact into OK (rc=$rc): $out"
 newrepo; proof 2
 printf '<!-- zuvo-review -->\nrange: %s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$HEAD" > memory/reviews/t.md
-chk range-not-a-range 1 1 "$F range: header missing or not '<base>..<head>'" \
+chk range-not-a-range 1 "$F range: header missing or not '<base>..<head>'" \
   "a range: without .. passed --check while the gate can never match it"
 newrepo; proof 2
 printf '<!-- zuvo-review -->\nrange: %s..%s\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/t.md
-chk files-missing 1 1 "$F files: header missing (or use 'files: *' for whole-range)" \
+chk files-missing 1 "$F files: header missing (or use 'files: *' for whole-range)" \
   "an artifact without files: passed --check while it covers nothing"
+
+echo "=== every refusing verdict token has its own message in both maps ==="
+# Bug: a token the verdict emits with no arm fell to the generic "refused: <token>" text, which names no repair.
+tokens="$(awk '/^pg_artifact_proof_verdict\(\)|^_pgl_proof_one\(\)/ { on = 1 } on && /^}/ { on = 0 }
+  on { s = $0; while (match(s, /_pv_tok=[a-z-]+|printf .[a-z-]+\\t/)) { t = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+       sub(/^_pv_tok=/, "", t); sub(/^printf ./, "", t); sub(/\\t$/, "", t); print t } }' "$LIB" | sort -u \
+  | awk '$0 != "proven" && $0 != "missing-optional" && $0 != "grandfathered"')"
+eval "$(awk '/^proof_reason\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SYNC")"
+ntok=0; unmapped=""
+for t in $tokens; do
+  ntok=$((ntok + 1))
+  case "$(proof_reason "$t" r d)" in "proof 'r' refused: $t "*) unmapped="$unmapped sync:$t" ;; esac
+  case "$(_pgl_proof_reason_msg a.md "$t" r d)" in *"was refused (d)"*) unmapped="$unmapped lib:$t" ;; esac
+done
+[ "$ntok" -ge 11 ] && [ -z "$unmapped" ] && ok "all $ntok refusing tokens have a non-fallback arm in sync and lib" \
+  || bad "tokens found: $ntok (want >=11); falling to the generic arm:$unmapped"
 
 echo "=== check: the verdict comes from the gate lib beside the script, or not at all ==="
 newrepo; proof 2; art 'adversarial: zuvo/proofs/adv.txt'
@@ -324,14 +345,27 @@ else
   bad "a planted ~/.claude/hooks/lib decided the verdict (rc=$rc): $out"
 fi
 
+# Bug guarded: the lib/ sibling candidate was dropped, so --check exited 2 on a Codex/Cursor-only
+# machine (install.d/codex.sh: the script and path-contain.sh flat in scripts/, hooks/lib in scripts/lib/).
+CX="$TMP/codex/scripts"; mkdir -p "$CX/lib"
+cp "$SYNC" "$ROOT/hooks/lib/path-contain.sh" "$CX/"
+cp "$LIB" "$ROOT/hooks/lib/path-contain.sh" "$CX/lib/"
+newrepo; proof 2; art 'adversarial: zuvo/proofs/adv.txt'
+out="$(HOME="$TMP/emptyhome" PG_REVIEW_PROOF_CUTOFF=1 bash "$CX/review-artifact-sync.sh" --check "$TMP/r" --slug t.md 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "OK   memory/reviews/t.md (proof: zuvo/proofs/adv.txt)" ] \
+  && ok "the Codex/Cursor layout (gate lib in lib/ beside the script) computes the verdict" \
+  || bad "Codex/Cursor layout --check (rc=$rc): $out"
+
 echo "=== argument errors exit 2 with the reason and the usage ==="
 # argrow <id> <want_first_stderr_line> <bug> -- <args...> — stdout empty, rc 2, stderr = reason + usage.
 USAGE1="review-artifact-sync.sh — move review artifacts BETWEEN checkouts as PAIRS,"
 argrow(){
   local id="$1" want="$2" bug="$3" out err rc; shift 4
-  out="$(cd "$TMP" && bash "$SYNC" "$@" 2>"$TMP/arg.err")"; rc=$?
+  # Bounded (perl alarm: macOS has no timeout) so an argument loop fails this row instead of hanging the suite.
+  out="$(cd "$TMP" && perl -e 'alarm shift; exec @ARGV' 10 bash "$SYNC" "$@" 2>"$TMP/arg.err")"; rc=$?
   err="$(sed -n '1,2p' "$TMP/arg.err")"
-  if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$err" = "$want
+  if [ "$rc" -eq 142 ]; then bad "$id: still running after 10s (SIGALRM) — $bug"
+  elif [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$err" = "$want
 $USAGE1" ]; then ok "$id: rc=2, reason + usage on stderr — $bug"
   else bad "$id: want rc=2 [$want / $USAGE1], got rc=$rc stdout=[$out] stderr=[$err] — $bug"; fi
 }

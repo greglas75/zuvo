@@ -44,13 +44,12 @@ case "${1:-}" in
   -h|--help) usage; exit 0 ;;
 esac
 
-# The verdict comes from the gate's own library, first readable candidate wins: the installed
-# sibling, the host's lib/, the repo layout, then ~/.claude/hooks/lib. No env override — a planted
-# library would turn a forged check into a pass.
+# The gate's own library, never from an env override; lib/ is the Codex/Cursor install layout.
 _ras_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 unset PG_LIB_LOADED
-# This CLI answers for the LOCAL gate; the CI waiver for absent proofs belongs to the CI entry script.
-unset PG_PROOF_OPTIONAL
+# This CLI answers for the LOCAL gate: the CI waiver for absent proofs belongs to the CI entry script,
+# and an inherited cutoff would grandfather every artifact into OK.
+unset PG_PROOF_OPTIONAL PG_REVIEW_PROOF_CUTOFF
 for _ras_c in "$_ras_dir/pipeline-gate-lib.sh" "$_ras_dir/lib/pipeline-gate-lib.sh" \
               "$_ras_dir/../hooks/lib/pipeline-gate-lib.sh" "$HOME/.claude/hooks/lib/pipeline-gate-lib.sh"; do
   if [ -r "$_ras_c" ]; then
@@ -60,7 +59,8 @@ for _ras_c in "$_ras_dir/pipeline-gate-lib.sh" "$_ras_dir/lib/pipeline-gate-lib.
 done
 if [ "${PG_LIB_LOADED:-}" != 1 ] || ! command -v path_contained >/dev/null 2>&1 \
    || ! command -v pg_artifact_proof_verdict >/dev/null 2>&1 \
-   || ! command -v pg_artifact_proof_refs >/dev/null 2>&1; then
+   || ! command -v pg_artifact_proof_refs >/dev/null 2>&1 \
+   || ! command -v pg_proof_ref_is_prose >/dev/null 2>&1 || ! command -v _pgl_clean >/dev/null 2>&1; then
   echo "review-artifact-sync: cannot compute the gate's verdict — pipeline-gate-lib.sh (with path-contain.sh) not found beside this script or in ~/.claude/hooks/lib; reinstall zuvo" >&2
   exit 2
 fi
@@ -109,22 +109,16 @@ resolve_root() {
   ( cd "$1" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null ) || return 1
 }
 
-NL='
-'
-TAB="$(printf '\t')"
-
-# clean <text> — header-derived text made safe to echo: control bytes dropped, length capped.
-clean() { local c="${1//[[:cntrl:]]/}"; printf '%s' "${c:0:200}"; }
-
 # read_refs <artifact> <name> — every proof ref the gate reads, into REFS. A header the gate
 # refuses as a whole (unreadable, over the ref caps) is named here instead of counting 0 proofs.
 read_refs() {
   local rc=0
   REFS="$(pg_artifact_proof_refs "$1" 2>/dev/null)" || rc=$?
+  _pgl_clean "$2"
   case "$rc" in
     0) return 0 ;;
-    2) echo "WARN $(clean "$2"): proof header over the gate's caps (refs, comma items or characters) — its proofs are skipped; the gate refuses it" ;;
-    *) echo "WARN $(clean "$2"): artifact unreadable — its proofs are skipped" ;;
+    2) echo "WARN $_PGL_CLEAN: proof header over the gate's caps (refs, comma items or characters) — its proofs are skipped; the gate refuses it" ;;
+    *) echo "WARN $_PGL_CLEAN: artifact unreadable — its proofs are skipped" ;;
   esac
   REFS=""; return 1
 }
@@ -132,7 +126,7 @@ read_refs() {
 # lint_artifact <repo-root> <artifact-path> → prints OK/FAIL lines; returns 1 on FAIL
 lint_artifact() {
   local root="$1" art="$2" name
-  name="$(clean "${art#"$root"/}")"
+  _pgl_clean "${art#"$root"/}"; name="$_PGL_CLEAN"
 
   if ! grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null; then
     echo "FAIL $name: missing '<!-- zuvo-review -->' marker — the gate skips this artifact entirely"
@@ -172,8 +166,10 @@ proof_reason() {
     escapes) echo "proof path '$2' escapes the repo (absolute, .. segment, or a symlink out) — the gate rejects it" ;;
     missing) echo "proof '$2' is not in THIS checkout — the gate refuses it here; sync the pair (--from <checkout> --to .) or --restore" ;;
     truncated) echo "proof '$2' is truncated ($3) — the reviewers never saw the whole change; re-run the review" ;;
-    blind-audit) echo "proof '$2' is a blind-audit record ($3) — cite the review's own adversarial output" ;;
+    blind-audit) echo "proof '$2' is a blind-audit record, not a review — cite the review's own adversarial output" ;;
     weak) echo "proof '$2' is weak: $3 — proof-of-work will reject it" ;;
+    unreadable) echo "proof '$2' cannot be read — fix its permissions so the gate can count its REVIEW BY: lines" ;;
+    scan-error) echo "proof '$2' could not be scanned ($3) — the gate grants nothing it cannot verify; re-save the proof" ;;
     *) echo "proof '$2' refused: $1 ($3)" ;;
   esac
 }
@@ -182,15 +178,15 @@ proof_reason() {
 # ref. Called directly, not through the gate's memo, whose locals are unbound under `set -u`.
 lint_proofs() {
   local root="$1" art="$2" name out rc=0 rest line tok ref det ok="" nbad=0
-  name="$(clean "$3")"
+  _pgl_clean "$3"; name="$_PGL_CLEAN"
   out="$(pg_artifact_proof_verdict "$root" "$art" 2>/dev/null)" || rc=$?
-  rest="$out$NL"
+  rest="$out$_PGL_NL"
   while [ -n "$rest" ]; do
-    line="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+    line="${rest%%"$_PGL_NL"*}"; rest="${rest#*"$_PGL_NL"}"
     [ -n "$line" ] || continue
-    tok="${line%%"$TAB"*}"; line="${line#*"$TAB"}"
-    ref="${line%%"$TAB"*}"; det="${line#*"$TAB"}"
-    ref="$(clean "$ref")"; det="$(clean "$det")"
+    tok="${line%%"$_PGL_TAB"*}"; line="${line#*"$_PGL_TAB"}"
+    ref="${line%%"$_PGL_TAB"*}"; det="${line#*"$_PGL_TAB"}"
+    _pgl_clean "$ref"; ref="$_PGL_CLEAN"; _pgl_clean "$det"; det="$_PGL_CLEAN"
     case "$tok" in
       grandfathered) ok="grandfathered: $det" ;;
       proven) ok="${ok:-proof: }${ok:+, }$ref" ;;
@@ -263,11 +259,11 @@ do_sync() {
 
     # Every ref the gate reads. Prose copies nothing; the lint below names it.
     read_refs "$art" "$name" || true
-    rest="$REFS$NL"
+    rest="$REFS$_PGL_NL"
     while [ -n "$rest" ]; do
-      ref="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+      ref="${rest%%"$_PGL_NL"*}"; rest="${rest#*"$_PGL_NL"}"
       [ -n "$ref" ] && proof_ref_is_path "$ref" || continue
-      shown="$(clean "$ref")"
+      _pgl_clean "$ref"; shown="$_PGL_CLEAN"
       # BOTH roots: the proof is READ from $sroot and WRITTEN to $droot, and a symlink in either
       # carries the copy out of its checkout.
       if ! path_contained "$sroot" "$ref" || ! path_contained "$droot" "$ref"; then
@@ -306,11 +302,8 @@ ARCHIVE_ROOT="${ZUVO_REVIEW_ARCHIVE:-$HOME/.zuvo/review-archive}"
 # narrative ("--multi; pass1 32 chunks exit 0; …"). The gate cannot resolve those either, so they
 # grant no coverage, and `basename` reads a leading `--` as an option and dies. Recognise them.
 proof_ref_is_path() {
-  case "$1" in
-    ''|-*) return 1 ;;                      # empty, or starts with a dash
-    *[[:space:]]*|*';'*|*'('*|*'|'*) return 1 ;;   # prose, not a path (the gate's not-a-path set)
-    *) return 0 ;;
-  esac
+  case "$1" in ''|-*) return 1 ;; esac
+  ! pg_proof_ref_is_prose "$1"
 }
 
 archive_dir_for() {                       # one directory per repo, by the main checkout's name
@@ -335,9 +328,9 @@ do_archive() {
     # somebody else's proof. path_contained before the read: this runs unattended from the
     # PostToolUse hook on header text an agent wrote.
     read_refs "$art" "$name" || true
-    rest="$REFS$NL"
+    rest="$REFS$_PGL_NL"
     while [ -n "$rest" ]; do
-      ref="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+      ref="${rest%%"$_PGL_NL"*}"; rest="${rest#*"$_PGL_NL"}"
       [ -n "$ref" ] || continue
       if proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ -f "$root/$ref" ]; then
         copy_preserving "$root/$ref" "$adir/proofs/${name%.md}/$ref" || true
@@ -363,13 +356,14 @@ do_restore() {
     [ -f "$art" ] || continue
     name="$(basename "$art")"; stem="${name%.md}"
     case "$name" in *"${SLUG}"*) : ;; *) [ -n "$SLUG" ] && continue ;; esac
-    # Archives written before path keys hold <stem>/<basename> of the first `adversarial:` value
-    # only, so that file is offered to that ref alone — never to another ref sharing its basename.
-    legacy="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     read_refs "$art" "$name" || true
-    rest="$REFS$NL"
+    # Archives written before path keys hold <stem>/<basename> of the first ref only, so that file is
+    # offered to that ref alone — never to another ref sharing its basename. Taken from the cleaned
+    # refs, so a CRLF or backticked header still matches.
+    legacy="${REFS%%"$_PGL_NL"*}"
+    rest="$REFS$_PGL_NL"
     while [ -n "$rest" ]; do
-      ref="${rest%%"$NL"*}"; rest="${rest#*"$NL"}"
+      ref="${rest%%"$_PGL_NL"*}"; rest="${rest#*"$_PGL_NL"}"
       [ -n "$ref" ] || continue
       # Write side of the containment guard — this COPIES INTO $root/$ref.
       proof_ref_is_path "$ref" && path_contained "$root" "$ref" && [ ! -f "$root/$ref" ] || continue

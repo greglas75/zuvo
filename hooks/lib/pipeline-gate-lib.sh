@@ -108,12 +108,12 @@ pg_unpushed_range() {
 # digits falls back to 500 rather than reaching shell arithmetic).
 #
 # Failure directions: anything that goes wrong in the TWIN step (patch-id, the window, the cap) leaves
-# the commit in the set — a twin missed is a review demanded. A failing base rev-list prints nothing,
-# exactly as the `git log … --not --remotes` this replaced did on the same failure.
+# the commit in the set — a twin missed is a review demanded. A failing base rev-list is rc 1, so a
+# caller can tell "git failed" from "nothing un-pushed" (rc 0, no output).
 _pgl_unpushed_commits() {
   local root="$1" tip="$2" all since twins max="${PG_TWIN_SCAN_MAX:-500}"
   case "$max" in ''|*[!0-9]*|???????*) max=500 ;; esac
-  all="$(git -C "$root" rev-list "$tip" --not --remotes 2>/dev/null)" || return 0
+  all="$(git -C "$root" rev-list "$tip" --not --remotes 2>/dev/null)" || return 1
   [ -n "$all" ] || return 0
   since="$(printf '%s\n' "$all" | git -C "$root" log --stdin --no-walk=unsorted --format=%at 2>/dev/null \
     | sort -n | head -1)"
@@ -180,10 +180,18 @@ pg_classify_files() {
   fi
 }
 
+# _pgl_range_optlike <range> — 0 when its base or head starts with `-`, which git would take as an option.
+_pgl_range_optlike() {
+  case "${1%%..*}" in -*) return 0 ;; esac
+  case "${1##*..}" in -*) return 0 ;; esac
+  return 1
+}
+
 # Production files changed in <range>. Returns 1 when git fails: an empty list then means "unknown".
 pg_changed_production() {
   local range="$1" root f tip commits
   [ -n "$range" ] || return 1
+  _pgl_range_optlike "$range" && return 1
   root="$(pg_repo_root)" || return 1
   # @unpushed sentinel: the topology-agnostic un-pushed file set via `git log -c --not --remotes`,
   # NOT a two-dot diff. `--not --remotes` excludes everything already on a remote (merged-in main,
@@ -195,7 +203,7 @@ pg_changed_production() {
     # The un-pushed commits minus cherry-picked/rebased twins of pushed ones (_pgl_unpushed_commits),
     # walked one by one (--no-walk). An EMPTY set must stop here: `git log --stdin` with nothing on
     # stdin falls back to HEAD and would report HEAD's files as un-pushed work.
-    commits="$(_pgl_unpushed_commits "$root" "$tip")"
+    commits="$(_pgl_unpushed_commits "$root" "$tip")" || return 1
     [ -n "$commits" ] || return 0
     # -z: NUL-delimited, path-safe (matches the git-diff path below — a filename with a newline
     # cannot split a record). core.quotePath=false: unquoted UTF-8 paths.
@@ -223,6 +231,7 @@ pg_changed_production() {
 pg_changed_lines() {
   local range="$1" root a d p total=0 tip _pgl_prod_set _pgl_nl _pgl_commits
   [ -n "$range" ] || { printf '0\n'; return 0; }
+  _pgl_range_optlike "$range" && { printf '0\n'; return 0; }
   root="$(pg_repo_root)" || { printf '0\n'; return 0; }
   # @unpushed sentinel → un-pushed numstat via git log (mirrors pg_changed_production). The
   # numeric-first-field guard below skips a merge's combined-numstat rows safely (files carry the
@@ -250,7 +259,7 @@ pg_changed_lines() {
     else _pgl_prod_set="$(pg_changed_production "$range" 2>/dev/null)" || _pgl_prod_set=""; fi
     [ -n "$_pgl_prod_set" ] || { printf '0\n'; return 0; }
     # Same commit set as pg_changed_production — twins excluded; empty must stop before `--stdin`.
-    _pgl_commits="$(_pgl_unpushed_commits "$root" "$tip")"
+    _pgl_commits="$(_pgl_unpushed_commits "$root" "$tip")" || _pgl_commits=""
     [ -n "$_pgl_commits" ] || { printf '0\n'; return 0; }
     _pgl_nl='
 '
@@ -413,18 +422,23 @@ pg_artifact_proof_refs() {
   printf '%s' "${_ppr_out#"$_PGL_NL"}"
 }
 
+# pg_proof_ref_is_prose <ref> — 0 when a ref holds whitespace, `;`, `(` or `|`: prose, not a written file.
+pg_proof_ref_is_prose() {
+  case "$1" in *[[:space:]]*|*';'*|*'('*|*'|'*) return 0 ;; esac
+  return 1
+}
+
 # _pgl_refs_add <value> — splits one header value into the caller's _ppr_out (dynamic scope),
-# counting into _ppr_steps / _ppr_n. rc 2 = a cap was exceeded.
+# counting into _ppr_steps / _ppr_n. rc 2 = a cap was exceeded. A value with any prose item is kept whole.
 _pgl_refs_add() {
   local _pra_rest="$1," _pra_item _pra_items="" _pra_prose=0
-  case "$1" in *';'*|*'('*|*'|'*) _pra_prose=1 ;; esac
   while [ "$_pra_prose" -eq 0 ] && [ -n "$_pra_rest" ]; do
     _ppr_steps=$((_ppr_steps + 1))
     [ "$_ppr_steps" -le "$PG_MAX_PROOF_ITEMS" ] || return 2
     _pra_item="${_pra_rest%%,*}"; _pra_rest="${_pra_rest#*,}"
     _pra_item="${_pra_item#"${_pra_item%%[![:space:]]*}"}"; _pra_item="${_pra_item%"${_pra_item##*[![:space:]]}"}"
     [ -n "$_pra_item" ] || continue
-    case "$_pra_item" in *[[:space:]]*) _pra_prose=1 ;; *) _pra_items="$_pra_items$_pra_item$_PGL_NL" ;; esac
+    if pg_proof_ref_is_prose "$_pra_item"; then _pra_prose=1; else _pra_items="$_pra_items$_pra_item$_PGL_NL"; fi
   done
   [ "$_pra_prose" -eq 0 ] || _pra_items="$1$_PGL_NL"
   while [ -n "$_pra_items" ]; do
@@ -497,11 +511,7 @@ pg_artifact_proven() { pg_artifact_proof_verdict "$1" "$2" >/dev/null; }
 # _pv_det (bash dynamic scope); every path that is not a clean scan exit 3 leaves a refusing token.
 _pgl_proof_one() {
   local _po_path _po_out _po_rc=0
-  # A ref holding whitespace, `;`, `(` or `|` is prose ("not run (CLI providers unavailable…)"),
-  # never a file the review wrote; refused before it can be waived as missing-optional in CI.
-  case "$2" in
-    *[[:space:]]*|*';'*|*'('*|*'|'*) _pv_tok=not-a-path; _pv_det="prose, not a proof path"; return 0 ;;
-  esac
+  if pg_proof_ref_is_prose "$2"; then _pv_tok=not-a-path; _pv_det="prose, not a proof path"; return 0; fi
   # NOTE: the bare literal `single_provider_only` (no file) is deliberately NOT accepted here —
   # it was a "type the magic words" bypass (write the field, skip the run). A genuine single-
   # provider run still PRODUCES a file with one `REVIEW BY:` line, which the >=1-provider +
@@ -671,6 +681,8 @@ _pgl_proof_reason_msg() {
     not-a-path) printf '%s\n' "$_prm_c its adversarial: value '$_prm_r' is prose, not a proof path — reference the saved adversarial output file" ;;
     too-many-refs) printf '%s\n' "$_prm_c cites more than $PG_MAX_PROOF_REFS proofs — cite at most $PG_MAX_PROOF_REFS" ;;
     no-containment) printf '%s\n' "$_prm_c the proof containment check (path-contain.sh) is not installed beside the gate library — reinstall zuvo" ;;
+    unreadable) printf '%s\n' "$_prm_c its proof '$_prm_r' cannot be read — fix its permissions so the gate can count its REVIEW BY: lines" ;;
+    scan-error) printf '%s\n' "$_prm_c its proof '$_prm_r' could not be scanned ($_prm_d) — the gate does not grant what it cannot verify" ;;
     *) printf '%s\n' "$_prm_c its proof '$_prm_r' was refused ($_prm_d) — the gate does not grant what it cannot verify" ;;
   esac
 }
@@ -1007,7 +1019,7 @@ pg_range_reviewed() {
 # Return codes carry the distinction stdout cannot:
 #   0 — computed. stdout = uncovered files; EMPTY stdout means every production file in
 #       the range is covered.
-#   2 — could NOT compute (no repo, empty or unresolvable range). stdout empty.
+#   2 — could NOT compute (no repo, empty, option-shaped or unresolvable range, failing git). stdout empty.
 #   3 — the range changed NO production files. stdout empty.
 #
 # EMPTY STDOUT IS AMBIGUOUS ON ITS OWN and must never be read as "all covered" without
@@ -1018,6 +1030,7 @@ pg_range_reviewed() {
 pg_uncovered_files() {
   local range="$1" root reviews head base change_files unc
   [ -n "$range" ] || return 2
+  _pgl_range_optlike "$range" && return 2
   root="$(pg_repo_root)" || return 2
   head="${range##*..}"; [ -n "$head" ] || return 2
   git -C "$root" rev-parse --verify "${head}^{commit}" >/dev/null 2>&1 || return 2   # unresolvable → unknown
@@ -1156,8 +1169,9 @@ PEU_JOINED
     printf '  ... and %s more uncovered file(s) not shown. Full list:\n' "$_peu_more"
     # Absolute path: ~/.zuvo is not on PATH, so a bare command name would not be found.
     # Arguments are single-quoted: a ref name may hold quotes, $( ) or backticks.
+    # Both libraries beside the helper, or it exits 2: pipeline-gate-lib.sh and the path-contain.sh it loads.
     if [ -n "${HOME:-}" ] && [ -f "$HOME/.zuvo/pg-uncovered-files" ] && [ -x "$HOME/.zuvo/pg-uncovered-files" ] \
-       && [ -f "$HOME/.zuvo/pipeline-gate-lib.sh" ]; then
+       && [ -f "$HOME/.zuvo/pipeline-gate-lib.sh" ] && [ -f "$HOME/.zuvo/path-contain.sh" ]; then
       printf '    %s %s\n' "$(_pgl_shq "$HOME/.zuvo/pg-uncovered-files")" "$(_pgl_shq "$_peu_range")"
     else
       printf '    bash -c %s _ %s %s\n' "'. \"\$1\" && pg_uncovered_files \"\$2\"'" \
