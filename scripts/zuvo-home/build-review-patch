@@ -27,14 +27,15 @@
 # shebang; without one, a .sh/.bash/.zsh/.ksh name) whose post-image defines a
 # trap, a cleanup-named function or a trap handler, a numbered
 # "=== CONTEXT: <path> - ... ===" block repeats those definitions (outside the
-# hunks; at most 40 lines per function, 80 lines / 4000 characters per file) up
-# to "=== END CONTEXT ===". It is not diff content: `git apply` skips it.
+# hunks; at most 40 lines per function, 80 lines / 4000 characters per file;
+# none for a post-image over 1 MiB) up to "=== END CONTEXT ===". It is not diff
+# content: `git apply` skips it.
 # ZUVO_REVIEW_PATCH_NO_CONTEXT=1 turns it off; if it cannot be built, the plain
 # patch is emitted with a warning.
 #
 # Every pathspec-taking git call uses --literal-pathspecs: a filename is a NAME,
 # never a glob or pathspec magic. Without it, scoping to a file literally named
-# `star*.txt` would silently widen the review to every `star…​.txt` in the tree.
+# `star*.txt` would silently widen the review to every `star….txt` in the tree.
 #
 # The index is NEVER written: no `git add`, no `git stash`, no `--intent-to-add`.
 # That is the whole point — a review helper that stages the caller's work would
@@ -91,8 +92,9 @@ Lifecycle context:
     === CONTEXT: <path> - lifecycle definitions outside the changed hunks ... ===
     <line>: <text>
     === END CONTEXT ===
-  At most 40 lines per function and 80 lines / 4000 characters per file. It is
-  reference text, not part of the diff; `git apply` ignores it.
+  At most 40 lines per function and 80 lines / 4000 characters per file; a
+  script over 1 MiB gets none (a warning names it). It is reference text, not
+  part of the diff; `git apply` ignores it.
 
 Exit:
   0   a patch was emitted on stdout
@@ -519,6 +521,10 @@ fi
 LC_AWK='
 BEGIN {
   CAPF = 40; CAPL = 80; CAPC = 4000
+  # The frame of a block: its header and END lines, plus one "... more ... not shown" line of at most MOREC characters.
+  FRAMEL = 3; MOREC = 100
+  # Post-image bytes read per file; past it the file gets no block, so a huge script is never held in memory.
+  MAXPOST = 1048576
   TAIL = " - lifecycle definitions outside the changed hunks (unchanged; reference only, NOT part of this diff) ==="
   top = ENVIRON["LC_TOP"]; oddf = ENVIRON["LC_ODD"]
   while ((getline p < oddf) > 0) odd[p] = 1
@@ -570,13 +576,22 @@ function func_end(i,    t, o, c, cl, ind, j) {
   return nL
 }
 function visible(i,    h) { for (h = 1; h <= nh; h++) if (i >= hs[h] && i <= he[h]) return 1; return 0 }
-function read_post(f,    r, first, line) {
+function over_post(f) {
+  close(f); nL = 0; split("", L)
+  warn("no lifecycle context for " rel ": its post-image is over " MAXPOST " bytes"); return 0
+}
+function read_post(f,    r, first, line, sz) {
   nL = 0; split("", L)
   r = (getline first < f)
   if (r < 0) { warn("cannot read " rel " (post-image); no lifecycle context for it"); return 0 }
   if (r == 0 || !is_shell(rel, first)) { close(f); return 0 }
-  L[++nL] = first
-  while ((r = (getline line < f)) > 0) L[++nL] = line
+  L[++nL] = first; sz = length(first) + 1
+  # The first line counts too: a one-line file never enters the loop.
+  if (sz > MAXPOST) return over_post(f)
+  while ((r = (getline line < f)) > 0) {
+    if ((sz += length(line) + 1) > MAXPOST) return over_post(f)
+    L[++nL] = line
+  }
   close(f)
   if (r < 0) { warn("cannot read " rel " (post-image); no lifecycle context for it"); return 0 }
   return 1
@@ -619,10 +634,10 @@ function emit_block(    i, k, hdr, endl, budget, used, take) {
   for (k = 1; k <= nfn; k++) if (fgrp[k] == 3) add_func(k)
   if (m == 0) return
   hdr = "=== CONTEXT: " rel TAIL; endl = "=== END CONTEXT ==="
-  budget = CAPC - length(hdr) - length(endl) - 2 - 100
+  budget = CAPC - (length(hdr) + 1) - (length(endl) + 1) - MOREC
   if (budget <= 0) { warn("no lifecycle context for " rel ": its block cannot fit " CAPC " characters"); return }
   used = 0
-  for (k = 1; k <= m && k <= CAPL - 3; k++) {
+  for (k = 1; k <= m && k <= CAPL - FRAMEL; k++) {
     if (used + length(C[k]) + 1 > budget) break
     used += length(C[k]) + 1
   }

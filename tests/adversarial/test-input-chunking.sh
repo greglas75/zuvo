@@ -221,25 +221,23 @@ assert_eq "3" "$chunks" "fence-aware split yields one chunk per REAL section"
 # decoy headings inside chunk 1's fence are not sections.
 assert_eq "3" "$(grep -cE 'chunk-[0-9]+: [0-9]+ chars, sections: 1$' "$CK_DOC/err13")" "every chunk reports one section (fenced decoys not counted)"
 
-start_test "CK.14 the per-chunk note says 'document', not 'files'"
-# Self-contained: it reads only the program text it assembles here, nothing CK.11-CK.13 wrote.
-# A plan reviewer told that sibling FILES exist elsewhere reports the document as
-# truncated or flags cross-references it cannot see. The note must match reality.
-# NB: the verdict must come back through pass/fail — a python `print("PASS")`
-# is invisible to the harness and would gate nothing while looking green.
-. "$ROOT/tests/lib/adversarial-driver.sh"   # the chunking phase lives in a module: hand python the whole program
-if ! adv_driver_source "$ADV" > "$CK_TMP/driver-source.sh"; then
-  fail "chunk note wording" "the program text could not be assembled (reason above)"
-elif python3 - "$CK_TMP/driver-source.sh" <<'PY'
-import re,sys
-s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
-doc_note = 'of ONE document split at section headings' in s
-guarded  = re.search(r'_ck_fence.*-eq 1.*\n(.*\n)*?\s*_ck_note=.*ONE document', s) is not None
-sys.exit(0 if (doc_note and guarded) else 1)
-PY
-then pass "doc-specific chunk note present and gated on doc mode"
-else fail "chunk note wording" "expected a doc-mode-gated 'ONE document split at section headings' note"
-fi
+start_test "CK.14 each part of a split document is told it is ONE document, never that sibling files exist"
+# A plan reviewer told that sibling FILES are reviewed elsewhere reports the document as truncated or flags
+# cross-references it cannot see. The lane echoes the prompt it received, so the Context line each part
+# actually carried is read here: "part i/3 of ONE document", and no "sibling files" wording.
+ck14_out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --mode plan < "$CK_DOC/plan.md" 2>"$CK_DOC/err14"); rc=$?
+assert_eq "0" "$rc" "every part of the plan reviewed: exit 0"
+assert_eq "1/3 2/3 3/3|0" \
+  "$(printf '%s\n' "$ck14_out" | sed -n 's#^Context: \[part \([0-9]*/[0-9]*\) of ONE document split at section headings.*#\1#p' | tr '\n' ' ' | sed 's/ $//')|$(printf '%s\n' "$ck14_out" | grep -c '^Context: .*sibling files')" \
+  "parts 1/3 to 3/3 each carry the one-document note, none the sibling-files note"
+# Control: a chunked CODE diff (two files, each over half the cap) must never be told it is one document.
+for f in a b; do
+  printf 'diff --git a/%s.ts b/%s.ts\n--- a/%s.ts\n+++ b/%s.ts\n@@ -0,0 +1,400 @@\n' "$f" "$f" "$f" "$f"
+  awk -v f="$f" 'BEGIN{for(i=0;i<400;i++) printf "+export const %s%d = \"%s\";\n", f, i, "xxxxxxxxxxxxxxxxxxxxxxxx"}'
+done > "$CK_DOC/code14.diff"
+ck14c=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --mode code < "$CK_DOC/code14.diff" 2>"$CK_DOC/err14c"); rc=$?
+assert_eq "0|2|0" "$rc|$(printf '%s\n' "$ck14c" | grep -c '^Context: .*sibling files')|$(printf '%s\n' "$ck14c" | grep -c '^Context: .*ONE document')" \
+  "a chunked code diff: both chunks carry the sibling-files note, neither the one-document note"
 
 start_test "CK.15 a small document is left alone"
 # A VALID plan under the cap (3 tasks — the plan minimum). A 1-task fragment would exit 5 at the material
@@ -715,3 +713,19 @@ for f in "$CK_HK/parts-35"/*.in; do
   [[ -f "$f" ]] && ck35=$((ck35 + $(grep -c 'MARKER-SHIM-PART' "$f")))
 done
 assert_eq "0" "$ck35" "the partial part the failed split wrote reached no reviewer"
+
+start_test "CK.36 an opt-out keeps one multi-hunk file over the cap in one run: truncated, never split at its hunks"
+# The hunk arm of the chunk gate must honour --no-chunk and ZUVO_ADV_NO_CHUNK=1 like the file arm (CK.4, CK.5):
+# a caller that asked for one run gets one prompt, cut at the cap, and the proof says so.
+# ck36_state <case> <rc> — "rc|prompts|CHUNKED banners|cut in proof|hunk markers seen".
+ck36_state() {
+  printf '%s|%s|%s|%s|%s' "$2" "$(ck_part_count "$1")" "$(grep -c 'CHUNKED INPUT:' "$CK_HK/err-$1")" \
+    "$(grep -q 'input_truncated=true' "$CK_HK/art-$1" 2>/dev/null && echo cut || echo whole)" "$(ck_marker_counts "$1" BIG 3)"
+}
+ck_hunk_diff big.sh BIG 12000 12000 12000 > "$CK_HK/optout.diff"
+ck_run_parts 36a "$CK_HK/optout.diff" --no-chunk; rc=$?
+assert_eq "4|1|0|cut|BIG-H1=1 BIG-H2=1 BIG-H3=0" "$(ck36_state 36a "$rc")" \
+  "--no-chunk: exit 4, one prompt, no split, the cut recorded, hunk 3 past the cap"
+ZUVO_ADV_NO_CHUNK=1 ck_run_parts 36b "$CK_HK/optout.diff"; rc=$?
+assert_eq "4|1|0|cut|BIG-H1=1 BIG-H2=1 BIG-H3=0" "$(ck36_state 36b "$rc")" \
+  "ZUVO_ADV_NO_CHUNK=1: exit 4, one prompt, no split, the cut recorded, hunk 3 past the cap"

@@ -1234,18 +1234,88 @@ lc_row_no_block "(47) a script replaced by a symlink gets no block" "$R47" '+++ 
 LONG48=""; k=0
 while [ "$k" -lt 16 ]; do LONG48="$LONG48$(awk -v k="$k" 'BEGIN { s = sprintf("d%02d", k); while (length(s) < 240) s = s "x"; print s }')/"; k=$((k + 1)); done
 R48="$(new_repo lc48)"
-(
-  cd "$R48" || exit 1
-  mkdir -p "$LONG48"
-  { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"; i=1; while [ "$i" -le 20 ]; do printf ': filler %d\n' "$i"; i=$((i + 1)); done; } > "${LONG48}x.sh"
-  git add -A && git commit -qm base
-  printf 'echo LONGPATH\n' >> "${LONG48}x.sh"
-) >/dev/null 2>&1
-OUT48="$(cd "$R48" && "$HELPER" 2>"$TMP/e48")"; RC48=$?
-if [ "$RC48" -eq 0 ] && has '+echo LONGPATH' "$OUT48" && ! has '=== CONTEXT: ' "$OUT48" && grep -q '/x\.sh' "$TMP/e48"; then
-  pass "(48) a block that cannot fit: plain patch, exit 0, a warning naming the file"
+# The path exceeds macOS's PATH_MAX (1024); a refused path is a skipped row, never a product verdict.
+if ! ( cd "$R48" && mkdir -p "$LONG48" \
+       && { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"; i=1; while [ "$i" -le 20 ]; do printf ': filler %d\n' "$i"; i=$((i + 1)); done; } > "${LONG48}x.sh" ) 2>/dev/null; then
+  printf 'SKIP: (48) long-path case skipped (the filesystem refused a %d-byte path: PATH_MAX is below it)\n' "${#LONG48}"
+elif ! ( cd "$R48" && git add -A && git commit -qm base && printf 'echo LONGPATH\n' >> "${LONG48}x.sh" ) >"$TMP/s48" 2>&1; then
+  bad "(48) fixture setup failed after the path was created: $(tr '\n' '|' < "$TMP/s48")"
 else
-  bad "(48) rc=$RC48, hunk=$(has '+echo LONGPATH' "$OUT48" && echo yes || echo NO), block=$(has '=== CONTEXT: ' "$OUT48" && echo yes || echo no), stderr names x.sh=$(grep -q '/x\.sh' "$TMP/e48" && echo yes || echo NO) — a dropped block must be reported"
+  OUT48="$(cd "$R48" && "$HELPER" 2>"$TMP/e48")"; RC48=$?
+  if [ "$RC48" -eq 0 ] && has '+echo LONGPATH' "$OUT48" && ! has '=== CONTEXT: ' "$OUT48" && grep -q '/x\.sh' "$TMP/e48"; then
+    pass "(48) a block that cannot fit: plain patch, exit 0, a warning naming the file"
+  else
+    bad "(48) rc=$RC48, hunk=$(has '+echo LONGPATH' "$OUT48" && echo yes || echo NO), block=$(has '=== CONTEXT: ' "$OUT48" && echo yes || echo no), stderr names x.sh=$(grep -q '/x\.sh' "$TMP/e48" && echo yes || echo NO) — a dropped block must be reported"
+  fi
+fi
+
+# (49) the "+++ b/" name git writes for a path with a space ends in a TAB, which is not part of the path
+R49="$(lc_repo lc49 'my dev.sh' '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_block "(49) a script whose path holds a space gets its block" "$R49" 'my dev.sh' \
+  "the TAB git appends after such a name was kept, so the post-image was never found" '3: trap cleanup EXIT INT TERM'
+
+# (50) with diff.context=0 a deletion-only hunk is "+N,0": it shows no post-image line, not line N
+R50="$(new_repo lc50)"
+(
+  cd "$R50" || exit 1
+  git config diff.context 0
+  { printf '#!/usr/bin/env bash\n%s\n: doomed\n' "$LC_BASE_PROLOG"
+    i=1; while [ "$i" -le 20 ]; do printf ': filler %d\n' "$i"; i=$((i + 1)); done; } > del.sh
+  git add -A && git commit -qm base
+  awk '$0 != ": doomed"' del.sh > del.sh.new && mv del.sh.new del.sh
+) >/dev/null 2>&1
+OUT50="$(cd "$R50" && "$HELPER" 2>/dev/null)"
+if has '@@ -4 +3,0 @@' "$OUT50"; then
+  lc_row_block "(50) a deletion-only hunk right after the trap keeps the trap line in the block" "$R50" del.sh \
+    "a '+N,0' hunk was read as showing line N, so the trap on that line was left out" \
+    '2: cleanup(){ kill -- -"$pg"; }' '3: trap cleanup EXIT INT TERM'
+else
+  bad "(50) fixture vacuous: the patch has no '@@ -4 +3,0 @@' deletion-only hunk"
+fi
+
+# (51) a post-image over the 1 MiB read bound: that file's block is skipped with a warning, the rest is annotated
+R51="$(new_repo lc51)"
+(
+  cd "$R51" || exit 1
+  # The change point sits past the hunk's context lines, so the trap and cleanup are outside the hunk.
+  { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"
+    awk 'BEGIN { for (i = 1; i <= 10; i++) printf ": head %d\n", i }'; printf ': change point\n'
+    awk 'BEGIN { for (i = 1; i <= 20000; i++) printf ": filler %d padding padding padding padding padding\n", i }'; } > huge.sh
+  { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"
+    awk 'BEGIN { for (i = 1; i <= 10; i++) printf ": head %d\n", i }'; printf ': change point\n: tail\n'; } > small.sh
+  git add -A && git commit -qm base
+  for f in huge.sh small.sh; do
+    awk '$0 == ": change point" { print "echo CHANGED"; next } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  done
+) >/dev/null 2>&1
+SZ51="$(wc -c < "$R51/huge.sh" | tr -d ' ')"
+OUT51="$(cd "$R51" && "$HELPER" 2>"$TMP/e51")"; RC51=$?
+if [ "$SZ51" -le 1048576 ]; then
+  bad "(51) fixture vacuous: huge.sh is $SZ51 bytes, not over 1 MiB"
+elif [ "$RC51" -eq 0 ] && has '+++ b/huge.sh' "$OUT51" && ! has '=== CONTEXT: huge.sh - ' "$OUT51" \
+     && has '=== CONTEXT: small.sh - ' "$OUT51" && grep -q 'huge\.sh' "$TMP/e51"; then
+  pass "(51) a post-image over 1 MiB: its hunk is kept, its block skipped with a warning naming it, small.sh still annotated"
+else
+  bad "(51) rc=$RC51, huge.sh block=$(has '=== CONTEXT: huge.sh - ' "$OUT51" && echo YES || echo no), small.sh block=$(has '=== CONTEXT: small.sh - ' "$OUT51" && echo yes || echo NO), stderr=$(tr '\n' '|' < "$TMP/e51") — a huge script is read whole into memory, unbounded"
+fi
+
+# (52) a one-line post-image over 1 MiB: the bound applies to the first line too, not only to later ones
+R52="$(new_repo lc52)"
+(
+  cd "$R52" || exit 1
+  awk 'BEGIN { s = "x"; while (length(s) < 600000) s = s s; printf "trap cleanup EXIT; : %s\n", s }' > one.sh
+  git add -A && git commit -qm base
+  awk '{ sub(/^trap cleanup EXIT;/, "trap cleanup EXIT INT;"); print }' one.sh > one.sh.new && mv one.sh.new one.sh
+) >"$TMP/s52" 2>&1 || bad "(52) fixture setup failed: $(tr '\n' '|' < "$TMP/s52")"
+SZ52="$(wc -c < "$R52/one.sh" | tr -d ' ')"; NL52="$(wc -l < "$R52/one.sh" | tr -d ' ')"
+(cd "$R52" && "$HELPER" >"$TMP/p52" 2>"$TMP/e52"); RC52=$?
+if [ "$SZ52" -le 1048576 ] || [ "$NL52" -ne 1 ]; then
+  bad "(52) fixture vacuous: one.sh is $SZ52 bytes in $NL52 lines, not one line over 1 MiB"
+elif [ "$RC52" -eq 0 ] && grep -q '^+trap cleanup EXIT INT;' "$TMP/p52" && ! grep -q '^=== CONTEXT: ' "$TMP/p52" \
+     && grep -q 'one\.sh: its post-image is over 1048576 bytes' "$TMP/e52"; then
+  pass "(52) a one-line post-image over 1 MiB: plain patch, exit 0, the size warning names it"
+else
+  bad "(52) rc=$RC52, hunk=$(grep -q '^+trap cleanup EXIT INT;' "$TMP/p52" && echo yes || echo NO), block=$(grep -q '^=== CONTEXT: ' "$TMP/p52" && echo YES || echo no), stderr=$(tr '\n' '|' < "$TMP/e52") — the first line escaped the 1 MiB bound with no warning"
 fi
 
 if [ "$fail" -eq 0 ]; then

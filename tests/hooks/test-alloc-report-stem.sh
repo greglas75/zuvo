@@ -129,6 +129,7 @@ done <<EOF
 --prefix mutation-test --scope x|2|--dir is required|a missing --dir must not default to the cwd
 --dir $dir --scope x|2|--prefix is required|a missing --prefix must not yield a stem that starts with a dash
 --dir $dir --prefix ../evil --scope x|2|--prefix must be|a prefix with a path must not escape the dir
+--dir $dir --prefix -abc --scope x|2|--prefix must be lowercase letters, digits and dashes: -abc|a leading-dash prefix makes the stem's basename read as a command-line option
 --dir $dir --prefix mutation-test --scope x --ext .md,../x|2|--ext entries must look like|an extension with a path must not escape the dir
 --dir $dir --prefix mutation-test --scope x --ext .json,../evil|2|--ext entries must look like|a path extension after a valid one is still rejected
 --dir $dir --prefix mutation-test --scope x --ext md|2|must start with a dot|an extension without its dot would glue onto the stem (STEMmd)
@@ -212,5 +213,10 @@ got=$(PATH="$TMP/clock:$PATH" bash "$H" --dir "$dir" --prefix mutation-test --sc
   || bad "default date: got '${got##*/}', want mutation-test-2031-04-05-x"
 [ "$got" = "$dir/${got##*/}" ] && ok "the printed stem is the dir joined with the name (\$STEM.md lands in --dir)" \
   || bad "printed stem '$got' is not under '$dir'"
+# Bug: --dir with trailing slashes is joined as-is, printing "dir///name", which no path comparison matches.
+dir=$(fresh_dir trailing-slash)
+got=$(bash "$H" --dir "$dir///" --prefix mutation-test --scope x --date "$D" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$got" = "$dir/mutation-test-$D-x" ] && ok "trailing slashes on --dir are trimmed: one '/' before the name" \
+  || bad "--dir '$dir///': rc=$rc, got '$got', want '$dir/mutation-test-$D-x'"
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
