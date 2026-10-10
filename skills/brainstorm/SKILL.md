@@ -652,12 +652,21 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran (--mode spec) — not skipped
 [ ] Spec status is Approved (interactive) or Reviewed (async)
 [ ] Spec saved to docs/specs/ with spec_id populated
+[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
 ```
 
 **Phase order is non-negotiable.** Retro append → log append → final Run: block. Printing the Run: line and the retrospective markdown without executing bash leaves `~/.zuvo/retros.log`, `~/.zuvo/retros.md`, and `~/.zuvo/runs.log` empty — observed failure mode for new projects (e.g. `uptime` 2026-05-09).
+
+### Drive-by findings (REQUIRED — record only, leaves a receipt)
+
+Follow `../../shared/includes/drive-by-findings.md` with `<skill> = brainstorm`: backlog the
+security, bug, size, duplication, complexity, performance, dead-code and readability problems
+noticed OUTSIDE this run's fence in files it already read (never fix them here), list every
+`SEC` one in the final output, then ALWAYS record the receipt
+`~/.zuvo/log-drive-by --skill brainstorm --sec <a> --bug <b> …` (all zeros is an honest outcome).
 
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 

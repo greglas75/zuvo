@@ -827,6 +827,7 @@ Per-file summary print (`adversarial:` = the Adversarial value above, verbatim):
 ## Completion (after queue empty)
 
 1. **Backlog persistence:** unfixed out-of-scope issues → `memory/backlog.md`
+1b. **Drive-by findings:** follow `../../shared/includes/drive-by-findings.md` with `<skill> = write-tests` — backlog the problems noticed OUTSIDE the files under test in code the run read (record only), list every `SEC` one in the completion summary, then ALWAYS run `~/.zuvo/log-drive-by --skill write-tests --sec <a> --bug <b> …` (all zeros is an honest outcome).
 2. **Knowledge curation** per `knowledge-curate.md`
 2b. **Content-keyed review artifact (success only):** if the run modified any **production** file (incl. Step 4.5 fixes), write `memory/reviews/<base7>..<head7>-<slug>.md` with `range:`/`files:` headers per `review-artifact.md` — this run's blind audit + adversarial already reviewed that content, so pipeline gates accept it without a redundant `zuvo:review`. Skip when only test/docs files changed. **If the reviewed production edits are NOT yet committed** (no-commit session), HEAD cannot content-key them: write the PROVISIONAL form from `review-artifact.md` (working-tree blob hashes, `status: PROVISIONAL`) — it grants no coverage until the upgrade step after commit verifies the blobs and rewrites the range. Never write a normal-form artifact whose head does not contain the reviewed blobs.
 
@@ -889,6 +890,7 @@ COMPLETION GATE CHECK
 [ ] Step 5: coverage.md rows fully populated (Status+Gate+Blind+Adversarial)
 [ ] Step A1/A2: [GATE: test-quality] emitted from a REAL zuvo:test-audit dispatch (on-disk zuvo/audits report) over touched + pre-existing in-scope test files; sub-A files fixed (or WARN + backlog); validator + blind audit re-run for A2-modified files
 [ ] Step 2b: review artifact written IF production files changed
+[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Final test run: all tests pass (N/N)
 ```
 

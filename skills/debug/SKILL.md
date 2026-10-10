@@ -485,13 +485,13 @@ rm -f __bisect_test.ts __bisect_test.py __bisect_test.sh
 
 ## Backlog Persistence
 
-If debugging reveals unrelated issues (code smells, missing tests, outdated patterns), do not fix them during the debug session. Persist each to `memory/backlog.md` — **at the MAIN checkout root, resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (never a worktree-local copy)**:
-
-1. Read `memory/backlog.md`. If missing, create it with the standard template.
-2. Fingerprint each item: `file|rule-id|signature`. Deduplicate against existing entries.
-3. Confidence 0-25: discard. Confidence 26-50: track. Confidence 51+: report.
-
-Source: `debug/[date]`. Zero silent discards.
+If debugging reveals unrelated issues, do not fix them during the debug session. Follow
+`../../shared/includes/drive-by-findings.md` with `<skill> = debug`: backlog the security, bug,
+size, duplication, complexity, performance, dead-code and readability problems noticed OUTSIDE
+the bug's fence in files the investigation read (dedup and the MAIN-checkout backlog per
+`../../shared/includes/backlog-protocol.md`), list every `SEC` one in the Debug Report, then
+ALWAYS record the receipt `~/.zuvo/log-drive-by --skill debug --sec <a> --bug <b> …` (all zeros
+is an honest outcome). Entries carry `source: drive-by:debug` (formerly `debug/[date]`).
 
 ---
 
@@ -625,6 +625,7 @@ COMPLETION GATE CHECK
 [ ] CQ self-eval on modified production files
 [ ] Adversarial review ran on staged diff
 [ ] Backlog updated
+[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
 

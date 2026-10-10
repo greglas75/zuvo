@@ -599,12 +599,21 @@ COMPLETION GATE CHECK
 [ ] Adversarial validation ran (--mode plan)
 [ ] Plan status is Approved (interactive) or Reviewed (async)
 [ ] Active plan pointer written to zuvo/plans/active-plan.md
+[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
 ```
 
 **Phase order is non-negotiable.** Retro append → log append → final Run: block. Printing the Run: line + retrospective markdown without executing bash leaves the logs empty.
+
+### Drive-by findings (REQUIRED — record only, leaves a receipt)
+
+Follow `../../shared/includes/drive-by-findings.md` with `<skill> = plan`: backlog the security,
+bug, size, duplication, complexity, performance, dead-code and readability problems noticed in
+code the planning read that NO task in this plan addresses (a problem a task fixes is in the
+fence), list every `SEC` one in the Output, then ALWAYS record the receipt
+`~/.zuvo/log-drive-by --skill plan --sec <a> --bug <b> …` (all zeros is an honest outcome).
 
 ### Retrospective (REQUIRED, before final Run: block)
 

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# ~/.zuvo/log-drive-by — one-line receipt that a skill's "Drive-by findings" step RAN.
+#
+# Most runs honestly record nothing, so the backlog alone cannot tell "looked and found nothing"
+# from "never looked" (shared/includes/drive-by-findings.md). Same contract as ~/.zuvo/log-ideas.
+#
+# Usage:
+#   ~/.zuvo/log-drive-by --skill build [--sec N] [--bug N] [--size N] [--dup N] [--cplx N]
+#                        [--perf N] [--dead N] [--read N] [--project P]
+#     The inherited $PROJECT env var is ignored (an orchestrator exports a plan-slug).
+#
+# Best-effort: every error exits 0 so it can never break a skill's completion path — but a receipt
+# that was NOT written says so on stderr, so the agent can report it instead of reading silence.
+set -u
+
+_unwritten() { echo "log-drive-by: receipt NOT written ($1)" >&2; exit 0; }
+[ -n "${ZUVO_HOME:-}" ] || [ -n "${HOME:-}" ] || _unwritten "neither ZUVO_HOME nor HOME is set"
+ZUVO_HOME="${ZUVO_HOME:-$HOME/.zuvo}"
+mkdir -p "$ZUVO_HOME" 2>/dev/null || _unwritten "cannot create $ZUVO_HOME"
+LOG="$ZUVO_HOME/drive-by.log"
+
+SKILL="" PROJECT=""
+SEC=0 BUG=0 SIZE=0 DUP=0 CPLX=0 PERF=0 DEAD=0 READ=0
+# Never `shift 2`: on a trailing flag it fails without shifting and spins forever (B-29).
+while [ $# -gt 0 ]; do
+  _flag="${1%%=*}"
+  case "$1" in
+    --*=*) _val="${1#*=}"; shift ;;
+    --*)   shift
+           # A missing value must not swallow the next flag: `--skill --sec 3` keeps --sec.
+           case "${1:-}" in --*|'') _val="" ;; *) _val="$1"; shift ;; esac ;;
+    *)     echo "log-drive-by: ignored stray argument: $1" >&2; shift; continue ;;
+  esac
+  case "$_flag" in
+    --skill)   SKILL="$_val" ;;
+    --project) PROJECT="$_val" ;;
+    --sec)  SEC="$_val" ;;  --bug)  BUG="$_val" ;;  --size) SIZE="$_val" ;; --dup)  DUP="$_val" ;;
+    --cplx) CPLX="$_val" ;; --perf) PERF="$_val" ;; --dead) DEAD="$_val" ;; --read) READ="$_val" ;;
+    *) echo "log-drive-by: ignored unknown flag: $_flag" >&2 ;;   # a typo must not read as a 0
+  esac
+done
+
+# Clipped so an absurd count cannot overflow TOTAL.
+_count() { local v; v="$(printf '%s' "$1" | tr -cd '0-9')"; v="${v:0:6}"; printf '%s' "${v:-0}"; }
+SEC="$(_count "$SEC")" BUG="$(_count "$BUG")" SIZE="$(_count "$SIZE")" DUP="$(_count "$DUP")"
+CPLX="$(_count "$CPLX")" PERF="$(_count "$PERF")" DEAD="$(_count "$DEAD")" READ="$(_count "$READ")"
+TOTAL=$((10#$SEC + 10#$BUG + 10#$SIZE + 10#$DUP + 10#$CPLX + 10#$PERF + 10#$DEAD + 10#$READ))
+
+[ -n "$SKILL" ] || SKILL="unknown"
+SKILL="$(printf '%s' "$SKILL" | tr -cd 'a-zA-Z0-9:_-')"; [ -n "$SKILL" ] || SKILL="unknown"
+
+if [ -z "$PROJECT" ]; then
+  _main="$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
+  [ -n "$_main" ] || _main="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  PROJECT="$(basename "$_main")"
+fi
+PROJECT="$(printf '%s' "$PROJECT" | tr -cd 'a-zA-Z0-9._-')"; [ -n "$PROJECT" ] || PROJECT="unknown"
+
+DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# The header is created with noclobber (O_EXCL): a check-then-`>` lets a second concurrent first
+# writer truncate the row the first one already appended.
+{ [ -e "$LOG" ] || ( set -C; printf '# DATE\tSKILL\tPROJECT\tTOTAL\tSEC\tBUG\tSIZE\tDUP\tCPLX\tPERF\tDEAD\tREAD\n' > "$LOG" ); } 2>/dev/null
+{ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$DATE" "$SKILL" "$PROJECT" "$TOTAL" \
+    "$SEC" "$BUG" "$SIZE" "$DUP" "$CPLX" "$PERF" "$DEAD" "$READ" >> "$LOG"; } 2>/dev/null \
+  || _unwritten "cannot append to $LOG"
+echo "log-drive-by: recorded $TOTAL drive-by finding(s) (SEC:$SEC) for $SKILL on $PROJECT"
+exit 0

@@ -189,7 +189,7 @@ skills/<name>/agents/<name>.md  — sub-agent instructions (51 agent files, 49 u
                                       find skills -path '*/agents/*.md' -exec basename {} .md \; | sort -u | wc -l
                                     The manifests' "26 specialized agents" is stale by ~2x and is
                                     tracked in memory/backlog.md, not fixed in passing)
-shared/includes/*.md            — shared procedural includes (90 files):
+shared/includes/*.md            — shared procedural includes (91 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the
@@ -200,6 +200,8 @@ shared/includes/*.md            — shared procedural includes (90 files):
                                     severity-vocabulary.md (unified severity mapping)
                                     terminal-state.md (no completion over a live process / pending check)
                                     adversarial-loop.md, adversarial-loop-docs.md (evidence enforcement)
+                                    drive-by-findings.md (backlog what a run noticed OUTSIDE its fence:
+                                      SEC/BUG/SIZE/DUP/CPLX/PERF/DEAD/READ; receipt ~/.zuvo/log-drive-by)
                                     quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
                                     + registries, schemas, protocols
 rules/*.md                      — code quality rules (20 files: cq-patterns, testing, security, file-limits, etc.)

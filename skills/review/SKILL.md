@@ -1006,6 +1006,14 @@ Skip tagging when scope is `staged` or `uncommitted`.
 
 Run `knowledge-curate.md` (if loaded): `WORK_TYPE="review"`, `CALLER="zuvo:review"`, `REFERENCE=<commit range or "staged">`.
 
+### Drive-by findings (REQUIRED — record only, leaves a receipt)
+
+Follow `../../shared/includes/drive-by-findings.md` with `<skill> = review`: backlog the
+security, bug, size, duplication, complexity, performance, dead-code and readability problems
+noticed OUTSIDE this run's fence in files it already read (never fix them here), list every
+`SEC` one in the review report, then ALWAYS record the receipt
+`~/.zuvo/log-drive-by --skill review --sec <a> --bug <b> …` (all zeros is an honest outcome).
+
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 
 Follow `../../shared/includes/followup-ideas.md` with `<skill> = review`: append genuine new
@@ -1047,6 +1055,7 @@ COMPLETION GATE CHECK
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/adversarial: header — the adversarial: field points at the saved `--artifact` output (≥2 providers); an artifact without a real proof no longer grants coverage (on success; skip staged/uncommitted)
 [ ] reviewed/<hash> tags created (skip for staged/uncommitted scope)
 [ ] Knowledge curation ran (if knowledge-curate.md loaded)
+[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Retrospective ran OR explicit "RETRO: skipped (<reason>)" printed
 [ ] Run: TSV line printed and appended to ~/.zuvo/runs.log
 ```

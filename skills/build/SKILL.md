@@ -765,6 +765,14 @@ Q check per 3.5)` — the tier table is the authority; do not silently omit the 
 Test fixes made here are writes too: before their `test:` commit, re-run 4.2c with the
 `BUILD_BASE` printed in 3.1 over its scope plus the fixed test files (the 4.6 recheck rule).
 
+### Drive-by findings (REQUIRED — record only, leaves a receipt)
+
+Follow `../../shared/includes/drive-by-findings.md` with `<skill> = build`: backlog the
+security, bug, size, duplication, complexity, performance, dead-code and readability problems
+noticed OUTSIDE this run's fence in files it already read (never fix them here), list every
+`SEC` one in the BUILD COMPLETE block, then ALWAYS record the receipt
+`~/.zuvo/log-drive-by --skill build --sec <a> --bug <b> …` (all zeros is an honest outcome).
+
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 
 Follow `../../shared/includes/followup-ideas.md` with `<skill> = build`: append genuine new
@@ -835,6 +843,7 @@ COMPLETION GATE CHECK
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/adversarial: header — the adversarial: field points at the saved `--artifact` output (≥2 providers); an artifact without a real proof no longer grants coverage (on success only)
 [ ] Retrospective ran (no "trivial session" opt-out)
 [ ] Backlog updated with deferred findings or "none"
+[ ] Drive-by findings recorded per drive-by-findings.md, every SEC listed in BUILD COMPLETE, `~/.zuvo/log-drive-by` receipt written (zeros allowed)
 [ ] Run: line printed and appended to log
 ```
 
@@ -851,6 +860,7 @@ Verification: tests PASS [| types PASS] [| lint PASS]
 CQ: [critical gates PASS | score/applicable on N files]
 Q: [critical gates PASS | score/applicable on N test files]
 Backlog: [N items persisted | "none"]
+Drive-by: [N recorded (SEC:a BUG:b SIZE:c DUP:d CPLX:e PERF:f DEAD:g READ:h) | 0 recorded]
 Commit: [hash] — [message]
 [Tag: [tag name]]
 

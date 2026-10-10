@@ -365,6 +365,8 @@ Read `../../shared/includes/backlog-protocol.md`.
 
 Persist any production bugs discovered during fixing, or files that could not be fixed automatically, to `memory/backlog.md`.
 
+**Drive-by findings:** follow `../../shared/includes/drive-by-findings.md` with `<skill> = fix-tests` — backlog the problems noticed OUTSIDE the fixed pattern in code the run read (record only), list every `SEC` one in the report, then ALWAYS run `~/.zuvo/log-drive-by --skill fix-tests --sec <a> --bug <b> …` (all zeros is an honest outcome).
+
 ### Knowledge Curation
 
 After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
@@ -397,6 +399,7 @@ COMPLETION GATE CHECK
 [ ] Every production bug surfaced by a strengthened assertion was FIXED in-run (test-bugfix-protocol.md) or escalated loudly with file:line — a backlog row for an in-scope bug is an incomplete run
 [ ] fix-tests-progress.md updated
 [ ] Backlog holds only genuinely out-of-scope or user-declined items
+[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
 

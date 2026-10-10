@@ -216,6 +216,7 @@ output that nothing consumed, and nothing in the system said so.
 | Proposals mined, never read | digests piling up in `mining/` | `digest-proposals` (v1.6.33) |
 | Proposals read, never dispositioned | every run re-surfaced all 217, including the 57 just implemented | the ledger (v1.6.37) |
 | `ideas` step "ran" but yielded nothing | `ideas.md` near-empty; no way to tell skipped-vs-empty | `log-ideas` receipt |
+| drive-by step "ran" but recorded nothing | no backlog rows from `drive-by:<skill>`; no way to tell skipped-vs-clean | `log-drive-by` receipt (`~/.zuvo/drive-by.log`, per-category counts) |
 | Retro drift (`key=value` rows) | learning present but uncounted by the miner | `sanitize-retros` in the rotate job |
 | Mining engine unversioned | `retro-mine.py` existed only in `~/.zuvo` — one disk failure from losing the loop | versioned in `scripts/zuvo-home/` (v1.6.38) |
 | Overlapping mining windows inflated recurrence | clearing the apply bar to 0, then one mining run put **111** items straight back on it — while only **9** new retros existed | count distinct SOURCE RETROS, not digest occurrences (v1.6.47) |
