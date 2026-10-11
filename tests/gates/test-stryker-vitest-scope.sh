@@ -20,7 +20,8 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 command -v node >/dev/null 2>&1 || { printf 'SKIP: node not installed — nothing was tested\n'; exit 0; }
 [ -f "$LIB" ] || { bad "missing scripts/lib/stryker-vitest.cjs"; echo "SOME FAILED"; exit 1; }
 
-TMP="$(mktemp -d)"
+# Physical path: macOS mktemp gives /var/..., which node and git report as /private/var/....
+TMP="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ── A. library tables (pure functions over a fixture tree) ────────────────────────────────────
