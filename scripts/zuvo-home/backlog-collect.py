@@ -199,7 +199,7 @@ def collect():
             if os.path.realpath(mr) != os.path.realpath(repo):
                 if not zio.tracked_root(repo):
                     strays.append(repo)      # an untracked linked-worktree copy: a fork, report it
-                continue                     # a tracked copy is branch content: it enters the totals once merged
+                continue  # a tracked copy is branch content: it enters the totals once merged
             if os.path.realpath(repo) in seen_main or os.path.realpath(bl) in seen_file:
                 continue
             seen_main.add(os.path.realpath(repo))

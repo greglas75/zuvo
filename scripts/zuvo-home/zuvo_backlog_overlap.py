@@ -28,10 +28,10 @@ while still ACCEPTING 40.7% of fabrications, and the only way to refuse fewer is
 accepts 71.0% of them. There is a signal, barely (AUC stable at 0.608..0.644 across five fabrication
 draws), and it is nowhere near a gate. 5 of the 29 genuine citations score ZERO in their own window,
 so even ">=1 word" refuses 17.2% of correct evidence. The decisive numbers are COUNTS over a labelled
-set, not estimates; the AUC only says the signal is weak rather than absent. A check that throws away a third of true citations to catch a third
-of invented ones is measuring the prose style of whoever wrote the entry, not fabrication — an entry
-that DESCRIBES a defect shares few words with the code that proves it, which is normal writing rather
-than a lie.
+set, not estimates; the AUC only says the signal is weak rather than absent. A check that throws away a
+third of true citations to catch a third of invented ones is measuring the prose style of whoever
+wrote the entry, not fabrication — an entry that DESCRIBES a defect shares few words with the code
+that proves it, which is normal writing rather than a lie.
 
 So the score is COMPUTED AND REPORTED: it travels in the mode string, where the include already
 requires a (c) pass rate to be quoted with its split, and the refusals of (c) are the basename half

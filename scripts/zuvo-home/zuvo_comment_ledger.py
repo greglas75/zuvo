@@ -80,10 +80,10 @@ def blob_id(data: bytes, fmt: str) -> str:
 
 
 def escape(text: str) -> str:
-    """Every character `str.isprintable()` rejects as \\xNN, \\uNNNN or \\UNNNNNNNN: the Unicode Other categories
-    (controls; format characters such as bidi, zero-width and tag marks; surrogates; private and unassigned code
-    points) and the Separators but ' '. A surrogate-escaped byte is its own \\xNN. A letter or symbol that merely
-    looks blank (U+3164, U+2800) is printable and kept."""
+    """Every character `str.isprintable()` rejects as \\xNN, \\uNNNN or \\UNNNNNNNN: the Unicode Other
+    categories (controls; format characters such as bidi, zero-width and tag marks; surrogates; private and
+    unassigned code points) and the Separators but ' '. A surrogate-escaped byte is its own \\xNN. A letter
+    or symbol that merely looks blank (U+3164, U+2800) is printable and kept."""
     if text.isprintable():
         return text
     return "".join(char if char.isprintable() else _code(ord(char)) for char in text)
@@ -114,8 +114,8 @@ def _metrics(result: rules.FileResult, accepted: Mapping[str, str]) -> tuple[lis
 def format_rows(run: str, where: Origin, thresholds: str, entries: Iterable[Entry],
                 accepted: Mapping[str, str], skill: str = "") -> list[str]:
     """One TSV line per entry; a `n/a (reason)` verdict is stored as `n/a`, the whole verdict going to notes,
-    after `skill=<name>` when the calling skill named itself and before `degraded` when the scanner fell back to its
-    simpler reader. ValueError when `run` is not
+    after `skill=<name>` when the calling skill named itself and before `degraded` when the scanner fell
+    back to its simpler reader. ValueError when `run` is not
     `yyyymmddTHHMMSSZ-pid` or `skill` is not a lowercase skill name."""
     if not RUN.fullmatch(run):
         raise ValueError(f"run id {run!r} is not yyyymmddTHHMMSSZ-pid")
@@ -279,10 +279,10 @@ def _summary(name: str, stats: list[Stat]) -> tuple[str, ...]:
 
 def trend(dated: Iterable[tuple[str, Stat | None]], since: str, project: str | None,
           by: str = "project") -> tuple[list[tuple[str, ...]], int, int]:
-    """Rows per project (or per calling skill, `-` for runs that named none) sorted by name, the number of rows
-    used, and the malformed rows in the window. `project` is the stored (escaped) name; a malformed row has no
-    project to filter on, so it counts as skipped under any `project`. ValueError for a `by` other than
-    project or skill."""
+    """Rows per project (or per calling skill, `-` for runs that named none) sorted by name, the number of
+    rows used, and the malformed rows in the window. `project` is the stored (escaped) name; a malformed
+    row has no project to filter on, so it counts as skipped under any `project`. ValueError for a
+    `by` other than project or skill."""
     if by not in TREND_BY:
         raise ValueError(f"--by {by!r}: expected one of {', '.join(TREND_BY)}")
     groups: dict[str, list[Stat]] = defaultdict(list)

@@ -6,7 +6,7 @@
 # PATH may hold nothing but python. Python reads the eight lines below as one string literal.
 ''''exec /bin/sh -c 'py="$(command -v python3 || command -v python)" ||
   { echo "comment-audit: error: no python3 or python on PATH" >&2; exit 127; }
-out="$("$py" -c "import sys; print(sys.version_info < (3, 8) and \"old %d.%d\" % sys.version_info[:2] or \"ok\")" 2>&1)"
+out="$("$py" -c "import sys; v=sys.version_info; print(v < (3, 8) and \"old %d.%d\" % v[:2] or \"ok\")" 2>&1)"
 rc=$?; last="${out##*
 }"; [ "$rc" = 0 ] && [ "$last" = ok ] || { case "$rc $last" in
   "0 old "*) echo "comment-audit: error: python3 >= 3.8 required (${last#old } found)" >&2 ;;
@@ -59,9 +59,11 @@ GIT_CONFIG = ("-c", "core.quotePath=false")
 GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_LITERAL_PATHSPECS": "1", "GIT_TERMINAL_PROMPT": "0",
            "GIT_NO_LAZY_FETCH": "1", "LC_ALL": "C"}
 # The repository is the one the current directory is in: the variables that point git at another git dir,
-# index, object store or namespace (a hook's GIT_INDEX_FILE, a caller's GIT_DIR) are dropped with the diff hooks.
+# index, object store or namespace (a hook's GIT_INDEX_FILE, a caller's GIT_DIR) are dropped with the diff
+# hooks.
 GIT_ENV_DROPPED = ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
-                   "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE")
+                   "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                   "GIT_NAMESPACE")
 DIFF = ("diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv",
         "--no-renames", "--diff-algorithm=myers", "--ignore-submodules=all", "--src-prefix=a/",
         "--dst-prefix=b/")
@@ -161,14 +163,16 @@ def _parser() -> argparse.ArgumentParser:
                         help=f"keep one finding; REASON has {rules.REASON_MIN}+ characters")
     parser.add_argument("--json", action="store_true", help="print one JSON object instead of the table")
     parser.add_argument("--skill", metavar="NAME",
-                        help="the calling skill (build, execute, review, refactor, …), recorded in the ledger")
+                        help="the calling skill (build, execute, review, refactor, …), "
+                             "recorded in the ledger")
     parser.add_argument("--trend", action="store_true", help="runs, density and findings per project")
     window = parser.add_mutually_exclusive_group()
     window.add_argument("--days", type=int, metavar="N", help=f"--trend days, default {ledger.DAYS_DEFAULT}")
     window.add_argument("--since", metavar="YYYY-MM-DD", help="--trend window from this UTC day")
     parser.add_argument("--project", metavar="NAME", help="--trend rows of one project only")
     parser.add_argument("--markdown", action="store_true", help="--trend as a Markdown table")
-    parser.add_argument("--by", choices=ledger.TREND_BY, help="--trend rows per project (default) or per calling skill")
+    parser.add_argument("--by", choices=ledger.TREND_BY,
+                        help="--trend rows per project (default) or per calling skill")
     return parser
 
 
@@ -288,7 +292,8 @@ class _Git:
 
 
 def _tree_object(top: str, rev: str, path: str) -> tuple[bytes, str]:
-    """Type and id of `rev:path` from `git ls-tree -z`, which takes the path as an argument; missing is rc 2."""
+    """Type and id of `rev:path` from `git ls-tree -z`, which takes the path as an argument;
+    missing is rc 2."""
     for entry in _git(top, ["ls-tree", "-z", rev, "--", path]).stdout.split(b"\0"):
         meta, _, name = entry.partition(b"\t")
         if name and _path(name) == path:
@@ -625,7 +630,8 @@ def _record(report: Report, skill: str) -> None:
 def _trend(args: argparse.Namespace) -> int:
     path = ledger.ledger_path(os.environ)
     try:
-        options = ledger.TrendOptions(args.days, args.since, args.project, args.markdown, args.by or "project")
+        options = ledger.TrendOptions(args.days, args.since, args.project, args.markdown,
+                                      args.by or "project")
         text = ledger.trend_report(path, options, dt.datetime.now(dt.timezone.utc))
     except ValueError as exc:
         raise AuditError(str(exc)) from exc
@@ -709,8 +715,8 @@ def _render_table(report: Report) -> list[str]:
     notes += [f"WARN unchanged {row.path}: base wrong or file not changed by this run" for row in report.rows
               if row.verdict == UNCHANGED]
     if report.truncated:
-        notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not searched for carried"
-                     " lines (budget)")
+        notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not searched "
+                     "for carried lines (budget)")
     notes += [f"NOTE skipped unreadable {path}: {why}" for path, why in report.unreadable.items()]
     thresholds = f"thresholds: {rules.describe_thresholds(report.thresholds)}"
     return [*lines, *(_shown(note) for note in notes), thresholds, _result_line(report), _retro_line(report)]
@@ -765,7 +771,8 @@ def _run(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
     _check_mode(args)
     if args.skill is not None and not ledger.SKILL.fullmatch(args.skill):
-        raise AuditError(f"--skill {args.skill!r}: expected a lowercase skill name (a-z, 0-9, '-', at most 40)")
+        raise AuditError(f"--skill {args.skill!r}: expected a lowercase skill name "
+                         "(a-z, 0-9, '-', at most 40)")
     if args.trend:
         return _trend(args)
     try:

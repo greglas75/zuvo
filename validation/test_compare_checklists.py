@@ -5,7 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 SCRIPT = Path(__file__).parent / "compare-checklists.py"
 INVARIANTS = Path(__file__).parent / "invariants" / "tgmcontest_orchestrator.json"
@@ -102,7 +101,8 @@ class TestPerfectScore:
 class TestPartialScore:
     def test_missing_some_invariants(self, tmp_path):
         # Only include middleware order, skip everything else
-        content = "callOrder requestId errorHandler corsMiddleware dbMiddleware\nclerkAuth tenantResolver\npublicTenantResolver"
+        content = ("callOrder requestId errorHandler corsMiddleware dbMiddleware\n"
+                   "clerkAuth tenantResolver\npublicTenantResolver")
         path = make_checklist(tmp_path, content)
         exit_code, result = run_script(str(path))
         assert 0 < result["score"] < 1.0
