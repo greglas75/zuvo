@@ -49,6 +49,22 @@ pg_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || return 1
 }
 
+# pg_reviews_dir <root> — the memory/reviews/ that holds this checkout's review artifacts: its own when it
+# exists (even empty), else, in a linked worktree, the main checkout's (git lists the main worktree first).
+# Writers (review-artifact.md → Path) use the own one whenever the worktree has memory/ at all, and the main
+# checkout's only when it has none — tgm-survey-platform's rule — so no copy or symlink is needed. Printed
+# even when neither exists (callers test -d); a failing git leaves the worktree's own path.
+pg_reviews_dir() {
+  local root="$1" main
+  if [ ! -d "$root/memory/reviews" ]; then
+    main="$(git -C "$root" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    if [ -n "$main" ] && [ "$main" != "$root" ] && [ -d "$main/memory/reviews" ]; then
+      printf '%s\n' "$main/memory/reviews"; return 0
+    fi
+  fi
+  printf '%s\n' "$root/memory/reviews"
+}
+
 pg_default_branch() {
   local root db
   root="$(pg_repo_root)" || { printf '%s\n' "${ZUVO_DEFAULT_BRANCH:-main}"; return 0; }
@@ -997,7 +1013,7 @@ pg_range_reviewed() {
   root="$(pg_repo_root)" || return 2
   head="${range##*..}"; [ -n "$head" ] || return 2
   git -C "$root" rev-parse --verify "${head}^{commit}" >/dev/null 2>&1 || return 2   # unresolvable → unknown
-  reviews="$root/memory/reviews"
+  reviews="$(pg_reviews_dir "$root")"
   [ -d "$reviews" ] || return 1            # repo present, no reviews dir → NOT covered
 
   change_files="$(pg_changed_production "$range" 2>/dev/null)" || return 1   # git failed → NOT covered
@@ -1046,7 +1062,7 @@ pg_uncovered_files() {
   # No reviews dir is NOT an error here: it means nothing is covered, so every production
   # file is emitted. (pg_range_reviewed returns 1 for the same state — same meaning, its
   # channel is a verdict rather than a list.)
-  reviews="$root/memory/reviews"
+  reviews="$(pg_reviews_dir "$root")"
   if [ ! -d "$reviews" ]; then
     printf '%s\n' "$change_files"
     return 0
@@ -1091,7 +1107,7 @@ pg_explain_uncovered() {
   local _peu_ahead _peu_name _pgl_py="$_PGL_NL" _pgl_pn="$_PGL_NL"
   _peu_root="$(pg_repo_root 2>/dev/null)" || return 0
   _peu_head="${_peu_range##*..}"; [ -n "$_peu_head" ] || return 0
-  _peu_reviews="$_peu_root/memory/reviews"
+  _peu_reviews="$(pg_reviews_dir "$_peu_root")"
 
   _peu_list="$(pg_changed_production "$_peu_range" 2>/dev/null)" || return 0
   [ -n "$_peu_list" ] || return 0

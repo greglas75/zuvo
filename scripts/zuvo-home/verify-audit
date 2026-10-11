@@ -69,12 +69,28 @@ def get_current_sha(project_root: Path) -> str:
         return ""
 
 
+def _git_path(cwd: Path, *args: str) -> str:
+    try:
+        out = subprocess.check_output(["git", *args], cwd=str(cwd), stderr=subprocess.DEVNULL)
+        return out.decode().strip()
+    except Exception:
+        return ""
+
+
 def find_project_root(audit_path: Path) -> Path:
+    """The work tree whose files the report cites: the one the artifact sits in, unless that is another
+    work tree of the repository the caller is in. A linked worktree's memory/reviews/ is often the main
+    checkout's (a symlink, or the gate's fallback), and its findings are about the caller's tree, not
+    about whatever branch the main checkout has out."""
     cur = audit_path.parent.resolve()
-    for parent in [cur, *cur.parents]:
-        if (parent / ".git").exists():
-            return parent
-    return audit_path.parent.resolve()
+    walked = next((p for p in [cur, *cur.parents] if (p / ".git").exists()), cur)
+    here = _git_path(Path.cwd(), "rev-parse", "--show-toplevel")
+    if here and Path(here).resolve() != walked:
+        mine = _git_path(Path.cwd(), "rev-parse", "--path-format=absolute", "--git-common-dir")
+        theirs = _git_path(walked, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if mine and mine == theirs:
+            return Path(here).resolve()
+    return walked
 
 
 # ---- finding parser --------------------------------------------------------
