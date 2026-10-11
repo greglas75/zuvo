@@ -69,6 +69,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 | `--include-e2e` | Include E2E test files in scope |
 | `--details` | Save per-file reports to `zuvo/audits/test-audit-details/` |
 | `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`) |
+| `--base <ref>` | Score Q7/Q11 against the production lines changed since `<ref>` (the Test Quality Gate passes the run's base); branches outside are listed as `Out-of-scope gaps`, not scored. Without it, the whole production file |
 | `--read-only` | Report only: skip Phases 4-6 (coverage.md/backlog.md writes) and Phase 7; no repo mutation beyond the `zuvo/audits/` report |
 
 Default: `all --quick --commit=ask`
@@ -195,6 +196,11 @@ For each test, identify its production counterpart:
 
 If production file not found: flag as ORPHAN (test without source).
 
+With `--base <ref>`, take each paired production file's scope now:
+`~/.zuvo/test-audit-batch ranges --base <ref> <production path>` prints `L<a>-<b>,…` (the lines changed
+since `<ref>`) or `whole` (a file new since `<ref>`, or one that did not change). It is the third field of
+the file's `batch-N.files` line. An ORPHAN has no scope.
+
 When CodeSift is available, use `search_symbols` or `find_references` for more reliable pairing in non-standard project layouts.
 
 ### 0.3 Pre-Batch Grouping
@@ -318,14 +324,16 @@ is another run's and was left alone).
 
 **Then the orchestrator writes `zuvo/audits/.test-audit-batch/batch-N.files`** for every batch —
 one line per test file, two TAB-separated fields: `<absolute test path>` TAB
-`<absolute production path, or ORPHAN>`. Absolute paths, because the client runs in a neutral
+`<absolute production path, or ORPHAN>`, plus, with `--base`, a third: the scope `ranges` printed
+(never beside ORPHAN). Absolute paths, because the client runs in a neutral
 directory, not in the repository. A path holding a TAB or a newline cannot be listed: the group
-call refuses a listing whose every line is not exactly two fields — field 1 an absolute path, field
-2 an absolute path or `ORPHAN` — records `listing-invalid` for that batch with a `listing-invalid:`
+call refuses a listing whose every line is not two or three fields — field 1 an absolute path, field
+2 an absolute path or `ORPHAN`, field 3 (beside a production path only) `whole` or `L<a>-<b>[,…]` — records `listing-invalid` for that batch with a `listing-invalid:`
 line on stderr, and never runs it. Field 1 is the test path, and the report heading for that file is
 `### ` followed by field 1 exactly — the heading the DONE gate below looks for. The group call
 renders `batch-N.list` from it for the reviewer (`<test path> (production: <production path>)`,
-one line per file), and `model-run` concatenates `--prompt-file` and `--append-file` byte for byte,
+with `; changed lines: 12-30, 88-91` or `; whole file` inside the parentheses when there is a scope, one
+line per file), and `model-run` concatenates `--prompt-file` and `--append-file` byte for byte,
 in order: the fenced body ends with `Files to audit:` followed by the placeholder, so the listing
 lands exactly where the placeholder stood.
 
@@ -431,7 +439,7 @@ never reported as cross-vendor or as `status=ok`. Its header line is
 Agent: Test Quality Auditor — fallback (per failed batch)
   model: <reviewer_model from reviewer-model-route.sh --fallback>
   type: "general-purpose"  # read-only: no Edit/Write; may run read-only verification commands (tests, lint) — never modifies the repo (Explore lacks mcp__codesift__*)
-  instructions: the fenced-body prompt, [VERIFICATION CONTEXT] = shell available, [BATCH FILE LIST] = batch-N.files rendered one line per file as "<test path> (production: <production path>)"
+  instructions: the fenced-body prompt, [VERIFICATION CONTEXT] = shell available, [BATCH FILE LIST] = batch-N.files rendered one line per file as "<test path> (production: <production path>)", the scope inside the parentheses as in 1a
   input: batch file list with paired production files, CODESIFT_AVAILABLE
 ```
 
