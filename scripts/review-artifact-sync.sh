@@ -59,7 +59,7 @@ for _ras_c in "$_ras_dir/pipeline-gate-lib.sh" "$_ras_dir/lib/pipeline-gate-lib.
 done
 if [ "${PG_LIB_LOADED:-}" != 1 ] || ! command -v path_contained >/dev/null 2>&1 \
    || ! command -v pg_artifact_proof_verdict >/dev/null 2>&1 \
-   || ! command -v pg_artifact_proof_refs >/dev/null 2>&1 \
+   || ! command -v pg_artifact_proof_refs >/dev/null 2>&1 || ! command -v pg_reviews_dir >/dev/null 2>&1 \
    || ! command -v pg_proof_ref_is_prose >/dev/null 2>&1 || ! command -v _pgl_clean >/dev/null 2>&1; then
   echo "review-artifact-sync: cannot compute the gate's verdict — pipeline-gate-lib.sh (with path-contain.sh) not found beside this script or in ~/.claude/hooks/lib; reinstall zuvo" >&2
   exit 2
@@ -109,19 +109,9 @@ resolve_root() {
   ( cd "$1" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null ) || return 1
 }
 
-# reviews_dir <root> — where the gate reads this checkout's artifacts: its own memory/reviews/, else (a
-# linked worktree without one) the main checkout's. The same rule as pg_reviews_dir in
-# hooks/lib/pipeline-gate-lib.sh, which this script must agree with.
-reviews_dir() {
-  local main
-  if [ ! -d "$1/memory/reviews" ]; then
-    main="$(git -C "$1" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
-    if [ -n "$main" ] && [ "$main" != "$1" ] && [ -d "$main/memory/reviews" ]; then
-      printf '%s\n' "$main/memory/reviews"; return 0
-    fi
-  fi
-  printf '%s\n' "$1/memory/reviews"
-}
+# reviews_dir <root> — where the gate reads this checkout's artifacts: the lib's own rule, so the two
+# can never disagree.
+reviews_dir() { pg_reviews_dir "$1"; }
 
 # read_refs <artifact> <name> — every proof ref the gate reads, into REFS. A header the gate
 # refuses as a whole (unreadable, over the ref caps) is named here instead of counting 0 proofs.

@@ -50,9 +50,10 @@ pg_repo_root() {
 }
 
 # pg_reviews_dir <root> — the memory/reviews/ that holds this checkout's review artifacts: its own when it
-# has one, else, in a linked worktree, the main checkout's. A repo that keeps memory/ in the main checkout
-# only (no memory/ in a linked worktree, as tgm-survey-platform rules) then needs no copy and no symlink.
-# Printed even when neither exists (callers test -d); only a failing git leaves the worktree's own path.
+# exists (even empty), else, in a linked worktree, the main checkout's (git lists the main worktree first).
+# Writers (review-artifact.md → Path) use the own one whenever the worktree has memory/ at all, and the main
+# checkout's only when it has none — tgm-survey-platform's rule — so no copy or symlink is needed. Printed
+# even when neither exists (callers test -d); a failing git leaves the worktree's own path.
 pg_reviews_dir() {
   local root="$1" main
   if [ ! -d "$root/memory/reviews" ]; then

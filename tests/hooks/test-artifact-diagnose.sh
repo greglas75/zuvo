@@ -418,4 +418,19 @@ else
   bad "stale-content lost: $out"
 fi
 
+echo "=== --check from a linked worktree without memory/ lints the main checkout's artifacts ==="
+# The gate reads them there (pg_reviews_dir); a --check that looked only in the worktree said
+# "No artifacts" while the gate was covering the push from the main checkout's copy.
+newrepo; proof 2
+git worktree add -q -b wt "$TMP/rw" HEAD >/dev/null 2>&1
+mkdir -p "$TMP/rw/zuvo/proofs" && cp zuvo/proofs/adv.txt "$TMP/rw/zuvo/proofs/adv.txt"
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/wt-main.md
+out="$(cd "$TMP/rw" && bash "$SYNC" --check 2>&1)"
+if [ ! -e "$TMP/rw/memory" ] && printf '%s' "$out" | grep -q '^OK .*/r/memory/reviews/wt-main.md (proof'; then
+  ok "--check in a worktree without memory/ lints the main checkout's artifact, its proof read in the worktree"
+else
+  bad "--check from the worktree: $out"
+fi
+git worktree remove --force "$TMP/rw" >/dev/null 2>&1
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
