@@ -868,6 +868,456 @@ fi
 has SUBDIRLINE "$OUT35B" && pass "(35) trailing-slash directory pathspec still scopes in the change" \
   || bad "(35) 'sub/' lost the in-scope change"
 
+# ═════════════════════════════════════════════════════════════════════════════
+# (36-41) lifecycle context: a changed hunk in a tracked shell script whose
+#      post-image defines a trap, a cleanup-named function or a trap handler gets
+#      those definitions appended after the file's last hunk, in a block no
+#      patch reader can take for diff content.
+# ═════════════════════════════════════════════════════════════════════════════
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+LC_BASE_PROLOG='cleanup(){ kill -- -"$pg"; }
+trap cleanup EXIT INT TERM'
+LC_SIG_PROLOG='on_sig() {
+  printf '"'"'caught\n'"'"' >&2
+  exit 130
+}
+trap on_sig INT'
+# Any block line starting like this is read as diff content or a section start by git or the adversarial splitter.
+LC_FORBIDDEN='^(diff --git |=== FILE: |@@|[-+ \\]|##)'
+
+# lc_repo <name> <path> <shebang|""> <prolog> <changed line> — a committed script: <shebang>, <prolog>, 30 filler
+# lines, `: change point`, 10 filler lines; the worktree then has <changed line> in place of `: change point`.
+lc_repo() {
+  local d
+  d="$(new_repo "$1")" || return 1
+  (
+    cd "$d" || exit 1
+    case "$2" in */*) mkdir -p "${2%/*}" ;; esac
+    {
+      [ -z "$3" ] || printf '%s\n' "$3"
+      printf '%s\n' "$4"
+      i=1; while [ "$i" -le 30 ]; do printf ': filler %d\n' "$i"; i=$((i + 1)); done
+      printf ': change point\n'
+      i=31; while [ "$i" -le 40 ]; do printf ': filler %d\n' "$i"; i=$((i + 1)); done
+    } > "$2"
+    git add -A && git commit -qm base
+    awk -v new="$5" '$0 == ": change point" { print new; next } { print }' "$2" > "$2.new" && mv "$2.new" "$2"
+  ) >/dev/null 2>&1 || return 1
+  printf '%s\n' "$d"
+}
+# lc_block <patch text> — every context block in it, opening and closing lines included.
+lc_block() { printf '%s\n' "$1" | awk '/^=== CONTEXT: /{ f = 1 } f { print } /^=== END CONTEXT ===$/{ f = 0 }'; }
+# lc_func_lines <n> <name> <pad> — a function <name> with <n> body lines, each about <pad> characters long.
+lc_func_lines() {
+  awk -v n="$1" -v name="$2" -v pad="$3" 'BEGIN {
+    printf "%s() {\n", name
+    for (i = 1; i <= n; i++) { l = sprintf("  : %s body line %d", name, i); while (length(l) < pad) l = l " x"; print l }
+    print "}" }'
+}
+
+# lc_row_block <label> <repo> <path> <bug> <want>... — the patch carries <path>'s block holding every <want> line.
+lc_row_block() {
+  local label="$1" repo="$2" path="$3" bug="$4" out blk w miss=""
+  shift 4
+  out="$(cd "$repo" && "$HELPER" 2>/dev/null)"
+  blk="$(lc_block "$out")"
+  has "=== CONTEXT: $path - " "$blk" || { bad "$label — no context block for $path; $bug"; return; }
+  for w in "$@"; do
+    printf '%s\n' "$blk" | grep -qxF -- "$w" || miss="$miss [$w]"
+  done
+  [ -z "$miss" ] && pass "$label" || bad "$label — the block lacks$miss; $bug"
+}
+# lc_row_no_block <label> <repo> <want in patch> <bug> — the patch (rc 0, holding <want>) carries no context block.
+lc_row_no_block() {
+  local out rc
+  out="$(cd "$2" && "$HELPER" 2>/dev/null)"; rc=$?
+  if [ "$rc" -ne 0 ] || ! has "$3" "$out"; then
+    bad "$1 — fixture vacuous: rc=$rc, patch lacks '$3'"
+  elif has "=== CONTEXT: " "$out"; then
+    bad "$1 — $4"
+  else
+    pass "$1"
+  fi
+}
+
+# (36) the block exists, with line numbers, whenever the script defines lifecycle code
+R36A="$(lc_repo lc36a dev.sh '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'setsid npm run dev:stack &')"
+lc_row_block "(36a) a background job beside a trap: the trap and the cleanup body travel with the hunk" "$R36A" dev.sh \
+  "a reviewer cannot tell whether the job is ever reaped" \
+  '2: cleanup(){ kill -- -"$pg"; }' '3: trap cleanup EXIT INT TERM'
+R36B="$(lc_repo lc36b dev.sh '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_block "(36b) a changed line with no lifecycle token still gets the script's definitions" "$R36B" dev.sh \
+  "the trigger is a token heuristic on the changed line, not the script's definitions" \
+  '3: trap cleanup EXIT INT TERM'
+R36C="$(lc_repo lc36c bin/run-dev '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'setsid npm run dev:stack &')"
+lc_row_block "(36c) an extensionless script is recognised by its env-bash shebang" "$R36C" bin/run-dev \
+  "shell detection reads only the extension" '3: trap cleanup EXIT INT TERM'
+R36D="$(lc_repo lc36d tools/start '#!/bin/sh' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_block "(36d) an extensionless script is recognised by its /bin/sh shebang" "$R36D" tools/start \
+  "only an env-style shebang is recognised" '3: trap cleanup EXIT INT TERM'
+R36E="$(lc_repo lc36e sig.sh '#!/usr/bin/env bash' "$LC_SIG_PROLOG" 'echo hi')"
+lc_row_block "(36e) a trap handler that is not cleanup-named has its whole body included" "$R36E" sig.sh \
+  "only cleanup-named functions are collected" \
+  '2: on_sig() {' "3:   printf 'caught\\n' >&2" '4:   exit 130' '5: }' '6: trap on_sig INT'
+
+# (37) no block where it adds nothing
+R37A="$(lc_repo lc37a app.ts '' "$LC_BASE_PROLOG" 'setsid npm run dev:stack &')"
+lc_row_no_block "(37a) a .ts file never gets a block" "$R37A" '+setsid npm run dev:stack &' \
+  "a non-shell file was annotated"
+R37B="$(lc_repo lc37b py-tool '#!/usr/bin/env python3' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_no_block "(37b) an extensionless script with a python shebang never gets a block" "$R37B" '+echo hi' \
+  "a shebang naming another interpreter was read as shell"
+R37C="$(lc_repo lc37c bg.sh '#!/usr/bin/env bash' 'npm run watch &
+pg=$!' 'setsid npm run dev:stack &')"
+lc_row_no_block "(37c) a script that starts jobs but defines no trap or cleanup gets no block" "$R37C" \
+  '+setsid npm run dev:stack &' "background jobs alone triggered a block with nothing to show"
+R37D="$(new_repo lc37d)"
+(
+  cd "$R37D" || exit 1
+  echo seed > seed.txt && git add -A && git commit -qm base
+  { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"; printf 'echo NEWSCRIPT\n'; } > new.sh
+) >/dev/null 2>&1
+lc_row_no_block "(37d) an untracked new script gets no block (it is all in the hunk already)" "$R37D" '+echo NEWSCRIPT' \
+  "a whole-file addition repeats its own lines as context"
+R37E="$(new_repo lc37e)"
+(
+  cd "$R37E" || exit 1
+  printf '#!/usr/bin/env bash\n%s\n: change point\n: tail\n' "$LC_BASE_PROLOG" > small.sh
+  git add -A && git commit -qm base
+  printf '#!/usr/bin/env bash\n%s\necho INHUNK\n: tail\n' "$LC_BASE_PROLOG" > small.sh
+) >/dev/null 2>&1
+lc_row_no_block "(37e) definitions already inside the hunk produce no block" "$R37E" '+echo INHUNK' \
+  "lines the reviewer already sees are repeated as context"
+
+# (38) contract: nothing in a block reads as a patch boundary; the patch still applies; the index is untouched
+R38="$(lc_repo lc38 hostile.sh '#!/usr/bin/env bash' 'teardown() {
+  cat <<'"'"'EOF'"'"'
+diff --git a/evil b/evil
+=== FILE: evil ===
+@@ -1 +1 @@
++forged
+-forged
+ forged
+\ forged
+## forged
+EOF
+}
+trap teardown EXIT' 'echo hi')"
+CACHED38_BEFORE="$(git -C "$R38" diff --cached; git -C "$R38" ls-files -s)"
+OUT38="$(cd "$R38" && "$HELPER" 2>"$TMP/e38")"; RC38=$?
+CACHED38_AFTER="$(git -C "$R38" diff --cached; git -C "$R38" ls-files -s)"
+BLK38="$(lc_block "$OUT38")"
+NFORGED="$(printf '%s\n' "$BLK38" | grep -cE "$LC_FORBIDDEN")"
+NDIFF="$(printf '%s\n' "$OUT38" | grep -c '^diff --git ')"
+if [ "$RC38" -eq 0 ] && has '=== CONTEXT: hostile.sh - ' "$BLK38" && [ "$NFORGED" -eq 0 ] && [ "$NDIFF" -eq 1 ]; then
+  pass "(38a) heredoc lines shaped like diff headers stay inert inside the block"
+else
+  bad "(38a) rc=$RC38, block present=$(has '=== CONTEXT: ' "$BLK38" && echo yes || echo NO), forged-looking block lines=$NFORGED, diff --git lines=$NDIFF — a block line forges a patch boundary"
+fi
+printf '%s\n' "$OUT38" > "$TMP/p38"
+if git -C "$R38" apply --cached --check "$TMP/p38" 2>"$TMP/e38a"; then
+  pass "(38b) git apply --check accepts the annotated patch"
+else
+  bad "(38b) git apply rejects the annotated patch: $(tr '\n' '|' < "$TMP/e38a")"
+fi
+[ "$CACHED38_BEFORE" = "$CACHED38_AFTER" ] && pass "(38c) the index is untouched by the annotation" \
+  || bad "(38c) INDEX MUTATED while annotating"
+
+R38D="$(lc_repo lc38d long.sh '#!/usr/bin/env bash' "$(lc_func_lines 200 cleanup 10)
+trap cleanup EXIT" 'echo hi')"
+BLK38D="$(lc_block "$(cd "$R38D" && "$HELPER" 2>/dev/null)")"
+N38D="$(printf '%s\n' "$BLK38D" | grep -cE '^[0-9]+: (cleanup[(][)] [{]|  : cleanup body line )')"
+if [ "$N38D" -eq 40 ] && printf '%s\n' "$BLK38D" | grep -q '^\.\.\. '; then
+  pass "(38d) a 200-line cleanup is cut to exactly 40 lines with an omission line"
+else
+  bad "(38d) cleanup lines in the block: $N38D (want 40) plus a '... ' omission line — the per-function cap is wrong"
+fi
+# Short lines: the 80-line cap binds first, and the block fills it exactly.
+R38E="$(lc_repo lc38e many.sh '#!/usr/bin/env bash' "$(lc_func_lines 200 cleanup_db 10)
+$(lc_func_lines 200 teardown 10)
+$(lc_func_lines 200 stop_all 10)
+trap cleanup_db EXIT" 'echo hi')"
+BLK38E="$(lc_block "$(cd "$R38E" && "$HELPER" 2>/dev/null)")"
+L38E="$(printf '%s\n' "$BLK38E" | wc -l | tr -d ' ')"
+if [ "$L38E" -eq 80 ] && printf '%s\n' "$BLK38E" | grep -q '^\.\.\. .* more context lines'; then
+  pass "(38e) short lines: the block is cut at exactly 80 lines and says what it left out"
+else
+  bad "(38e) block lines=$L38E (want 80 with a '... N more context lines' line) — the per-file line cap is wrong"
+fi
+# Long lines: the 4000-character cap binds first; the block ends just under it, not far below.
+R38F="$(lc_repo lc38f huge.sh '#!/usr/bin/env bash' "$(lc_func_lines 200 cleanup_db 70)
+$(lc_func_lines 200 teardown 70)
+$(lc_func_lines 200 stop_all 70)
+trap cleanup_db EXIT" 'echo hi')"
+BLK38F="$(lc_block "$(cd "$R38F" && "$HELPER" 2>/dev/null)")"
+C38F="$(printf '%s\n' "$BLK38F" | wc -c | tr -d ' ')"
+if [ "$C38F" -gt 3700 ] && [ "$C38F" -le 4000 ] && printf '%s\n' "$BLK38F" | grep -q '^\.\.\. .* more context lines'; then
+  pass "(38f) long lines: the block stops between 3700 and 4000 characters and says what it left out"
+else
+  bad "(38f) block chars=$C38F (want 3701..4000 with a '... N more context lines' line) — the per-file character cap is wrong"
+fi
+
+# (39) opt-out: only the exact value 1 removes the block
+OUT39A="$(cd "$R36A" && ZUVO_REVIEW_PATCH_NO_CONTEXT=1 "$HELPER" 2>/dev/null)"
+OUT39B="$(cd "$R36A" && ZUVO_REVIEW_PATCH_NO_CONTEXT=yes "$HELPER" 2>/dev/null)"
+if has '+setsid npm run dev:stack &' "$OUT39A" && ! has '=== CONTEXT: ' "$OUT39A"; then
+  pass "(39a) ZUVO_REVIEW_PATCH_NO_CONTEXT=1 emits the plain patch"
+else
+  bad "(39a) ZUVO_REVIEW_PATCH_NO_CONTEXT=1 still annotated (or lost the hunk)"
+fi
+has '=== CONTEXT: dev.sh - ' "$OUT39B" && pass "(39b) ZUVO_REVIEW_PATCH_NO_CONTEXT=yes keeps the block (only 1 opts out)" \
+  || bad "(39b) a non-1 value silently dropped the lifecycle context"
+
+# (40) fail-open: the annotation can only ever add; a failure leaves the plain patch, exit 0, a warning
+PLAIN36A="$(cd "$R36A" && ZUVO_REVIEW_PATCH_NO_CONTEXT=1 "$HELPER" 2>/dev/null)"
+SHIM40="$TMP/lc-awk-shim"; mkdir -p "$SHIM40"
+printf '#!/bin/sh\nexit 2\n' > "$SHIM40/awk"; chmod +x "$SHIM40/awk"
+OUT40A="$(cd "$R36A" && PATH="$SHIM40:$PATH" "$HELPER" 2>"$TMP/e40a")"; RC40A=$?
+if [ "$RC40A" -eq 0 ] && [ "$OUT40A" = "$PLAIN36A" ] && [ -s "$TMP/e40a" ]; then
+  pass "(40a) a failing annotation leaves the plain patch, exit 0, with a stderr warning"
+else
+  bad "(40a) rc=$RC40A, plain patch=$([ "$OUT40A" = "$PLAIN36A" ] && echo yes || echo NO), stderr=$(tr '\n' '|' < "$TMP/e40a") — an annotation failure must not cost the patch or pass silently"
+fi
+if [ "$(id -u)" -eq 0 ]; then
+  printf 'SKIP: (40b) unreadable post-image case skipped (running as root)\n'
+else
+  # core.trustctime=false + an old mtime keep git's stat check passing after chmod 000, so git still emits a
+  # diff for the file (rc 0) while the annotation cannot read the post-image.
+  R40="$(new_repo lc40)"
+  (
+    cd "$R40" || exit 1
+    git config core.trustctime false
+    printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG" > locked.sh
+    i=1; while [ "$i" -le 20 ]; do printf ': filler %d\n' "$i" >> locked.sh; i=$((i + 1)); done
+    touch -t 202001010000 locked.sh && git add -A && git commit -qm base
+    printf 'echo LOCKEDCHANGE\n' >> locked.sh
+    touch -t 202001010100 locked.sh && git add locked.sh
+    chmod 000 locked.sh
+  ) >/dev/null 2>&1
+  OUT40B="$(cd "$R40" && "$HELPER" 2>"$TMP/e40b")"; RC40B=$?
+  PLAIN40="$(cd "$R40" && ZUVO_REVIEW_PATCH_NO_CONTEXT=1 "$HELPER" 2>/dev/null)"
+  chmod 644 "$R40/locked.sh" 2>/dev/null
+  if [ "$RC40B" -eq 0 ] && has '+++ b/locked.sh' "$OUT40B" && [ "$OUT40B" = "$PLAIN40" ] \
+     && grep -q 'locked.sh' "$TMP/e40b"; then
+    pass "(40b) an unreadable post-image: plain patch, exit 0, a warning naming the file"
+  else
+    bad "(40b) rc=$RC40B, file in patch=$(has '+++ b/locked.sh' "$OUT40B" && echo yes || echo NO), plain=$([ "$OUT40B" = "$PLAIN40" ] && echo yes || echo NO), stderr=$(tr '\n' '|' < "$TMP/e40b") — want the plain patch and a warning naming locked.sh"
+  fi
+fi
+
+# (41) cross-check with the adversarial driver: a file split at its hunks carries the block into every part
+R41="$(new_repo lc41)"
+(
+  cd "$R41" || exit 1
+  {
+    printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"
+    for k in 1 2 3; do
+      i=1; while [ "$i" -le 20 ]; do printf ': filler %d.%d\n' "$k" "$i"; i=$((i + 1)); done
+      printf ': region %d\n' "$k"
+    done
+    printf ': tail\n'
+  } > big.sh
+  git add -A && git commit -qm base
+  awk '/^: region [0-9]$/ { for (i = 1; i <= 150; i++) printf "echo \"region %s line %d padding padding padding padding padding padding padding\"\n", $3, i; next } { print }' \
+    big.sh > big.sh.new && mv big.sh.new big.sh
+) >/dev/null 2>&1
+(cd "$R41" && "$HELPER" > "$TMP/p41" 2>/dev/null)
+LC_BIN="$TMP/lc-bin"; LC_PARTS="$TMP/lc-parts"; mkdir -p "$LC_BIN" "$LC_PARTS" "$TMP/lc-home/.zuvo"
+cat > "$LC_BIN/mock-partlog" <<'MOCK'
+#!/usr/bin/env bash
+n=1
+while ! ( set -C; : > "$LC_PART_DIR/$n.in" ) 2>/dev/null; do
+  n=$((n + 1)); [ "$n" -le 999 ] || { echo "mock-partlog: cannot create a part file in $LC_PART_DIR" >&2; exit 1; }
+done
+cat > "$LC_PART_DIR/$n.in"
+echo '{"findings":[]}'
+MOCK
+chmod +x "$LC_BIN/mock-partlog"
+( cd "$R41" && HOME="$TMP/lc-home" ZUVO_HOME="$TMP/lc-home/.zuvo" ZUVO_ADVERSARIAL_TEST_HARNESS=1 \
+    ZUVO_REVIEW_TEST_PROVIDERS=mock-partlog LC_PART_DIR="$LC_PARTS" PATH="$LC_BIN:$PATH" \
+    bash "$ROOT/scripts/adversarial-review.sh" --single --artifact "$TMP/art41" < "$TMP/p41" >/dev/null 2>"$TMP/e41" ); RC41=$?
+N41=0; PER41=""
+while [ -f "$LC_PARTS/$((N41 + 1)).in" ]; do
+  N41=$((N41 + 1))
+  PER41="$PER41${PER41:+ }$(grep -c '^=== CONTEXT: big.sh - ' "$LC_PARTS/$N41.in")"
+done
+WANT41="$(i=0; while [ "$i" -lt "$N41" ]; do printf '%s1' "$([ "$i" -gt 0 ] && echo ' ')"; i=$((i + 1)); done)"
+if [ "$RC41" -eq 0 ] && [ "$N41" -ge 2 ] && [ "$PER41" = "$WANT41" ]; then
+  pass "(41) the driver splits the annotated file into $N41 parts, each carrying the block exactly once"
+else
+  bad "(41) rc=$RC41 parts=$N41 block count per part=[$PER41] — want rc 0, >= 2 parts, one block in each (stderr: $(tail -3 "$TMP/e41" | tr '\n' '|'))"
+fi
+
+# (42) the user's diff prefix config cannot hide the block: the helper fixes a/ and b/
+R42A="$(lc_repo lc42a dev.sh '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'echo hi')"
+git -C "$R42A" config diff.noprefix true
+lc_row_block "(42a) diff.noprefix=true still gets the block" "$R42A" dev.sh \
+  "the post-image path is read from a prefix the user's config removed" '3: trap cleanup EXIT INT TERM'
+R42B="$(lc_repo lc42b dev.sh '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'echo hi')"
+git -C "$R42B" config diff.mnemonicPrefix true
+lc_row_block "(42b) diff.mnemonicPrefix=true still gets the block" "$R42B" dev.sh \
+  "the post-image path is read from a prefix the user's config renamed" '3: trap cleanup EXIT INT TERM'
+
+# (43) placement: the block closes its own file's section, right before the next file's header
+R43="$(lc_repo lc43 a.sh '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'echo A-CHANGED')"
+( cd "$R43" && echo b > b.txt && git add b.txt && git commit -qm b && echo B-CHANGED >> b.txt ) >/dev/null 2>&1
+OUT43="$(cd "$R43" && "$HELPER" 2>/dev/null)"
+POS43="$(printf '%s\n' "$OUT43" | awk '
+  /^=== CONTEXT: a\.sh - / { h = NR; before = prev }
+  /^=== END CONTEXT ===$/ { e = NR }
+  /^diff --git a\/b\.txt b\/b\.txt$/ { b = NR }
+  { prev = $0 }
+  END { printf "%s|%s", (h > 0 && before ~ /^[-+ ]/ && e > h && b == e + 1) ? "ok" : "bad", before }')"
+printf '%s\n' "$OUT43" > "$TMP/p43"
+if [ "${POS43%%|*}" = ok ] && git -C "$R43" apply --cached --check "$TMP/p43" 2>"$TMP/e43"; then
+  pass "(43) a.sh's block follows its last hunk line and directly precedes b.txt's diff; the patch applies"
+else
+  bad "(43) placement=$POS43, apply: $(tr '\n' '|' < "$TMP/e43") — the block is not where the splitter and git expect it"
+fi
+
+# (44) budget priority: trap registrations come first, so a full block never drops them
+R44="$(lc_repo lc44 prio.sh '#!/usr/bin/env bash' "$(lc_func_lines 40 cleanup_a 70)
+$(lc_func_lines 40 cleanup_b 70)
+trap 'echo bye' EXIT" 'echo hi')"
+BLK44="$(lc_block "$(cd "$R44" && "$HELPER" 2>/dev/null)")"
+if printf '%s\n' "$BLK44" | grep -qE "^[0-9]+: trap 'echo bye' EXIT$"; then
+  pass "(44) two long cleanup bodies fill the budget, the trap at the bottom still makes it in"
+else
+  bad "(44) the trap registration was cut by the cap (block lines: $(printf '%s\n' "$BLK44" | wc -l | tr -d ' '))"
+fi
+
+# (45) shell detection: a shebang decides when there is one; the extension must end the path
+R45A="$(lc_repo lc45a tool.sh '#!/usr/bin/env python3' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_no_block "(45a) a .sh file with a python shebang gets no block" "$R45A" '+echo hi' \
+  "the .sh extension overrode the interpreter the file names"
+R45B="$(lc_repo lc45b x.sh.bak '' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_no_block "(45b) x.sh.bak without a shebang gets no block" "$R45B" '+echo hi' \
+  "an extension in the middle of the name was read as shell"
+R45C="$(lc_repo lc45c x.sh.bak '#!/bin/bash' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_block "(45c) a bash-shebang script with any extension gets the block" "$R45C" x.sh.bak \
+  "a shebang script with a non-shell extension was skipped" '3: trap cleanup EXIT INT TERM'
+
+# (46) function bodies end at their own closer
+R46A="$(lc_repo lc46a arr.sh '#!/usr/bin/env bash' 'cleanup() {
+pids=(
+1 2
+)
+kill "${pids[@]}"
+}
+trap cleanup EXIT' 'echo hi')"
+lc_row_block "(46a) a brace function holding a same-indent ')' line is shown up to its '}'" "$R46A" arr.sh \
+  "the body was cut at the array's ')' and the kill was hidden" '6: kill "${pids[@]}"' '7: }'
+R46B="$(lc_repo lc46b sub.sh '#!/usr/bin/env bash' 'stop_svc() (
+cd /
+kill -- -"$pg"
+)
+: after the function' 'echo hi')"
+lc_row_block "(46b) a '( … )' subshell function is shown up to its ')'" "$R46B" sub.sh \
+  "a subshell body was not closed by its ')'" '2: stop_svc() (' '4: kill -- -"$pg"' '5: )'
+BLK46B="$(lc_block "$(cd "$R46B" && "$HELPER" 2>/dev/null)")"
+has '6: : after the function' "$BLK46B" && bad "(46b) the line after the subshell function leaked into its body" \
+  || pass "(46b) nothing after the closing ')' is shown"
+
+# (47) not a regular file: a tracked script replaced by a symlink to a lifecycle script gets no block
+R47="$(new_repo lc47)"
+(
+  cd "$R47" || exit 1
+  printf '#!/usr/bin/env bash\n%s\n: real\n' "$LC_BASE_PROLOG" > real.sh
+  printf '#!/usr/bin/env bash\n: plain\n' > link.sh
+  git add -A && git commit -qm base
+  rm link.sh && ln -s real.sh link.sh
+) >/dev/null 2>&1
+lc_row_no_block "(47) a script replaced by a symlink gets no block" "$R47" '+++ b/link.sh' \
+  "the annotation followed a symlink to another file's definitions"
+
+# (48) a path so long that no block fits the 4000-character cap: plain patch and a warning, never a silent drop
+LONG48=""; k=0
+while [ "$k" -lt 16 ]; do LONG48="$LONG48$(awk -v k="$k" 'BEGIN { s = sprintf("d%02d", k); while (length(s) < 240) s = s "x"; print s }')/"; k=$((k + 1)); done
+R48="$(new_repo lc48)"
+# The path exceeds macOS's PATH_MAX (1024); a refused path is a skipped row, never a product verdict.
+if ! ( cd "$R48" && mkdir -p "$LONG48" \
+       && { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"; i=1; while [ "$i" -le 20 ]; do printf ': filler %d\n' "$i"; i=$((i + 1)); done; } > "${LONG48}x.sh" ) 2>/dev/null; then
+  printf 'SKIP: (48) long-path case skipped (the filesystem refused a %d-byte path: PATH_MAX is below it)\n' "${#LONG48}"
+elif ! ( cd "$R48" && git add -A && git commit -qm base && printf 'echo LONGPATH\n' >> "${LONG48}x.sh" ) >"$TMP/s48" 2>&1; then
+  bad "(48) fixture setup failed after the path was created: $(tr '\n' '|' < "$TMP/s48")"
+else
+  OUT48="$(cd "$R48" && "$HELPER" 2>"$TMP/e48")"; RC48=$?
+  if [ "$RC48" -eq 0 ] && has '+echo LONGPATH' "$OUT48" && ! has '=== CONTEXT: ' "$OUT48" && grep -q '/x\.sh' "$TMP/e48"; then
+    pass "(48) a block that cannot fit: plain patch, exit 0, a warning naming the file"
+  else
+    bad "(48) rc=$RC48, hunk=$(has '+echo LONGPATH' "$OUT48" && echo yes || echo NO), block=$(has '=== CONTEXT: ' "$OUT48" && echo yes || echo no), stderr names x.sh=$(grep -q '/x\.sh' "$TMP/e48" && echo yes || echo NO) — a dropped block must be reported"
+  fi
+fi
+
+# (49) the "+++ b/" name git writes for a path with a space ends in a TAB, which is not part of the path
+R49="$(lc_repo lc49 'my dev.sh' '#!/usr/bin/env bash' "$LC_BASE_PROLOG" 'echo hi')"
+lc_row_block "(49) a script whose path holds a space gets its block" "$R49" 'my dev.sh' \
+  "the TAB git appends after such a name was kept, so the post-image was never found" '3: trap cleanup EXIT INT TERM'
+
+# (50) with diff.context=0 a deletion-only hunk is "+N,0": it shows no post-image line, not line N
+R50="$(new_repo lc50)"
+(
+  cd "$R50" || exit 1
+  git config diff.context 0
+  { printf '#!/usr/bin/env bash\n%s\n: doomed\n' "$LC_BASE_PROLOG"
+    i=1; while [ "$i" -le 20 ]; do printf ': filler %d\n' "$i"; i=$((i + 1)); done; } > del.sh
+  git add -A && git commit -qm base
+  awk '$0 != ": doomed"' del.sh > del.sh.new && mv del.sh.new del.sh
+) >/dev/null 2>&1
+OUT50="$(cd "$R50" && "$HELPER" 2>/dev/null)"
+if has '@@ -4 +3,0 @@' "$OUT50"; then
+  lc_row_block "(50) a deletion-only hunk right after the trap keeps the trap line in the block" "$R50" del.sh \
+    "a '+N,0' hunk was read as showing line N, so the trap on that line was left out" \
+    '2: cleanup(){ kill -- -"$pg"; }' '3: trap cleanup EXIT INT TERM'
+else
+  bad "(50) fixture vacuous: the patch has no '@@ -4 +3,0 @@' deletion-only hunk"
+fi
+
+# (51) a post-image over the 1 MiB read bound: that file's block is skipped with a warning, the rest is annotated
+R51="$(new_repo lc51)"
+(
+  cd "$R51" || exit 1
+  # The change point sits past the hunk's context lines, so the trap and cleanup are outside the hunk.
+  { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"
+    awk 'BEGIN { for (i = 1; i <= 10; i++) printf ": head %d\n", i }'; printf ': change point\n'
+    awk 'BEGIN { for (i = 1; i <= 20000; i++) printf ": filler %d padding padding padding padding padding\n", i }'; } > huge.sh
+  { printf '#!/usr/bin/env bash\n%s\n' "$LC_BASE_PROLOG"
+    awk 'BEGIN { for (i = 1; i <= 10; i++) printf ": head %d\n", i }'; printf ': change point\n: tail\n'; } > small.sh
+  git add -A && git commit -qm base
+  for f in huge.sh small.sh; do
+    awk '$0 == ": change point" { print "echo CHANGED"; next } { print }' "$f" > "$f.new" && mv "$f.new" "$f"
+  done
+) >/dev/null 2>&1
+SZ51="$(wc -c < "$R51/huge.sh" | tr -d ' ')"
+OUT51="$(cd "$R51" && "$HELPER" 2>"$TMP/e51")"; RC51=$?
+if [ "$SZ51" -le 1048576 ]; then
+  bad "(51) fixture vacuous: huge.sh is $SZ51 bytes, not over 1 MiB"
+elif [ "$RC51" -eq 0 ] && has '+++ b/huge.sh' "$OUT51" && ! has '=== CONTEXT: huge.sh - ' "$OUT51" \
+     && has '=== CONTEXT: small.sh - ' "$OUT51" && grep -q 'huge\.sh' "$TMP/e51"; then
+  pass "(51) a post-image over 1 MiB: its hunk is kept, its block skipped with a warning naming it, small.sh still annotated"
+else
+  bad "(51) rc=$RC51, huge.sh block=$(has '=== CONTEXT: huge.sh - ' "$OUT51" && echo YES || echo no), small.sh block=$(has '=== CONTEXT: small.sh - ' "$OUT51" && echo yes || echo NO), stderr=$(tr '\n' '|' < "$TMP/e51") — a huge script is read whole into memory, unbounded"
+fi
+
+# (52) a one-line post-image over 1 MiB: the bound applies to the first line too, not only to later ones
+R52="$(new_repo lc52)"
+(
+  cd "$R52" || exit 1
+  awk 'BEGIN { s = "x"; while (length(s) < 600000) s = s s; printf "trap cleanup EXIT; : %s\n", s }' > one.sh
+  git add -A && git commit -qm base
+  awk '{ sub(/^trap cleanup EXIT;/, "trap cleanup EXIT INT;"); print }' one.sh > one.sh.new && mv one.sh.new one.sh
+) >"$TMP/s52" 2>&1 || bad "(52) fixture setup failed: $(tr '\n' '|' < "$TMP/s52")"
+SZ52="$(wc -c < "$R52/one.sh" | tr -d ' ')"; NL52="$(wc -l < "$R52/one.sh" | tr -d ' ')"
+(cd "$R52" && "$HELPER" >"$TMP/p52" 2>"$TMP/e52"); RC52=$?
+if [ "$SZ52" -le 1048576 ] || [ "$NL52" -ne 1 ]; then
+  bad "(52) fixture vacuous: one.sh is $SZ52 bytes in $NL52 lines, not one line over 1 MiB"
+elif [ "$RC52" -eq 0 ] && grep -q '^+trap cleanup EXIT INT;' "$TMP/p52" && ! grep -q '^=== CONTEXT: ' "$TMP/p52" \
+     && grep -q 'one\.sh: its post-image is over 1048576 bytes' "$TMP/e52"; then
+  pass "(52) a one-line post-image over 1 MiB: plain patch, exit 0, the size warning names it"
+else
+  bad "(52) rc=$RC52, hunk=$(grep -q '^+trap cleanup EXIT INT;' "$TMP/p52" && echo yes || echo NO), block=$(grep -q '^=== CONTEXT: ' "$TMP/p52" && echo YES || echo no), stderr=$(tr '\n' '|' < "$TMP/e52") — the first line escaped the 1 MiB bound with no warning"
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo "ALL PASS"
   exit 0

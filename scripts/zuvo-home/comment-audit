@@ -1,11 +1,16 @@
 #!/bin/sh
 # Polyglot sh/python header: /bin/sh finds python3 (or python) and re-execs this file with it. No python
 # is rc 127; one older than 3.8, the modules' minimum, is rc 2, because it would stop at a SyntaxError
-# (rc 1, read as a breach). Python reads the six lines below as one string literal.
+# (rc 1, read as a breach). The probe prints `ok` or `old X.Y` as its last line; a python that prints neither
+# does not start, rc 2 with its rc and last output line (a traceback's cause). Only shell builtins run here:
+# PATH may hold nothing but python. Python reads the eight lines below as one string literal.
 ''''exec /bin/sh -c 'py="$(command -v python3 || command -v python)" ||
   { echo "comment-audit: error: no python3 or python on PATH" >&2; exit 127; }
-"$py" -c "import sys; sys.exit(sys.version_info < (3, 8))" 2>/dev/null ||
-  { echo "comment-audit: error: python3 >= 3.8 required" >&2; exit 2; }
+out="$("$py" -c "import sys; print(sys.version_info < (3, 8) and \"old %d.%d\" % sys.version_info[:2] or \"ok\")" 2>&1)"
+rc=$?; last="${out##*
+}"; [ "$rc" = 0 ] && [ "$last" = ok ] || { case "$rc $last" in
+  "0 old "*) echo "comment-audit: error: python3 >= 3.8 required (${last#old } found)" >&2 ;;
+  *) echo "comment-audit: error: $py does not start (rc $rc): ${last:-no output}" >&2 ;; esac; exit 2; }
 exec "$py" "$0" "$@"' "$0" "$@" # '''
 from __future__ import annotations
 
@@ -53,7 +58,10 @@ OPEN_FLAGS = os.O_RDONLY | sum(getattr(os, flag, 0) for flag in ("O_NOFOLLOW", "
 GIT_CONFIG = ("-c", "core.quotePath=false")
 GIT_ENV = {"GIT_OPTIONAL_LOCKS": "0", "GIT_LITERAL_PATHSPECS": "1", "GIT_TERMINAL_PROMPT": "0",
            "GIT_NO_LAZY_FETCH": "1", "LC_ALL": "C"}
-GIT_ENV_DROPPED = ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF")
+# The repository is the one the current directory is in: the variables that point git at another git dir,
+# index, object store or namespace (a hook's GIT_INDEX_FILE, a caller's GIT_DIR) are dropped with the diff hooks.
+GIT_ENV_DROPPED = ("GIT_DIFF_OPTS", "GIT_EXTERNAL_DIFF", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                   "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE")
 DIFF = ("diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv",
         "--no-renames", "--diff-algorithm=myers", "--ignore-submodules=all", "--src-prefix=a/",
         "--dst-prefix=b/")
@@ -67,8 +75,8 @@ CAT_HEADER = re.compile(rb"([0-9a-f]{40}|[0-9a-f]{64}) (blob|tree|commit|tag) (\
 SYMLINK_MODE = b"120000"
 MODIFIED, DELETED, BINARY, LINK, UNTRACKED = "modified", "deleted", "binary", "symlink", "untracked"
 PRESET = {DELETED: "deleted", BINARY: "n/a (binary)", LINK: "n/a (symlink)"}
-TREND_OPTIONS = ("days", "since", "project", "markdown")
-AUDIT_OPTIONS = ("base", "range", "files", "justify", "json")
+TREND_OPTIONS = ("days", "since", "project", "markdown", "by")
+AUDIT_OPTIONS = ("base", "range", "files", "justify", "json", "skill")
 TABLE_HEADER = ("FILE", "LANG", "AUTH_CODE", "AUTH_CMT", "DENSITY", "FILE_DENS", "N", "L", "C", "VERDICT")
 
 
@@ -152,12 +160,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--justify", action="append", default=[], metavar="ID=REASON",
                         help=f"keep one finding; REASON has {rules.REASON_MIN}+ characters")
     parser.add_argument("--json", action="store_true", help="print one JSON object instead of the table")
+    parser.add_argument("--skill", metavar="NAME",
+                        help="the calling skill (build, execute, review, refactor, …), recorded in the ledger")
     parser.add_argument("--trend", action="store_true", help="runs, density and findings per project")
     window = parser.add_mutually_exclusive_group()
     window.add_argument("--days", type=int, metavar="N", help=f"--trend days, default {ledger.DAYS_DEFAULT}")
     window.add_argument("--since", metavar="YYYY-MM-DD", help="--trend window from this UTC day")
     parser.add_argument("--project", metavar="NAME", help="--trend rows of one project only")
     parser.add_argument("--markdown", action="store_true", help="--trend as a Markdown table")
+    parser.add_argument("--by", choices=ledger.TREND_BY, help="--trend rows per project (default) or per calling skill")
     return parser
 
 
@@ -189,7 +200,7 @@ class _Git:
     """A streaming git child, killed GIT_TIMEOUT s after its start or last rearm; a timeout is rc 2."""
 
     def __init__(self, cwd: str, args: list[str], stdin: int) -> None:
-        self.args, self.err, self.expired = args, tempfile.TemporaryFile(), threading.Event()
+        self.cwd, self.args, self.err, self.expired = cwd, args, tempfile.TemporaryFile(), threading.Event()
         self.timer = threading.Timer(0, self._expire)
         try:
             self.proc = subprocess.Popen(["git", *GIT_CONFIG, *args], cwd=cwd, env=_git_env(), stdin=stdin,
@@ -247,11 +258,13 @@ class _Git:
     def blob(self, rev: str, path: str) -> tuple[str | None, str, str]:
         """The post-image of `rev:path` from a `git cat-file --batch` child."""
         stdin, stdout = self.proc.stdin, self.proc.stdout
-        if "\n" in path or stdin is None or stdout is None:
-            raise AuditError(f"{_shown(path)}: a path with a newline cannot be read from {rev[:7]}")
+        if stdin is None or stdout is None:
+            raise AuditError(f"git cat-file: no pipe to read {_shown(path)} from {rev[:7]}")
+        # The batch reads one name per line, so a path holding a newline is asked for by its object id.
+        name = _tree_object(self.cwd, rev, path)[1] if "\n" in path else f"{rev}:{path}"
         self.rearm()
         try:
-            stdin.write(f"{rev}:{path}\n".encode("utf-8", "surrogateescape"))
+            stdin.write(f"{name}\n".encode("utf-8", "surrogateescape"))
             stdin.flush()
             kind, size, ident = _cat_kind(stdout.readline().rstrip(b"\n"), f"{_shown(path)} in {rev[:7]}")
             if kind == b"blob" and size <= SIZE_CAP:
@@ -262,6 +275,7 @@ class _Git:
                 return (*_decode_blob(data[:-1]), ident)
             left = size + 1
             while left > 0:
+                self.rearm()  # a blob far over SIZE_CAP is drained, and each chunk restarts the timer
                 chunk = stdout.read(min(left, CHUNK))
                 if not chunk:
                     raise AuditError(f"git cat-file: {_shown(path)} ended early")
@@ -271,6 +285,16 @@ class _Git:
         if kind == b"blob":
             return None, "n/a (too large)", ident
         return None, f"n/a (not a file: {kind.decode()})", "-"
+
+
+def _tree_object(top: str, rev: str, path: str) -> tuple[bytes, str]:
+    """Type and id of `rev:path` from `git ls-tree -z`, which takes the path as an argument; missing is rc 2."""
+    for entry in _git(top, ["ls-tree", "-z", rev, "--", path]).stdout.split(b"\0"):
+        meta, _, name = entry.partition(b"\t")
+        if name and _path(name) == path:
+            _mode, kind, ident = meta.split(b" ")
+            return kind, ident.decode()
+    raise AuditError(f"git cat-file: {_shown(path)} in {rev[:7]}: missing")
 
 
 def _cat_kind(line: bytes, label: str) -> tuple[bytes, int, str]:
@@ -478,18 +502,21 @@ def _presets(top: str, target: Target, diff: Diff, paths: list[str]) -> dict[str
     if not quiet:
         return {}
     if target.post:
-        if any("\n" in path for path in quiet):
-            raise AuditError(f"a path with a newline cannot be read from {target.post[:7]}")
-        names = "".join(f"{target.post}:{path}\n" for path in quiet).encode("utf-8", "surrogateescape")
-        replies = _git(top, ["cat-file", "--batch-check"], stdin=names).stdout.split(b"\n")
-        if replies[-1:] == [b""]:
-            replies.pop()
-        if len(replies) != len(quiet):
-            raise AuditError(f"git cat-file: {len(replies)} replies for {len(quiet)} paths")
-        for index, path in enumerate(quiet):
-            label = f"{_shown(path)} in {target.post[:7]}"
-            if _cat_kind(replies[index], label)[0] != b"blob":
-                raise AuditError(f"git cat-file: {label}: not a file")
+        # The batch reads one name per line; a path holding a newline is looked up by ls-tree instead.
+        batch = [path for path in quiet if "\n" not in path]
+        kinds = {path: _tree_object(top, target.post, path)[0] for path in quiet if "\n" in path}
+        if batch:
+            names = "".join(f"{target.post}:{path}\n" for path in batch).encode("utf-8", "surrogateescape")
+            replies = _git(top, ["cat-file", "--batch-check"], stdin=names).stdout.split(b"\n")
+            if replies[-1:] == [b""]:
+                replies.pop()
+            if len(replies) != len(batch):
+                raise AuditError(f"git cat-file: {len(replies)} replies for {len(batch)} paths")
+            for index, path in enumerate(batch):
+                kinds[path] = _cat_kind(replies[index], f"{_shown(path)} in {target.post[:7]}")[0]
+        for path in quiet:
+            if kinds[path] != b"blob":
+                raise AuditError(f"git cat-file: {_shown(path)} in {target.post[:7]}: not a file")
         return dict.fromkeys(quiet, UNCHANGED)
     missing = [path for path in quiet if not os.path.lexists(os.path.join(top, path))]
     if missing:
@@ -583,12 +610,13 @@ def _origin(top: str, target: Target) -> ledger.Origin:
     return ledger.origin(top, common[:-1] if common.endswith("\n") else common, fmt, head, target.base)
 
 
-def _record(report: Report) -> None:
+def _record(report: Report, skill: str) -> None:
     path = ledger.ledger_path(os.environ)
     try:
         thresholds = rules.describe_thresholds(report.thresholds)
         accepted = report.justification.accepted
-        ledger.append(ledger.format_rows(report.run, report.origin, thresholds, report.rows, accepted), path)
+        rows = ledger.format_rows(report.run, report.origin, thresholds, report.rows, accepted, skill)
+        ledger.append(rows, path)
     except (OSError, ValueError) as exc:
         why = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
         raise AuditError(f"cannot write the ledger {_shown(path)}: {why}") from exc
@@ -597,7 +625,7 @@ def _record(report: Report) -> None:
 def _trend(args: argparse.Namespace) -> int:
     path = ledger.ledger_path(os.environ)
     try:
-        options = ledger.TrendOptions(args.days, args.since, args.project, args.markdown)
+        options = ledger.TrendOptions(args.days, args.since, args.project, args.markdown, args.by or "project")
         text = ledger.trend_report(path, options, dt.datetime.now(dt.timezone.utc))
     except ValueError as exc:
         raise AuditError(str(exc)) from exc
@@ -636,7 +664,9 @@ def _env_suffix(report: Report) -> str:
 
 
 def _unchanged_suffix(report: Report) -> str:
-    return f" unchanged={sum(row.verdict == UNCHANGED for row in report.rows)}"
+    """degraded= then unchanged=, which stays the last field of both machine lines."""
+    degraded = sum(bool(row.result and row.result.degraded) for row in report.rows)
+    return f" degraded={degraded} unchanged={sum(row.verdict == UNCHANGED for row in report.rows)}"
 
 
 def _result_line(report: Report) -> str:
@@ -679,7 +709,8 @@ def _render_table(report: Report) -> list[str]:
     notes += [f"WARN unchanged {row.path}: base wrong or file not changed by this run" for row in report.rows
               if row.verdict == UNCHANGED]
     if report.truncated:
-        notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not read (budget)")
+        notes.append(f"NOTE carried pool truncated: {report.truncated} untracked files not searched for carried"
+                     " lines (budget)")
     notes += [f"NOTE skipped unreadable {path}: {why}" for path, why in report.unreadable.items()]
     thresholds = f"thresholds: {rules.describe_thresholds(report.thresholds)}"
     return [*lines, *(_shown(note) for note in notes), thresholds, _result_line(report), _retro_line(report)]
@@ -733,6 +764,8 @@ def _run(argv: list[str]) -> int:
         getattr(stream, "reconfigure", lambda **_: None)(errors="backslashreplace")
     args = _parser().parse_args(argv)
     _check_mode(args)
+    if args.skill is not None and not ledger.SKILL.fullmatch(args.skill):
+        raise AuditError(f"--skill {args.skill!r}: expected a lowercase skill name (a-z, 0-9, '-', at most 40)")
     if args.trend:
         return _trend(args)
     try:
@@ -740,7 +773,7 @@ def _run(argv: list[str]) -> int:
     except ValueError as exc:
         raise AuditError(str(exc)) from exc
     report = _audit(args, thresholds)
-    _record(report)
+    _record(report, args.skill or "")
     _emit(_render_json(report) + "\n" if args.json else "\n".join(_render_table(report)) + "\n")
     return report.rc
 

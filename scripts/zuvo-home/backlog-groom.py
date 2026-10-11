@@ -111,9 +111,11 @@ KINDS: Tuple[str, ...] = zb.DEFAULT_KINDS + (zb.KIND_HEADING,)
 def load(repo: str) -> Loaded:
     """Resolve, read and parse both files. Read-only; every write in this module happens under a lock
     taken afterwards, against a RE-READ of the same path."""
-    _, real, archive = zio.resolve(repo)
+    declared, real, archive = zio.resolve(repo)
     text = zio.read(real)
-    return Loaded(real=real, archive=archive, root=zb.main_root(repo),
+    # The root of the SAME resolution (one rule evaluation): verdict citations resolve against the tree
+    # whose backlog this is — a linked worktree's for a tracked backlog, else the main checkout.
+    return Loaded(real=real, archive=archive, root=os.path.dirname(os.path.dirname(declared)),
                   lines=text.splitlines(keepends=True),
                   entries=list(zb.iter_entries(text, kinds=KINDS)),
                   archived=list(zb.iter_entries(zio.read(archive), kinds=KINDS)))
@@ -250,10 +252,15 @@ def cmd_dispatch(a: argparse.Namespace) -> int:
     # The chunk's MODAL section, so a seed's `section` is one the chunk really contains. A constant
     # there — never mind a literal marker — is a field `jq` can select the graded rows on.
     sections = [str(r.get("section", "")) for r in mine]
-    seeds, answers, short = zs.build_seeds(
+    # The tree the chunk is dispatched AGAINST is what a seed's expected verdict has to be derivable
+    # from; twice as many live anchors are asked for as are used, because a candidate the verifier
+    # could not honestly answer is dropped BEFORE the slice and a pool of exactly K absorbs no drops.
+    tree = zv.Tree(root=loaded.root, real=loaded.real, archive=loaded.archive)
+    seeds, answers, short, dropped = zs.build_seeds(
         a.chunk, [e.body for e in loaded.archived],
-        zs.live_anchors(loaded.root, zs.SEEDS_PER_CHUNK), mine, zs.SEEDS_PER_CHUNK,
-        max(set(sections), key=sections.count) if sections else zs.SEED_SECTION)
+        zs.live_anchors(loaded.root, zs.SEEDS_PER_CHUNK * 2), mine, zs.SEEDS_PER_CHUNK,
+        max(set(sections), key=sections.count) if sections else zs.SEED_SECTION, tree=tree)
+    zs.print_drops(dropped)
     # THE COUNT AND THE SPLIT, never the values. `expected=STALE-FIXED,STILL-REAL` is constant while
     # both halves derive, and informative the moment one does not — a chunk that could only seed
     # closures would announce `expected=STALE-FIXED`, which is the answer to all four graded rows.
@@ -341,7 +348,7 @@ def cmd_apply(a: argparse.Namespace) -> int:
     print("LEDGER=%s lines=%d rows=%d" % (ledger, read.lines, len(read.rows)))
     zf.refuse_index_rows(read.rows)
     zap.coverage_or_refuse(loaded.entries, read.rows)
-    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived)
+    actions = zap.dispositions(loaded.entries, read.rows, loaded.archived, loaded.lines)
     zap.report(actions)
     # THE REFUSAL PATH WRITES TOO. `drop-stale` runs before `archive`'s scope check can be asked (see
     # `perform`), so RC_SCOPE lands after entries were already removed — and `refuse` exits, so the

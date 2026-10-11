@@ -1541,12 +1541,6 @@ not execute it. The adversarial suite was therefore run separately for this push
 **What:** `run-logger.md` says the wrapper "stamps `date -u` when absent". A 12-field line WITHOUT the DATE field (`refactor-radar\ttgm-access\t…`) came back as `2026-09-25T16:12:43Z\ttgm-access\t…`: the SKILL field was REPLACED by the date instead of the date being prepended. The line then failed `12 TSV fields, runs.log schema requires 13` and was NOT appended. A retry with an explicit date worked. Doc and code disagree.
 **Fix:** when field 1 is not ISO-8601, prepend the date instead of overwriting, or reject with "field 1 must be DATE" and fix the doc sentence.
 
-- [ ] B-20260925-APPEND-RUNLOG-INCLUDES-AUTO [P4][telemetry][conf 80]
-**Fingerprint:** scripts/zuvo-home/append-runlog|telemetry|includes-auto-ambiguous-trackers
-**Source:** refactor-radar/2026-09-25; severity:low.
-**What:** `INCLUDES=AUTO` gave up with `98 include trackers in /tmp — cannot tell which belongs to this run; INCLUDES left as -`. With several concurrent sessions this is the normal state, so AUTO effectively always yields `-`, and no skill sets `ZUVO_INCLUDES_FILE`.
-**Fix:** key the tracker file by session id (the hook knows it) and let append-runlog pick the current session's file. Also prune trackers older than a day.
-**Re-observed:** 2026-10-03, zuvo:refactor 1f022802 on zuvo-plugin — `36 include trackers in /tmp`, INCLUDES left as `-` (seen:2).
 
 - [ ] B-20260925-BACKLOG-HELPER-TABLE-FORMAT [P2][correctness][conf 90]
 **Fingerprint:** scripts/zuvo-home/backlog-archive.py|correctness|table-format-backlogs-invisible
@@ -1581,7 +1575,7 @@ not execute it. The adversarial suite was therefore run separately for this push
 **Fix:** expose `zms_timeout_bin` as public and route the driver's six other call sites through it; or state in the lane table why only codex/claude get the wider fallback.
 **Defer-reason:** structural-refactor (multi-site) — six call sites across two files.
 
-## B-20260925-ADV-CHUNK-TRUNCATES-SINGLE-FILE — the driver truncates an oversized single file instead of splitting it, and the gate blames the wrong thing
+## B-20260925-ADV-CHUNK-TRUNCATES-SINGLE-FILE — PARTIAL (2807e11 splits a single file at its hunks; b875e78 makes the gate message name the truncation; RD-1040): the driver truncates an oversized single file instead of splitting it, and the gate blames the wrong thing
 
 **File:** scripts/adversarial-review.sh (chunker), hooks/lib/pipeline-gate-lib.sh (pg_artifact_proven)
 **Fingerprint:** scripts/adversarial-review.sh|correctness|single-file-truncation-and-misleading-gate
@@ -1590,6 +1584,7 @@ not execute it. The adversarial suite was therefore run separately for this push
 Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the truncation marker BEFORE it counts providers, but the refusal reads `<2 'REVIEW BY:' lines` — so a proof with 32 providers is reported as having fewer than two. And `review-artifact-sync.sh --check` called the same file `OK (REVIEW BY x55)` while the push gate refused it: two readers of one artifact giving opposite answers, which is what finally forced reading the gate's source.
 **Fix:** hunk-split inside the chunker when one file exceeds the cap; for a NEW file (one `@@ -0,0 +1,N @@` hunk, no boundary at all — the documented staircase in adversarial-loop.md stops at hunk boundaries and does not cover this) split the hunk body and recompute the header. Make the gate's message name the truncation and list the omitted files. Make the two readers agree, or have the lenient one say which check it does not perform.
 **Defer-reason:** tooling fix outside the reviewed diff; worked around by hand this run.
+**Remaining:** a single hunk over the cap is still truncated (owner decision); `diff -u` input without `diff --git` headers is not split.
 
 ## B-20260925-CODEX-READ-ACCESS-UNENFORCED — `--access read` bounds claude but not codex
 
@@ -1983,11 +1978,6 @@ confidence:95 source:observed-directly-in-run
 **What:** CodeSift indexed the linked worktree but returned `(no symbols)` for `scripts/zuvo-home/verify-tests`, while the repository's Python AST extractor found 53 public symbols. That makes CodeSift discovery and reference analysis unavailable for this supported sh/Python helper shape, forcing native fallback despite a healthy index.
 **Fix:** teach CodeSift's file classifier the `''''exec` polyglot marker or make the skill's index step declare this exact parser gap and use the AST extractor directly.
 
-- [ ] B-20260927-REFGLOB-WARNING [P4][diagnostics][conf 100]
-**Fingerprint:** hooks/lib/refactor-gate-lib.sh|diagnostics|unmatched-contract-glob-warning
-**Source:** every commit in `codex/verify-tests-7364` printed `zuvo contract: unreadable or non-contract: zuvo/contracts/refactor-*.json` twice.
-**What:** `refactor_gate_check` iterates a literal `refactor-*.json` when the contracts directory exists but no matching file does. It sends that literal to the structural reader and prints an error-looking warning on successful unrelated commits.
-**Fix:** guard each `refactor-*.json` loop with `[ -f "$c" ] || continue` (and the corresponding variable names in sibling loops), then test a contracts directory with zero matching files.
 
 - [ ] B-20260928-TEST-AUDIT-REVIEWER-ROUTING [P3][test-infra][conf 100]
 **Fingerprint:** skills/test-audit/SKILL.md|reviewer|codex-gpt-5.4-http-400
@@ -3000,20 +2990,8 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
 - [ ] B-20261005-CP-REVIEW-QUEUE [unknown owner]: `docs/review-queue.md` is untracked in the comment-pass worktree. It is not from this session. Decide whether to commit, move or delete it before the worktree is removed.
 
 ### Helper defects the re-scorers rated below 51 (left for time; each verified VALID at HEAD 978ad713)
-- [ ] B-20261005-CP-R-C1 C1 (40) scripts/zuvo-home/zuvo_comment_scan.py:129-133: a directive comment with trailing prose is classified as CODE, so the prose escapes N/L/D. Examples: `# noqa: E501 long reason`, `// @ts-expect-error because ...`. Fix with a directive-argument rule: the directive token is code, the rest is comment.
-- [ ] B-20261005-CP-R-A2 A2 (30) zuvo_comment_scan.py:236-237: the PHP heredoc close row is not rescanned, so `EOT; // c` loses its comment. When php mode closes the heredoc, run `_scan` from the end of the delimiter.
-- [ ] B-20261005-CP-R-B2 B2 (20) zuvo_comment_scan.py:176-179: a parenthesized triple-quoted string is not recognised as a docstring, so the row counts as code.
 - [ ] B-20261005-CP-R-A3 A3 (12) zuvo_comment_scan.py:536: the python tokenize fallback has no f-string model. This is the documented degraded mode; consider adding one.
-- [ ] B-20261005-CP-R-B-22 B-22 (20) scripts/zuvo-home/comment-audit:674: `degraded` is absent from the RESULT line and the ledger, so a run on the fallback scanner looks like a normal PASS. Add a `degraded=<n>` token after `unchanged=`.
-- [ ] B-20261005-CP-R-B-04 B-04 (15) comment-audit:247-273: `rearm()` runs once per `blob()`, so a huge drain can exceed GIT_TIMEOUT. Re-arm inside the read loop.
-- [ ] B-20261005-CP-R-B-08 B-08 (25) comment-audit:56: inherited `GIT_DIR`/`GIT_INDEX_FILE` redirect every git call. Clear them, as the other hostile-env hardening does.
-- [ ] B-20261005-CP-R-B-12 B-12 (15) comment-audit:250,481: a path containing a newline turns `--range` mode into rc 2. Give such a path a per-file `n/a (unsupported path)` row instead.
-- [ ] B-20261005-CP-R-D-25 D-25 (25) comment-audit:679-680 and docs/comment-pass.md:138: the NOTE "untracked files not read (budget)" is wrong. Those files are still audited; they are only kept out of the carried pool. Reword it to "not searched for carried lines".
-- [ ] B-20261005-CP-R-D-26 D-26 (18) comment-audit:5-8: a broken interpreter reports "python3 >= 3.8 required". Let the probe's stderr through.
 - [ ] B-20261005-CP-HELP-STDERR: with fd 1 closed, `--help` text goes to stderr (found by fixer F1).
-- [ ] B-20261005-CP-R-B-95 B-95 (45) scripts/zuvo-home/zuvo_comment_ledger.py:44: CONTROL lacks U+061C (a bidi control).
-- [ ] B-20261005-CP-R-B-96 B-96 (25) ledger:259: the trend's FILES column counts measured rows, while the docs say "files". Rename the column or fix the doc.
-- [ ] B-20261005-CP-R-B-97 B-97 (20) ledger:275: `--project` is compared raw against the escaped stored name, and `skipped` ignores the filter. Escape the option before `trend()`.
 - [ ] B-20261005-CP-R-B-98 B-98 (20) ledger:35: EINVAL is not in NO_LOCK. Measure whether flock returns it on any supported FS.
 - [ ] B-20261005-CP-R-B-91 B-91 (10) ledger:174-198: there is no fsync after append, so a power loss can drop the last row.
 - [ ] B-20261005-CP-R-B-26 B-26 (10) ledger: the ledger has no retention or rotation. Reuse rotate-retros' age-based archival.
@@ -3092,7 +3070,8 @@ B-ap13-language-neutral, B-tqg-*, B-pipefail-grep-q, B-execute-7b-scope-source, 
   - tests/skill-suite/test-comment-pass-wiring.sh
 
 ### Tooling and process gaps hit during the session (out of scope: other skills, scripts or repos)
-- [ ] B-20261005-CP-ADV-HUNK-SPLIT: scripts/adversarial-review.sh truncates a single file diff over the 30k cap (EXIT 4) instead of splitting it at `@@` hunks. It also chunks only at `diff --git` boundaries, so `diff -u` input is never split; the T9 delta review lost its test-file half this way.
+- [ ] B-20261005-CP-ADV-HUNK-SPLIT [PARTIAL — 2807e11 splits a single file at its hunks, RD-1040]: scripts/adversarial-review.sh truncates a single file diff over the 30k cap (EXIT 4) instead of splitting it at `@@` hunks. It also chunks only at `diff --git` boundaries, so `diff -u` input is never split; the T9 delta review lost its test-file half this way.
+  Remaining: a single hunk over the cap is still truncated (owner decision); `diff -u` input without `diff --git` headers is not split. The gate message names truncation (b875e78).
 - [ ] B-20261005-CP-ADV-SHARDS: skills/review/SKILL.md 1.6 has no recipe for diffs above about 150k characters. Sequential chunks took about 12 min each (23 chunks ≈ 4.5 h). The session hand-rolled 4 parallel shards, each with its own --artifact, then concatenated the artifacts into the proof. Add a `--shards N` option or document the recipe.
 - [ ] B-20261005-CP-TF-ABLATE-CMD [repo i9-farma]: tf-ablate runs only jest, vitest, pytest and codeception. Add `--runner cmd --test-cmd <cmd>`, so bash/bats suites get one farm reservation and parallel sandboxes.
   - Until then, document the reprobe-per-mutant recipe in skills/mutation-test/SKILL.md 1.3.
@@ -3116,13 +3095,6 @@ Session: merged the stack (PRs #26–#37), split the write-tests/mutation-test w
 - [ ] B-20261007-CPM-CACHE-ZUVO-HOME-STALE [P4][install][conf 85]: the cache dirs' `scripts/zuvo-home/` is never refreshed.
   - **What:** `~/.claude/plugins/cache/zuvo-marketplace/zuvo/1.6.80/scripts/zuvo-home/` dates from 2026-09-27. It has no `comment-audit`, and its `append-runlog` differs from main. `install.sh` syncs `scripts/*.sh|*.py` into the cache but not `scripts/zuvo-home/`. Skills call `~/.zuvo/<helper>`, so nothing breaks today. But the retro-marker block in execute/plan falls back to `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub` when `retro-stub` is not on PATH, so it would pick up a stale stub.
   - **Fix:** either sync `scripts/zuvo-home/` into each cache dir, or stop shipping it there and drop the cache fallback from the retro-marker block.
-- [ ] B-20261007-CPM-ARCHIVE-WORKTREE-REPO [P3][tooling][conf 85]: `backlog-archive.py --repo <linked worktree>` reads and writes the main checkout's backlog.
-  - **What:** from the `comment-pass-merge` worktree, `backlog-archive.py status --repo .` reported `/Users/greglas/DEV/zuvo-plugin/memory/backlog.md` and "nothing resolved left". The branch's own backlog.md had a ticked `B-20261005-CP-PRS`, which turned test-backlog-grooming-smoke (A19b) red on the farm. Running `archive` from there would have written into the main checkout, which other agents share.
-  - **Workaround used:** copied the branch's two backlog files into a scratch `git init` repo, ran `archive --repo <scratch>`, and copied the result back (commit 4f6c7d40).
-  - **Fix:** when `--repo` names a worktree explicitly, operate on that tree's tracked `memory/backlog.md`, or refuse and name both paths. Never write silently into a different checkout.
-- [ ] B-20261007-CPM-LEDGER-NO-SKILL [P3][comment-audit][conf 80]: ledger rows do not say which skill or slot ran the helper.
-  - **What:** answering "who uses it" meant correlating `~/.zuvo/comment-audit.log` timestamps with `runs.log`. A run that has not finished yet (the 50 zuvo-plugin rows from an in-progress execute on `fix/hook-enforcement-integrity`) has no runs.log line, so it could only be attributed from git history.
-  - **Fix:** an optional `--skill <name>` (or a `ZUVO_SKILL` env), written into the `notes` column, and passed by each slot (build 4.2c, execute 7a, review 1b, refactor 0b/3d). `--trend` could then group by skill.
 - [ ] B-20261007-CPM-TELEMETRY-UPTAKE [P3][follow-up][conf 70]: check that PR #40 actually brings `comment_pass:` into retros.
   - **Baseline:** 2026-10-05 17:25Z to 2026-10-06 05:25Z: 74 ledger runs, but only 1 of the ~15 build/review retros carried the line.
   - **When:** about a week after the Claude Code and Codex restarts. Count the build, execute, review (FIX) and refactor retros with `comment_pass:` against the ledger runs. No miner parses the line (retros.log has no column for it), so this is a manual count, or `comment-audit --trend`.
@@ -3163,6 +3135,32 @@ below with their failing gates. Their gaps sit outside the changed behaviour and
 - [ ] B-20261008-TQ-KIMI-BUILD [P4][test-quality] tests/hooks/test-kimi-build.sh — tier C (Q3, Q4, Q7, Q11 = 0): a complete rejection matrix for invalid agent and hook inputs; targeted cases for the transform and validation branches; a recorded-seed property test for the pure transforms.
 - [ ] B-20261008-TQ-INFRA-WIRING [P4][test-quality] tests/infra-suite/test-infra-wiring.sh — tier C (Q4, Q7, Q11, Q12, Q13, Q17 = 0): run install_codex and assert the installed infra-collect.sh bytes in this suite (today only test-install-wiring (15) covers it through verify_copied); check the severity mapping values; fix the Total-row grep, whose `^` alternative matches any line.
 - [ ] B-20261008-TQ-INSTALL-HOST-OWNERSHIP [P4][test-quality] tests/hooks/test-install-host-ownership.sh — tier C (Q3, Q4, Q7, Q11 = 0): the invalid KIMI_CODE_HOME refusal and build-failure results; the empty-agent, manifest-prune and malformed-TOML branches; make the Kimi cases runnable without the shared build fixture.
+
+## 2026-10-09 build backlog-root (b4c5e18d) — left open
+
+Build: a tracked backlog belongs to the checkout it is in (owner decision 2026-10-09). The test-quality gate
+(cross-vendor test-audit, report zuvo/audits/test-quality-audit-2026-10-09-backlog-root.md in that worktree) is
+WARN. The new suite covers every changed branch, but scored against the whole zuvo_backlog_io.py it is tier C.
+The pre-existing suites are tier C on their own debt.
+
+- [ ] B-20261009-BACKLOG-DONE-UNTRACKED-WARN [P4][tooling][conf 75]: `backlog-archive.py archive` does not warn when the backlog is tracked but `memory/backlog-done.md` beside it is neither tracked nor ignored.
+  - **Why:** the moved entries then live only in that checkout. In a linked worktree they disappear with it, while the tracked backlog.md loses them through the merge. The protocol only advises tracking the file (backlog-protocol.md "Where the Backlog Lives").
+  - **Fix:** in cmd_archive, beside `_refuse_tracked_archive`, warn (do not refuse) when `is_ignored(archive) is False` and git does not track the archive file, naming the `git add` to run.
+- [ ] B-20261009-BACKLOG-GIT-FAIL-MAIN [P4][tooling][conf 60]: a failing git (a lock, a corrupt index, a timeout) reads as "untracked", so backlog_root falls back to the main checkout. In a repo that tracks the backlog, a write from a linked worktree then lands in the main checkout's working copy: the pre-2026-10-09 behaviour, through a failure path.
+  - **Why left:** the io module's fail-opens are load-bearing (append-runlog runs verify as a blocking gate), and the window is a git failure at the moment of the call.
+  - **Fix if it ever shows:** have tracked_root tell "not tracked" (empty `ls-files --stage`) from "git failed" (non-zero rc), and make the WRITE commands (archive, drop-stale) refuse on the second while reads keep failing open.
+- [ ] B-20261009-STATE-FAMILY-TRACKED [P4][design][conf 70]: `memory/ideas.md` and `knowledge/*.jsonl` still follow the main-checkout anchor even where git tracks them, as zuvo-plugin does.
+  - **Why left:** the owner's decision covered the backlog, and the protocol now says so explicitly.
+  - **Decide:** whether the tracked rule should extend to them. knowledge-prime.md and knowledge-curate.md would follow, together with log-ideas and its readers.
+- [ ] B-20261009-TQ-BACKLOG-IO-PRIMITIVES [P4][test-quality] zuvo_backlog_io.py: Lock (error, stale reclaim), atomic_write failure cleanup and the line_count cache/missing-file branches have no exhaustive negative cases. test-backlog-resolve-worktree.sh is tier C against the whole module for that reason alone; headings (H20, H24) and grooming exercise them only in part.
+- [ ] B-20261009-TQ-BACKLOG-COLLECTOR [P4][test-quality] tests/hooks/test_backlog_collector.py — tier C (Q7, Q11, Q13, Q17 = 0, AP −3): the cross-vendor audit found mocks aimed at an unrelated module and branches of collect() without cases.
+- [ ] B-20261009-TQ-BACKLOG-SMOKE [P4][test-quality] tests/hooks/test-backlog-smoke.sh — tier C (Q7, Q11 = 0). Its S1e comments still narrate the old "a worktree answers about the MAIN checkout" trap. Since b4c5e18d, Target A equals Target B whenever the worktree tracks the file; refresh that text with the next edit.
+- [ ] B-20261009-TQ-BACKLOG-HEADINGS [P4][test-quality] tests/hooks/test-backlog-headings.sh — tier C (Q7, Q11 = 0): negative-case completeness across the heading and io families, per the cross-vendor audit.
+- [ ] B-20261009-TQ-BACKLOG-GROOMING [P4][test-quality] tests/hooks/test-backlog-grooming.sh — tier C (Q7, Q11 = 0). Its comment at the W12 block (around 4182) still says the counts are taken on "the MAIN checkout's" file. Since b4c5e18d they are taken on the branch's own copy in a linked worktree.
+- [ ] B-20261009-TQ-COMMENT-AUDIT-CLI [P4][test-quality] tests/hooks/test-comment-audit.sh — tier C against the whole 778-line CLI. Q11 = 0: about 100 branch sites, many unexercised. Q3 = 0: mock calls and non-calls are not asserted consistently. AP15: a direct `_diff` test. AP2: one filesystem-conditional assertion. Its one named Q7 gap, the quiet-path newline refusal, was fixed in 9bd8e10e (cross-vendor audit 2026-10-09, zuvo/audits/test-quality-audit-2026-10-09-ledger-skill.md).
+- [ ] B-20261009-INSTALL-CACHE-ZUVO-HOME-STALE [P4][install][conf 75] `~/.claude/plugins/cache/zuvo-marketplace/zuvo/<v>/scripts/zuvo-home/` is never refreshed by install.sh. `install_claude` overlays `scripts/*.sh`, `*.py` and `install.d/`, but zuvo-home stays the copy seeded when the version dir was created: 1.6.83's zuvo_backlog_io.py had no `tracked_root` after a 42b8f06c install (2026-10-09, ryzen-old-1). `~/.zuvo` is current, so the gap shows only where something reads the cache copy. Every skill's retro-marker block falls back to `ls cache/*/scripts/zuvo-home/retro-stub | head -1`, which can also pick an older version's dir. Fix: sync zuvo-home into each cache dir with the same atomic helper, or drop the cache fallback in favour of `~/.zuvo/retro-stub`.
+- [ ] B-20261009-CA-ESCAPE-NOT-INJECTIVE [P4][comment-audit][conf 70] `zuvo_comment_ledger.escape()` writes U+000A as the four characters `\x0a` and leaves a literal backslash alone, so a path named `z<LF>l.py` and one literally named `z\x0al.py` are stored and printed the same way. This is pre-existing, from the delta review of 5301382d. The ledger's path column and the CLI's finding lines cannot tell the two apart. Fix: escape `\` as `\\` too. That changes every stored path holding a backslash, so check readers of the path column (the include's awk lookup compares `$6` with the escaped path) before changing it.
+- [ ] B-20261009-HEADINGS-FLAKE-ONCE [P4][test][conf 40]: on 2026-10-08, test-backlog-headings.sh reported PASS=319 FAIL=1 once on the farm, in a batch after the merge of origin/main into fix/install-atomic-cache-archive-repo. A re-run alone passed 320/0, and the failing check's text was not captured. If it recurs, keep the run id and the FAIL line.
 
 ## B-20261002-NORMALISE-STRIPS-GLOBALLY `strip_resolution_markers` deletes dates, shas and `*` ANYWHERE, so two entries differing only in a deadline are one entry
 
@@ -3451,10 +3449,11 @@ PR bodies, never as a backlog entry anyone would find. A deferral that lives onl
 deferral nobody picks up.
 
 It is now MOSTLY unblocked: A needs a per-entry `text_sha` to diff a lossless rewrite against, which is
-exactly what the ledger this session shipped creates. One narrow prerequisite remains and it is NOT the
-one first claimed here: a regroup keyed on `entry_key` would merge the **5** entries whose signature
-drops the line number (`B-20261005-BACKLOG-DUPLICATE-KEYS`, corrected). `NORMALISE-STRIPS-GLOBALLY` is
-real but causes **none** of those collisions — measured, not assumed — so it is not a blocker for A.
+exactly what the ledger this session shipped creates. It has NO external prerequisite. The 5 collisions
+(`B-20261005-BACKLOG-DUPLICATE-KEYS`) are a constraint INSIDE A: group on
+`(entry_key, sha1(body)[:8])`, never on `entry_key` alone. Changing the identity function instead was
+attempted and reverted — it rotates ~1 250 fleet keys and breaks control (c).
+`NORMALISE-STRIPS-GLOBALLY` is real but causes none of those collisions, so it blocks nothing here.
 
 - [ ] B-20261005-OPTION-A-SORT-GROUP-IN-PLACE plan and execute in-place re-emission of
       `memory/backlog.md` (sort + group), using the ledger's `text_sha` as the diff oracle and the
@@ -3543,49 +3542,45 @@ confidence:94 source:12-chunk adversarial 2026-10-02, proof zuvo/proofs/backlog-
 
 confidence:98 source:self-account of the session 2026-10-05
 
-## B-20261005-BACKLOG-DUPLICATE-KEYS 5 signature collisions hide distinct defects — the other 15 were my miscount
+## B-20261005-BACKLOG-DUPLICATE-KEYS 5 collisions matter for GROUPING, not for identity
 
-**CORRECTED 2026-10-05, same day it was filed.** The original entry said "22 keys held by more than one
-entry, 21 of them entries with genuinely different text" and recommended deciding all 21 by hand. That
-reading was wrong and would have sent someone through 21 pairs to find 5 problems. Classified by `kind`:
+**CORRECTED TWICE on 2026-10-05/06.** First version: "22 keys, 21 genuinely different" — wrong, 15 of
+those were a `##` heading and its own checkbox, one entry counted twice. Second version: "fix
+`normalize_signature` to keep the line number, a one-line change plus a handful of re-keyed rows" —
+also wrong, and this one was caught by a test rather than by review.
 
-| what the collision actually is | count | verdict |
-|---|---|---|
-| a `## B-xxx` heading and its own `- [ ] B-xxx` checkbox | **15** | NOT a defect — one entry, counted twice |
-| `id:b-skillpages-red`: two headings, original + RESOLVED | 1 | one item and its closure; merging is right |
-| `fp:` bullets whose path ENDS the line | **5** | **real** — distinct defects sharing a key |
-
-The 15 are an artifact of reading the file with `kinds=DEFAULT_KINDS + (KIND_HEADING,)`, which is what
-`groom` does deliberately: the heading dialect PR 1 introduced puts an entry's description in a `##`
-heading and its action in a checkbox beneath, so both halves resolve to the same `id:` key. That is the
-dialect working, not data rot.
-
-THE 5 REAL ONES have a single, mechanical cause, and it is NOT the global marker-stripping that
-`B-20261002-NORMALISE-STRIPS-GLOBALLY` describes — measured: `strip_resolution_markers` leaves
-`FILE: scripts/adversarial-review.sh:1744` completely intact. The cause is in `normalize_signature`:
+WHAT THE FIX ATTEMPT MEASURED. Keeping `:NNN` and recognising extension-less paths does reach 0
+collisions, at a cost of rotating **154 of 821 signatures (18.8%)**. The migration looked free because
+this repo's `memory/backlog-verdicts.jsonl` holds **0 rows** — but that is the wrong file. `fp:` keys
+also feed the FLEET index, and `H10` in `tests/hooks/test-backlog-headings.sh` says so in its own
+comment before failing on exactly this change (it compares `iter_entries` against a sha256-pinned
+frozen snapshot of the pre-change parser, precisely to stop the key moving):
 
 ```
-body  FILE: scripts/adversarial-review.sh:1744   (and :2385, twice)
-sig   adversarial-review.sh|file
+~/.zuvo/backlog-local.jsonl    9 083 rows   8 770 keys   6 657 of them fp:
+~/.zuvo/backlog-index.jsonl   25 408 rows
 ```
 
-`_PATH_RE` matches `scripts/adversarial-review.sh:1744`, then `path.split(":", 1)[0]` **discards the
-line number**, and because the path ENDS the text the 8-word window after it is empty, so the function
-falls back to the words BEFORE the path — which here is only "file", from `FILE:`. Three different
-defects in one file therefore key alike. The affected keys are `fp:dd1533472ee9`, `fp:f762a0deebd1`,
-`fp:aced3cd1e308`, `fp:d90f81a6670f`, `fp:876dff0fba1a`.
+At 18.8% that is **~1 250 fleet keys** ceasing to match. And the same attempt broke control (c)
+outright: `check_overlap` compares the cited basename against the signature's, so a basename carrying
+`:1` rejected every correct citation — `cites docs/one.md but the entry's signature names one.md:1`.
+Five grooming assertions and the whole dogfood lane went red.
 
-This IS the prerequisite for `B-20261005-OPTION-A-SORT-GROUP-IN-PLACE` — a regroup keyed on
-`entry_key` would merge those distinct defects — and it is far narrower than the migration-bearing
-stripping fix. Keeping `:NNN` in the signature when the path ends the text rotates the `fp:` key only
-for entries of that shape, so the migration is a handful of ledger rows rather than every key in every
-repo.
+THE CORRECTED DESIGN, measured: the collisions do not need the identity function to change at all.
+They matter only where entries are GROUPED or REWRITTEN — i.e. inside option A. Grouping on
+`(entry_key, sha1(normalised body)[:8])` instead of `entry_key` alone gives **0 collisions with every
+identity key byte-identical**, so the fleet index, the frozen snapshot and control (c) are all
+untouched. Two findings in one file remain ONE entry for dedup (which is right — that is what makes
+archiving idempotent) and become TWO rows for grouping, which is the only place the distinction is
+needed.
 
-- [ ] B-20261005-BACKLOG-DUPLICATE-KEYS keep the line number in `normalize_signature` when the path
-      ends the text (so `foo.py:568` and `foo.py:631` differ), re-key the affected ledger rows, and
-      settle `id:b-skillpages-red` by hand; the RED is the five keys above ceasing to be shared
+- [ ] B-20261005-BACKLOG-DUPLICATE-KEYS in option A, group and re-emit on
+      `(entry_key, sha1(body)[:8])`, NOT on `entry_key`; add an assertion that the five measured
+      keys (`fp:dd1533472ee9`, `fp:f762a0deebd1`, `fp:aced3cd1e308`, `fp:d90f81a6670f`,
+      `fp:876dff0fba1a`) yield distinct GROUPS while their entry_keys stay unchanged. Do NOT touch
+      `normalize_signature` — see the fleet numbers above
 
-confidence:99 source:classified by entry kind 2026-10-05 on memory/backlog.md at 67fe9ed9 — supersedes this entry's own first version
+confidence:99 source:attempted, measured and reverted 2026-10-06; H10 and 5 grooming assertions caught it
 
 ## B-20261005-SESSION-HOUSEKEEPING three loose ends in the worktree and on the remote
 
@@ -3680,6 +3675,28 @@ executed yet, so these stay open until its tasks land.
 
 ### Not in any plan
 
+- [ ] B-20261009-VERDICT-WIRING-SEMANTICS: tests/skill-suite/test-verdict-recording-wiring.sh checks that every
+  triaging skill points at adversarial-loop.md Step 4.9 after its first adversarial-review call, not what the
+  step itself says: the cross-vendor test-audit (zuvo/audits/test-quality-audit-2026-10-09-verdict-hint.md,
+  iteration 2) wants the skip and unknown-id paths of Step 4.9's prose pinned, and invocations outside the
+  detector's `<command> --` pattern (a wrapper function, a variable other than "$AR") would go unseen. |
+  severity: low | category: Test | conf: 70
+
+- [ ] B-20261009-LEDGER-MODULE-BRANCHES: the cross-vendor test-audit of tests/adversarial/test-findings-ledger.sh
+  (zuvo/audits/test-quality-audit-2026-10-09-text-ledger.md) leaves it Tier C module-wide on branches the
+  text-ledger build did not touch: scripts/lib/adversarial-ledger.sh locking (_ar_lock_stale, _ar_pid_alive,
+  _ar_pid_age_s, _ar_mtime), ledger_header retry paths, provider health, and JSON finding-shape variants
+  beyond non-string ids (`.findings` not an array, objects mixed with scalars). | severity: low |
+  category: Test | conf: 80
+
+- [ ] B-20261009-CK-DRYRUN-NEEDS-LANES: tests/adversarial/test-input-chunking.sh CK.15, CK.21, CK.22 are red on
+  the farm (waw-tf, runs 1791527596-1218371-14088 and on base c5014a6d alike: `--mode plan --dry-run` exits 1,
+  expected 0) and green where provider CLIs are installed (ryzen-dev: the same dry run exits 0, listing
+  cursor-agent agy muse kimi qwen). Probable cause (not confirmed on the farm): the dry runs detect real
+  providers and fail when none exist. Fix: run them hermetically (ZUVO_ADVERSARIAL_TEST_HARNESS=1 +
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-success), as test-findings-ledger.sh does. | severity: medium |
+  category: Test | conf: 75
+
 - [ ] B-20261009-ADV-LANE-TESTS-BELOW-A: the test-quality gate of the effort-column build
   (zuvo/audits/test-quality-audit-2026-10-09-effort-column.md, cross-vendor codex/gpt-6-sol) left 7 files at
   Tier C on PRE-EXISTING behaviour (the effort cases themselves are covered): test-claude-reviewer-model.sh
@@ -3773,11 +3790,11 @@ executed yet, so these stay open until its tasks land.
   the heartbeat to `<root>/.zuvo/context/<skill>.heartbeat`, while its own prose, the plan skill and
   `report-output-location.md` use the visible `zuvo/context/`. A skill following the snippet and a
   check following the prose look at different files. | severity: medium | category: Documentation | conf: 85
-- [ ] B-20261005-FARM-HOOK-HEREDOC-FP: `~/.claude/hooks/farm-no-local-tests.sh` (outside this repo —
-  source repo to confirm, likely i9-farma) blocked a `python3 - <<EOF` heredoc that only carried test
-  commands as STRING DATA (plan text being edited) as "shell substitution <test command>". Worked
-  around by writing the script to a file. The detector should not scan heredoc bodies fed to an
-  interpreter. | severity: low | category: Infrastructure | conf: 85
+- [ ] B-20261010-FARM-GUARD-MATCHER-MODULE [P3][hooks][conf 55][structural-refactor (multi-file)]: hooks/farm-no-local-tests.sh carries a ~700-line python matcher inside `python3 -c '...'` (no literal quote allowed, invisible to ruff/mypy/imports, testable only end to end). Recipe: (1) move it to hooks/lib/farm-guard-matcher.py (hooks/lib/ already ships, see refactor-state.py) and resolve it like refactor-gate-lib.sh:30-33; (2) split the ~180-line segment loop into strip_prefixes/check_shell/check_runner/check_pm/check_task returning a label or None, prefix options as a table; (3) main() catches exceptions and prints <unparseable command>, and the shell side refuses when the matcher file is missing or exits non-zero while the fast path saw a runner word (closes the remaining fail-open on a SyntaxError); (4) table-driven unit tests that import classify(); keep test-farm-guard-vendored.sh as the end-to-end layer. Source: zuvo:review of RD-1039 (STRUCT-1, re-scored 55). | severity: medium | category: Code | conf: 55
+- [ ] B-20261010-RETRO-WRITERS-SHARED-LIB [P4][zuvo-home][conf 48][structural-refactor (multi-file)]: the lock loop, high-water parse, row count and snapshot naming exist in append-retro, rotate-retros and sanitize-retros (python port); drift already happened once (rotate-retros read BSD `stat -f` first — fixed 8e932f22). Recipe: scripts/zuvo-home/lib/retro-common.sh with retro_lock_acquire/release, retro_hw_rows, retro_row_count, retro_snapshot_pair; source it from append-retro and rotate-retros (installed beside the helpers like retro-appendonly.sh); keep the python port in sanitize-retros and add one cross-implementation test over the same fixtures (pid-less lock, junk high-water, same-second snapshot). Source: zuvo:review of RD-1039 (STRUCT-2). | severity: low | category: Code | conf: 48
+- [ ] B-20261010-RD1039-REVIEW-BELOW-THRESHOLD [P4][hooks][conf 40]: findings of the RD-1039 review kept below the confidence threshold: rotate-retros-cron.sh swallows exit 4 refusals (the job reports success while nothing rotated; stderr shows REFUSED); the retros.md rotation renames staged quarters one by one, so a failure after the first rename leaves that quarter updated and a rerun appends its entries again (md archives have no dedup); session-start's bounded `read -t 2` adds up to 2 s if a harness ever leaves stdin open; §12 offers no sanctioned way to accept a deliberate purge below the high-water; the tracker path is built in three places (session-start, track-includes, append-runlog); the §12 script's `for f in $(ls -t …)` fails closed when ZUVO_HOME contains a space; test nits (`sum` instead of `cksum` in test-retro-rewrite-highwater.sh, the mv stub interpolates the real mv path unquoted). Source: zuvo:review of RD-1039 (memory/reviews/2026-10-10-rd1039-range.md). | severity: low | category: Code | conf: 40
+- [ ] B-20261010-RD1039-TEST-AUDIT-PREEXISTING-BRANCHES [P4][test-infra][conf 80]: the RD-1039 test-quality gate (zuvo/audits/test-quality-audit-2026-10-10-rd1039.md, cross-vendor codex/gpt-6-sol) left all 7 touched shell suites at Tier C on Q7/Q11 = 0 for branches of their production files that RD-1039 did not change: test-refactor-gate-lib-edge-cases.sh (library-wide reject/fallback paths credited to sibling suites), test-farm-guard-vendored.sh (empty/malformed payload, FARM_HOOK_OFF, absent rt, separator-bearing opt-out), test-runlog-includes-auto.sh (session-start profile/protocol/platform branches), test-sanitize-retros.sh (dry-run read error, write failure, missing date/skill sentinel), test-retro-rewrite-highwater.sh (missing target / unknown argument, no-old-entry and no-marker fallbacks, rollback paths that need coreutils stubs), test-install-wiring.sh (optional portable.sh / retro-appendonly.sh / platform-flag branches), test-append-retro-contract.sh (error messages, unknown args, malformed dates, non-numeric counters, newline/CR fields, unwritable home, lock-busy exit 3). Also AP26/AP2: order-dependent shared fixtures and wall-clock timing in several of them. | severity: low | category: Test | conf: 80
+- [ ] B-20261010-FARM-GUARD-KNOWN-LIMITS [P4][hooks][conf 90]: `hooks/farm-no-local-tests.sh` after RD-1039 (1433f096) still misses data piped into a shell (`echo 'npm test' | bash`, `<<<"npm test" bash`, `cat <<<"…" | bash`, `bash <(printf 'npm test')`), a runner glued to `(` inside a `-c` string (`bash -c "(vitest run)"`) and wrappers outside its list (`caffeinate -i bash <<EOF`); shlex in split_segments is quadratic, so a ~1 MB single-line command reaches the 10 s hook timeout, which fails open. Three false positives remain: `echo "$(grep -c 'npm test' README.md)"`, `sh -c 'echo "$1"' _ "go test"`, `bash <<EOF` + `npm view jest version`. The base hook shares every one of these; found by the RD-1039 Task 3 review (zuvo/proofs/task-3-report.md). | severity: low | category: Infrastructure | conf: 90
 - [ ] B-20261005-CODESIFT-HOOK-NON-REPO-GREP: the CodeSift PreToolUse hook blocks `grep`/`rg` whenever
   the CWD repo is indexed, even when the paths searched are outside it (`~/.zuvo/bench`,
   `~/.zuvo/adversarial.log`), where CodeSift cannot help. Worked around with python. The hook should
@@ -4914,18 +4931,6 @@ worktree holds nothing worth keeping: its evidence is ignored by git by design (
 ~/.zuvo/review-archive/<repo>/worktrees/ — or refuses while zuvo/ holds files; the refactor/mutation skills could also copy
 their ledger and reports into ~/.zuvo at completion.
 
-- [ ] B-20261008-MAIN-CHECKOUT-STALE [P3][process][conf 70]
-**Fingerprint:** ~/DEV/zuvo-plugin|main-checkout|monolith-wip
-**Source:** adversarial-review split wrap-up, 2026-10-08 (sessions host).
-**What:** the host's main checkout ~/DEV/zuvo-plugin is on local main 2fbcfee3, behind origin/main by the split and later
-work, with uncommitted changes laid in (not this session's): scripts/adversarial-review.sh is the 5,263-line MONOLITH plus
-+140/−35 lines, while origin/main carries the driver as 420 lines over scripts/lib/adversarial-*.sh. The changes in that
-WIP are the BytePlus/OpenRouter streaming work (openrouter_assemble_stream, stream_integrity), which origin/main already
-carries in scripts/lib/adversarial-lanes-http.sh (a2c2db3e, 377284c4). Other modified files there (README.md,
-shared/includes/model-registry.sh) already equal origin/main's. Releases cannot run from that checkout (dev-push.sh stages
-with git add -A), and v1.6.82 was cut from a clean worktree for that reason.
-**Fix:** the owner (or the session that owns the WIP) confirms nothing in it is missing from origin/main, then fast-forwards
-the checkout to origin/main; anything still needed in the driver is ported into the modules, not the monolith.
 
 - [ ] B-20261008-REFACTOR-GATE-VERSIONED-PATH [P2][hooks][conf 90]
 **Fingerprint:** skills/refactor/references/bootstrap.md|refactor-gate|versioned-install-root
@@ -4945,3 +4950,405 @@ rewrites it; a hook test covers "block points at a pruned version dir".
 - [ ] B-test-log-ideas-bug-timeout-vacuous tests/hooks/test-log-ideas.sh:20 — [BUG] the "trailing value-flag must NOT infinite-loop" cases call bare `timeout` and pass on any status but 124, so on a host without GNU `timeout` (stock macOS) every case reads ✓ with rc=127 and a reintroduced B-29 spin stays green | evidence: same pattern the adversarial pass flagged in its copy, fixed in tests/hooks/test-log-drive-by.sh (resolve `timeout`/`gtimeout`, fail when absent, assert rc 0) | severity: medium | source: drive-by:build | conf: 90 | 2026-10-10
 - [ ] B-log-ideas-bug-header-truncate-race scripts/zuvo-home/log-ideas:56 — [BUG] `[ -f "$LOG" ] || printf header > "$LOG"` is check-then-truncate: two first writers both see no file, the later `>` truncates the row the earlier one appended, and that lost receipt reads as "step skipped" | evidence: fixed in scripts/zuvo-home/log-drive-by with a noclobber (`set -C`) header create; tests/hooks/test-log-drive-by.sh runs 8 concurrent first writers | severity: low | source: drive-by:build | conf: 85 | 2026-10-10
 - [ ] B-test-log-drive-by-q-tier-warn tests/hooks/test-log-drive-by.sh:1 — [READ] test-quality gate ended WARN (tier C after 2 re-audits; Q7/Q11 open at the last audit) — post-cap fixes covered inherited PROJECT, HOME fallback and per-case project homes but were never re-audited; the `git rev-parse` fallback (log-drive-by:53-54) stays untested | evidence: zuvo/audits/test-quality-audit-2026-10-10-log-drive-by.md | severity: low | source: zuvo:build/test-quality-gate | conf: 80 | 2026-10-10
+
+# 2026-10-07 — what the FIRST LIVE verify run skipped, by its own account
+
+The `verify` lane met a real model for the first time on 2026-10-06: chunk 0 of this repo's own
+backlog, 88 rows, one `general-purpose` verifier. The chunk was REJECTED (25 rejections, 0 of 88
+verdicts written — fail-closed, as designed). Everything below was surfaced by that run and NOT fixed,
+with the reason it was skipped. Entries already filed (`B-20261005-*`, `B-20261002-*`) are not repeated.
+
+## B-20261007-CONTROL-C-MATCHES-NON-PATHS control (c) treats `e.g` and `sys.argv` as filenames, and rejects correct citations
+
+**Found by running, not fixed — this is the defect that makes the lane unusable on a real backlog.**
+21 of the 25 rejections were control (c), and the reasons name the cause:
+
+```
+cites shared/includes/lead-output-schema.md but the entry's signature names json.parse
+cites skills/leads/agents/contact-extractor.md  but the entry's signature names sys.argv
+cites scripts/tests/leads-source-registry-structure.sh but the entry's signature names e.g
+```
+
+`_PATH_RE` is `\b[\w./@-]*[\w@-]\.[A-Za-z][A-Za-z0-9]{0,4}\b(?::\d+)?` — `name.ext` shaped, so it
+matches **`e.g`, `i.e`, `sys.argv`, `json.parse`, `crt.sh`** inside ordinary prose. `check_overlap` then
+compares the cited basename against that non-path and refuses a citation that is perfectly correct. In
+682 entries of English prose those tokens are everywhere, so EVERY chunk will fail this way: the run
+cannot complete, and not because of the model.
+
+SECOND CAUSE, same control: when an entry names several files, the signature keeps only the FIRST path
+token, and a citation of any other file it names is rejected —
+`cites tests/run-all.sh but the entry's signature names test-suite-e2e.sh`, where the entry names both.
+
+Candidate fixes, narrowest first: require a `/` or a known extension before treating a token as a path
+(kills `e.g`/`i.e`/`sys.argv`/`json.parse` without touching real paths); and accept a citation matching
+ANY path the entry names, not only the first.
+
+- [ ] B-20261007-CONTROL-C-MATCHES-NON-PATHS tighten the path token so prose abbreviations and
+      attribute access cannot be basenames, and let (c) accept any path the entry names; the RED is
+      chunk 0's 21 OVERLAP rejections, which are reproducible from
+      `zuvo/context/backlog-dispatch-0.jsonl` plus the recorded response
+
+confidence:99 source:first live verify run 2026-10-06, 21/88 rows on this repo's own backlog
+
+## B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER control (d) fails an agent for the answer its own contract calls free
+
+**Found by running, not fixed.** Control (d) caught the verifier — 4 of 4 seeds missed, which is the
+control working. But **two of those four misses are the seeds' fault, not the agent's**:
+
+```
+expected STALE-FIXED | agent: NOT-VERIFIABLE
+  seed text: "B- -cb8b1c - [B-secaudit-2] pentest SCA preflight (0.5b): snippet is advisory; 4 adversarial rou…"
+```
+
+A closed seed is built from an archived entry with its resolution markers STRIPPED, so the answer is not
+legible from the text — that is deliberate and right. The side effect is that what remains is an
+amputated fragment (`B- -cb8b1c -`) indistinguishable from the metadata continuation lines this backlog
+is full of. The agent contract states, in its own words, that `NOT-VERIFIABLE` is "cheap, legitimate and
+costs you nothing" and is "the correct answer, not the cautious one" when unsure — and control (d) then
+fails the run for using it. **The seed measures something other than what it claims.**
+
+The other two misses are honest agent errors (`AGENTS.md:1 still reads …` is checkable with one `Read`),
+so the control is not wrong in general — it is wrong about this half of its seeds.
+
+Fix direction: build closed seeds from entries whose text still states the PROBLEM after stripping (the
+stripper already knows which span it removed), or grade a closed seed as passed on `NOT-VERIFIABLE` and
+reserve the miss for an actively wrong verdict.
+
+- [x] B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER — FIXED: BOTH directions it offered were taken. A closed
+      seed is no longer failed on `NOT-VERIFIABLE` (graded as an abstention and reported on a
+      `SEED-ABSTAIN` control line; a LIVE seed still misses, because its proof is the line it quotes), AND
+      the seed text is fixed at the root — the identity now comes off BEFORE the markers, so the
+      `B- -cb8b1c` residue this entry quotes cannot form. It was 40 of 55 candidates; it is 0.
+      Underivable candidates are dropped as well. The measurements and the mutants (D1b, D1c, D2b, D2c,
+      D5c-D5f) are in the closing note on [[B-20261009-SEEDS-PUNISH-HONEST-ABSTAIN]].
+
+confidence:97 source:first live verify run 2026-10-06, 2 of 4 seed misses attributable to the seed
+
+## B-20261007-NO-RESPONSE-HANDOFF the lane has no defined path from the agent's answer to the response file
+
+**Deliberate workaround, never designed.** The verifier is READ-ONLY by contract and correctly writes
+nothing to disk, so its 88 JSONL records come back inside a chat message. `ingest` needs them in a FILE.
+Nothing in the skill, the include or the agent contract says how they get there — so this run got them
+there by the orchestrator HAND-TRANSCRIBING 88 lines into a heredoc, which is precisely the step that can
+silently corrupt a verdict or drop a row (and a dropped row rejects the whole chunk).
+
+- [ ] B-20261007-NO-RESPONSE-HANDOFF define the handoff: either let the lane write only
+      `zuvo/context/response-<n>.jsonl` (a single named path, still no other write), or have the
+      orchestrator capture the agent's final message to that file mechanically. Name it in
+      `skills/backlog/agents/backlog-verifier.md` and in the include
+
+confidence:99 source:how chunk 0 was actually ingested 2026-10-06
+
+## B-20261007-LEDGER-LEFT-IN-SHARED-CHECKOUT the run left an untracked 93-row file in the main checkout
+
+**Accidental, and in someone else's working directory.** `plan --repo .` resolves through `main_root`,
+which deliberately jumps to the MAIN worktree so six checkouts share one backlog — so the ledger it
+wrote landed at `~/DEV/zuvo-plugin/memory/backlog-verdicts.jsonl`, not in the worktree the command ran
+from. It is **untracked and not gitignored**, so it shows as `??` in every other agent's `git status` in
+that checkout, and `memory/` is not covered by `.gitignore` the way `zuvo/` is.
+
+This also invalidates a measurement recorded earlier in this file: "the ledger holds 0 rows, so the
+migration is free" was true when written and is not true now.
+
+- [ ] B-20261007-LEDGER-LEFT-IN-SHARED-CHECKOUT decide whether `memory/backlog-verdicts.jsonl` is
+      tracked (it is the verdict record — arguably yes) or gitignored (it is per-machine state —
+      arguably no), and add it to `.gitignore` or commit it. Until then it is neither, which is the one
+      state that surprises everybody
+
+confidence:99 source:left by the plan run 2026-10-06 22:02, confirmed untracked and unignored
+
+## B-20261007-LIVE-RUN-COVERAGE-GAPS four things this run did not establish
+
+**Three deliberate, one unenforced.**
+
+1. **18 of 19 chunks were never dispatched to a verifier.** Deliberate: chunk 0 proved every chunk will
+   fail control (c) the same way, so 18 more agent runs would have bought 18 identical rejections.
+2. **`ingest`'s ACCEPT path is still unproven on real data.** Only the reject path ran. Every
+   measurement of "the lane works end to end" in this session's reports rests on fixtures, not on this.
+3. **The verifier did not read the two shared includes its own instruction file names**, and did not
+   print the first-read checklist that file asks for — it said so itself. Nothing in the lane enforces
+   either, so a verifier's reported compliance is self-asserted.
+4. **Chunk sizing is by block bytes, so chunk 6 holds 107 rows and chunk 3 holds 4** at ~23.5 KB each.
+   Intended, and recorded here because it means the 19 runs are not comparable in cost or in how much
+   judgement each demands.
+
+- [ ] B-20261007-LIVE-RUN-COVERAGE-GAPS after the two control fixes above, run ONE chunk to a clean
+      accept and keep that artifact as the lane's first real green; then decide whether the remaining
+      chunks are worth their cost, and whether the include-read checklist should be enforced rather
+      than requested
+
+confidence:98 source:self-account of the first live verify run 2026-10-06
+
+## Merged from worktree zuvo-plugin-wt-prefix (2026-10-09)
+- B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
+  collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
+
+- [ ] B-20261009-DEDUP-SIGNATURE-ONLY [P2][process][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|signature-match-only
+**Source:** owner's question 2026-10-09 — "czy agent przed dodaniem wpisu sprawdza czy podobny nie istnieje?"
+**What:** `skills/backlog/SKILL.md` "Adding Items" step 5 mandates `backlog-archive.py lookup` before an add, but the
+lookup keys on `normalize_signature` = cited-path basename + the 8 words AFTER the path. Measured on the live file
+(`--repo ~/DEV/zuvo-plugin`, exit code taken without a pipe):
+  - exact text of an existing entry citing `scripts/adversarial-review.sh:1744` -> `rc=10 OPEN fp:dd1533472ee9` (correct)
+  - the SAME file:line, same defect, different words                            -> `rc=0 ABSENT fp:4b9363e41053`
+  - rewording only BEFORE the path (`FILE:` -> `see`), 8 words intact           -> `rc=10 OPEN` (still correct)
+  - an existing entry with NO cited path (`B-leads-T1-jsonl-ext`), byte-exact   -> `rc=0 ABSENT`
+So dedup catches a re-paste and misses the same problem described by another session — which is the normal case, since
+every session writes its own words. Entries that cite no path are outside the check entirely. Measured scale of the
+symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone holding 32.
+**Fix:** add a similarity tier under the exact signature — same cited path (any basename match) plus a token-overlap or
+embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
+agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
+
+- [ ] B-20261009-DEDUP-EMPTY-QUERY-OPEN [P2][correctness][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
+**Source:** probing the dedup path for the question above, 2026-10-09.
+**What:** an empty or whitespace-only query returns a false positive pointing at an unrelated, already-DONE section:
+  `lookup --repo ~/DEV/zuvo-plugin ""`    -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+  `lookup --repo ~/DEV/zuvo-plugin "   "` -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+backlog.md:186 is `## B-noverify-hardening — DONE`. A nonsense-but-nonempty query correctly returns `rc=0 ABSENT`. So the
+failure is specific to a signature that normalizes to nothing. This is worse than a fail-open: the SKILL's contract for
+`OPEN` is "update that entry in place", so an agent whose candidate text carries no signature words is instructed to
+overwrite a closed, unrelated entry. Any candidate that is only a path, only punctuation, or stripped to nothing by
+`strip_resolution_markers` lands here.
+**Fix:** `lookup` refuses an empty normalized signature with its own exit code (not 0/10) and a message naming what was
+stripped; a test seeds "", "   ", a path-only query and a markers-only query and asserts none of them returns OPEN.
+
+- [ ] B-20261009-DEDUP-ADD-MODE-ONLY [P3][process][conf 85]
+**Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
+**Source:** owner's question 2026-10-09, same probe.
+**What:** the dedup check lives only in the SKILL's `add` mode. The actual practice — every `docs(backlog):` commit in this
+repo's history, mine included — is a direct append to `memory/backlog.md` followed by a commit, which never enters `add`
+mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-commit` does not exist here and the global
+`hooks/git-dispatch/` chain gates pushes for pipeline entry, not backlog appends.
+**Fix:** move the check to where the write happens — a commit-time or pre-push hook that, for a commit touching
+`memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
+a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
+B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
+
+- [x] B-20261009-OVERLAP-WORDS-HALF-THRESHOLD [P2][correctness][conf 85] — FIXED
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_overlap.py|MIN_WORDS|window-threshold
+**Source:** first live `zuvo:backlog verify` run, 2026-10-06 (chunk 0 of this repo's backlog), measured again after
+the basename half was fixed (PR #59).
+**What:** control (c)'s second half requires >=2 of the 8 signature words to appear within +/-5 lines of the cited
+line (`MIN_WORDS`, `WINDOW`). After the basename half stopped firing, 11 rejections remain and they read
+`1 of 8 signature word(s)`. The 8 words come from `normalize_signature` — the words AFTER the cited path — so for an
+entry whose prose describes the defect in the backlog rather than quoting the code, almost none of them appear near
+the code line that proves it. The control is meant to catch FABRICATION (a citation invented to look resolving), and
+a correctly cited line whose surrounding code shares one word with the entry's prose is not fabrication.
+**Fix:** decide the threshold from measurement rather than from the 2/8 guess: over the corpus, score every (entry,
+citation) pair that a human verdict already classified, and pick the threshold and window that separate fabricated
+from genuine citations. If no threshold separates them, the words half is the wrong signal for this control and the
+basename half plus resolvability is the whole of (c) — say so in the include rather than keeping a half that only
+produces false rejections. Deliberately left out of PR #59, which fixed the basename half only.
+
+**Closed 2026-10-10 — measured, and the measurement chose the second branch.** `tests/lib/overlap-corpus.py`
+builds a labelled corpus out of this repo's own two backlog files: every citation an entry makes of a
+`path:line` that resolves is a GENUINE pair (the line the entry itself points at), and five citations of the
+SAME file more than 100 lines away are its FABRICATED pairs — same entry, same file, basename half passing,
+so the only fabrication the words half could still catch. 29 genuine against 145 fabricated:
+
+| window | AUC | perm p | best balanced accuracy |
+|---|---|---|---|
+| ±5 | 0.632 | 0.011 | 0.607 at ≥2 words — what shipped |
+| ±10 | 0.614 | 0.022 | 0.610 at ≥3 |
+| ±20 | 0.605 | 0.037 | 0.597 at ≥3 |
+| ±40 | 0.654 | 0.003 | 0.614 at ≥4 |
+
+0.500 is a coin flip. At the shipped ±5/≥2 it refuses **37.9% of genuine citations** while accepting **40.7%
+of fabrications**, and no threshold rescues it: **5 of the 29** genuine citations score ZERO in their own
+window, so even "≥1 word" refuses 17.2% of correct evidence while letting 71.0% of fabrications through. The words half is therefore the wrong signal:
+it is now COMPUTED AND REPORTED as ` ov=k/n` in control (c)'s mode string, and (c) refuses on the basename
+half alone. Two consequences written down rather than left implicit — within-file fabrication is explicitly
+control (d)'s business (Cc2b asserts it reaches the ledger), and a signature too short to score no longer
+skips the BASENAME half, which 21 of this repo's 26 short-signature entries were silently escaping (Cc4b).
+`MIN_WORDS` is gone from `zuvo_backlog_reject.py`: a constant named like a threshold and enforced by nothing
+is the next reader's trap. Fixed in passing: the `nobasename` mutation assertion still grepped `basenames
+differ`, the phrasing PR #59 replaced, so `mu3_gone` passed vacuously against a string nothing emitted.
+
+The cross-model review of the change (5 providers) objected twice to the corpus, and both objections cut
+the same way, so they are recorded in the harness rather than argued with: the fabricated citations it
+draws are the EASY negatives (far from the true line, where a real fabricated number is usually close),
+and a "genuine" label tolerates the line drift that `WINDOW` exists for. Both make these numbers a LOWER
+bound on the failure. The `--fakes` samples also share an entry, so the verdict rests on the permutation
+p-value and on re-running with several seeds, never on a confidence interval.
+
+- [x] B-20261009-SEEDS-PUNISH-HONEST-ABSTAIN [P2][test][conf 80] — FIXED
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_seedshape.py|closed-seed|not-verifiable
+**Source:** first live verify run, 2026-10-06 — reading WHY the 4 remaining known-answer misses missed.
+**What:** control (d) seeds each dispatch chunk with entries whose answer is known, then scores the agent against
+them. 2 of the 4 misses are the seeds' fault, not the agent's: the seeded entry is one already CLOSED, whose
+resolving evidence no longer exists in the tree (the code it cited was moved or deleted by the very commit that
+closed it). An agent that answers `NOT-VERIFIABLE` is then CORRECT about the repo and scored as a miss, which
+teaches exactly the wrong thing — the control's own measurement rewards guessing a verdict it cannot support.
+**Fix:** a seed is admissible only if its expected verdict is still derivable from the tree AT THE SHA THE CHUNK IS
+DISPATCHED AGAINST. `build_seeds` checks that (resolve the citation, confirm the evidence line is present) and
+drops a seed that fails, rather than counting the agent wrong; the drop is reported, since a chunk left with fewer
+than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists and already refuses). Relates to
+[[B-20261002-SEED-NOT-IN-FILE]], which is the other half of the seed-provenance problem.
+
+**Closed 2026-10-10, together with [[B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER]] — the same 2 misses, and
+they had TWO causes, not one.** This entry blamed unreachable evidence; the earlier entry blamed the
+amputated seed text. Both were real:
+
+1. **The amputated id, the bigger half.** `strip_resolution_markers` runs `DATE_RE` over the text and eats
+   the date out of a minted id, so `B-A20261007-cb8b1c` became `B- -cb8b1c`, which `BODY_ID_RE` no longer
+   matches — `_unidentified` left the wreckage at the front of the seed, where it read as one of the
+   metadata continuation lines this backlog is full of. **40 of 55** closed-seed candidates carried it.
+   `build_seeds` now removes the identity BEFORE the markers, which leaves 0, because the id is still
+   intact when the pattern looks at it. A `striporder` mutant catches a swap of the two calls.
+2. **Admissibility**, as this entry asked: `_closed_derivable` / `_live_derivable` drop a candidate whose
+   expected verdict the dispatched tree cannot support — filtering BEFORE the slice, so a pool of 75 is not
+   refused because two of the first two were bad — and the drops print as `SEEDS_DROPPED=` /
+   `SEED_DROP=<why>`. An entry naming no path stays admissible; its proving shape is the archive line.
+   `tree` is keyword-only with no default, so a caller that was not updated gets a `TypeError` rather than
+   the check silently switched off.
+3. **And the concession the earlier entry asked for, which no predicate can replace:** `NOT-VERIFIABLE` on
+   a CLOSED seed is now an ABSTENTION, reported on a `SEED-ABSTAIN` control line, not a miss. No predicate
+   can decide whether amputated prose still states a checkable claim, and the include promises the verifier
+   that `NOT-VERIFIABLE` costs it nothing. Deliberately NOT symmetric: a live seed's proof is the line it
+   quotes, read out of the tree at dispatch and re-checked there, so abstaining on one stays a `SEED-MISS` —
+   which is what the other 2 of those 4 misses were, and they were the agent's. The gate survives the
+   concession: abstaining on everything still misses every live seed, half of every chunk (D2b/D2c).
+   And it now fails CLOSED: the cross-model review (4 of 5 providers) asked what stops an ALL-CLOSED
+   chunk from passing (d) outright. Checked: nothing can dispatch one — `build_seeds` caps each half
+   independently, so a full K means both halves filled and anything less is the shortfall the caller
+   refuses (D1f measures it). The claim was true but rested on an invariant in ANOTHER module, so
+   `check_seeds` now grants the abstention only when the key also holds a live seed (D1d/D1e). The
+   guard cannot fire today, which is what makes it safe; it exists so a later edit to the pool sizing
+   cannot turn the concession into a way past control (d).
+
+- [ ] B-20261010-RESOLVE-CITED-UNCONFINED [P3][security][conf 70]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_verdicts.py|resolve_cited|no-root-confinement
+**Source:** cross-model review of the verify-control change, 2026-10-10 (2 of 5 providers, CRITICAL).
+**What:** `resolve_cited` joins a cited path onto `tree.root` and returns it with no check that the
+result stays UNDER that root, so `../../../etc/passwd` in an entry's text resolves to a path outside the
+repo. Every control that touches the filesystem then stats or reads it: (b) `unresolvable` → `os.path.exists`,
+(c) `window_words` → `open`, and now (d) `zuvo_backlog_seedadmit`. The input is this repo's own backlog, so
+the reachable harm is a stat/read of a path the operator already has, and the practical symptom is a
+citation that "resolves" to something outside the tree being accepted as evidence. Pre-existing — the
+review raised it against the new (d) caller, but confining it only there would leave (b) and (c) answering
+differently about the same path, which is the exact disagreement `resolve_cited` was centralised to end.
+**Fix:** confine in `resolve_cited` itself — `os.path.realpath` the join and refuse (return None) when it
+does not start with `realpath(tree.root)` + os.sep, keeping the two backlog basenames' special case. Then
+re-run the b/c/d suites: a refusal there changes what (b) reports for an absolute or escaping path, and
+`tests/hooks/test-backlog-grooming.sh` pins several of those messages.
+
+- [ ] B-20261010-GROOM-MODAL-SECTION-TIE [P4][tooling][conf 60]: `cmd_dispatch`'s "modal section"
+      is `max(set(sections), key=sections.count)` over `[str(r.get("section", "")) for r in mine]`,
+      which neither filters the `""` default nor breaks ties deterministically — `set` iteration
+      order decides, so a chunk can seed a `section` that no row of it actually carries, and two
+      runs over the same chunk can disagree. A seed whose `section` is unique in its chunk is a
+      tell, which is what `SEED_SECTION` exists to avoid. Pre-existing; found by the cross-model
+      review of the verify-control change, 2026-10-10. | severity: low | category: Tooling | conf: 60
+
+- [ ] B-20261010-GROOM-REFUSAL-PATHS-UNTESTED: the cross-vendor test-audit of tests/hooks/test-backlog-grooming.sh
+  (zuvo/audits/test-quality-audit-2026-10-10.md) finds two refusals of scripts/zuvo-home/backlog-groom.py with no
+  test: the empty dispatch chunk (:249) and the locked-write byte mismatch (:150); the stub archiver's contract
+  (arguments it must get, calls that must not happen) is asserted only partly (Q4=0), and :5205 calls the private
+  `_decide` directly (AP15). Pre-existing; the RD-1378 build only added an argument there. | severity: low |
+  category: Test | conf: 80
+
+- [ ] B-20261010-DECLARED-PARTIAL-MODULE-BRANCHES: tests/hooks/test-backlog-declared-partial.sh covers every branch of
+  the declared re-open behaviour, but the audit scores it against all of scripts/zuvo-home/backlog-archive.py and
+  stays Tier C on Q7/Q11 for branches it does not own: the unknown-key refusal (:631) and the stale-line guard under
+  the lock (:702), tested in test-backlog-archive-dedup.sh (A18, :781-796) without exact-message assertions. |
+  severity: low | category: Test | conf: 70
+
+- [ ] B-20261010-HEADING-BLOCK-HOLDS-TABLE-ENTRIES: scripts/zuvo-home/zuvo_backlog_block.py keeps every table
+  under a HEADING entry inside its block (deliberately: heading bodies hold tables), so a heading entry whose
+  body is followed by a `| B-NNNN |` backlog table would carry those independent entries with it when the
+  env-gated heading archive moves it, and `open_children` does not count open table rows as live children.
+  Same for an INDENTED open table row under a checkbox: it is a child the parser admits, but classify's
+  live-child holdback looks only for `[ ]` sub-items. Raised by the cross-model review of the table-row
+  boundary build (2026-10-10); latent while heading archive is off by default. | severity: low |
+  category: Code | conf: 60
+
+- [ ] B-20261010-HEADINGS-SUITE-DEBT: the cross-vendor test-audit of tests/hooks/test-backlog-headings.sh
+  (zuvo/audits/test-quality-audit-2026-10-10-table-row.md) rates it Tier C, 15/21: broad substring and
+  positive-count checks where the fixture's exact result is known (Q4), sequential fixture groups that
+  depend on each other (Q19), no declared test level (Q20), no generated-input test for the pure boundary
+  helpers (Q22), and Q7/Q11 module-wide. Pre-existing; the table-row boundary build did not touch the file. |
+  severity: low | category: Test | conf: 75
+
+## RD-1040 review-pipeline — test debt the branch's test-quality gate left below A (recorded 2026-10-10)
+
+- [ ] B-20261010-RD1040-VERIFY-TESTS-SUITE-DEBT: the cross-vendor test-audit of the RD-1040 branch
+  (zuvo/audits/test-quality-audit-2026-10-10-rd-1040.md) rates tests/hooks/test_verify_tests_mutation.py C 13/22 and
+  tests/hooks/test-verify-tests.sh C 11/21 for debt that predates the branch: three tests call the private
+  `_stop_mutation_child` directly (AP15), the time-budget checks in test-verify-tests.sh use a real `sleep` (AP26),
+  and `coverage_pytest` / `coverage_entry_from_coveragepy` in scripts/zuvo-home/verify-tests have no test at all.
+  Q7/Q11 are scored against the whole 2871-line script. | severity: low | category: Test | conf: 75
+
+- [ ] B-20261010-RD1040-GATE-LIB-SUITE-DEBT: the same audit rates tests/hooks/test-pipeline-gate-lib.sh C 14/20:
+  empty-input fallbacks of `pg_files_covered` and the coverage-cache failure branches of
+  hooks/lib/pipeline-gate-lib.sh are not pinned, and the fresh-cache assertion depends on real elapsed time.
+  Pre-existing; the branch changed 8 lines of this suite. | severity: low | category: Test | conf: 70
+
+- [ ] B-20261010-RD1040-CHUNKING-PATCH-SUITE-DEBT: tests/adversarial/test-input-chunking.sh (C 12/20, AP26 real
+  sleep) and tests/hooks/test-build-review-patch.sh (C 14/20) stay below A on module-wide Q7/Q11 for
+  scripts/lib/adversarial-input.sh and scripts/zuvo-home/build-review-patch, and none of the repo's bash suites
+  carries a declared test level (Q20) or a seeded property test (Q22). The rows RD-1040 added there name their bugs;
+  the remaining gaps are outside the branch. | severity: low | category: Test | conf: 65
+
+## RD-1040 aggregate review (8606769a..d540adfc) — deferred findings (recorded 2026-10-10)
+
+- [ ] B-20261010-RD1040-ADV-CHUNK-MODULE [structural-refactor (multi-file)]: scripts/lib/adversarial-input.sh is
+  ~890 lines and `ar_chunk_input` ~214. Recipe: (1) move `_ck_count_units`, `_ck_count_hunks`, `_ck_split_hunks`,
+  `_ck_split_oversized_sections`, `_ck_merge_part_note`, `_ck_build_chunk_note` and `ar_chunk_input` into a new
+  scripts/lib/adversarial-chunk.sh; (2) add it to the module list behind `install_adv_module_stamp` and the cksum
+  stamp; (3) teach tests/lib/adversarial-driver.sh to load it; (4) update CLAUDE.md's "eleven modules". |
+  severity: low | category: Code | conf: 80
+- [ ] B-20261010-RD1040-GATE-PROOF-LIB [structural-refactor (multi-file)]: the proof-verdict subsystem (~250 lines:
+  `pg_artifact_proof_refs`, `_pgl_refs_add`, `pg_artifact_proof_verdict`, `_pgl_proof_one`, the two message maps,
+  `pg_proof_ref_is_prose`) sits inside the ~1200-line hooks/lib/pipeline-gate-lib.sh. Recipe: extract
+  hooks/lib/pipeline-proof-lib.sh sourced like path-contain.sh; add it to install.d/zuvo-home.sh's flat extras and
+  its `_iz_verify_cmp` list, to the review-artifact-sync.sh and pg-uncovered-files load guards; keep the
+  fail-closed refusal when the sibling is missing. | severity: low | category: Code | conf: 75
+- [ ] B-20261010-RD1040-VERIFY-TESTS-SURVIVORS-MODULE [structural-refactor (multi-file)]: scripts/zuvo-home/verify-tests
+  is ~2900 lines; the survivors/reprobe subsystem (`write_survivor_report`, `read_reprobe`, `load_survivors`,
+  `reprobe_refusal`, `apply_reprobe`, `mutant_original`, `reprobe_hint`) is separable, `_measure_mutation` (~254) and
+  `main` (~438) are oversized, and `record_survivors`/`check_mutation`/`_measure_mutation` take 9-10 parameters.
+  Recipe: extract scripts/zuvo-home/zuvo_survivors.py (precedent: zuvo_backlog_*.py), add the script dir to
+  sys.path in the test loader (tests/hooks/test_verify_tests_mutation.py exec-compiles one file), introduce a
+  `MutationRun` namedtuple for the shared arguments, then split `_measure_mutation` and `main`. |
+  severity: low | category: Code | conf: 75
+- [ ] B-20261010-RD1040-Q21-SELECTION-INCLUDE [structural-refactor (multi-file)]: the Q21 mutation-artifact
+  selection rule is hand-copied in shared/includes/test-audit-batch-prompt.md, shared/includes/refactor-reference.md
+  and skills/refactor/references/remediation.md besides the generated gate-registry copies. Recipe: put the rule
+  once in shared/includes/mutation-artifact-selection.md, reference it from the three files, and shorten the Q21
+  row to point at it. | severity: low | category: Docs | conf: 65
+- [ ] B-20261010-RD1040-LC-AWK-SIBLING [structural-refactor (multi-file)]: build-review-patch embeds a ~170-line awk
+  program (`LC_AWK`) in a single-quoted string (no apostrophes allowed, cannot be linted alone), and the
+  `=== CONTEXT:` / `=== END CONTEXT ===` marker is produced there and parsed by scripts/lib/adversarial-input.sh with
+  no shared definition. Recipe: move it to scripts/zuvo-home/build-review-patch-context.awk (installed flat by the
+  zuvo-home glob, found via dirname "$0"), and name the marker contract at both ends. | severity: low |
+  category: Code | conf: 55
+- [ ] B-20261010-RD1040-SHIP-USES-PG-UNCOVERED-FILES [below-threshold]: skills/ship/SKILL.md (~:522, ~:604) still
+  hand-sources pipeline-gate-lib.sh with its own candidate order (~/.claude/hooks/lib first) instead of calling
+  `~/.zuvo/pg-uncovered-files "$DIFF_BASE..HEAD"` and reading its 0/2/3 codes. Outside the RD-1040 diff. |
+  severity: low | category: Code | conf: 60
+- [ ] B-20261010-ARCHIVE-COUNTS-FAILED-COPIES [below-threshold, pre-existing]: scripts/review-artifact-sync.sh
+  `do_archive` runs `copy_preserving … || true` and then counts the artifact/proof as archived; a CONFLICT or failed
+  copy is still in the "N proof(s)" summary (present at 8606769a). Fix: count only on success and print a WARN
+  otherwise; decide whether a CONFLICT should change the exit code. | severity: low | category: Code | conf: 30
+- [ ] B-20261010-Q21-STALE-ARTIFACT-PREFERENCE [pre-existing]: the Q21 mutation-artifact rule (gate-registry.md Q21
+  row and its copies) makes `commit == HEAD` a preference ("else among all"), so the refactor flow
+  (skills/refactor/references/remediation.md, shared/includes/refactor-reference.md) can record `prove.mutation`
+  from an artifact of an older tree; the test-audit side scores such an artifact N/A (stale), the refactor side
+  does not say so. Same rule at 8606769a. Decide whether a non-HEAD candidate blocks the refactor field. |
+  severity: low | category: Docs | conf: 55
+- [ ] B-20261010-RD1040-WEAK-TEST-ROWS [below-threshold]: tests/hooks/test-review-pipeline-smoke.sh assertion 3
+  counts duplicate lifecycle lines only inside `=== CONTEXT:` blocks (a duplicate carried as hunk text is not
+  seen); tests/hooks/test-build-review-patch.sh (38e/38f) cap rows do not check which function lines survive;
+  tests/hooks/test-pipeline-gate-lib.sh:779 `grep -q 'pg.uncovered.files'` lets `.` match any character. |
+  severity: low | category: Test | conf: 30
+
+## 2026-10-10 RD-121 review deferrals (stryker-scoped-config / stryker-vitest / watchdog)
+
+- [ ] B-RD121-SCOPER-SPLIT [structural-refactor (multi-file)]: `scripts/stryker-scoped-config.sh` carries a ~410-line node program in a heredoc fed 19 positional argv entries. Recipe: (1) move `resolveBase`, `changedRanges`, `unquote`, `whyNotMutable`, `rangeUnsafe`, `addWhole`/`addRanges` into `scripts/lib/stryker-scope.cjs` (pure, errors thrown as `{code,msg}`); (2) `buildConfig`/`renderKv` into `scripts/lib/stryker-config.cjs`; (3) the heredoc becomes `node lib/stryker-scoper-main.cjs --json "$OPTS_JSON"` with named keys; (4) table-test `changedRanges`/`unquote` directly. Behaviour-preserving; the gate tests are the net.
+- [ ] B-RD121-VITEST-LIB-ANALYZE [structural-refactor (multi-file)]: `scripts/lib/stryker-vitest.cjs` re-reads and re-blanks the config several times and `resolve()` returns four shapes. Recipe: `analyzeConfig(src)` -> `{blanked, objects, inherits, opaque, include, exclude}` once; split `resolve` into `chooseConfig` and `chooseTests`; rename the two glob escapers by dialect (`escapeVitestGlob` here, `escapeMutateGlob` in the scoper).
+- [ ] B-RD121-STATIC-AGGREGATOR-LIMIT [NIT]: multi-project detection is textual; a `mergeConfig(base, …)` whose imported base declares `test.projects` is only warned about, not refused. A runtime check inside the generated config (throw when the merged `test.projects` is set) would close it.
+- [ ] B-RD121-ZERO-NUMERICS [NIT]: `--concurrency 0` and `--timeout-ms 0` pass the scoper's validation (pre-existing `^[0-9]+$`).
+- [ ] B-RD121-HELPER-LISTS [NIT]: the Codex install lists the scoper's companions (watchdog, reprobe) in two places in `scripts/install.d/codex.sh`; declare them once.
+- [ ] B-RD121-TEST-QUALITY-WARN [NIT]: zuvo:test-audit scored the six touched test files tier C on Q7/Q11 (exhaustive negative matrices of pre-existing scoper branches); dispositioned under ~/.claude/rules/test-scope.md, report zuvo/audits/test-quality-audit-2026-10-10.md (local).

@@ -515,6 +515,8 @@ OUT="$(ls -t zuvo/audits/architecture-review-*.md 2>/dev/null | head -1)"   # or
   || echo "adversarial: set OUT to the architecture file you just wrote"
 ```
 
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
+
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Then:
@@ -557,7 +559,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 ## Backlog Integration (ALL MODES)
 
-After completing any mode, persist actionable items to `memory/backlog.md` — at the MAIN checkout root, resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (never a worktree-local copy):
+After completing any mode, persist actionable items to `memory/backlog.md` — resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (the checkout's own copy when git tracks it, else the MAIN checkout root; never an untracked worktree-local copy):
 
 **Review mode:** Each Critical and Needs-work issue from the report.
 **ADR mode:** "Harder" consequences, "Revisit when" triggers, incomplete action items.

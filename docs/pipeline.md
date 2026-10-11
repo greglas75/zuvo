@@ -318,9 +318,9 @@ missing reviews.
 
 ```bash
 # The enumeration, with a reason per file:
-bash -c '. "$(git rev-parse --show-toplevel)/hooks/lib/pipeline-gate-lib.sh" \
-         && pg_uncovered_files "<base>..<head>"'
-# The header linter, run against the gate parser's ACTUAL expectations:
+# (exit 0 = computed, and then empty output = all covered; 2 = cannot compute; 3 = no production files)
+~/.zuvo/pg-uncovered-files "<base>..<head>"
+# The header linter; it applies the push gate's own verdict, so it FAILs wherever the gate refuses:
 ~/.zuvo/review-artifact-sync.sh --check
 ```
 
@@ -328,7 +328,7 @@ bash -c '. "$(git rev-parse --show-toplevel)/hooks/lib/pipeline-gate-lib.sh" \
 |---|---|---|---|
 | `lists it SPACE-separated` | `files:` is split on **commas only**. A space-separated list parses as one impossible filename and matches nothing. | Rewrite the header with commas (`--check` finds them all) | **No** — seconds |
 | `lists it but reviewed DIFFERENT content (head <sha>)` | The file changed *after* its review, so the blob no longer matches. This is the gate working correctly. | Review **those files only** | Yes, but only for them |
-| no artifact found / proof missing | Coverage is TWO files — the `memory/reviews/*.md` artifact **and** the `zuvo/proofs/…` file its `adversarial:` header names — and both are per-checkout and **gitignored**. The review ran in a worktree; the push is from somewhere else. | `--from/--to` if both checkouts still exist; `--restore` if it was archived | **No** — when it is recoverable at all (see below) |
+| no artifact found / proof missing | Coverage is TWO files — the `memory/reviews/*.md` artifact **and** the `zuvo/proofs/…` file(s) its `adversarial:` header names (repeated lines or a comma list; every cited proof must pass) — and both are per-checkout and **gitignored**. The review ran in a worktree; the push is from somewhere else. | `--from/--to` if both checkouts still exist (it copies every cited proof and exits 1 if the destination's gate would still refuse); `--restore` if it was archived | **No** — when it is recoverable at all (see below) |
 | `adversarial:` holds prose, not a path | A run narrative was written where a repo-relative path belongs. Nothing can resolve it. | Point the header at the proof file | **No** |
 | `files:` present but the artifact has no `<!-- zuvo-review -->` marker | The parser ignores an unmarked file entirely. | Add the marker line | **No** |
 
@@ -343,7 +343,7 @@ their evidence no longer exists. So run, after every review and once on any repo
 ~/.zuvo/review-artifact-sync.sh --restore     # puts an archived proof back where a header points at nothing
 ```
 
-The archive is keyed by ARTIFACT, not by the proof's filename — proof names are not unique (a run
+The archive is keyed by ARTIFACT and the proof's repo-relative path (`proofs/<artifact-stem>/<ref>`), not by its filename — proof names are not unique (a run
 that passes a fixed `--artifact adversarial-final.txt` collides with every other run that did the
 same, which the first live archive of that repo hit immediately), and keying on the basename would
 let `--restore` hand an artifact somebody else's proof, manufacturing coverage.

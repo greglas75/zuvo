@@ -60,7 +60,7 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
 0b. **Comment pass (before commit 1).** Read `../../../shared/includes/comment-pass.md` and run its whole sequence — mechanical scope, `CHECK` lines, ledger check, exit valve — with `COMMENT_SCOPE` = the scope-fence files this run created or modified, plus every file a fix creates or edits, checked against `git status --porcelain --untracked-files=all` — a check on the record, never a source of paths (files other sessions changed stay out); and `COMMENT_BASE` = `HEAD`, still the pre-refactor commit because this phase owns all committing. Print `COMMENT_BASE=<sha>`, resolved by `git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`, and pass that literal; if it is missing (a resume): the same resolver (`git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`) only when this run has committed nothing, otherwise print `[GATE: comment-pass] BLOCKED rc=2 base unknown`. Moved comments are carried lines: the helper does not judge them and this pass never edits them. One run, each path quoted, from the repository root:
     ```bash
     COMMENT_BASE=<sha printed above>
-    rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<fence-file-1>" "<fence-file-2>" || rc=$?
+    rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<fence-file-1>" "<fence-file-2>" --skill refactor || rc=$?
     ```
    - **rc 1** → fix every finding in-run and re-run until rc 0 — no cap, no backlog; history moves into the commit message. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop for a human.
    - **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it as `CHECK settled: <file:line> test|removed|softened`. A settling edit (a test added, a number removed) means one more helper run, and the marker takes that last clean run's id. Confirm the ledger with the include's `awk` lookup: a row for every path in scope (no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`; a scoped path without a row → re-run over the full scope), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]` or `N/A (run=<id> no audited source)`; `N/A (no files written)` is printed only when the scope is empty (include step 1), with no run. If the pass added a test or changed code, re-run the targeted suite for those files; the include's freshness section decides whether the Phase 3 blind audit runs again. A claim inside a frozen characterization file (characterization.md "Freeze the characterization package": commit 1 keeps those files unchanged) is settled by `removed|softened` or by a test in a NEW file, which joins the scope and is staged with the commit this pass precedes (commit 1 here, 3e when 3d runs this sequence) — it tests the code that commit holds; a comment-only edit to a frozen file must keep its recorded pass count — re-run it to confirm.
@@ -214,8 +214,13 @@ word is `sampled(<N>)`, not `clean`. `--runner auto` prefers the native runner p
 its total is not a budget.
 
 **Record `prove.mutation = "<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>"`** — all three
-parts read out of `$ZUVO_DIR/audits/mutation-test-<date>.json` (`score_triaged`, `engine`), never
-from memory. `WARN` when gaps remain after the fix loop, with a per-file backlog entry naming each.
+parts (`score_triaged`, `engine`, path) read out of one artifact chosen by this rule; `scope` selects, it is not recorded.
+Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` and zero-byte or
+unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
+audited file lies under it, or each audited file is a `files[].path` entry.
+Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
+No candidate → the field cannot be filled: re-run Step 2 over the audited files. A missing artifact has no `N/A`.
+Never from memory. `WARN` when gaps remain after the fix loop, with a per-file backlog entry naming each.
 The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
 `plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is
 a score with no digit in it: `WARN:substituted-inline` is a real value a field run once invented

@@ -247,8 +247,9 @@ Input:
   --effectiveness  Per-model report over ~/.zuvo/adversarial-findings.log: findings raised,
                    CRITICALs, verdicts, and precision = (fixed+deferred) / judged — rejected
                    is the false-positive column. Unjudged findings are excluded from precision,
-                   not counted against the model. Only --json reviews are in the ledger: text
-                   output carries no fingerprints to join a verdict to.
+                   not counted against the model. Every finding with an ID is in the ledger —
+                   the JSON "id", or in text the ID: line of a block opened by its SEVERITY:
+                   line; a finding without an ID is not.
   --no-chunk      Disable auto-chunking of oversized input (env: ZUVO_ADV_NO_CHUNK=1).
                    Default: input over the char cap with 2+ file boundaries is split at
                    file boundaries and reviewed chunk-by-chunk — no silent truncation.

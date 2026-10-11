@@ -53,6 +53,7 @@ refactor_gate_check() (
   [ -n "$ttl" ] || ttl=86400
   blocked=0
   for c in "$cdir"/refactor-*.json; do
+    [ -e "$c" ] || [ -L "$c" ] || continue
     _refactor_contract_file "$c" || continue
     # TERMINAL stages — the gate exists to protect an IN-FLIGHT refactor from being
     # committed around. A refactor that stopped is not in flight. `BLOCKED` is a
@@ -148,6 +149,7 @@ refactor_prove_v4_check() (
   [ -n "$rpv_ttl" ] || rpv_ttl=86400
   rpv_blocked=0
   for rpv_c in "$rpv_dir"/refactor-*.json; do
+    [ -e "$rpv_c" ] || [ -L "$rpv_c" ] || continue
     _refactor_contract_file "$rpv_c" || continue
     _is_agent_env || continue
     rpv_now=$(date +%s)
@@ -350,6 +352,7 @@ refactor_scope_gate_check() (
   rsg_active=0
   rsg_fences=""
   for rsg_c in "$rsg_cdir"/refactor-*.json; do
+    [ -e "$rsg_c" ] || [ -L "$rsg_c" ] || continue
     _refactor_contract_file "$rsg_c" || continue
     # Same terminal set as the prove gate above — see the comment there. This is the
     # scope guard ("every staged file must sit in some fence"), which is the one that

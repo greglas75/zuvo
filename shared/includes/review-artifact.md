@@ -53,7 +53,9 @@ evidence is gone.
 
 On Claude Code this is handled for you: the PostToolUse hook `zuvo-archive-review-artifact.sh`
 fires on the write itself and copies the pair to `~/.zuvo/review-archive/<repo>/`, outside every
-checkout. **On any host without that hook — and after writing an artifact by hand — run it:**
+checkout. Each proof is stored under `proofs/<artifact-stem>/<repo-relative path>`, so two proofs
+that share a basename do not collide, and `adv-proof:` and comma-listed proofs are archived too.
+**On any host without that hook — and after writing an artifact by hand — run it:**
 
 ```bash
 ~/.zuvo/review-artifact-sync.sh --archive . --slug "<artifact filename without .md>"
@@ -66,16 +68,17 @@ artifacts ended up dead weight.
 
 **The three header bugs that make a real review invisible to the gate.** Each one produces a push
 BLOCKED on files that WERE reviewed, and each is a seconds-long fix — never a reason to re-review
-or to reach for `ZUVO_ALLOW_ADHOC=1`. Lint them with `~/.zuvo/review-artifact-sync.sh --check`:
+or to reach for `ZUVO_ALLOW_ADHOC=1`. Lint them with `~/.zuvo/review-artifact-sync.sh --check` (it applies the push gate's own verdict, so it fails
+whenever the gate would refuse the artifact):
 
 1. **`files:` separated by spaces.** The parser splits on **commas only** (it cannot split on
    spaces: a path may contain one). A space-separated list parses as a single impossible filename
    and matches nothing, so every file in it reads as unreviewed.
 2. **Missing `<!-- zuvo-review -->` marker.** An unmarked file is ignored outright — the headers
    below are never even read.
-3. **The artifact travelled without its proof.** Coverage is TWO files: this `.md` AND the
-   `zuvo/proofs/…` file its `adversarial:` header names. Both are per-checkout and gitignored, so
-   a review run in a worktree leaves the main checkout seeing nothing. Move them as a PAIR with
+3. **The artifact travelled without its proof.** Coverage is this `.md` AND every
+   `zuvo/proofs/…` file its `adversarial:` header cites. All are per-checkout and gitignored, so
+   a review run in a worktree leaves the main checkout seeing nothing. Move them together with
    `~/.zuvo/review-artifact-sync.sh` — copying only the `.md` fails proof-of-work instead, which
    reads as "the review never happened" (diagnosed that way twice before the helper existed).
 
@@ -88,7 +91,11 @@ ranges, not this push" is a misreading of the gate, not a finding about it. Full
 - `range:` — the full (non-abbreviated) `<base>..<head>` the review covered.
 - `files:` — comma-separated reviewed **production** files, OR a single `*` meaning the whole range.
 - `adversarial:` — path (repo-relative) to the adversarial run's saved output. **Required for any
-  artifact written on/after 2026-07-23** — see Proof-of-work below.
+  artifact written on/after 2026-07-23** — see Proof-of-work below. It may cite several proofs:
+  repeat the line (`adv-proof:` is an alias) or give a comma list. Only the header block holding
+  the first such line is read, at most 16 refs / 64 comma items / 4096 characters, and prose instead
+  of a path is refused. Exceeding a cap refuses the artifact (`too-many-refs`); the list is never
+  truncated. **Every cited proof must pass.**
 - `verdict:` — the review/build/execute outcome.
 
 ## Proof-of-work (REQUIRED for coverage — content-key alone is not enough)
@@ -109,9 +116,10 @@ git diff <range> | ~/.zuvo/adversarial-review --multi --mode code --artifact "zu
 #   adversarial: zuvo/proofs/<slug>-adversarial.txt
 ```
 
-`hooks/lib/pipeline-gate-lib.sh :: pg_artifact_proven` verifies, for any artifact newer than
-`PG_REVIEW_PROOF_CUTOFF` (2026-07-23T00:00:00Z), that the referenced file **resolves inside the
-repo** (no `..` traversal, no absolute path) and holds **≥2 `REVIEW BY:` provider lines** (a
+`hooks/lib/pipeline-gate-lib.sh :: pg_artifact_proven` (a wrapper over `pg_artifact_proof_verdict`,
+which prints a verdict and reason per proof) verifies, for any artifact newer than
+`PG_REVIEW_PROOF_CUTOFF` (2026-07-23T00:00:00Z), that each cited proof (every cited proof must pass)
+**resolves inside the repo** (no `..` traversal, no absolute path) and holds **≥2 `REVIEW BY:` provider lines** (a
 genuine multi-model run). A genuine single-provider machine still produces a file with **one**
 `REVIEW BY:` line plus a single-provider note — that is accepted too. The bare literal
 `single_provider_only` with **no file** is NOT accepted: that was a "type the magic words"
@@ -155,7 +163,8 @@ After the header, the normal human-readable report body follows.
 
 For a long time the artifact had exactly one reader: the pipeline-entry gates, asking a yes/no
 question at push time (`pg_range_reviewed`). `zuvo:ship` Phase 2 is the second reader, and it asks a
-different question — *which* files still need review — via `pg_uncovered_files` in the same library.
+different question — *which* files still need review — via `pg_uncovered_files` in the same library (callable from a shell
+as `~/.zuvo/pg-uncovered-files "<base>..<head>"`).
 
 This matters because ship was the largest duplicated cost in the pipeline. Ship *wrote* an artifact
 and *diagnosed* artifacts when the push gate blocked, but never *consulted* one when deciding review
@@ -221,7 +230,8 @@ reviewed" because their pairs lived only in the worktrees):
 - **After writing an artifact, lint it:** `~/.zuvo/review-artifact-sync.sh
   --check` catches the malformed headers the gate otherwise skips silently —
   missing `<!-- zuvo-review -->` marker, space-separated `files:` (the parser
-  splits on commas ONLY), missing/weak proof.
+  splits on commas ONLY) — and gives the gate's verdict on every cited proof
+  (missing, truncated, blind-audit, weak, prose).
 - When a push is blocked, the gate prints a per-file reason
   (`pg_explain_uncovered`): proof-missing, stale-content, marker-missing, and
   no-artifact each have a DIFFERENT fix — only the last one means re-review.

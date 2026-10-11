@@ -143,6 +143,8 @@ install_codex() {
     # mutation-test resolves these helpers from the active Codex root.
     install_files_atomic "codex scripts" "$HOME/.codex/scripts" "$ZUVO_DIR"/scripts/stryker-scoped-config.sh || _vc_rc=1
     install_files_atomic "codex scripts" "$HOME/.codex/scripts" "$ZUVO_DIR"/scripts/mutation-survivor-reprobe.sh || _vc_rc=1
+    # The scoper's run_command copies this watchdog from beside itself; without it the scoper exits 2.
+    install_files_atomic "codex scripts" "$HOME/.codex/scripts" "$ZUVO_DIR"/scripts/stryker-run-watchdog.sh || _vc_rc=1
     # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
     # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
     # script refuses to sync rather than falling back to a private copy of the rule.
@@ -164,7 +166,7 @@ install_codex() {
     # fixing "the one missing file" could still be left with a broken install. Run all three,
     # accumulate (onto the runner-lib verdict above), then decide.
     verify_copied "codex scripts" "$ZUVO_DIR/scripts" "$HOME/.codex/scripts" \
-      benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh stryker-scoped-config.sh mutation-survivor-reprobe.sh || _vc_rc=1
+      benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh stryker-scoped-config.sh mutation-survivor-reprobe.sh stryker-run-watchdog.sh || _vc_rc=1
     verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh || _vc_rc=1
     verify_copied "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.codex/scripts" path-contain.sh || _vc_rc=1
     if [ "$_vc_rc" -eq 0 ]; then

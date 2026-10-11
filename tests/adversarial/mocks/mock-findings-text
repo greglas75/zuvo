@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# mock-findings-text — Mock lane for the findings ledger in TEXT mode (test-findings-ledger.sh FL.20-FL.22).
+# Answers in the text OUTPUT FORMAT with the shapes real lanes produce, each block chosen to pin one
+# branch of findings_text_rows (expected rows are in FL.20):
+#   1+2  the same ID twice, the HIGHER severity second, with its own confidence (inline, on a numbered
+#        heading) and file — the second must win;
+#   3    colon outside the emphasis, `KEY :`, lowercase severity, a decorated ID with closing
+#        punctuation, then a second ID line (ignored: the first ID of a block wins);
+#   4    unknown severity word, empty FILE, no CONFIDENCE, words after the ID;
+#   5    no ID at a HIGHER severity than block 4 (dropped; must not inherit block 4's ID);
+#   6-9  unrecordable IDs: flag-shaped, backslash, the prompt's own <template>, a tab;
+#   10+11 the same ID twice at the SAME severity — the later copy is kept, as jq max_by keeps it in the JSON path;
+#   12   a recordable LAST block with a tab inside FILE and a second FILE line (the first value of a field in a
+#        block wins; the end-of-input flush; the row keeps 11 columns).
+cat >/dev/null
+printf '%s\n' \
+  'Review of the change.' \
+  '' \
+  'SEVERITY: INFO' \
+  'CONFIDENCE: low' \
+  'FILE: src/my_file.ts:12' \
+  'ID: my_file.ts:12:missing-null-guard' \
+  'ISSUE: value read before the guard' \
+  '' \
+  '**1. SEVERITY: CRITICAL — CONFIDENCE: medium**' \
+  '**FILE:** `src/my_file.ts:14`' \
+  '**ID:** `my_file.ts:12:missing-null-guard`' \
+  '' \
+  '**SEVERITY**: warning' \
+  '**CONFIDENCE** : high' \
+  '**FILE**: auth.ts:40' \
+  '**ID**: `auth.ts:40:token-logged-plaintext`.' \
+  'ID: auth.ts:41:second-id-ignored' \
+  '' \
+  'SEVERITY: BLOCKER' \
+  'FILE:' \
+  'ID: odd.ts:1:unknown-severity and trailing words' \
+  '' \
+  'SEVERITY: CRITICAL' \
+  'FILE: x.ts:1' \
+  'ISSUE: a finding without an ID' \
+  '' \
+  '- SEVERITY: INFO' \
+  '- ID: -flag-shaped:1:x' \
+  '' \
+  'SEVERITY: INFO' \
+  'ID: back\slash.ts:1:x' \
+  '' \
+  'SEVERITY: INFO' \
+  'ID: <file-basename>:<line>:<3-5 lowercase-hyphenated keywords from the issue>'
+printf 'SEVERITY: INFO\nID: tab\there:1:x\n\n'
+printf '%s\n' 'SEVERITY: WARNING' 'CONFIDENCE: low' 'FILE: tie.ts:1' 'ID: tie.ts:1:same-severity' '' \
+  'SEVERITY: WARNING' 'CONFIDENCE: high' 'FILE: tie.ts:2' 'ID: tie.ts:1:same-severity' ''
+printf 'SEVERITY: WARNING\nFILE: tab\tin.ts:2\nFILE: second-file-line.ts:9\nID: last.ts:2:end-of-review\n'
+exit 0

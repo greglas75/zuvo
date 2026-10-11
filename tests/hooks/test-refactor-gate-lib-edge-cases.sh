@@ -223,6 +223,42 @@ else
   bad "future execution state status=$future_status; output=$(cat "$TMP/guard.out" "$TMP/guard.err")"
 fi
 
+echo "=== empty contracts dir is not reported as an unreadable contract ==="
+# Bug caught: an unmatched refactor-*.json glob stays literal and reaches the state reader,
+# which prints "unreadable or non-contract" for a path that never existed.
+mkdir -p "$TMP/empty-contracts"
+for entry in refactor_gate_check refactor_prove_v4_check refactor_scope_gate_check; do
+  if ZUVO_CONTRACTS_DIR="$TMP/empty-contracts" ZUVO_GATE_MODE=pre-push \
+     "$entry" 'src/in.ts' > "$TMP/empty.out" 2> "$TMP/empty.err"; then
+    empty_status=0
+  else
+    empty_status=$?
+  fi
+  if [ "$empty_status" -eq 0 ] && ! grep -Fq 'unreadable or non-contract' "$TMP/empty.err"; then
+    ok "$entry ignores an empty contracts dir"
+  else
+    bad "$entry on an empty contracts dir: status=$empty_status; output=$(cat "$TMP/empty.out" "$TMP/empty.err")"
+  fi
+done
+
+echo "=== a dangling contract symlink is still reported as unreadable ==="
+# Bug caught: a guard that skips every glob hit that is not a regular file also hides a dangling contract symlink.
+mkdir -p "$TMP/broken-contracts"
+ln -s "$TMP/no-such-target.json" "$TMP/broken-contracts/refactor-broken.json"
+for entry in refactor_gate_check refactor_prove_v4_check refactor_scope_gate_check; do
+  if ZUVO_CONTRACTS_DIR="$TMP/broken-contracts" ZUVO_GATE_MODE=pre-push \
+     "$entry" 'src/in.ts' > "$TMP/broken.out" 2> "$TMP/broken.err"; then
+    broken_status=0
+  else
+    broken_status=$?
+  fi
+  if [ "$broken_status" -eq 0 ] && grep -Fq 'unreadable or non-contract' "$TMP/broken.err"; then
+    ok "$entry reports a dangling contract symlink"
+  else
+    bad "$entry on a dangling symlink: status=$broken_status; output=$(cat "$TMP/broken.out" "$TMP/broken.err")"
+  fi
+done
+
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo 'ALL PASS'; exit 0; }
 echo "$fails FAILED"; exit 1

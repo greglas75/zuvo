@@ -59,9 +59,10 @@ narration, blocks that outweigh their code — and makes the fix part of the run
    `[GATE: comment-pass] N/A (no files written)` and return.
 2. **One run over the whole scope**, from the repository root, each path quoted on its own:
    ```bash
-   rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<path-1>" "<path-2>" || rc=$?
+   rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<path-1>" "<path-2>" --skill <skill> || rc=$?
    ```
-   It prints the table, findings, `CHECK` lines and, last, `RESULT: comment-pass …` and `comment_pass: …`.
+   `<skill>` is the calling skill's name (`build`, `execute`, `review`, `refactor`, …); the ledger records it
+   so `--trend --by skill` can say which skill ran it. It prints the table, findings, `CHECK` lines and, last, `RESULT: comment-pass …` and `comment_pass: …`.
 3. **rc 1** → fix every finding per the table (MOVE, DELETE, cut a block to its WHY) and re-run the
    SAME command over the grown scope until rc 0; the exit valve below is the one exception. There is
    no iteration cap: a breach is fixed in-run, never backlog it and never hand it to a later skill.
@@ -146,5 +147,5 @@ or run this pass BEFORE the blind audit.
 
 - Paste the helper's last `comment_pass:` line verbatim into the retro's Telemetry block, on the line
   after `status:` — the markdown retro only; `retros.log` keeps its columns.
-- Trend across runs and projects: `~/.zuvo/comment-audit --trend --days 30`.
+- Trend across runs and projects: `~/.zuvo/comment-audit --trend --days 30`; per calling skill: add `--by skill`.
 - Semantic counterpart: adversarial code review item 12 checks a comment's claim against the code.

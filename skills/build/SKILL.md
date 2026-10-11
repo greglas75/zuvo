@@ -622,7 +622,7 @@ Read `../../shared/includes/comment-pass.md` and run its whole sequence — mech
 ```bash
 # Quote each path separately, as in 4.4; run from the repository root.
 BUILD_BASE=<sha printed in 3.1>
-rc=0; ~/.zuvo/comment-audit --base "$BUILD_BASE" --files "<written-file-1>" "<written-file-2>" || rc=$?
+rc=0; ~/.zuvo/comment-audit --base "$BUILD_BASE" --files "<written-file-1>" "<written-file-2>" --skill build || rc=$?
 ```
 
 - **rc 1** → fix every finding in-run (MOVE history into the 4.6 commit message) and re-run until rc 0 — no cap, no backlog. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop for a human.
@@ -693,6 +693,8 @@ else
   ~/.zuvo/adversarial-review --mode code --artifact "zuvo/proofs/build-<slug>-adversarial.txt" --files "<changed files>"
 fi
 ```
+
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
 
 If diff touches auth, payment, crypto, PII, or migration files, use `--mode security` instead. If diff touches migrations/schema, use `--mode migrate`.
 

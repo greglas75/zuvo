@@ -132,15 +132,22 @@ else
   bad "settings merge changed malformed input before rejecting it"
 fi
 
-probe() {  # <label> <expect: allow|block> <command text>
+probe() {  # <label> <expect: allow|block> <command text>; PROBE_TIMEOUT=N caps the guard at N s
   local label="$1" expect="$2" cmd="$3" rc
+  local -a run=(bash "$GUARD")
+  [ -n "${PROBE_TIMEOUT:-}" ] && run=(timeout "$PROBE_TIMEOUT" bash "$GUARD")
   printf '%s' "$cmd" | python3 -c '
 import json,sys
 print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.stdin.read()}}))' \
-    | env -u TF_ALLOW_LOCAL -u FARM_HOOK_OFF PATH="$STUB:$PATH" bash "$GUARD" >/dev/null 2>&1
+    | env -u TF_ALLOW_LOCAL -u FARM_HOOK_OFF PATH="$STUB:$PATH" "${run[@]}" >/dev/null 2>&1
   rc=$?
+  if [ -n "${PROBE_TIMEOUT:-}" ] && [ "$rc" -eq 124 ]; then
+    bad "the guard hung past the ${PROBE_TIMEOUT}s ceiling: $label"; return
+  fi
+  # exactly 2: a matcher crash refuses too, but python failing to start or the hook timing out
+  # still lets the command through (exit 0), and any other non-zero is not a refusal
   if [ "$expect" = "block" ]; then
-    [ "$rc" -ne 0 ] && pass "blocks: $label" || bad "did NOT block: $label"
+    [ "$rc" -eq 2 ] && pass "blocks: $label" || bad "did NOT block (rc=$rc): $label"
   else
     [ "$rc" -eq 0 ] && pass "allows: $label" || bad "wrongly blocked: $label"
   fi
@@ -177,6 +184,163 @@ probe "a heredoc fed to /bin/bash"                block "$(printf '%s\n' "/bin/b
 probe "a heredoc fed to /usr/bin/env bash"         block "$(printf '%s\n' "/usr/bin/env bash <<'EOF'" 'npx vitest run' 'EOF')"
 probe "a heredoc fed to ksh"                       block "$(printf '%s\n' "ksh <<'EOF'" 'npx vitest run' 'EOF')"
 probe "same look-alike in a bash heredoc runs"    block "$(printf '%s\n' "bash <<'EOF'" '  EOF' 'npx vitest run' 'EOF')"
+
+# Only what the shell would expand counts. Each ALLOW below has a BLOCK sibling of the same shape,
+# so a matcher that crashes (and fails open) or stops scanning shows red.
+# Bug: data fed to a non-shell interpreter read as a command.
+probe "python heredoc printing a runner name"     allow "$(printf '%s\n' 'python3 - <<EOF' 'print("npm test")' 'EOF')"
+# Bug: the opener line's tail was swallowed together with the body.
+probe "a runner after a python heredoc opener"    block "$(printf '%s\n' 'python3 - <<EOF; npm test' 'print(1)' 'EOF')"
+probe "a substitution after a quoted opener"      block "$(printf '%s\n' "cat <<'EOF'; echo \$(npm test)" 'data' 'EOF')"
+# Bug: text after the delimiter hid a heredoc fed to bash.
+probe "a bash heredoc with a redirect after it"   block "$(printf '%s\n' 'bash <<EOF >/dev/null' 'npm test' 'EOF')"
+probe "a bash heredoc running a runner"           block "$(printf '%s\n' 'bash <<EOF' 'npm test' 'EOF')"
+# Bug: an escaped substitution in an unquoted body is literal text, not a run.
+probe "escaped \$( in an unquoted body"            allow "$(printf '%s\n' 'cat <<EOF' '\$(npm test)' 'EOF')"
+probe "escaped backslash then a live \$("           block "$(printf '%s\n' 'cat <<EOF' '\\$(npm test)' 'EOF')"
+probe "escaped backticks in an unquoted body"     allow "$(printf '%s\n' 'cat <<EOF' '\`npx vitest run\`' 'EOF')"
+probe "live backticks in an unquoted body"        block "$(printf '%s\n' 'cat <<EOF' '`npx vitest run`' 'EOF')"
+# Bug: single-quoted and $'...' text is never expanded.
+probe "a substitution inside single quotes"       allow "grep 'echo \$(npm test)' f"
+probe "a live substitution after single quotes"   block "echo 'x' \"\$(npm test)\""
+probe "backticks inside single quotes"            allow "echo 'see \`npm test\`'"
+probe "backticks inside double quotes"            block "echo \"see \`npm test\`\""
+probe "a substitution inside \$'...'"              allow "echo \$'it\\'s \$(npm test)'"
+probe "an escaped quote in \$'...' then a live \$(" block "echo \$'a\\'b' \"\$(npm test)\""
+probe "an escaped \$( in double quotes"            allow 'echo "\$(npm test)"'
+probe "a bare substitution"                       block 'echo $(npm test)'
+# Bug: an apostrophe in a comment opened a quote that hid the next line.
+probe "a comment apostrophe, then a substitution" block "$(printf '%s\n' "ls # don't" 'echo "$(npm test)"')"
+# Bug: a quoted body was searched for heredoc openers of its own.
+probe "an opener piped to bash inside quoted data" allow "$(printf '%s\n' "cat <<'EOF'" 'cat <<X | bash' 'npm test' 'X' 'EOF')"
+probe "a heredoc piped to bash"                   block "$(printf '%s\n' 'cat <<EOF | bash' 'npm test' 'EOF')"
+# Bug: a heredoc body counted as part of the substitution that holds it.
+probe "a commit message heredoc naming a runner"  allow "$(printf '%s\n' "git commit -m \"\$(cat <<'EOF'" 'run npm test first' 'EOF' ')"')"
+probe "a heredoc inside bash -c \"\$(...)\""        block "$(printf '%s\n' 'bash -c "$(cat <<EOF' 'npm test' 'EOF' ')"')"
+# Bug: a << inside quotes taken for an opener, swallowing the next line as its body.
+probe "a quoted << then a runner"                 block "$(printf '%s\n' 'grep "<<EOF" f' 'npm test')"
+
+# Bug: `#` read as a comment where it is inside a word, hiding the live backticks after it.
+probe "# right after a closing \$(...)"            block 'echo $(echo a)#`npm test`'
+probe "# right after an escaped space"            block 'echo a\ #`npm test`'
+probe "a real comment holding backticks"          allow 'echo a #`npm test`'
+# Bug: a " nested inside ${...} closed the double quotes early.
+probe "nested quotes in \${...} inside dq"         block "echo \"\${x:-\"'\"}\" \$(npm test) \"'\""
+# Bug: an unterminated body was put back as command text; bash reads it to the end and expands it.
+probe "an unterminated body with a live \$("       block "$(printf '%s\n' 'cat <<EOF' "it's \$(npm test)")"
+probe "an unterminated body with live backticks"  block "$(printf '%s\n' 'cat <<EOF' "it's \`npm test\`")"
+# Bug: body substitutions ignored escapes and quotes inside the substitution.
+probe "escaped backticks nested in backticks"     block "$(printf '%s\n' 'cat <<EOF' '`echo \`true\`; npm test`' 'EOF')"
+probe "a quoted ) inside a body \$(...)"           block "$(printf '%s\n' 'cat <<EOF' '$(echo ")"; npm test)' 'EOF')"
+probe "an escaped ) inside a body \$(...)"         block "$(printf '%s\n' 'cat <<EOF' '$(echo \); npm test)' 'EOF')"
+# Bug: wrapper and assignment forms in front of a shell hid that the shell reads the heredoc.
+probe "env X=1 bash heredoc"                      block "$(printf '%s\n' 'env X=1 bash <<EOF' 'npm test' 'EOF')"
+probe "X=1 bash heredoc"                          block "$(printf '%s\n' 'X=1 bash <<EOF' 'npm test' 'EOF')"
+probe "( bash heredoc"                            block "$(printf '%s\n' '( bash <<EOF' 'npm test' 'EOF' ')')"
+probe "timeout 60 bash heredoc"                   block "$(printf '%s\n' 'timeout 60 bash <<EOF' 'npm test' 'EOF')"
+probe "eval of a quoted heredoc"                  block "$(printf '%s\n' "eval \"\$(cat <<'EOF'" 'npm test' 'EOF' ')"')"
+# Bug: a pipe to a shell after the body, or on a continued opener line, was not seen.
+probe "a dangling pipe to bash after the body"    block "$(printf '%s\n' 'cat <<EOF |' 'npm test' 'EOF' 'bash')"
+probe "a pipe to bash on a continued opener line" block "$(printf '%s\n' "cat <<EOF \\" '| bash' 'npm test' 'EOF')"
+# Bug: an arithmetic shift taken for a heredoc opener swallowed the next line as its body.
+probe "an arithmetic << then a runner"            block "$(printf '%s\n' 'echo $((1<<2))' 'npm test' '2')"
+probe "an attached here-string to bash"           block 'bash <<<"npm test"'
+# Bug: the ) ending a case pattern closed the substitution.
+probe "a case pattern inside \$(...)"              block 'echo "$(case x in x) npm test;; esac)"'
+# Bug: ${...} and $[...] are one unit: no comment and no heredoc opener inside them.
+probe "# inside an unquoted \${...}"               block 'echo ${x:-a #}`npm test`'
+probe "<< inside an unquoted \${...}"              block "$(printf '%s\n' 'echo ${x:-<<A}' 'npm test' 'A}')"
+probe "<< inside \$[...] arithmetic"               block "$(printf '%s\n' 'echo $[1<<2]' 'npm test' '2]')"
+# Bug: the shell word was missed behind a redirect, quoting, $SHELL or many assignments.
+probe "a redirect before the shell word"          block "$(printf '%s\n' '<<EOF bash' 'npm test' 'EOF')"
+probe "2>/dev/null before the shell word"         block "$(printf '%s\n' '2>/dev/null bash <<EOF' 'npm test' 'EOF')"
+probe "a redirect before a non-shell command"     allow "$(printf '%s\n' '2>/dev/null cat <<EOF' 'npm test' 'EOF')"
+probe "a backslash inside the shell word"         block "$(printf '%s\n' 'ba\sh <<EOF' 'npm test' 'EOF')"
+probe "empty quotes inside the shell word"        block "$(printf '%s\n' "b''ash <<EOF" 'npm test' 'EOF')"
+probe "\$SHELL reading a heredoc"                  block "$(printf '%s\n' '$SHELL <<EOF' 'npm test' 'EOF')"
+probe "a heredoc piped to \$SHELL"                 block "$(printf '%s\n' 'cat <<EOF | $SHELL' 'npm test' 'EOF')"
+probe "ten assignments before bash"               block "$(printf '%s\n' 'V0=1 V1=1 V2=1 V3=1 V4=1 V5=1 V6=1 V7=1 V8=1 V9=1 bash <<EOF' 'npm test' 'EOF')"
+# Bug: a comment, a blank line or |& hid a dangling pipe into a shell.
+probe "a dangling pipe, then a comment"           block "$(printf '%s\n' 'cat <<EOF | # c' 'npm test' 'EOF' 'bash')"
+probe "a dangling pipe, then a blank line"        block "$(printf '%s\n' 'cat <<EOF |' 'npm test' 'EOF' '' 'bash')"
+probe "a dangling |&"                             block "$(printf '%s\n' 'cat <<EOF |&' 'npm test' 'EOF' 'bash')"
+# Bug: a shell-fed body or a live substitution only got the regex check, not the command analysis.
+probe "a test script in a bash heredoc"           block "$(printf '%s\n' 'bash <<EOF' './tests/run-all.sh' 'EOF')"
+probe "a test script piped to bash"               block "$(printf '%s\n' 'cat <<EOF | bash' './tests/run-all.sh' 'EOF')"
+probe "a test script in a quoted substitution"    block 'echo "$(./tests/run-all.sh)"'
+# Bug: quotes and backslashes split a runner name the shell joins back.
+probe "a backslash inside a substituted runner"   block 'echo "$(npm te\st)"'
+probe "quotes inside a substituted runner"        block 'echo "$(vi"test" run)"'
+probe "a here-string to ksh"                      block 'ksh <<<"npm test"'
+# Bug: a package-manager word and a task word on different lines read as one command.
+probe "npm ci, then test -f, in a bash heredoc"   allow "$(printf '%s\n' 'bash <<EOF' 'npm ci' 'test -f x' 'EOF')"
+probe "npm ci, then npm test, in a bash heredoc"  block "$(printf '%s\n' 'bash <<EOF' 'npm ci' 'npm test' 'EOF')"
+probe "a runner word as a plain argument"         allow "echo npm"
+# Bug: a -c string, an eval argument or a here-string is a command line, yet ( ) ` and $( did not
+# end a word before a runner, and only the regex check, not the command analysis, read it.
+probe "bash -c with a runner in \$(...)"           block "bash -c 'echo \$(vitest run)'"
+probe "bash -c with a runner in backticks"        block "bash -c 'x=\`vitest\`'"
+probe "bash -c with a runner in a subshell"       block "bash -c '(vitest run)'"
+probe "bash -c with cd && runner in a subshell"   block "bash -c '(cd pkg && vitest)'"
+probe "bash -c running a test script, then more" block "bash -c './foo-test.sh && echo ok'"
+probe "eval of a subshell runner"                 block "eval '(vitest run)'"
+probe "a here-string with a runner in \$(...)"     block "bash <<<'echo \$(vitest)'"
+probe "bash -c printing a word"                   allow "bash -c 'echo hello'"
+probe "bash -c grepping for a runner name"        allow 'bash -c "git log --grep=vitest"'
+# Bug: the quick check of a -c string turned a quoted ( into a word boundary.
+probe "bash -c echoing a parenthesised runner"    allow "bash -c 'echo \"Test runners: (vitest)\"'"
+# Bug: the positional parameters after a -c string were read as part of the command.
+probe "a runner name as a positional parameter"   allow "bash -c 'echo hello' vitest"
+probe "a -c string echoing its positional arg"    allow "sh -c 'echo \"\$1\"' _ \"go test\""
+# Bug: a positional parameter in command position runs the word bound to it.
+probe "a runner bound to \$1 of a -c string"        block "bash -c '\$1' _ 'npm test'"
+probe "a runner bound to \"\$@\" of a -c string"     block "bash -c '\"\$@\"' _ npx vitest"
+probe "a runner bound to \${2} of a -c string"      block "bash -c 'cd x && \${2} run' _ y vitest"
+# Bug: an option value (-o pipefail) ended the option scan, hiding -c and the script after it.
+probe "bash -o pipefail -c runner"                block "bash -o pipefail -c 'pytest'"
+probe "bash -eo pipefail running a test script"   block "bash -eo pipefail tests/run-all.sh"
+# Bug: a here-string token was taken for the script, hiding the script bash really runs.
+probe "a test script after a here-string"         block "bash <<<'echo ok' tests/run-all.sh"
+probe "a test script after a bare here-string"    block "bash <<< 'echo ok' tests/run-all.sh"
+# Bug: a bare here-string handed the analysis one word, where the refusal check reads them all.
+probe "a test script in a here-string's words"    block "bash <<< 'echo' '(./foo.spec.sh)'"
+# Bug: past the nesting cap the analysis stopped silently; it must refuse instead.
+probe "a test script under nine bash -c layers"   block "$(python3 -c '
+s = "./foo.spec.sh && echo ok"
+for _ in range(9):
+    s = "bash -c \"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+print(s)')"
+# Bug: an internal error in the matcher let the command through. The test-only switch can only refuse.
+_crash_msg=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"echo npm"}}' \
+  | env -u TF_ALLOW_LOCAL -u FARM_HOOK_OFF FARM_HOOK_TEST_CRASH=1 PATH="$STUB:$PATH" bash "$GUARD" 2>&1 >/dev/null)
+_crash_rc=$?
+case "$_crash_rc:$_crash_msg" in
+  2:*"could not parse"*TF_ALLOW_LOCAL=1*) pass "a matcher crash refuses (exit 2) and names the way through" ;;
+  *) bad "a matcher crash did not refuse with the parse message (rc=$_crash_rc)" ;;
+esac
+
+command -v timeout >/dev/null 2>&1 || bad "coreutils timeout is missing: a hung guard would hang this suite"
+timed_probe() {  # <label> <expect> <command text>: the verdict, and within 5 s; a hang fails at 30 s
+  local t0=$SECONDS
+  PROBE_TIMEOUT=30 probe "$1" "$2" "$3"
+  [ $((SECONDS - t0)) -le 5 ] && pass "within 5s: $1" || bad "took $((SECONDS - t0))s: $1"
+}
+# Linear time: a 12 KB unquoted body is scanned to its end, and its last line still blocks.
+_body=$(python3 -c 'print("\n".join("row %04d: \"q\" x \\$HOME $(date) y" % i for i in range(380)))')
+_heredoc=$(printf 'cat <<EOF\n%s\n%s\nEOF' "$_body" '$(npm test)')
+[ "${#_heredoc}" -ge 12000 ] || bad "the heredoc perf payload is under 12000 chars"
+timed_probe "a ${#_heredoc}-char unquoted body ending in a live substitution" block "$_heredoc"
+# Bug: every nested $( was rescanned on its own, quadratic in the nesting.
+timed_probe "12000 nested \$( and no runner" allow "$(python3 -c 'print("npm ci\necho " + "$(" * 12000 + "x" + ")" * 12000)')"
+# Bug: the command word was re-read from the segment start for every opener on the line.
+timed_probe "200 KB of blanks, then 8000 openers" allow "$(python3 -c 'print("npm ci; " + " " * 200000 + "cat " + "<<A " * 8000)')"
+timed_probe "the same line ending in a runner"   block "$(python3 -c 'print("npm ci; " + " " * 200000 + "cat " + "<<A " * 8000 + "; npm test")')"
+timed_probe "8000 nested \$( around a runner" block "$(python3 -c 'print("echo " + "$(" * 8000 + "npm test" + ")" * 8000)')"
+# Bug: binding one long word to many $1 grows the text quadratically; past its budget the guard refuses.
+timed_probe "5000 \$1 bound to a 100 KB word"      block "$(python3 -c 'print("bash -c \"" + "$1 " * 5000 + "\" _ " + "a" * 100000)')"
+# Bug: the package-manager pattern backtracked exponentially in the number of arguments.
+timed_probe "npm with 30 arguments and no script" allow "$(python3 -c 'print("echo \"$(npm " + "a " * 30 + ";)\"")')"
+timed_probe "npm with 30 arguments, then test"    block "$(python3 -c 'print("echo \"$(npm " + "a " * 30 + "test;)\"")')"
 
 # THE REGRESSION. One command, split across lines — not three commands.
 probe "git add with backslash continuations" allow \

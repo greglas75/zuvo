@@ -1,5 +1,5 @@
 # adversarial-lane golden: what the codex client saw for `adversarial-review.sh --mode code --provider codex-5.3`
-# driver-blob: bbd7250d50bd02acd94836d12247c4867c961431 (git rev-parse HEAD:scripts/adversarial-review.sh at recording)
+# driver-blob: 67025d3fead6f2af1d44ebaa256806c80da739bd (git rev-parse HEAD:scripts/adversarial-review.sh at recording)
 # host: CLAUDECODE=1 CLAUDE_MODEL=opus, every other signal absent (env -i); clients: tests/hooks/fixtures/model-subprocess/spy-cli
 # written by: ZUVO_GOLDEN_RECORD=1 tests/hooks/test-adversarial-lane-golden.sh — never edit by hand
 arg=exec
@@ -18,5 +18,5 @@ config=sandbox_mode = "danger-full-access"
 config=approval_policy = "never"
 config=model_reasoning_effort = "none"
 OPENAI_API_KEY_set=
-stdin_bytes=4330
-stdin_sha=a8d9c10416706ee0a8b12d41783deb98c0c1f9db9aa584e443292c1024531140
+stdin_bytes=4629
+stdin_sha=f0e4a01e61d42df6feb6e67603666a7ef082ff5617e8a4a94e9f7a038bb932f0

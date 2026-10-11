@@ -118,51 +118,412 @@ fi
 # segment, skipping leading env assignments and `cd x &&` style prefixes.
 _verdict=$(printf '%s' "$_cmd" | python3 -c '
 import re, sys, os, shlex
+import bisect
+
+
+def _fail_closed(*_exc):
+    """An internal error refuses instead of allowing: the fast path already saw a runner word."""
+    sys.stdout.write("<unparseable command>\n")
+    sys.stdout.flush()
+    os._exit(0)
+
+
+sys.excepthook = _fail_closed
+if os.environ.get("FARM_HOOK_TEST_CRASH") == "1":
+    raise RuntimeError("forced by the test suite; a crash can only refuse")
 
 cmd = sys.stdin.read()
 
+SHELLS = ("bash", "sh", "zsh", "dash", "ksh", "mksh")
+UNQUOTE = str.maketrans("", "", "\"\x27\\")
+FLAT = str.maketrans("()`", "   ")
+RUNNER_WORD = re.compile(
+    r"(?:^|[;&|\s])(vitest|jest|stryker|playwright|mocha|ava|cypress|pytest|phpunit|tsc|knip|biome|eslint)"
+    r"(?:$|[;&|\s])")
+PM_HEAD = re.compile(r"\b(?:npm|yarn|pnpm|bun)\b(?=\s)")
+PM_TASK = re.compile(r"(?<=\s)(?:t|test|build|lint|typecheck|type-check|check|e2e|coverage)\b")
+TR_HEAD = re.compile(r"\b(?:make|cargo|go|turbo|gradle|gradlew|mvn|dotnet|composer|nx)\b(?=\s)")
+TR_TASK = re.compile(r"(?<=\s)(?:test|build|lint|check|typecheck|coverage|verify|package)\b")
+SH_HEAD = re.compile(r"\b(?:" + "|".join(SHELLS) + r")\s+")
+SH_TARGET = re.compile(r"(?:tests?|run-all|run-tests|check)\.(?:sh|bash)\b")
+
+
+def _head_then_task(text, head, task):
+    """A head word, whitespace, any arguments, whitespace, a task word, on one line of one command.
+    The leftmost head per piece is enough, so this is linear where a nested regex backtracks."""
+    for seg in re.split(r"[;&|\n]", text):
+        h = head.search(seg)
+        if h and task.search(seg, h.end() + 1):
+            return True
+    return False
+
+
+def _shell_script(text):
+    """A shell then a test-named script on the line its arguments start on; each line searched once."""
+    for seg in re.split(r"[;&|]", text):
+        done = 0
+        for m in SH_HEAD.finditer(seg):
+            if m.end() < done:
+                continue
+            eol = seg.find("\n", m.end())
+            done = len(seg) if eol < 0 else eol
+            if SH_TARGET.search(seg, m.end(), done):
+                return True
+    return False
+
+
 def nested_has_suite(text):
-    """Conservative check for commands executed by shell -c/heredoc."""
-    if re.search(r"(?:^|[;&|\s])(vitest|jest|stryker|playwright|mocha|ava|cypress|pytest|phpunit|tsc|knip|biome|eslint)(?:$|[;&|\s])", text):
+    """Conservative check for commands executed by shell -c/heredoc; quotes and backslashes are
+    dropped first, as the fast path drops them, because the shell joins `te\\st` back into `test`.
+    A quoted ( stays a character here: the full analysis of the same text finds live subshells."""
+    text = text.translate(UNQUOTE)
+    if RUNNER_WORD.search(text):
         return True
-    if re.search(r"\b(?:npm|yarn|pnpm|bun)\b(?:\s+[^;&|\n]+?)*\s+(?:t|test|build|lint|typecheck|type-check|check|e2e|coverage)\b", text):
-        return True
-    if re.search(r"\b(?:make|cargo|go|turbo|gradle|gradlew|mvn|dotnet|composer|nx)\b(?:\s+[^;&|\n]+?)*\s+(?:run\s+)?(?:test|build|lint|check|typecheck|coverage|verify|package)\b", text):
+    if _head_then_task(text, PM_HEAD, PM_TASK) or _head_then_task(text, TR_HEAD, TR_TASK):
         return True
     if re.search(r"\bnode\s+--test\b|\bpython3?\s+-m\s+(?:pytest|unittest)\b", text):
         return True
-    return bool(re.search(r"\b(?:bash|sh|zsh|dash)\s+[^;&|\n]*(?:tests?|run-all|run-tests|check)\.(?:sh|bash)\b", text))
+    return _shell_script(text)
 
-# STRIP HEREDOC BODIES FIRST. A python/awk script passed inline is DATA, not a command
-# sequence, and splitting it on `;` and newlines turns every mention of a runner name into a
-# fake command head. Measured cost of not doing this: the gate refused `ps | grep vitest`, a
-# repo-wide search for the word, and its own maintenance edits — and a gate that cries wolf is
-# a gate somebody switches off.
-# A shell heredoc is data for most commands, but it is executable input for
-# `bash/sh/zsh <<EOF`.  Inspect those bodies before discarding non-executable
-# heredoc payloads so the guard cannot be bypassed by moving a runner into one.
-# A heredoc ends at its delimiter alone on a line: column 0, or after tabs only for `<<-`. One rule for
-# every heredoc pattern below — `^\s*MARK\s*$` ended a body at any indented look-alike.
-HEREDOC_END = r"^(?(1)\t*)\3$"
-for heredoc in re.finditer(r"(?ms)(?:^|[;&|]\s*)(?:(?:\S*/)?(?:env|command|builtin|exec|nohup|sudo|time|nice|timeout|setsid|cd)\s+)*(?:\S*/)?(?:bash|sh|zsh|dash|ksh|mksh)\b[^\n]*<<(-)?\s*([\"\x27]?)(\w+)\2\s*\n(.*?)" + HEREDOC_END, cmd):
-    body = heredoc.group(4)
-    if nested_has_suite(body):
-        print("shell heredoc <test command>"); sys.exit(0)
-for piped_heredoc in re.finditer(r"(?ms)<<(-)?\s*([\"\x27]?)(\w+)\2\s*\|[^\n]*\b(?:bash|sh|zsh|dash|ksh|mksh)\b[^\n]*\n(.*?)" + HEREDOC_END, cmd):
-    if nested_has_suite(piped_heredoc.group(4)):
-        print("piped shell heredoc <test command>"); sys.exit(0)
-HEREDOC_QUOTED = r"<<(-)?\s*([\"\x27])(\w+)\2.*?" + HEREDOC_END
-HEREDOC_ANY = r"<<(-)?\s*([\"\x27]?)(\w+)\2.*?" + HEREDOC_END
-# A QUOTED heredoc (<<'EOF', <<"EOF") is literal: the shell expands nothing in it, so its body goes
-# before the substitution scan — a JS template literal in a python patch script fed through one
-# (`... go ... check ...`) read as a backtick substitution running a test (2026-10-05). An UNQUOTED
-# heredoc body is expanded by the shell, `$(npm test)` in it really runs, so it stays for the scan.
-# Executable heredocs (bash/sh/zsh/dash) were already inspected above, body and substitutions alike.
-cmd = re.sub(HEREDOC_QUOTED, " ", cmd, flags=re.S | re.M)
-for substitution in re.finditer(r"\$\((.*?)\)|`([^`]*)`", cmd, flags=re.S):
-    if nested_has_suite(substitution.group(1) or substitution.group(2) or ""):
-        print("shell substitution <test command>"); sys.exit(0)
-cmd = re.sub(HEREDOC_ANY, " ", cmd, flags=re.S | re.M)
+# ONLY WHAT THE SHELL WOULD RUN OR EXPAND COUNTS. A heredoc body is data unless a shell reads it;
+# single-quoted, ANSI-C quoted and comment text never expands; a backslash escapes; and $( ),
+# backticks, $(( )) and $[ ] open live text again even inside double quotes or an unquoted body.
+# One linear walk splits the command. The segment analysis below gets the command text with the
+# bodies cut out but each opener line kept whole, plus every shell-fed body and live substitution.
+# A heredoc ends at its delimiter alone on a line (after tabs only for `<<-`), else at end of input.
+FED_HEADS = SHELLS + ("eval", "source", ".", "$SHELL", "${SHELL}")
+WRAPPERS = {"env", "command", "builtin", "exec", "nohup", "sudo", "time", "nice", "timeout", "setsid",
+            "stdbuf", "ionice", "xargs", "if", "then", "else", "elif", "do", "while", "until", "!", "{"}
+SEG_SEP = re.compile(r"\$\(|[;&|()`]")
+TOKEN_RE = re.compile(r"\S+")
+REDIR_OP = re.compile(r"<<<|<<-?|<>|>>|>&|<&|>\||[<>]")
+PIPE_RE = re.compile(r"\|")
+PIPE_SHELL = re.compile(r"\b(?:" + "|".join(SHELLS) + r")\b|\$\{?SHELL\b")
+SPAN_KINDS = ("sub", "bq", "arith", "arb")
+OPERATOR = " \t\n;&|()<>"
+
+
+def _head_word(s, tok):
+    """Feed one token to a command-head state [pos, skip next, after option, verdict]: redirections and
+    their targets, assignments, wrappers and option values are passed over; the next word decides."""
+    if s[1]:
+        s[1] = False
+        return
+    k = next((j for j, ch in enumerate(tok) if ch in "<>"), -1)
+    if k >= 0:
+        if tok[:k] in ("", "&") or tok[:k].isdigit():
+            op = REDIR_OP.match(tok, k)
+            s[1] = op is not None and op.end() == len(tok)
+            return
+        tok = tok[:k]
+    w = tok.translate(UNQUOTE).rsplit("/", 1)[-1]
+    if w in FED_HEADS:
+        s[3] = True
+    elif w in WRAPPERS or s[2] or "=" in w or (w and w[0] in "-0123456789"):
+        s[2] = w.startswith("-") and "=" not in w
+    else:
+        s[3] = False
+
+
+def _seg_scan(text, s, b):
+    """Advance head state s over the tokens of text[s[0]:b]; each token is read once, so linear."""
+    if s[3] is None:
+        for m in TOKEN_RE.finditer(text, s[0], b):
+            _head_word(s, m.group())
+            if s[3] is not None:
+                break
+        s[0] = b
+    return s[3]
+
+
+def _fed_before(text, i, st, line):
+    """Advance the command-head scan of this line to i: (did an earlier command feed a shell, the
+    head state of the command at i, which a later word on the line can still decide)."""
+    f = st["fed"]  # line start, scanned up to, an earlier command fed a shell, open head state
+    if f[0] != line:
+        f[:] = [line, line, False, [line, False, False, None]]
+    for m in SEG_SEP.finditer(text, f[1], i):
+        f[2] = f[2] or bool(_seg_scan(text, f[3], m.start()))
+        f[3] = [m.end(), False, False, None]
+    f[1] = max(f[1], i)
+    _seg_scan(text, f[3], i)
+    return f[2], f[3]
+
+
+def _opener(text, i, st):
+    """Queue the body of the `<<[-]WORD` at i for the next unquoted newline; return the index after WORD."""
+    j, n = i + 2, len(text)
+    dash = text.startswith("-", j)
+    j += dash
+    while j < n and text[j] in " \t":
+        j += 1
+    word, quoted = [], False
+    while j < n and text[j] not in " \t\n;&|<>()":
+        if text[j] in "\x27\"":
+            close = text.find(text[j], j + 1)
+            if close < 0:
+                return i + 2
+            word.append(text[j + 1:close])
+            quoted, j = True, close + 1
+            continue
+        if text[j] == "\\":
+            quoted, j = True, j + 1
+        word.append(text[j:j + 1])
+        j += 1
+    if not "".join(word):
+        return i + 2
+    prior, head = _fed_before(text, i, st, st["line"])
+    st["pending"].append(("".join(word), dash, quoted, prior, j, head))
+    st["word"] = False
+    return j
+
+
+def _body_end(text, pos, word, dash):
+    """Where a body starting at pos stops and parsing resumes; an unterminated one runs to the end."""
+    n = len(text)
+    if dash:
+        m = re.compile("^\t*" + re.escape(word) + "$", re.M).search(text, pos)
+        return (m.start(), min(m.end() + 1, n)) if m else (n, n)
+    k = text.find("\n" + word + "\n", pos - 1)
+    if k >= 0:
+        return k + 1, k + len(word) + 2
+    if text.endswith("\n" + word) and n - len(word) >= pos:
+        return n - len(word), n
+    return n, n
+
+
+def _next_fed(text, j):
+    """Is the first command after j, past blank and comment lines, a shell?"""
+    n = len(text)
+    while j < n:
+        eol = text.find("\n", j)
+        eol = n if eol < 0 else eol
+        line = text[j:eol].strip()
+        if line and not line.startswith("#"):
+            sep = SEG_SEP.search(text, j, eol)
+            return bool(_seg_scan(text, [j, False, False, None], sep.start() if sep else eol))
+        j = eol + 1
+    return False
+
+
+def _pipe_targets(text, pend, nl, resume):
+    """Per queued opener: is it piped to a shell later on its line, or (dangling |) after the bodies?"""
+    pipes = [m.start() for m in PIPE_RE.finditer(text, pend[0][4], nl)]
+    shells = [m.start() for m in PIPE_SHELL.finditer(text, pend[0][4], nl)]
+    last = shells[-1] if shells else -1
+    if pipes:
+        rest = text[pipes[-1] + 1:nl].lstrip("&").strip()
+        if (not rest or rest.startswith("#")) and _next_fed(text, resume):
+            last = nl
+    out = []
+    for p in pend:
+        k = bisect.bisect_left(pipes, p[4])
+        out.append(k < len(pipes) and pipes[k] < last)
+    return out
+
+
+def _take_bodies(text, nl, st):
+    """Cut the queued heredoc bodies that follow newline nl and tag each shell, quoted or unquoted."""
+    pos, pend, cut = nl + 1, st["pending"], []
+    _fed_before(text, nl, st, st["fed"][0])
+    for word, dash, quoted, prior, _after, head in pend:
+        stop, resume = _body_end(text, pos, word, dash)
+        cut.append((text[pos:stop], quoted, prior or head[3] is True))
+        pos = resume
+    piped = _pipe_targets(text, pend, nl, pos)
+    for k, (body, quoted, fed) in enumerate(cut):
+        st["bodies"].append(("shell" if fed or piped[k] else "quoted" if quoted else "unquoted", body))
+    st["parts"].append(text[st["seg"]:nl + 1])
+    st["cut"] += pos - nl - 1
+    st["seg"] = st["line"] = pos
+    st["pending"], st["word"] = [], True
+    return pos
+
+
+def _push(stack, st, kind, start):
+    stack.append([kind, start - st["cut"], 0, 0])  # kind, span start, nesting depth, open case count
+    st["open"] += kind in SPAN_KINDS
+    st["word"] = True
+
+
+def _pop(stack, st, i):
+    """Close the innermost state; an outermost expansion becomes a span of the command text."""
+    kind, start = stack.pop()[:2]
+    st["word"] = False
+    st["open"] -= kind in SPAN_KINDS
+    if kind in SPAN_KINDS and not st["open"]:
+        st["spans"].append((start, i - st["cut"]))
+
+
+def _expansion(text, i, stack, st, code):
+    """Push the expansion opening at i; `${` in shell code keeps its quotes (parc). None if none."""
+    for opener, kind in (("$((", "arith"), ("$(", "sub"), ("$[", "arb"), ("`", "bq"),
+                         ("${", "parc" if code else "par")):
+        if text.startswith(opener, i):
+            _push(stack, st, kind, i + len(opener))
+            return i + len(opener)
+    return None
+
+
+def _keyword(text, i, words):
+    end = i + 4
+    return text[i:end] in words and (end == len(text) or text[end] in OPERATOR)
+
+
+def _cmd_step(text, i, stack, st):
+    """One step in shell code: escapes, heredocs, closers, quotes and expansions."""
+    c, top = text[i], stack[-1]
+    if c == "\\":
+        st["word"] = st["word"] and text.startswith("\n", i + 1)
+        return i + 2
+    if c == "\n" and st["pending"]:
+        return _take_bodies(text, i, st)
+    if text.startswith("<<<", i):
+        st["word"] = True
+        return i + 3
+    if text.startswith("<<", i):
+        return _opener(text, i, st)
+    if (c == "`" and top[0] == "bq") or (c == ")" and top[0] == "sub" and not top[2] and not top[3]):
+        _pop(stack, st, i)
+        return i + 1
+    if text.startswith("$\x27", i):
+        _push(stack, st, "ansi", i + 2)
+        return i + 2
+    nxt = _expansion(text, i, stack, st, True)
+    return _cmd_char(text, i, stack, st) if nxt is None else nxt
+
+
+def _cmd_char(text, i, stack, st):
+    """Quotes, comments, (( )), parens and case/esac; tracks whether the next char starts a word."""
+    c, top, at_word = text[i], stack[-1], st["word"]
+    st["word"] = c in OPERATOR
+    if c in "\x27\"":
+        _push(stack, st, "sq" if c == "\x27" else "dq", i + 1)
+    elif c == "#" and at_word:
+        _push(stack, st, "com", i + 1)
+    elif at_word and text.startswith("((", i):
+        _push(stack, st, "arith", i + 2)
+        return i + 2
+    elif c in "()" and top[0] == "sub":
+        top[2] = max(0, top[2] + (1 if c == "(" else -1))
+    elif at_word and _keyword(text, i, ("case", "esac")):
+        top[3] = max(0, top[3] + (1 if text.startswith("case", i) else -1))
+    return i + 1
+
+
+def _arith_step(text, i, stack, st):
+    """$(( )) and $[ ]: nesting, the closer and the expansions inside; `<<` is a shift here."""
+    c, top = text[i], stack[-1]
+    close = "))" if top[0] == "arith" else "]"
+    if not top[2] and text.startswith(close, i):
+        _pop(stack, st, i)
+        return i + len(close)
+    if c in "()[]":
+        top[2] = max(0, top[2] + (1 if c in "([" else -1))
+        return i + 1
+    nxt = _expansion(text, i, stack, st, False)
+    return i + 1 if nxt is None else nxt
+
+
+def _text_step(text, i, stack, st):
+    """Double quotes, unquoted heredoc text and ${...}: escapes, expansions and the closer. An unquoted
+    ${...} (parc) still has quotes, but neither comments nor heredoc openers."""
+    c, kind = text[i], stack[-1][0]
+    if c == "\\":
+        return i + 2
+    if (c == "\"" and kind == "dq") or (c == "}" and kind in ("par", "parc")):
+        _pop(stack, st, i)
+        return i + 1
+    if c == "\"" and kind in ("par", "parc"):
+        _push(stack, st, "dq", i + 1)
+        return i + 1
+    if kind == "parc" and (c == "\x27" or text.startswith("$\x27", i)):
+        skip = 1 if c == "\x27" else 2
+        _push(stack, st, "sq" if skip == 1 else "ansi", i + skip)
+        return i + skip
+    nxt = _expansion(text, i, stack, st, kind == "parc")
+    return i + 1 if nxt is None else nxt
+
+
+def _quoted_step(text, i, stack, st):
+    """Single quotes, ANSI-C quotes and comments: nothing expands, only the closer matters."""
+    kind, c = stack[-1][0], text[i]
+    if kind == "com":
+        if c == "\n":
+            stack.pop()
+            return i
+        return i + 1
+    if c == "\\" and kind == "ansi":
+        return i + 2
+    if c == "\x27":
+        _pop(stack, st, i)
+    return i + 1
+
+
+STEPS = {"cmd": _cmd_step, "sub": _cmd_step, "bq": _cmd_step, "arith": _arith_step, "arb": _arith_step,
+         "dq": _text_step, "hd": _text_step, "par": _text_step, "parc": _text_step,
+         "sq": _quoted_step, "ansi": _quoted_step, "com": _quoted_step}
+
+
+def _scan(text, top):
+    """Split text into command text (heredoc bodies cut out), tagged bodies and outermost live expansions."""
+    st = {"parts": [], "seg": 0, "cut": 0, "line": 0, "pending": [], "bodies": [], "spans": [],
+          "open": 0, "word": True, "fed": [-1, 0, False, None]}
+    stack = [[top, 0, 0, 0]]
+    i = 0
+    while i < len(text):
+        if text[i] == "\n":
+            st["line"] = i + 1
+        i = STEPS[stack[-1][0]](text, i, stack, st)
+    out = "".join(st["parts"]) + text[st["seg"]:]
+    first = next((f for f in stack if f[0] in SPAN_KINDS), None)
+    if first:
+        st["spans"].append((first[1], len(out)))
+    return out, st["bodies"], [out[a:b] for a, b in st["spans"]]
+
+
+MAX_NEST = 8
+
+
+def _deeper(depth):
+    """The depth for text nested one level further; past the cap the guard refuses (fail closed)
+    instead of skipping the analysis, so the depth bound keeps the run linear without a gap."""
+    if depth >= MAX_NEST:
+        raise RecursionError("command nesting deeper than the analysis cap")
+    return depth + 1
+
+
+def _live_suite(text, top="cmd", depth=0):
+    """(refusal label or None, texts for the segment analysis). Shell-fed bodies and live substitutions
+    are commands and get the whole analysis. A span is flattened: ( ) and backticks end a word there."""
+    out, bodies, spans = _scan(text, top)
+    texts = ([out] if top == "cmd" else []) + spans
+    for kind, body in bodies:
+        if kind == "quoted" or not body:
+            continue
+        label, inner = _live_suite(body, "cmd" if kind == "shell" else "hd", _deeper(depth))
+        if label or (kind == "shell" and nested_has_suite(body)):
+            return label or "shell heredoc <test command>", texts
+        texts += inner
+    if any(nested_has_suite(s.translate(FLAT)) for s in spans):
+        return ("heredoc substitution" if top == "hd" else "shell substitution") + " <test command>", texts
+    return None, texts
+
+
+WORK = []  # (command line, nesting depth) still to be split into segments
+
+
+def _analyse(text, depth):
+    """A command line, at top level or handed to a shell as -c, here-string or eval text: refuse on
+    its live spans and shell-fed bodies, else queue what the shell runs for the segment loop."""
+    label, texts = _live_suite(text, "cmd", depth)
+    if label:
+        print(label)
+        sys.exit(0)
+    WORK.append(("\n".join(texts), depth))
+
+
+_analyse(cmd, 0)
 # Direct runner binaries: invoking one IS running a suite.
 RUNNERS = {
     "vitest", "jest", "stryker", "playwright", "mocha", "ava", "cypress",
@@ -219,7 +580,8 @@ def split_segments(text):
         return [part.strip().split() for part in re.split(r"(?:&&|\|\||[;|&]|\n)", text) if part.strip()]
     segments, current = [], []
     for token in tokens:
-        if token in (";", "&", "|", "&&", "||", "\n", "(", ")"):
+        # shlex glues adjacent punctuation (`))` + newline is one token): all-punctuation separates
+        if token and set(token) <= set(";&|\n()"):
             if current:
                 segments.append(current)
                 current = []
@@ -250,9 +612,74 @@ def looks_like_test_script(path):
 # into its own segment whose FIRST WORD is the test path — so the guard blocked a `git add`
 # (2026-09-05). Naming a file is not running it, and a guard that cries wolf on staging is a
 # guard people learn to route around.
-cmd = re.sub(r"\\\n", " ", cmd)
+def _segments():
+    """Every segment of every queued command line; a nested one queued meanwhile is read after."""
+    while WORK:
+        text, depth = WORK.pop()
+        for words in split_segments(re.sub(r"\\\n", " ", text)):
+            yield words, depth
 
-for words in split_segments(cmd):
+
+def _analyse_nested(text, depth):
+    if text:
+        _analyse(text, _deeper(depth))
+
+
+VALUE_OPTS = re.compile(r"^(?:[-+][A-Za-z]*[oO]|--rcfile|--init-file)$")
+
+
+def _shell_options(rest):
+    """(option words, index of the first operand). -o/+o/-O/+O, also at the end of a cluster such as
+    -eo, and --rcfile/--init-file take the next word as a value: it neither ends the scan nor counts."""
+    opts, k = [], 0
+    while k < len(rest) and rest[k][:1] in ("-", "+"):
+        opts.append(rest[k])
+        k += 1
+        if opts[-1] == "--":
+            break
+        if VALUE_OPTS.match(opts[-1]) and k < len(rest):
+            k += 1
+    return opts, k
+
+
+def _script_word(rest, k):
+    """The script a shell would run: the first operand from k on, past here-strings and options."""
+    while k < len(rest):
+        a = rest[k]
+        if a.startswith("<<<"):
+            k += 1 if len(a) > 3 else 2
+        elif a[:1] == "-":
+            k += 1
+        else:
+            return a
+    return ""
+
+
+POSITIONAL = re.compile(r"\"\$(?:@|\{@\})\"|\$\{(\d+|[@*])\}|\$(\d|[@*])")
+EXPAND_BUDGET = [4 * len(cmd) + 4096]  # characters positional expansion may add, over the whole run
+
+
+def _positional(m, args):
+    key = m.group(1) or m.group(2)
+    if key is None:  # "$@": one word per argument
+        out = " ".join(shlex.quote(a) for a in args[1:])
+    elif key in ("@", "*"):
+        out = " ".join(args[1:])
+    else:
+        out = args[int(key)] if int(key) < len(args) else ""
+    EXPAND_BUDGET[0] -= len(out)
+    if EXPAND_BUDGET[0] < 0:
+        raise OverflowError("positional expansion beyond the analysis budget")
+    return out
+
+
+def _with_positionals(script, args):
+    """The -c string as the shell runs it: the words after it bind to $0, $1, ... and $@/$*. Quoted
+    references stay quoted, so a bound value is data unless it lands in command position."""
+    return POSITIONAL.sub(lambda m: _positional(m, args), script) if args else script
+
+
+for words, depth in _segments():
     i = 0
     # skip env assignments (FOO=bar)
     while i < len(words) and ("=" in words[i] and not words[i].startswith("-")):
@@ -323,8 +750,7 @@ for words in split_segments(cmd):
 
     # Shell flags may be clustered (`bash -ec ...`), so inspect short-option
     # bundles rather than matching only a standalone token.
-    _flag_limit = next((idx for idx, arg in enumerate(rest) if not arg.startswith("-")), len(rest))
-    _shell_flags = rest[:_flag_limit]
+    _shell_flags, _flag_limit = _shell_options(rest)
 
     def shell_flag_index(flag):
         short = flag[1:]
@@ -335,28 +761,35 @@ for words in split_segments(cmd):
 
     # `bash -n` parses without running — never a suite, unless the same bundle
     # also contains -c (which executes the following command string).
-    if w0 in ("bash", "sh", "zsh", "dash") and shell_flag_index("-n") >= 0 and shell_flag_index("-c") < 0:
+    if w0 in SHELLS and shell_flag_index("-n") >= 0 and shell_flag_index("-c") < 0:
         continue
 
-    if w0 in ("bash", "sh", "zsh", "dash") and shell_flag_index("-c") >= 0:
-        j = shell_flag_index("-c") + 1
-        nested = " ".join(rest[j:])
-        if nested_has_suite(nested):
+    if w0 in SHELLS and shell_flag_index("-c") >= 0:
+        # only the command string runs; the words after it are its positional parameters, so the
+        # quick check reads the string alone and the full analysis reads it with them bound
+        script = rest[_flag_limit] if _flag_limit < len(rest) else ""
+        if nested_has_suite(script):
             print(f"{w0} -c <test command>"); sys.exit(0)
+        _analyse_nested(_with_positionals(script, rest[_flag_limit + 1:]), depth)
 
     # 1. a bash/sh harness, or a directly-executed test script
-    if w0 in ("bash", "sh", "zsh", "dash"):
-        if "<<<" in rest:
-            j = rest.index("<<<") + 1
-            if j < len(rest) and nested_has_suite(" ".join(rest[j:])):
-                print(f"{w0} <<< <test command>"); sys.exit(0)
-        target = next((a for a in rest if not a.startswith("-")), "")
+    if w0 in SHELLS:
+        # a here-string may be attached to its word: `bash <<<"npm test"` is one token. The segment
+        # split already ended rest at every separator, so the words after it hold no metacharacter.
+        hs = next((k for k, a in enumerate(rest) if a.startswith("<<<")), -1)
+        here = " ".join([rest[hs][3:]] + rest[hs + 1:]) if hs >= 0 else ""
+        if nested_has_suite(here):
+            print(f"{w0} <<< <test command>"); sys.exit(0)
+        _analyse_nested(here.strip(), depth)
+        target = _script_word(rest, _flag_limit)
         if target and looks_like_test_script(target):
             print(f"{w0} {target}"); sys.exit(0)
     elif w0 in ("eval", "source", "."):
         nested = " ".join(rest)
         if nested_has_suite(nested) or any(looks_like_test_script(a) for a in rest):
             print(f"{w0} <test command>"); sys.exit(0)
+        if w0 == "eval":
+            _analyse_nested(nested, depth)
     elif w0.endswith((".sh", ".bash")) and looks_like_test_script(head[0]):
         print(head[0]); sys.exit(0)
 
@@ -446,7 +879,11 @@ for words in split_segments(cmd):
 # round trip to work out what to do; one that hands back the corrected command
 # costs nothing and gets followed.
 {
-  echo "BLOCKED: '$_verdict' would run the suite on this laptop."
+  if [ "$_verdict" = "<unparseable command>" ]; then
+    echo "BLOCKED: the farm guard could not parse this command, and it names a test runner."
+  else
+    echo "BLOCKED: '$_verdict' would run the suite on this laptop."
+  fi
   echo
   echo "The farm exists for exactly this. A saturated Mac slows every agent on it,"
   echo "which causes more farm timeouts, which causes more local fallbacks — that"

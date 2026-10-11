@@ -129,7 +129,7 @@ adversarial: ../outside-secret.txt
 REVIEW BY: a
 REVIEW BY: b
 ART
-    sync_out="$(bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" 2>&1)"
+    sync_out="$(PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" 2>&1)"; sync_rc=$?
     # POSITIVE control FIRST. Asserting only "the secret was not copied" passes
     # trivially when the sync errored out or did nothing at all — a test that
     # cannot fail, which is the exact class this whole release is about. So first
@@ -143,11 +143,35 @@ ART
     else
       pass "do_sync copies the artifact, refuses the '../' proof, and says so"
     fi
+    # Bug: a sync whose proof was refused reported success for a pair the gate rejects.
+    [ "$sync_rc" -eq 1 ] && pass "do_sync of an escaping proof exits 1" \
+      || bad "do_sync of an escaping proof exited $sync_rc, want 1"
     rm -rf "$sbox"
   fi
 else
-  pass "review-artifact-sync.sh absent — do_sync case skipped"
+  # Bug: a renamed or deleted sync script turned the only end-to-end traversal check into a pass.
+  bad "scripts/review-artifact-sync.sh absent — the end-to-end traversal case cannot run"
 fi
+
+# Bug: only the SOURCE side was contained, so a clean ref whose destination parent symlinks out of
+# the repo carried the proof copy outside the destination checkout.
+dbox="$(mktemp -d)"
+mkdir -p "$dbox/src/memory/reviews" "$dbox/src/zuvo/proofs" "$dbox/dst/memory/reviews" "$dbox/dst/zuvo" "$dbox/outside"
+git -C "$dbox/src" init -q; git -C "$dbox/dst" init -q
+ln -s "$dbox/outside" "$dbox/dst/zuvo/proofs"
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$dbox/src/zuvo/proofs/p.txt"
+printf '<!-- zuvo-review -->\nrange: aaaaaaa..bbbbbbb\nfiles: *\nadversarial: zuvo/proofs/p.txt\n' > "$dbox/src/memory/reviews/t.md"
+sr="$(git -C "$dbox/src" rev-parse --show-toplevel)"; dr="$(git -C "$dbox/dst" rev-parse --show-toplevel)"
+want="WARN t.md: proof path 'zuvo/proofs/p.txt' escapes the repo (absolute, .. segment, or a symlink out) — artifact copied, proof NOT
+FAIL memory/reviews/t.md: proof path 'zuvo/proofs/p.txt' escapes the repo (absolute, .. segment, or a symlink out) — the gate rejects it
+SYNCED: 1 artifact pair(s) from $sr to $dr"
+got="$(PG_REVIEW_PROOF_CUTOFF=1 bash "$SYNC" --from "$dbox/src" --to "$dbox/dst" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && [ "$got" = "$want" ] && [ -f "$dbox/dst/memory/reviews/t.md" ] && [ -z "$(ls -A "$dbox/outside")" ]; then
+  pass "do_sync refuses a proof whose destination parent symlinks out: rc=1, nothing written outside"
+else
+  bad "dst-symlink sync: want rc=1 [$want] and an empty outside dir, got rc=$rc [$got], outside=[$(ls -A "$dbox/outside")]"
+fi
+rm -rf "$dbox"
 
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

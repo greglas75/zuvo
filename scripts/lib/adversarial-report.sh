@@ -270,6 +270,7 @@ ar_count_findings() {
 # ─── Count findings (before output, while temp files still exist) ──
 
 TOTAL_FINDINGS=0
+LEDGER_RUN_IDS=""   # filled by findings_log_rows below; never one inherited from the environment
 CRITICAL_COUNT=0
 WARNING_COUNT=0
 INFO_COUNT=0
@@ -469,6 +470,25 @@ fi
 return 0
 }
 
+# print_verdict_hint — on STDERR, after the review: the IDs this run recorded in the findings ledger and the one
+# command that records their verdicts. STDERR, so stdout (a --json document), the --artifact file and its
+# `REVIEW BY:` lines stay byte-identical. Nothing when the run recorded no ID.
+print_verdict_hint() {
+  local ids n
+  ids="$(printf '%s' "${LEDGER_RUN_IDS:-}" | awk 'NF && !seen[$0]++')"
+  [[ -n "$ids" ]] || return 0
+  n="$(printf '%s\n' "$ids" | wc -l | tr -d ' ')"
+  {
+    echo "VERDICTS: this review recorded $n finding ID(s) in $FINDINGS_LOG. After triage, record a verdict for"
+    echo "each — fixed, rejected (a false positive) or deferred (real, not fixed now) — in ONE call, from this"
+    echo "repository (Step 4.9 of shared/includes/adversarial-loop.md) — replace each VERDICT:"
+    printf '  ~/.zuvo/adversarial-review'
+    while IFS= read -r id; do printf ' \\\n    --record-disposition %q VERDICT' "$id"; done <<< "$ids"
+    printf '\n'
+  } >&2
+  return 0
+}
+
 # ar_emit_output — write the artifact, report a tree changed under the reviewers, print the output.
 ar_emit_output() {
 if [[ -n "$ARTIFACT_PATH" ]]; then
@@ -481,6 +501,7 @@ fi
 _tamper_verify
 
 printf '%s\n' "$FINAL_OUTPUT"
+print_verdict_hint
 
 # Disable strict mode for best-effort logging below. Partial-status runs (some
 # providers timed out) can have grep -c returning 1 on missing markers, and we

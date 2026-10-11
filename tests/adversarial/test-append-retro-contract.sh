@@ -311,3 +311,48 @@ start_test "a lane is not a status: --routing=cross-vendor is still rejected"
 Z=$(_z)
 run_retro "$Z" --skill=write-tests --routing=cross-vendor
 assert_exit_code 2 "$?" "the lane word cross-vendor is not a ROUTING_STATUS"
+
+# Bug (usage block vs validator): a value the usage block omits gets invented by the skill; one it lists that the validator
+# rejects costs the run its telemetry. `ran:unknown` is the one intended gap (fleet import only).
+# usage_alts <flag> — the |-separated alternatives inside --<flag>="<...>" of the usage block
+usage_alts() {
+  grep -m1 -o -- "--$1=\"<[^>]*>\"" "$RETRO_DOC" | sed -e 's/^[^<]*<//' -e 's/>.*$//' | tr '|' '\n'
+}
+# validator_alts <VAR> — the alternatives of the first pattern line of `case "$<VAR>" in`, normalised
+# to the usage block's spelling, without ran:unknown
+validator_alts() {
+  awk -v v="$1" '$0 ~ "^case \"\\$" v "\" in" {getline; print; exit}' "$ARET" \
+    | sed -e 's/) *: *;;.*$//' -e 's/^ *//' | tr '|' '\n' \
+    | sed -e 's/^fix:\*$/fix:N/' -e 's/^\*findings:preserved$/Nfindings:preserved/' -e 's/^\*findings$/Nfindings/' \
+    | grep -vx 'ran:unknown'
+}
+
+start_test "every --blind-audit / --adversarial value the validator accepts is listed in the usage block"
+for pair in "blind-audit BLIND" "adversarial ADV"; do
+  flag="${pair% *}"; var="${pair#* }"
+  listed=$(usage_alts "$flag")
+  accepted=$(validator_alts "$var")
+  [ -n "$listed" ] && [ -n "$accepted" ] || fail "$flag parse" "usage block or validator alternatives not found"
+  while IFS= read -r v; do
+    case "
+$listed
+" in
+      *"
+$v
+"*) pass "--$flag usage block lists $v" ;;
+      *) fail "--$flag usage block omits $v" "listed: $(printf '%s ' "$listed")" ;;
+    esac
+  done <<< "$accepted"
+done
+
+start_test "append-retro accepts every value the usage block lists for --blind-audit / --adversarial"
+for flag in blind-audit adversarial; do
+  listed=$(usage_alts "$flag")
+  [ -n "$listed" ] || fail "$flag parse" "no alternatives found in the usage block"
+  while IFS= read -r v; do
+    c=$(printf '%s' "$v" | sed -e 's/^N\([a-z]\)/2\1/' -e 's/^fix:N$/fix:2/')
+    Z=$(_z)
+    run_retro "$Z" "--$flag=$c"
+    assert_exit_code 0 "$?" "--$flag=$c accepted"
+  done <<< "$listed"
+done

@@ -211,8 +211,9 @@ providers at all.
 
 **Volume is not value — the findings ledger.** `find/ok` and `crit/ok` above count what a lane
 SAID, not what was true: a lane that emits seven speculative issues outranks one that finds two real
-bugs. `~/.zuvo/adversarial-findings.log` closes that gap. Every `--json` review appends one row per
-distinct finding (provider, model, fingerprint `id`, severity, project = the main checkout's path),
+bugs. `~/.zuvo/adversarial-findings.log` closes that gap. Every review appends one row per distinct
+finding that carries a fingerprint — the `ID:` line of the text format, the `id` of `--json` (provider,
+model, fingerprint, severity, project = the main checkout's path),
 and the triaging agent appends a verdict per `id` (`adversarial-loop.md` Step 4.9):
 
 ```bash
@@ -222,8 +223,9 @@ and the triaging agent appends a verdict per `id` (`adversarial-loop.md` Step 4.
 
 precision = (fixed + deferred) / judged; `rejected` is the false-positive column and unjudged
 findings are excluded, not counted against the lane. A verdict judges the raises logged before it; a
-later raise of the same `id` is a new, open occurrence. Text-mode and `--mode blind-audit` runs have
-no fingerprints and are not recorded, and `mock-*` lanes never write the real ledger. Rank lanes on
+later raise of the same `id` is a new, open occurrence. A finding without an ID is not recorded (no
+verdict could join it); `--mode blind-audit` runs are not recorded, and `mock-*` lanes never write the
+real ledger. Rank lanes on
 precision × coverage from here, not on the table above.
 
 ## Doctor — verify providers actually WORK (not just exist)

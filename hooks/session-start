@@ -23,6 +23,31 @@ PLUGIN_DIR="$(cd "${HOOKS_DIR}/.." && pwd)"
 _SWEEP="${ZUVO_HOME:-$HOME/.zuvo}/retro-stub"
 [ -x "$_SWEEP" ] && "$_SWEEP" --sweep >/dev/null 2>&1 || true
 
+# Name this session's include tracker so append-runlog's AUTO expansion can tell it apart from
+# other sessions' trackers. Silent and best-effort, like the sweep. The matcher has no `resume`
+# (it would re-inject the router), so a resumed session keeps whatever its env file already
+# holds and otherwise falls back to INCLUDES `-`.
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ ! -t 0 ]; then
+    _ss_in=""
+    IFS= read -r -d '' -t 2 _ss_in || true    # returns non-zero at EOF and on timeout
+    _ss_id=$(printf '%s' "$_ss_in" | python3 -c '
+import json, re, sys
+try:
+    sid = json.load(sys.stdin).get("session_id")
+except Exception:
+    sys.exit(0)
+if isinstance(sid, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", sid):
+    print(sid)
+' 2>/dev/null) || _ss_id=""
+    if [ -n "$_ss_id" ]; then
+        _ss_line="export ZUVO_INCLUDES_FILE='/tmp/zuvo-includes-${_ss_id}.txt'"
+        grep -qxF "$_ss_line" "$CLAUDE_ENV_FILE" 2>/dev/null \
+            || { [ -s "$CLAUDE_ENV_FILE" ] && [ -n "$(tail -c1 "$CLAUDE_ENV_FILE" 2>/dev/null)" ] \
+                     && printf '\n' >> "$CLAUDE_ENV_FILE"   # else our export joins an unterminated last line
+                 printf '%s\n' "$_ss_line" >> "$CLAUDE_ENV_FILE"; } 2>/dev/null || true
+    fi
+fi
+
 ROUTER_FILE="${PLUGIN_DIR}/skills/using-zuvo/SKILL.md"
 PROTOCOL_FILE="${PLUGIN_DIR}/shared/includes/compressed-response-protocol.md"
 RESPONSE_PROTOCOL_MODE="${ZUVO_RESPONSE_PROTOCOL:-on}"

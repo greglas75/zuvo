@@ -213,8 +213,8 @@ or one that ignores the code, which is how this went unnoticed — reports a gre
 no model ever saw. That is the exact failure the loop exists to prevent, with the loop supplying
 the green: a 50583-char patch on 2026-07-31 dropped its single largest file and exited 0 with a
 normal verdict. Chunking now handles most oversized inputs without dropping anything, so 4 fires
-only where there is nothing to split on (`--mode tests`, a single file over the cap, chunking
-disabled) — rarer, not safer.
+only where there is nothing to split on (`--mode tests`, a single hunk or a `--files` section over
+the cap, chunking disabled) — rarer, not safer.
 
 Defence in depth: `pg_artifact_proven` REFUSES an artifact carrying `input_truncated=true`
 outright, so the gates do not depend on any individual call-site having checked the code.
@@ -294,8 +294,9 @@ For each finding:
 
 #### Step 4.9: Record every verdict in the findings ledger (MANDATORY after triage)
 
-Each `--json` review writes one row per finding to `~/.zuvo/adversarial-findings.log`, keyed by
-the finding's `id` fingerprint. That row says which model RAISED it; only you know what it was
+Every review writes one row per finding to `~/.zuvo/adversarial-findings.log`, keyed by the
+finding's fingerprint — the `ID:` line of each finding in text output, the `id` field with `--json`.
+Copy it verbatim into the call below. That row says which model RAISED it; only you know what it was
 worth. Without your verdict the ledger can rank models by volume only, which rewards the noisiest
 one. So once Step 4 has decided every finding, record all of them in ONE call, from the same
 repository the review ran in (the ledger keys a verdict on project + fingerprint):
@@ -313,14 +314,15 @@ repository the review ran in (the ledger keys a verdict on project + fingerprint
 | Dismissed as a false positive (Step 4.0 FP class, disproven on verification, downgraded for no `file:line` and not real) | `rejected` |
 | Real but not fixed now (known concern, backlog, INFO kept) | `deferred` |
 
-- The `id` is copied verbatim from the JSON finding — never re-typed or reworded. Every lane that
+- The id is copied verbatim from the finding — its `ID:` line in text output, its `id` with `--json` —
+  never re-typed or reworded. Every lane that
   reported the same `id` gets the verdict, which is correct: they found the same thing.
 - A Step 5 re-run that changes a verdict (the "fix" did not hold) is recorded again; the latest
   row wins, nothing is edited.
-- Skip only when the review ran in text mode or `--mode blind-audit` (no `id` exists to key on —
-  the ledger does not record those runs at all) or produced no findings.
-- Exit 1 names the ids that were NOT recorded: no `--json` review from this repository raised them
-  (a re-typed id, or the wrong directory). Fix the id and record those again; it never blocks the
+- Skip a finding the reviewer gave no ID (nothing to key on — the ledger did not record it), a
+  `--mode blind-audit` run (not recorded at all), or a review with no findings.
+- Exit 1 names the ids that were NOT recorded: no review from this repository raised them
+  (a re-typed id, the wrong directory, or a finding without an ID). Fix the id and record those again; it never blocks the
   skill's verdict.
 
 The result, per model — findings raised, CRITICALs, precision = (fixed + deferred) / judged — is

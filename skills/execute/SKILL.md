@@ -731,7 +731,7 @@ Read `../../shared/includes/comment-pass.md` and run its whole sequence — mech
 ```bash
 # Quote each path separately, as in 7b; run from repo_root.
 COMMENT_BASE=<sha printed above>
-rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<written-file-1>" "<written-file-2>" || rc=$?
+rc=0; ~/.zuvo/comment-audit --base "$COMMENT_BASE" --files "<written-file-1>" "<written-file-2>" --skill execute || rc=$?
 ```
 
 - **rc 1** → fix every finding in-run (multi-agent: re-dispatch the implementer with the finding lines) and re-run until rc 0 — no cap, no backlog; history moves into the Step 8 commit message. The one exception is the exit valve: findings that cannot be fixed without harming the code and exceed the justification cap → print `[GATE: comment-pass] BLOCKED rc=1 ids=<id,…> <reason>` and stop the task for a human.
@@ -766,6 +766,8 @@ else
   ~/.zuvo/adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt" --files "<changed files>"
 fi
 ```
+
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
 
 Mode selection:
 - default task -> `--mode code`

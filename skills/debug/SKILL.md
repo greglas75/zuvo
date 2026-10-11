@@ -364,6 +364,8 @@ else
 fi
 ```
 
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
+
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Handle findings by severity:
@@ -488,10 +490,11 @@ rm -f __bisect_test.ts __bisect_test.py __bisect_test.sh
 If debugging reveals unrelated issues, do not fix them during the debug session. Follow
 `../../shared/includes/drive-by-findings.md` with `<skill> = debug`: backlog the security, bug,
 size, duplication, complexity, performance, dead-code and readability problems noticed OUTSIDE
-the bug's fence in files the investigation read (dedup and the MAIN-checkout backlog per
-`../../shared/includes/backlog-protocol.md`), list every `SEC` one in the Debug Report, then
-ALWAYS record the receipt `~/.zuvo/log-drive-by --skill debug --sec <a> --bug <b> …` (all zeros
-is an honest outcome). Entries carry `source: drive-by:debug` (formerly `debug/[date]`).
+the bug's fence in files the investigation read (dedup and the backlog location per
+`../../shared/includes/backlog-protocol.md` "Where the Backlog Lives"), list every `SEC` one in
+the Debug Report, then ALWAYS record the receipt `~/.zuvo/log-drive-by --skill debug --sec <a>
+--bug <b> …` (all zeros is an honest outcome). Entries carry `source: drive-by:debug` (formerly
+`debug/[date]`).
 
 ---
 

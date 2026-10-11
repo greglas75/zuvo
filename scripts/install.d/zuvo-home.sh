@@ -163,6 +163,24 @@ _zuvo_home_drop_stale() {
   return 1
 }
 
+# _iz_miss <detail> [message] — one INSTALL INCOMPLETE item: counted, named in the summary, said.
+_iz_miss() {
+  INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+  INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      $1"
+  [ -z "${2:-}" ] || fail "$2"
+}
+
+# _iz_verify_cmp <canonical> <installed> <detail> <message> [stale-label] — status 0 when <installed>
+# is byte-identical to <canonical>; otherwise a counted miss, and with <stale-label> the differing copy
+# is removed (_zuvo_home_drop_stale) so no helper loads it as current. Callers add `|| :` under set -e.
+_iz_verify_cmp() {
+  cmp -s "$1" "$2" && return 0
+  _iz_miss "$3" "$4"
+  [ -z "${5:-}" ] || _zuvo_home_drop_stale "$5" "$2" "$1" || :
+  return 1
+}
+
 install_zuvo_home() {
   echo ""
   echo "======================================"
@@ -171,10 +189,7 @@ install_zuvo_home() {
 
   mkdir -p "$HOME/.zuvo"
 
-  if ! install_refactor_radar_bundle; then
-    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-radar bundle"
-  fi
+  install_refactor_radar_bundle || _iz_miss "refactor-radar bundle"   # its own fail line names the cause
 
   # The shared codex/claude reviewer runner (scripts/lib/model-subprocess.sh) — BEFORE the loop below
   # installs ~/.zuvo/adversarial-review, so a review starting mid-install never runs the new driver
@@ -192,10 +207,8 @@ install_zuvo_home() {
   install_runner_lib "zuvo home (runner lib)" "$ZUVO_DIR/scripts/lib" "$HOME/.zuvo" || _zlib_ok=0
   if ! _zms_reason="$(install_file_atomic "$ZUVO_DIR/scripts/lib/model-subprocess.sh" "$HOME/.zuvo/model-subprocess.sh")"; then
     _zms_ok=0
-    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      shared reviewer runner: $HOME/.zuvo/model-subprocess.sh — $_zms_reason"
-    fail "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo ($_zms_reason) — drivers that fall back to it lose their codex and claude lanes"
+    _iz_miss "shared reviewer runner: $HOME/.zuvo/model-subprocess.sh — $_zms_reason" \
+      "model-subprocess.sh (the shared codex/claude runner) did NOT install to ~/.zuvo ($_zms_reason) — drivers that fall back to it lose their codex and claude lanes"
     # …and an OLD flat copy left in place would be loaded instead: it is every driver's last candidate,
     # and the only one when ~/.zuvo/lib/ failed too. Same sweep as the lib/ and blind-audit copies.
     _zuvo_home_drop_stale "runner" "$HOME/.zuvo/model-subprocess.sh" "$ZUVO_DIR/scripts/lib/model-subprocess.sh" || :
@@ -248,20 +261,16 @@ install_zuvo_home() {
   # failure stays loud (no protocol/library to fall back on) instead of silently wrong.
   local _zproto_reason
   if ! _zproto_reason="$(install_file_atomic "$ZUVO_DIR/shared/includes/blind-coverage-audit.md" "$HOME/.zuvo/blind-coverage-audit.md")"; then
-    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      blind-audit protocol: $HOME/.zuvo/blind-coverage-audit.md — $_zproto_reason"
-    fail "blind-coverage-audit.md (the blind-audit panel's protocol) did NOT install to ~/.zuvo ($_zproto_reason) — the installed driver's --mode blind-audit has no protocol to fall back to"
+    _iz_miss "blind-audit protocol: $HOME/.zuvo/blind-coverage-audit.md — $_zproto_reason" \
+      "blind-coverage-audit.md (the blind-audit panel's protocol) did NOT install to ~/.zuvo ($_zproto_reason) — the installed driver's --mode blind-audit has no protocol to fall back to"
     _zuvo_home_drop_stale "blind-audit protocol" "$HOME/.zuvo/blind-coverage-audit.md" "$ZUVO_DIR/shared/includes/blind-coverage-audit.md" || :
   else
     ok "blind-coverage-audit.md installed (~/.zuvo/blind-coverage-audit.md — blind-audit panel protocol)"
   fi
   local _zbap_reason
   if ! _zbap_reason="$(install_file_atomic "$ZUVO_DIR/scripts/lib/blind-audit-panel.sh" "$HOME/.zuvo/blind-audit-panel.sh")"; then
-    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      blind-audit panel library (flat): $HOME/.zuvo/blind-audit-panel.sh — $_zbap_reason"
-    fail "blind-audit-panel.sh (flat) did NOT install to ~/.zuvo ($_zbap_reason) — if ~/.zuvo/lib/ also fails, --mode blind-audit has no library left to fall back to"
+    _iz_miss "blind-audit panel library (flat): $HOME/.zuvo/blind-audit-panel.sh — $_zbap_reason" \
+      "blind-audit-panel.sh (flat) did NOT install to ~/.zuvo ($_zbap_reason) — if ~/.zuvo/lib/ also fails, --mode blind-audit has no library left to fall back to"
     _zuvo_home_drop_stale "blind-audit panel library" "$HOME/.zuvo/blind-audit-panel.sh" "$ZUVO_DIR/scripts/lib/blind-audit-panel.sh" || :
   else
     ok "blind-audit-panel.sh installed (~/.zuvo/blind-audit-panel.sh — flat fallback for the panel library)"
@@ -305,10 +314,15 @@ install_zuvo_home() {
   # scripts/zuvo-home helper): model-run looks for the router BESIDE itself, and in ~/.zuvo that is
   # here. Installed flat, the router finds its runner in ~/.zuvo/lib/ and its registry as
   # ~/.zuvo/model-registry.sh — both installed by this function. The pair is cmp-verified below.
+  # pipeline-gate-lib.sh and path-contain.sh go flat beside pg-uncovered-files and
+  # review-artifact-sync.sh, which resolve them next to themselves first.
+  # mutation-survivor-reprobe.sh is the command verify-tests' perTest survivor gaps name.
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
               "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$ZUVO_DIR"/scripts/reviewer-model-route.sh \
               "$ZUVO_DIR"/hooks/lib/refactor-state.py \
               "$ZUVO_DIR"/hooks/lib/refactor-gate-lib.sh "$ZUVO_DIR"/hooks/lib/agent-env.sh \
+              "$ZUVO_DIR"/hooks/lib/pipeline-gate-lib.sh "$ZUVO_DIR"/hooks/lib/path-contain.sh \
+              "$ZUVO_DIR"/scripts/mutation-survivor-reprobe.sh \
               "$ZUVO_DIR"/shared/includes/model-registry.sh; do
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
@@ -344,12 +358,19 @@ install_zuvo_home() {
   # dependencies must travel with every helper install, including Codex-only installs;
   # falling back to another platform's older hooks silently revives obsolete checks.
   for _name in refactor-state.py refactor-gate-lib.sh agent-env.sh; do
-    if ! cmp -s "$ZUVO_DIR/hooks/lib/$_name" "$HOME/.zuvo/$_name"; then
-      INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-      INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-contract dependency: $HOME/.zuvo/$_name"
-      fail "refactor-contract dependency $_name did not match the canonical source"
-    fi
+    _iz_verify_cmp "$ZUVO_DIR/hooks/lib/$_name" "$HOME/.zuvo/$_name" "refactor-contract dependency: $HOME/.zuvo/$_name" \
+      "refactor-contract dependency $_name did not match the canonical source" || :
   done
+  # Without these two beside them, ~/.zuvo/pg-uncovered-files and review-artifact-sync.sh exit 2
+  # in every mode — so a missing copy is counted, and an older one removed rather than loaded.
+  for _name in pipeline-gate-lib.sh path-contain.sh; do
+    _iz_verify_cmp "$ZUVO_DIR/hooks/lib/$_name" "$HOME/.zuvo/$_name" "gate library dependency: $HOME/.zuvo/$_name" \
+      "gate library dependency $_name in ~/.zuvo did not match the canonical source" "gate library ($_name)" || :
+  done
+  _iz_verify_cmp "$ZUVO_DIR/scripts/mutation-survivor-reprobe.sh" "$HOME/.zuvo/mutation-survivor-reprobe.sh" \
+    "survivor reprobe: $HOME/.zuvo/mutation-survivor-reprobe.sh" \
+    "~/.zuvo/mutation-survivor-reprobe.sh did not match scripts/mutation-survivor-reprobe.sh — verify-tests' survivor gaps name it" \
+    "survivor reprobe helper" || :
   # ~/.zuvo/model-run, the router it calls, the registry that router reads its ids from, and the
   # test-audit batch script that runs model-run must be the CURRENT set. The loop above only warns on a
   # failed copy; here a mismatch is counted for INSTALL INCOMPLETE, and a stale copy is removed — an old
@@ -364,22 +385,15 @@ install_zuvo_home() {
                   shared/includes/model-registry.sh:model-registry.sh \
                   scripts/zuvo-home/test-audit-batch:test-audit-batch; do
     _mr_src="$ZUVO_DIR/${_mr_pair%%:*}"; _mr_dst="$HOME/.zuvo/${_mr_pair#*:}"
-    if ! cmp -s "$_mr_src" "$_mr_dst"; then
-      INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-      INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      cross-vendor reviewer: $_mr_dst — does not match ${_mr_pair%%:*}"
-      fail "~/.zuvo/${_mr_pair#*:} did not install byte-identical to ${_mr_pair%%:*} — ~/.zuvo/model-run --route cannot run the current route"
-      _zuvo_home_drop_stale "cross-vendor reviewer (${_mr_pair#*:})" "$_mr_dst" "$_mr_src" || :
-    fi
+    _iz_verify_cmp "$_mr_src" "$_mr_dst" "cross-vendor reviewer: $_mr_dst — does not match ${_mr_pair%%:*}" \
+      "~/.zuvo/${_mr_pair#*:} did not install byte-identical to ${_mr_pair%%:*} — ~/.zuvo/model-run --route cannot run the current route" \
+      "cross-vendor reviewer (${_mr_pair#*:})" || :
   done
   # ~/.zuvo/adversarial-review must be THIS checkout's driver: both module sets above are stamped with its
   # bytes, so an older driver refuses every set — counted for INSTALL INCOMPLETE, not removed (it says why).
-  if ! cmp -s "$ADV_DRIVER_SRC" "$HOME/.zuvo/adversarial-review"; then
-    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
-    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
-      adversarial driver: $HOME/.zuvo/adversarial-review — does not match scripts/adversarial-review.sh"
-    fail "~/.zuvo/adversarial-review did not install byte-identical to scripts/adversarial-review.sh — the module sets beside it are stamped for the new driver, so it refuses them until a reinstall succeeds"
-  fi
+  _iz_verify_cmp "$ADV_DRIVER_SRC" "$HOME/.zuvo/adversarial-review" \
+    "adversarial driver: $HOME/.zuvo/adversarial-review — does not match scripts/adversarial-review.sh" \
+    "~/.zuvo/adversarial-review did not install byte-identical to scripts/adversarial-review.sh — the module sets beside it are stamped for the new driver, so it refuses them until a reinstall succeeds" || :
   if [[ "$_skipped" -gt 0 ]]; then
     ok "$_installed zuvo-home helpers installed to ~/.zuvo/ ($_skipped skipped)"
   else

@@ -12,7 +12,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)" || { echo "FAIL: cannot resolve the repo root"; echo "RESULT: PASS=0 FAIL=1"; exit 1; }
 HELPERS="$ROOT/scripts/zuvo-home"
 CLI="$HELPERS/comment-audit"
-DECLARED=105
+DECLARED=111
 FLOOR=20
 fail=0
 npass=0; nfail=0
@@ -245,7 +245,7 @@ check "$rc|$(lq 'L.count(A[0]), L.count(A[1]), len(R), len(N)' "$SCHEMA" "$HEADE
 fx fx_led; audit --json --files b.py; run=$(j 'd["run"]')
 check "$rc|$(lq 'len(N), len(R), F("b.py")["verdict"]')" "1|(1, 1, 'breach')" "--json writes its row under the JSON run id, rc 1 kept"
 fx fx_led; ZUVO_COMMENT_MAX_DENSITY=0.9 audit --files a.py; runid
-check "$rc|$(lq 'F("a.py")["thresholds"]')|$(last 2 | sed 's/.* justified=0//')" "0|density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)| env=ZUVO_COMMENT_MAX_DENSITY unchanged=0" "an env threshold is recorded with its source; env= names the threshold only"
+check "$rc|$(lq 'F("a.py")["thresholds"]')|$(last 2 | sed 's/.* justified=0//')" "0|density=0.90(env) min_lines=20(default) block=4(default) justify_max=2(default)| env=ZUVO_COMMENT_MAX_DENSITY degraded=0 unchanged=0" "an env threshold is recorded with its source; env= names the threshold only"
 fx fx_led; ZUVO_COMMENT_MIN_LINES=1 audit --files b.py; runid
 check "$rc|$(cells b.py '12:17')" "1|1 0 0 1 0" "one comment line of one: narrative, long, claims, density_breach and justified land in their own columns"
 
@@ -667,5 +667,77 @@ BIN='env' audit -u ZUVO_COMMENT_AUDIT_LOG ZUVO_HOME="$ZH" "$ZH/comment-audit" --
 check "$rc|$(last 2 | cut -d' ' -f1-3)" "0|RESULT: comment-pass PASS" "end to end: history moved out and the block cut to the WHY exit 0"
 BIN='env' audit -u ZUVO_COMMENT_AUDIT_LOG ZUVO_HOME="$ZH" "$ZH/comment-audit" --trend --days 1
 check "$rc|$(rows_of "${R##*/}" | cut -d' ' -f1-3)|$(LEDGER="$ZH/comment-audit.log" lq 'len(R)')" "0|${R##*/} 2 2|2" "end to end: --trend --days 1 shows runs=2 for the project, read from \$ZUVO_HOME/comment-audit.log"
+
+# ── the calling skill: first in notes, read back into Stat, grouped by --by skill ──
+check "$(unit 'import io, zuvo_comment_ledger as l
+o = l.Origin("p", "-", "-", "sha1")
+named = l.format_rows("20260102T030405Z-1", o, "t", [("a.py", "n/a (too large)", "-", None, "-")], {}, "build")
+plain = l.format_rows("20260102T030405Z-1", o, "t", [("a.py", "pass", "python", None, "-")], {})
+verdicts = []
+for name in ("Build", "a b", "x" * 41, "-x", "a|b", "a\tb", "build\n", "x-", "x" * 40):
+    try:
+        l.format_rows("20260102T030405Z-1", o, "t", [], {}, name); verdicts.append("ok")
+    except ValueError:
+        verdicts.append("refused")
+print(named[0].split("\t")[-1], plain[0].split("\t")[-1], " ".join(verdicts), sep=" | ")')" \
+  "skill=build|n/a (too large) | - | refused refused refused refused refused refused refused ok ok" \
+  "format_rows puts skill=NAME first in notes; no skill (the default '') writes no skill note; a name outside [a-z0-9][a-z0-9-]{0,39} (a '|', tab or newline included) is refused, a trailing '-' and 40 characters are not"
+check "$(unit 'import io, datetime as dt, zuvo_comment_ledger as l
+o = l.Origin("p", "-", "-", "sha1")
+rows = []
+for run, skill, files in (("20260102T030405Z-1", "build", ("a.py", "b.py")), ("20260102T030406Z-2", "build", ("a.py",)),
+                          ("20260102T030407Z-3", "review", ("a.py",)), ("20260102T030408Z-4", "", ("a.py",))):
+    rows += l.format_rows(run, o, "t", [(f, "pass", "python", None, "-") for f in files], {}, skill)
+data = b"\n".join([l.SCHEMA.encode(), "\t".join(l.COLUMNS).encode()] + [r.encode() for r in rows]) + b"\n"
+stats = [s.skill for _, s in l.read_rows(io.BytesIO(data))]
+table, used, skipped = l.trend(l.read_rows(io.BytesIO(data)), "2026-01-01T00:00:00Z", None, "skill")
+other = l.format_rows("20260102T030409Z-5", l.Origin("q", "-", "-", "sha1"), "t", [("b.py", "pass", "python", None, "-")], {}, "refactor")
+both = data + other[0].encode() + b"\n"
+only_p, used_p, _ = l.trend(l.read_rows(io.BytesIO(both)), "2026-01-01T00:00:00Z", "p", "skill")
+print(stats, [(r[0], r[1]) for r in table], used, skipped, [(r[0], r[1]) for r in only_p], used_p)')" \
+  "['build', 'build', 'build', 'review', ''] [('-', '1'), ('build', '2'), ('review', '1')] 5 0 [('-', '1'), ('build', '2'), ('review', '1')] 5" \
+  "Stat.skill is read back from notes; trend by skill gives one row per skill counting RUNS (build: 2 runs over 3 rows), '-' for none, and --project still filters"
+check "$(unit 'import io, zuvo_comment_ledger as l
+o = l.Origin("p", "-", "-", "sha1")
+row = l.format_rows("20260102T030405Z-1", o, "t", [("j.py", "justified", "python", None, "-")], {}, "review")[0].split("\t")
+moved = row[:-1] + ["N:j.py:0123abcd=a reason long enough|skill=execute"]
+forged = [row[:-1] + [note + "|n/a (too large)"] for note in ("skill=Build", "skill=-lead", "skill=" + "x" * 41, "skill=", "skill=" + "x" * 40)]
+data = b"\n".join([l.SCHEMA.encode(), "\t".join(l.COLUMNS).encode()] + ["\t".join(r).encode() for r in (row, moved, *forged)]) + b"\n"
+try:
+    l.trend(iter(()), "2026-01-01T00:00:00Z", None, "team"); refused = "accepted"
+except ValueError as exc:
+    refused = str(exc)
+print([s.skill.replace("x" * 40, "x*40") for _, s in l.read_rows(io.BytesIO(data))], refused)')" "['review', '', '', '', '', '', 'x*40'] --by 'team': expected one of project, skill" \
+  "Stat.skill is read only from the first note, where format_rows writes it: a later skill=, an uppercase, leading-dash, 41-character or empty name each read as none, 40 characters still count; trend() refuses an unknown by"
+check "$(unit 'import datetime as dt, zuvo_comment_ledger as l
+try:
+    l.trend_report("/nonexistent/ledger", l.TrendOptions(1, None, None, False, "team"), dt.datetime(2026, 1, 2, tzinfo=dt.timezone.utc))
+    print("accepted")
+except ValueError as exc:
+    print(exc)')" "--by 'team': expected one of project, skill" "trend_report refuses a --by other than project or skill"
+
+# ── the degraded note, a project name filtered in its stored (escaped) form, escape() of what python does not print ──
+check "$(unit 'import datetime as dt, os, tempfile, zuvo_comment_ledger as l, zuvo_comment_rules as r
+res = r.FileResult("a.py", "python", 1, 1, 0, None, None, True, [], [])
+rows = l.format_rows("20260102T030405Z-1", l.Origin("p\x01q", "-", "-", "sha1"), "t", [("a.py", "pass", "python", res, "-")], {}, "build")
+rows += l.format_rows("20260102T030406Z-2", l.Origin("p", "-", "-", "sha1"), "t", [("b.py", "pass", "python", None, "-")], {})
+fd, path = tempfile.mkstemp()
+try:
+    with os.fdopen(fd, "w") as handle:
+        handle.write("\n".join([l.SCHEMA, "\t".join(l.COLUMNS), *rows]) + "\n")
+    now = dt.datetime(2026, 1, 3, tzinfo=dt.timezone.utc)
+    heads = [l.trend_report(path, l.TrendOptions(None, "2026-01-01", name, False, "project"), now).splitlines()[0]
+             for name in ("p\x01q", "p")]
+finally:
+    os.remove(path)
+cells = [row.split("\t") for row in rows]
+print(cells[0][2], cells[0][-1], cells[1][-1], *(" ".join(head.split(" ")[2:4]) for head in heads))')" \
+  'p\x01q skill=build|degraded - project=p\x01q rows=1 project=p rows=1' \
+  "a degraded file is a 'degraded' note after skill= (none without it); a project name is stored escaped and --project picks exactly its own row in that form, next to a project 'p'"
+check "$(unit 'import zuvo_comment_ledger as l
+print(" ".join(l.escape(c) for c in ("\u061c", "\u00ad", "\u2060", "\U000e0041", "\u00a0", "\u3000", "\x7f", "\ud800", "\udcff")),
+      l.escape("za\u017c \U0001f600 \u3164"), l.escape(""))')" \
+  '\u061c \xad \u2060 \U000e0041 \xa0 \u3000 \x7f \ud800 \xff zaż 😀 ㅤ ' \
+  "escape(): every character python does not print is escaped, one per code point (Arabic letter mark, soft hyphen, word joiner, a tag, two non-ASCII spaces, DEL, a lone surrogate, a surrogate-escaped byte); printable text, an emoji and a blank-looking letter are kept"
 
 finish

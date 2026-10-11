@@ -740,6 +740,11 @@ uc "zzz..yyy"
 { [ "$UC_RC" -eq 2 ] && [ -z "$UC_OUT" ]; } \
   && pass "uncovered_files: unresolvable range → rc 2 (unknown), not rc 0" \
   || bad "uncovered_files: bad range should be rc 2 (rc=$UC_RC out=[$UC_OUT])"
+# Bad BASE, good head: git diff fails, the file list comes back empty, and that read as rc 3.
+uc "zzz..$UCH"
+{ [ "$UC_RC" -eq 2 ] && [ -z "$UC_OUT" ]; } \
+  && pass "uncovered_files: unresolvable base with a valid head → rc 2, not rc 3 (no production files)" \
+  || bad "uncovered_files: bad base should be rc 2 (rc=$UC_RC out=[$UC_OUT])"
 # EMPTY HEAD ("<base>..") is its own short-circuit — `head` is empty before git is ever asked,
 # so it is NOT the same branch as the unresolvable-range case above.
 uc "$UCB.."
@@ -771,7 +776,8 @@ EX_OUT="$(PG_REPO_ROOT="$EXT" pg_explain_uncovered "$EX_BASE..$(git -C "$EXT" re
 EX_SHOWN="$(printf '%s\n' "$EX_OUT" | grep -c '^  src/f[0-9]*\.sh: ')"
 { [ "$EX_SHOWN" -eq 10 ] \
   && printf '%s' "$EX_OUT" | grep -q '\.\.\. and 2 more uncovered file(s) not shown' \
-  && printf '%s' "$EX_OUT" | grep -q "pg_uncovered_files \"$EX_BASE\.\."; } \
+  && printf '%s' "$EX_OUT" | grep -q 'pg.uncovered.files' \
+  && printf '%s' "$EX_OUT" | grep -qF "'$EX_BASE.."; } \
   && pass "explain_uncovered: 12 uncovered → 10 shown + 'and 2 more' with the full-list command" \
   || bad "explain_uncovered: expected 10 shown + 'and 2 more' (shown=$EX_SHOWN out=[$EX_OUT])"
 ( cd "$EXT" && git rm -q src/f0[4-9].sh src/f1[0-2].sh && git commit -qm trim ) >/dev/null 2>&1

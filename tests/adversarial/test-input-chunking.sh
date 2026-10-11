@@ -221,25 +221,23 @@ assert_eq "3" "$chunks" "fence-aware split yields one chunk per REAL section"
 # decoy headings inside chunk 1's fence are not sections.
 assert_eq "3" "$(grep -cE 'chunk-[0-9]+: [0-9]+ chars, sections: 1$' "$CK_DOC/err13")" "every chunk reports one section (fenced decoys not counted)"
 
-start_test "CK.14 the per-chunk note says 'document', not 'files'"
-# Self-contained: it reads only the program text it assembles here, nothing CK.11-CK.13 wrote.
-# A plan reviewer told that sibling FILES exist elsewhere reports the document as
-# truncated or flags cross-references it cannot see. The note must match reality.
-# NB: the verdict must come back through pass/fail — a python `print("PASS")`
-# is invisible to the harness and would gate nothing while looking green.
-. "$ROOT/tests/lib/adversarial-driver.sh"   # the chunking phase lives in a module: hand python the whole program
-if ! adv_driver_source "$ADV" > "$CK_TMP/driver-source.sh"; then
-  fail "chunk note wording" "the program text could not be assembled (reason above)"
-elif python3 - "$CK_TMP/driver-source.sh" <<'PY'
-import re,sys
-s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
-doc_note = 'of ONE document split at section headings' in s
-guarded  = re.search(r'_ck_fence.*-eq 1.*\n(.*\n)*?\s*_ck_note=.*ONE document', s) is not None
-sys.exit(0 if (doc_note and guarded) else 1)
-PY
-then pass "doc-specific chunk note present and gated on doc mode"
-else fail "chunk note wording" "expected a doc-mode-gated 'ONE document split at section headings' note"
-fi
+start_test "CK.14 each part of a split document is told it is ONE document, never that sibling files exist"
+# A plan reviewer told that sibling FILES are reviewed elsewhere reports the document as truncated or flags
+# cross-references it cannot see. The lane echoes the prompt it received, so the Context line each part
+# actually carried is read here: "part i/3 of ONE document", and no "sibling files" wording.
+ck14_out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --mode plan < "$CK_DOC/plan.md" 2>"$CK_DOC/err14"); rc=$?
+assert_eq "0" "$rc" "every part of the plan reviewed: exit 0"
+assert_eq "1/3 2/3 3/3|0" \
+  "$(printf '%s\n' "$ck14_out" | sed -n 's#^Context: \[part \([0-9]*/[0-9]*\) of ONE document split at section headings.*#\1#p' | tr '\n' ' ' | sed 's/ $//')|$(printf '%s\n' "$ck14_out" | grep -c '^Context: .*sibling files')" \
+  "parts 1/3 to 3/3 each carry the one-document note, none the sibling-files note"
+# Control: a chunked CODE diff (two files, each over half the cap) must never be told it is one document.
+for f in a b; do
+  printf 'diff --git a/%s.ts b/%s.ts\n--- a/%s.ts\n+++ b/%s.ts\n@@ -0,0 +1,400 @@\n' "$f" "$f" "$f" "$f"
+  awk -v f="$f" 'BEGIN{for(i=0;i<400;i++) printf "+export const %s%d = \"%s\";\n", f, i, "xxxxxxxxxxxxxxxxxxxxxxxx"}'
+done > "$CK_DOC/code14.diff"
+ck14c=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt" bash "$ADV" --single --mode code < "$CK_DOC/code14.diff" 2>"$CK_DOC/err14c"); rc=$?
+assert_eq "0|2|0" "$rc|$(printf '%s\n' "$ck14c" | grep -c '^Context: .*sibling files')|$(printf '%s\n' "$ck14c" | grep -c '^Context: .*ONE document')" \
+  "a chunked code diff: both chunks carry the sibling-files note, neither the one-document note"
 
 start_test "CK.15 a small document is left alone"
 # A VALID plan under the cap (3 tasks — the plan minimum). A 1-task fragment would exit 5 at the material
@@ -473,3 +471,261 @@ assert_exit_code "0" "$rc" "every part reviewed by both lanes: exit 0"
 assert_eq "3|mock-success, mock-echo-files|mock-success, mock-echo-files|mock-success, mock-echo-files" \
   "$(printf '%s' "$ck25_json" | jq -r '[(.chunks | tostring), (.results[] | .providers_used)] | join("|")' 2>/dev/null)" \
   "each of the 3 parts ran both lanes: the glob excluded nothing"
+
+# ─── 14: one file over the cap is split at its hunks (ar_chunk_input, _ck_split_hunks) ───
+#
+# A diff of ONE file has a single file boundary, so the file split had nothing to cut at and the input was
+# truncated: the tail hunks reached no reviewer and the proof recorded input_truncated=true, which the push
+# gate refuses. The lane below keeps every call's prompt as its own numbered file, so each part a run sends
+# is seen — a one-file echo keeps only the last part.
+mkdir -p "$CK_TMP/bin"
+cat > "$CK_TMP/bin/mock-partlog" <<'MOCK'
+#!/usr/bin/env bash
+n=1
+while ! ( set -C; : > "$CK_PART_DIR/$n.in" ) 2>/dev/null; do
+  n=$((n + 1)); [ "$n" -le 999 ] || { echo "mock-partlog: cannot create a part file in $CK_PART_DIR" >&2; exit 1; }
+done
+cat > "$CK_PART_DIR/$n.in"
+echo '{"findings":[]}'
+MOCK
+chmod +x "$CK_TMP/bin/mock-partlog"
+CK_HK="$CK_TMP/hunks"; mkdir -p "$CK_HK"
+
+# ck_hunk_diff <path> <tag> <size>... — one file's diff with one hunk per <size> (chars, about); hunk k ends with
+# the line `+MARKER-<tag>-H<k>`, so a marker seen proves its whole hunk reached a part.
+ck_hunk_diff() {
+  local p="$1" tag="$2" k=0 s
+  shift 2
+  printf 'diff --git a/%s b/%s\nindex 1111111..2222222 100644\n--- a/%s\n+++ b/%s\n' "$p" "$p" "$p" "$p"
+  for s in "$@"; do
+    k=$((k + 1))
+    awk -v k="$k" -v s="$s" -v tag="$tag" 'BEGIN {
+      printf "@@ -%d,1 +%d,2 @@\n", k * 1000, k * 1000
+      n = 0
+      while (n < s) { l = sprintf("+hunk %d line padding padding padding padding padding padding\n", k); printf "%s", l; n += length(l) }
+      printf "+MARKER-%s-H%d\n", tag, k }'
+  done
+}
+# ck_run_parts <case> <stdin file> [driver args...] — a --single review by mock-partlog, its prompts kept in
+# $CK_HK/parts-<case>/<n>.in, stderr in $CK_HK/err-<case>, the artifact $CK_HK/art-<case>; status = the driver's.
+ck_run_parts() {
+  local c="$1" in="$2"
+  shift 2
+  mkdir -p "$CK_HK/parts-$c"
+  CK_PART_DIR="$CK_HK/parts-$c" PATH="$CK_TMP/bin:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-partlog" \
+    bash "$ADV" --single --artifact "$CK_HK/art-$c" "$@" < "$in" >/dev/null 2>"$CK_HK/err-$c"
+}
+# ck_part_count <case> — how many prompts the lane received.
+ck_part_count() { local n=0; while [[ -f "$CK_HK/parts-$1/$((n + 1)).in" ]]; do n=$((n + 1)); done; echo "$n"; }
+# ck_marker_counts <case> <tag> <hunks> — "<tag>-H1=<n> …": in how many lines across all prompts each marker is.
+# Counted file by file: a prompt ends without a newline, so concatenated prompts would glue its last line to the next.
+ck_marker_counts() {
+  local k=1 out="" c f
+  while [[ "$k" -le "$3" ]]; do
+    c=0
+    for f in "$CK_HK/parts-$1"/*.in; do
+      [[ -f "$f" ]] && c=$((c + $(grep -cxF -- "+MARKER-$2-H$k" "$f")))
+    done
+    out="${out:+$out }$2-H$k=$c"; k=$((k + 1))
+  done
+  echo "$out"
+}
+# ck_headerless_parts <case> <path> <tag> — the prompts holding a hunk of <path> (a +MARKER-<tag>- line) without its
+# whole diff header (diff --git, ---, +++), by number; empty = every such part names its file.
+ck_headerless_parts() {
+  local f out=""
+  for f in "$CK_HK/parts-$1"/*.in; do
+    [[ -f "$f" ]] && grep -q "^+MARKER-$3-H" "$f" || continue
+    grep -qxF -- "diff --git a/$2 b/$2" "$f" && grep -qxF -- "--- a/$2" "$f" && grep -qxF -- "+++ b/$2" "$f" \
+      || out="${out:+$out }$(basename "$f" .in)"
+  done
+  echo "$out"
+}
+# ck_part_notes <case> — each prompt's hunk note (the "hunks a-b of N of <path>" its Context line names), in call
+# order, joined by "|"; a prompt with no such note contributes an empty field.
+ck_part_notes() {
+  local n=1 out="" sep=""
+  while [[ -f "$CK_HK/parts-$1/$n.in" ]]; do
+    out="$out$sep$(sed -n 's/^Context: .*\(hunks [0-9]*-[0-9]* of [0-9]* of [^];]*\).*$/\1/p' "$CK_HK/parts-$1/$n.in" | head -1)"
+    sep="|"; n=$((n + 1))
+  done
+  echo "$out"
+}
+
+start_test "CK.26 one file over the cap with 3 hunks is split at its hunks, never cut"
+ck_hunk_diff big.sh BIG 12000 12000 12000 > "$CK_HK/one.diff"
+ck_run_parts 26 "$CK_HK/one.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0 (the unsplit file was cut: exit 4)"
+if grep -q 'input_truncated=true' "$CK_HK/art-26" 2>/dev/null; then
+  fail "the proof records no truncation" "$(grep -c 'input_truncated=true' "$CK_HK/art-26") input_truncated=true record(s)"
+else
+  pass "the proof records no truncation"
+fi
+assert_eq "2" "$(ck_part_count 26)" "two parts: hunks 1-2 fill one, hunk 3 the next"
+assert_eq "" "$(ck_headerless_parts 26 big.sh BIG)" "every part repeats the file's diff --git/---/+++ header"
+assert_eq "BIG-H1=1 BIG-H2=1 BIG-H3=1" "$(ck_marker_counts 26 BIG 3)" "each hunk reached exactly one part, whole"
+assert_eq "hunks 1-2 of 3 of big.sh|hunks 3-3 of 3 of big.sh" "$(ck_part_notes 26)" "each part's note names the hunks it holds"
+
+start_test "CK.27 beside small files, the one file over the cap is split at its hunks"
+{ ck_hunk_diff a.sh A 2000; ck_hunk_diff big.sh BIG 12000 12000 12000; ck_hunk_diff c.sh C 2000; } > "$CK_HK/three.diff"
+ck_run_parts 27 "$CK_HK/three.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0 (the big file's part was cut: exit 4)"
+if grep -q 'input_truncated=true' "$CK_HK/art-27" 2>/dev/null; then
+  fail "the proof records no truncation" "$(grep -c 'input_truncated=true' "$CK_HK/art-27") input_truncated=true record(s)"
+else
+  pass "the proof records no truncation"
+fi
+assert_eq "" "$(ck_headerless_parts 27 big.sh BIG)" "every part holding a big.sh hunk repeats big.sh's header"
+assert_eq "BIG-H1=1 BIG-H2=1 BIG-H3=1|A-H1=1|C-H1=1" \
+  "$(ck_marker_counts 27 BIG 3)|$(ck_marker_counts 27 A 1)|$(ck_marker_counts 27 C 1)" "every hunk of every file reached exactly one part"
+assert_eq "hunks 1-2 of 3 of big.sh|hunks 3-3 of 3 of big.sh" "$(ck_part_notes 27)" "each part's note names the big file's hunks it holds"
+
+start_test "CK.28 one hunk over the cap by itself: only that hunk is cut, the others reach a part whole"
+ck_hunk_diff big.sh BIG 2000 35000 2000 > "$CK_HK/onebig.diff"
+ck_run_parts 28 "$CK_HK/onebig.diff"; rc=$?
+# Owner decision: a single hunk over the cap cannot be split further, so its part is truncated and says so.
+assert_exit_code "4" "$rc" "a part reviewed with its input cut: exit 4"
+assert_contains "$(cat "$CK_HK/art-28" 2>/dev/null)" "input_truncated=true" "the proof records the truncation"
+assert_eq "BIG-H1=1 BIG-H2=0 BIG-H3=1" "$(ck_marker_counts 28 BIG 3)" "hunks 1 and 3 reached a part whole; only hunk 2 was cut"
+
+start_test "CK.29 '@@ ' lines inside a --files section are file content, never hunk boundaries"
+{ k=1; while [[ "$k" -le 3 ]]; do
+    printf '@@ -%d +%d @@\n' "$k" "$k"
+    awk -v k="$k" 'BEGIN { for (i = 0; i < 180; i++) printf "raw text %d padding padding padding padding padding padding\n", k }'
+    k=$((k + 1))
+  done; } > "$CK_HK/notes.txt"
+ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single --files "$CK_HK/notes.txt" >/dev/null 2>"$CK_HK/err-29"; rc=$?
+# Splitting it would hand each part a fragment with no file header, read as a file of its own.
+assert_exit_code "4" "$rc" "one --files section over the cap is truncated: exit 4"
+if grep -q 'CHUNKED INPUT:' "$CK_HK/err-29"; then
+  fail "the --files section is not split" "$(grep 'CHUNKED INPUT:' "$CK_HK/err-29")"
+else
+  pass "the --files section is not split"
+fi
+# Beside a second file the input does chunk at file boundaries, so the hunk split sees the --files section too.
+printf 'small file\n' > "$CK_HK/small.txt"
+ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single --files "$CK_HK/notes.txt
+$CK_HK/small.txt" >/dev/null 2>"$CK_HK/err-29b"; rc=$?
+assert_exit_code "4" "$rc" "chunked beside a small file, the --files section's part is truncated: exit 4"
+assert_contains "$(cat "$CK_HK/err-29b")" "CHUNKED INPUT:" "premise: the two-file input chunks"
+if grep -q 'hunk boundaries' "$CK_HK/err-29b"; then
+  fail "the chunked --files section is not split at its '@@ ' lines" "$(grep 'CHUNKED INPUT:' "$CK_HK/err-29b")"
+else
+  pass "the chunked --files section is not split at its '@@ ' lines"
+fi
+
+start_test "CK.30 a ~300-char path: the parts stay under the cap with its header repeated, the note stays short"
+ck30_path="src/$(awk 'BEGIN { for (i = 0; i < 29; i++) printf "segment%02d/", i }')long.sh"
+# Two hunks fit the budget, but not with this path's ~1.2k-char header repeated in front of them.
+ck_hunk_diff "$ck30_path" LONG 14600 14600 14600 > "$CK_HK/long.diff"
+ck_run_parts 30 "$CK_HK/long.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+if grep -q 'WARN: input truncated' "$CK_HK/err-30"; then
+  fail "no part was cut" "$(grep 'input truncated' "$CK_HK/err-30" | head -2)"
+else
+  pass "no part was cut"
+fi
+assert_eq "LONG-H1=1 LONG-H2=1 LONG-H3=1" "$(ck_marker_counts 30 LONG 3)" "each hunk reached exactly one part"
+assert_eq "" "$(ck_headerless_parts 30 "$ck30_path" LONG)" "every part repeats the long header"
+# The longest Context line any part carried, in characters: the note stays inside its headroom.
+ck30_note=$(python3 - "$CK_HK/parts-30" <<'PY'
+import glob, sys
+m = 0
+for f in glob.glob(sys.argv[1] + "/*.in"):
+    for line in open(f, encoding="utf-8", errors="replace"):
+        if line.startswith("Context: "):
+            m = max(m, len(line.rstrip("\n")) - len("Context: "))
+print(m)
+PY
+)
+assert_le "400" "${ck30_note:-999}" "every part's note is at most 400 characters"
+assert_contains "$(ck_part_notes 30)" "hunks 1-1 of 3 of ..." "the note names the hunks with the path's tail"
+
+start_test "CK.31 a file's lifecycle-context trailer reaches every part of it exactly once"
+{ ck_hunk_diff big.sh BIG 12000 12000 12000
+  printf '=== CONTEXT: big.sh - lifecycle definitions outside the changed hunks (unchanged; reference only, NOT part of this diff) ===\n'
+  printf '3: trap cleanup EXIT\n10: cleanup() { printf done; }\n=== END CONTEXT ===\n'; } > "$CK_HK/trailer.diff"
+ck_run_parts 31 "$CK_HK/trailer.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+ck31=""
+for f in "$CK_HK/parts-31"/*.in; do
+  [[ -f "$f" ]] || continue
+  ck31="${ck31:+$ck31|}$(basename "$f" .in):$(grep -c '^=== CONTEXT: big.sh - ' "$f")/$(grep -cxF '3: trap cleanup EXIT' "$f")/$(grep -cxF '=== END CONTEXT ===' "$f")"
+done
+assert_eq "1:1/1/1|2:1/1/1" "$ck31" "both parts carry the trailer's opening, a definition and its closing once"
+
+start_test "CK.32 exactly two hunks over the cap together: split into one hunk per part"
+# The first hunk is a unit like the others: miscounting it leaves a two-hunk file under the split's minimum.
+ck_hunk_diff two.sh TWO 18000 18000 > "$CK_HK/two.diff"
+ck_run_parts 32 "$CK_HK/two.diff"; rc=$?
+assert_exit_code "0" "$rc" "both parts reviewed whole: exit 0"
+if grep -q 'input_truncated=true' "$CK_HK/art-32" 2>/dev/null; then
+  fail "the proof records no truncation" "$(grep -c 'input_truncated=true' "$CK_HK/art-32") input_truncated=true record(s)"
+else
+  pass "the proof records no truncation"
+fi
+assert_eq "" "$(ck_headerless_parts 32 two.sh TWO)" "both parts repeat the file's header"
+assert_eq "TWO-H1=1 TWO-H2=1" "$(ck_marker_counts 32 TWO 2)" "each hunk reached exactly one part, whole"
+assert_eq "hunks 1-1 of 2 of two.sh|hunks 2-2 of 2 of two.sh" "$(ck_part_notes 32)" "one hunk per part"
+
+start_test "CK.33 an added line reading '=== CONTEXT: …' is hunk content, never the trailer"
+# Only a column-0 '=== CONTEXT: ' opens the trailer; read anywhere else, the hunks after it would be
+# repeated in every part as if they were context.
+ck_hunk_diff fake.sh FAKE 12000 12000 12000 \
+  | awk '{ print } /^\+MARKER-FAKE-H1$/ { print "+=== CONTEXT: fake.sh - an added line, not a trailer ===" }' > "$CK_HK/fake.diff"
+ck_run_parts 33 "$CK_HK/fake.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+assert_eq "FAKE-H1=1 FAKE-H2=1 FAKE-H3=1" "$(ck_marker_counts 33 FAKE 3)" "each hunk reached exactly one part"
+ck33=0
+for f in "$CK_HK/parts-33"/*.in; do
+  [[ -f "$f" ]] && ck33=$((ck33 + $(grep -cxF -- '+=== CONTEXT: fake.sh - an added line, not a trailer ===' "$f")))
+done
+assert_eq "1" "$ck33" "the added line reached one part, with its hunk"
+
+start_test "CK.34 a trailer too big to repeat: each part is cut in the trailer, every hunk still reaches a part whole"
+# The trailer follows the hunks, so a part over the cap loses trailer text, never a hunk. Leaving the file
+# whole instead would cut it once at the cap and drop hunks 2 and 3 from the review.
+{ ck_hunk_diff big.sh BIG 20000 20000 20000
+  printf '=== CONTEXT: big.sh - lifecycle definitions outside the changed hunks (unchanged; reference only, NOT part of this diff) ===\n'
+  awk 'BEGIN { for (i = 1; i <= 520; i++) printf "%d: context line padding padding padding padding padding\n", i }'
+  printf '=== END CONTEXT ===\n'; } > "$CK_HK/bigtrailer.diff"
+ck_run_parts 34 "$CK_HK/bigtrailer.diff"; rc=$?
+assert_exit_code "4" "$rc" "parts reviewed with their trailer cut: exit 4"
+assert_contains "$(cat "$CK_HK/art-34" 2>/dev/null)" "input_truncated=true" "the proof records the truncation"
+assert_eq "BIG-H1=1 BIG-H2=1 BIG-H3=1" "$(ck_marker_counts 34 BIG 3)" "every hunk reached a part whole"
+
+start_test "CK.35 a hunk split that fails midway leaves the file whole: no partial part is reviewed"
+# An awk that writes one part and then fails, for the split's call only (the one passing out=<section>).
+ck_real_awk=$(command -v awk)
+mkdir -p "$CK_TMP/shimbin"
+{ printf '#!/usr/bin/env bash\n'
+  printf 'for a in "$@"; do case "$a" in out=*) printf "+MARKER-SHIM-PART\\n" > "${a#out=}-p0001"; exit 1 ;; esac; done\n'
+  printf 'exec %q "$@"\n' "$ck_real_awk"; } > "$CK_TMP/shimbin/awk"
+chmod +x "$CK_TMP/shimbin/awk"
+ck_hunk_diff big.sh BIG 12000 12000 12000 > "$CK_HK/shim.diff"
+mkdir -p "$CK_HK/parts-35"
+CK_PART_DIR="$CK_HK/parts-35" PATH="$CK_TMP/shimbin:$CK_TMP/bin:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-partlog" \
+  bash "$ADV" --single --artifact "$CK_HK/art-35" < "$CK_HK/shim.diff" >/dev/null 2>"$CK_HK/err-35"; rc=$?
+assert_exit_code "4" "$rc" "the whole file, reviewed with its input cut: exit 4"
+assert_eq "1" "$(ck_part_count 35)" "one prompt: the section left whole"
+ck35=0
+for f in "$CK_HK/parts-35"/*.in; do
+  [[ -f "$f" ]] && ck35=$((ck35 + $(grep -c 'MARKER-SHIM-PART' "$f")))
+done
+assert_eq "0" "$ck35" "the partial part the failed split wrote reached no reviewer"
+
+start_test "CK.36 an opt-out keeps one multi-hunk file over the cap in one run: truncated, never split at its hunks"
+# The hunk arm of the chunk gate must honour --no-chunk and ZUVO_ADV_NO_CHUNK=1 like the file arm (CK.4, CK.5):
+# a caller that asked for one run gets one prompt, cut at the cap, and the proof says so.
+# ck36_state <case> <rc> — "rc|prompts|CHUNKED banners|cut in proof|hunk markers seen".
+ck36_state() {
+  printf '%s|%s|%s|%s|%s' "$2" "$(ck_part_count "$1")" "$(grep -c 'CHUNKED INPUT:' "$CK_HK/err-$1")" \
+    "$(grep -q 'input_truncated=true' "$CK_HK/art-$1" 2>/dev/null && echo cut || echo whole)" "$(ck_marker_counts "$1" BIG 3)"
+}
+ck_hunk_diff big.sh BIG 12000 12000 12000 > "$CK_HK/optout.diff"
+ck_run_parts 36a "$CK_HK/optout.diff" --no-chunk; rc=$?
+assert_eq "4|1|0|cut|BIG-H1=1 BIG-H2=1 BIG-H3=0" "$(ck36_state 36a "$rc")" \
+  "--no-chunk: exit 4, one prompt, no split, the cut recorded, hunk 3 past the cap"
+ZUVO_ADV_NO_CHUNK=1 ck_run_parts 36b "$CK_HK/optout.diff"; rc=$?
+assert_eq "4|1|0|cut|BIG-H1=1 BIG-H2=1 BIG-H3=0" "$(ck36_state 36b "$rc")" \
+  "ZUVO_ADV_NO_CHUNK=1: exit 4, one prompt, no split, the cut recorded, hunk 3 past the cap"
