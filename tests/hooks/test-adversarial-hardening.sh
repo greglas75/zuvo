@@ -2020,6 +2020,54 @@ same "F53 the range form fails after printing exactly ZUVO_ADV_MAX_INPUT_BYTES: 
 has "F53 …as a failed git diff, not passed on whole" "failed (exit 128) after printing part of the diff" "$(err f53-ceil)"
 fi
 
+if only F66; then
+echo "=== F66 --diff <branch> reviews the change since the merge base, never the branch's own later commits (mutation) ==="
+# main gets a commit after the feature branch leaves it. `main..HEAD` (two trees) would review that commit
+# reversed; `main...HEAD` (from the merge base) is the feature's change alone.
+F66R="$T/f66-repo"; mkdir -p "$F66R"
+( cd "$F66R" && git init -q -b main . && git config user.email t@t && git config user.name t \
+  && printf 'const f = 1;\n' > f.js && printf 'const m = 1;\n' > m.js && git add . && git commit -qm base \
+  && git checkout -qb feature && printf 'const f = 2;\n' > f.js && git commit -qam feature \
+  && git checkout -q main && printf 'const m = 9;\n' > m.js && git commit -qam moved-on && git checkout -q feature ) >/dev/null 2>&1
+rc="$(REPO="$F66R" drive f66 -- --single --dry-run --diff main)"
+same "F66 --diff main from a feature branch: reviewed (dry run, exit 0)" "0" "$rc"
+has "F66 …the feature's change reaches the prompt" "+const f = 2;" "$(out f66)"
+hasnt "F66 …main's later commit does not, in either direction" "const m = 9;" "$(out f66)"
+fi
+
+if only F67; then
+echo "=== F67 --diff <a ref with no merge base> (the empty tree) is the two-tree diff, not the working tree (mutation) ==="
+# REF...HEAD needs a merge base; the empty tree has none. Its meaning is "all of HEAD" — the committed
+# feature line, never an uncommitted edit, which the working-tree form would pick up.
+F67R="$T/f67-repo"; mkdir -p "$F67R"
+( cd "$F67R" && git init -q -b main . && git config user.email t@t && git config user.name t \
+  && printf 'const f = 2;\n' > f.js && git add . && git commit -qm one && printf 'const f = 3;\n' > f.js ) >/dev/null 2>&1
+F67E="$(cd "$F67R" && git hash-object -t tree /dev/null)"
+rc="$(REPO="$F67R" drive f67 -- --single --dry-run --diff "$F67E")"
+same "F67 --diff <empty tree>: reviewed (dry run, exit 0)" "0" "$rc"
+has "F67 …HEAD's committed line reaches the prompt" "+const f = 2;" "$(out f67)"
+hasnt "F67 …the uncommitted edit does not" "const f = 3;" "$(out f67)"
+fi
+
+if only F68; then
+echo "=== F68 --diff <ref> in a shallow clone with no visible merge base: refused, never the two-tree diff (mutation) ==="
+# CI checkouts are shallow: the merge base exists but is not fetched, so the two trees would be the moved-ref
+# diff F66 fixed. F66's shape, cloned at depth 1 with main fetched at depth 1 too.
+F68R="$T/f68-repo"; F68O="$T/f68-origin"; mkdir -p "$F68O"
+( cd "$F68O" && git init -q -b main . && git config user.email t@t && git config user.name t \
+  && printf 'const f = 1;\n' > f.js && printf 'const m = 1;\n' > m.js && git add . && git commit -qm base \
+  && git checkout -qb feature && printf 'const f = 2;\n' > f.js && git commit -qam feature \
+  && git checkout -q main && printf 'const m = 9;\n' > m.js && git commit -qam moved-on ) >/dev/null 2>&1
+git clone -q --depth 1 --branch feature "file://$F68O" "$F68R" >/dev/null 2>&1 \
+  && git -C "$F68R" fetch -q --depth 1 origin main:refs/remotes/origin/main >/dev/null 2>&1
+same "F68 premise: the clone is shallow and has no merge base for origin/main" "true|1" \
+  "$(git -C "$F68R" rev-parse --is-shallow-repository)|$(git -C "$F68R" merge-base origin/main HEAD >/dev/null 2>&1; echo $?)"
+rc="$(REPO="$F68R" drive f68 -- --single --dry-run --diff origin/main)"
+same "F68 refused (exit 2)" "2" "$rc"
+has "F68 …naming the shallow clone and the fix" "no merge base in this shallow clone" "$(err f68)"
+hasnt "F68 …and main's commit never reaches a prompt" "const m = 9;" "$(out f68)"
+fi
+
 if only F54; then
 echo "=== F54 a chunk's child review killed by TERM stops the chunked review there (mutation) ==="
 # A part whose child died of TERM (an orchestrator stopping it, a process group reaped) is an interruption, not a
