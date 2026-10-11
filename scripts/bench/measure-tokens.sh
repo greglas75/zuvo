@@ -30,6 +30,8 @@ case "$CLI" in claude|codex|cursor|agy|kimi|muse) ;; *) echo "measure-tokens.sh:
 D="${BENCH_HOME:-$HOME/.zuvo/bench}"
 DRIVER="${ADV:-$HOME/.zuvo/adversarial-review}"
 TIMEOUT="${MEASURE_TIMEOUT:-900}"
+# Stock macOS has no `timeout`: without this every row was a silent rc=127 zero.
+TO=$(command -v timeout || command -v gtimeout) || { echo "measure-tokens.sh: needs timeout (coreutils: gtimeout)" >&2; exit 2; }
 DIFFS="${MEASURE_DIFFS:-1788097281-9996 1788094994-91059 1788095259-67132 1788097410-31790 1788097157-76385}"
 OUT="$D/subs/usage-$LAB.tsv"
 mkdir -p "$D/prompts" "$D/subs/usage-raw"
@@ -70,18 +72,19 @@ A
 run_cli() {
   local p=$1 raw=$2 wd=$3
   case "$CLI" in
-    claude) timeout "$TIMEOUT" claude -p --model "$MODEL" ${EFF:+--effort "$EFF"} --output-format json --tools "" \
-              --mcp-config '{"mcpServers":{}}' --strict-mcp-config --no-session-persistence < "$p" > "$raw" ;;
-    codex)  (cd "$wd" && timeout "$TIMEOUT" codex exec --json --skip-git-repo-check -s read-only -m "$MODEL" \
+    # From the empty workdir: in a repo, claude -p loads its CLAUDE.md and rules into every measured call.
+    claude) (cd "$wd" && "$TO" "$TIMEOUT" claude -p --model "$MODEL" ${EFF:+--effort "$EFF"} --output-format json --tools "" \
+              --mcp-config '{"mcpServers":{}}' --strict-mcp-config --no-session-persistence < "$p" > "$raw") ;;
+    codex)  (cd "$wd" && "$TO" "$TIMEOUT" codex exec --json --skip-git-repo-check -s read-only -m "$MODEL" \
               ${EFF:+-c model_reasoning_effort="$EFF"} - < "$p" > "$raw") ;;
-    cursor) timeout "$TIMEOUT" cursor-agent -p --model "$MODEL" --mode ask --trust --workspace "$wd" \
+    cursor) "$TO" "$TIMEOUT" cursor-agent -p --model "$MODEL" --mode ask --trust --workspace "$wd" \
               --output-format json < "$p" > "$raw" ;;
-    agy)    (cd "$wd" && timeout "$TIMEOUT" agy -p "$(cat "$p")" --model "$MODEL" --output-format stream-json \
+    agy)    (cd "$wd" && "$TO" "$TIMEOUT" agy -p "$(cat "$p")" --model "$MODEL" --output-format stream-json \
               < /dev/null > "$raw") ;;
     kimi)   agent_file "$wd/agent.md"
-            (cd "$wd" && KIMI_MODEL_THINKING_EFFORT="${EFF:-high}" timeout "$TIMEOUT" kimi -p "$(cat "$p")" \
+            (cd "$wd" && KIMI_MODEL_THINKING_EFFORT="${EFF:-high}" "$TO" "$TIMEOUT" kimi -p "$(cat "$p")" \
               --output-format stream-json -m "$MODEL" --agent-file "$wd/agent.md" > "$raw") ;;
-    muse)   timeout "$TIMEOUT" muse exec --prompt-file "$p" --workspace "$wd" --model "$MODEL" --json > "$raw" ;;
+    muse)   "$TO" "$TIMEOUT" muse exec --prompt-file "$p" --workspace "$wd" --model "$MODEL" --json > "$raw" ;;
   esac
 }
 
@@ -100,7 +103,7 @@ row = None
 if cli == "claude":
     d = json.load(open(raw)); u = d.get("usage") or {}
     th = (u.get("output_tokens_details") or {}).get("thinking_tokens", 0)
-    row = (u.get("input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("cache_creation_input_tokens", 0),
+    row = None if not u else (u.get("input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("cache_creation_input_tokens", 0),
            u.get("output_tokens", 0), th, d.get("total_cost_usd", ""))
 elif cli == "codex":
     t = [e["usage"] for e in lines(raw) if e.get("type") == "turn.completed" and isinstance(e.get("usage"), dict)]
@@ -140,11 +143,17 @@ print("\t".join(str(x) for x in row) if row else "")
 PY
 }
 
-n=0
+n=0; ok=0
 for id in $DIFFS; do
   if awk -F'\t' -v id="$id" 'NR>1 && $1==id && $2==0 && $7>0 {f=1} END{exit !f}' "$OUT"; then continue; fi
   [ -f "$D/judge2/$id/CODE.diff" ] || { echo "  $id: no diff in the corpus, skipped" >&2; continue; }
   capture_prompt "$id" || { echo "  $id: could not capture the driver prompt" >&2; continue; }
+  # agy and kimi take the prompt as ONE argv string; Linux caps a single argument at 128 KiB (E2BIG).
+  if [ "$CLI" = agy ] || [ "$CLI" = kimi ]; then
+    if [ "$(uname -s)" = Linux ] && [ "$(wc -c < "$D/prompts/$id.txt")" -gt 131000 ]; then
+      echo "  $id: prompt over the Linux 128 KiB argv limit for $CLI, skipped" >&2; continue
+    fi
+  fi
   wd=$(mktemp -d "${TMPDIR:-/tmp}/mtok-$LAB-XXXX" | tr -d '\n')
   raw="$D/subs/usage-raw/$LAB-$id.raw"
   s=$(date +%s); rc=0
@@ -152,9 +161,12 @@ for id in $DIFFS; do
   secs=$(( $(date +%s) - s ))
   u=$(parse_usage "$raw" "$wd" 2>>"$raw.err")
   [ -n "$u" ] || { [ "$rc" = 0 ] && rc=97; u=$'0\t0\t0\t0\t\t'; }
-  awk -F'\t' -v id="$id" 'NR==1 || $1!=id' "$OUT" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+  rm -rf "$wd"
+  t=$(mktemp "$OUT.XXXX") && awk -F'\t' -v id="$id" 'NR==1 || $1!=id' "$OUT" > "$t" && mv "$t" "$OUT"
   printf '%s\t%s\t%s\t%s\n' "$id" "$rc" "$secs" "$u" >> "$OUT"
   echo "  $LAB $id rc=$rc ${secs}s usage: $(printf '%s' "$u" | tr '\t' ' ')"
-  n=$((n+1))
+  n=$((n+1)); [ "$rc" = 0 ] && ok=$((ok+1))
 done
-echo "MEASURED $LAB: $n new, $(($(wc -l < "$OUT") - 1)) total rows in $OUT"
+echo "MEASURED $LAB: $n attempted, $ok succeeded, $(($(wc -l < "$OUT") - 1)) total rows in $OUT"
+# Nothing measured although something was attempted is a failure, not a quiet zero row.
+[ "$n" -eq 0 ] || [ "$ok" -gt 0 ]
