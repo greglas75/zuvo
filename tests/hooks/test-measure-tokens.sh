@@ -6,8 +6,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MT="$ROOT/scripts/bench/measure-tokens.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
-TO="$(command -v timeout || command -v gtimeout || true)"
-[ -n "$TO" ] || { echo "  ✗ no timeout/gtimeout on PATH — measure-tokens.sh requires one"; exit 1; }
+# A precondition, not a wrapper: measure-tokens.sh itself refuses to run without one.
+command -v timeout >/dev/null || command -v gtimeout >/dev/null \
+  || { echo "  ✗ no timeout/gtimeout on PATH — measure-tokens.sh requires one"; exit 1; }
 
 export BENCH_HOME="$TMP/bench" MEASURE_DIFFS="d1"
 mkdir -p "$BENCH_HOME/judge2/d1" "$TMP/bin"
@@ -19,9 +20,10 @@ echo "chunk one" | "$ZUVO_CLAUDE_BIN" -p >/dev/null
 echo "chunk two" | "$ZUVO_CLAUDE_BIN" -p >/dev/null
 EOF
 # The measured CLI: usage depends on the prompt, so a lost chunk changes the sum.
-cat > "$TMP/bin/claude" <<'EOF'
+cat > "$TMP/bin/claude" <<EOF
 #!/bin/sh
-case "$(cat)" in
+echo call >> "$TMP/calls"
+case "\$(cat)" in
   *one*) echo '{"usage":{"input_tokens":100,"cache_read_input_tokens":10,"cache_creation_input_tokens":0,"output_tokens":7},"total_cost_usd":0.5}' ;;
   *two*) echo '{"usage":{"input_tokens":200,"cache_read_input_tokens":20,"cache_creation_input_tokens":0,"output_tokens":9},"total_cost_usd":0.25}' ;;
 esac
@@ -37,9 +39,10 @@ row="$(awk -F'\t' '$1=="d1"' "$OUT" | cut -f1,2,4-9)"
   && ok "both chunk prompts captured and summed (catches measuring only the last chunk)" || bad "rc=$rc row=[$row]"
 
 echo "=== resume ==="
-before="$(cat "$OUT")"
+calls_before="$(wc -l < "$TMP/calls")"
 bash "$MT" lab claude m >/dev/null 2>&1
-[ "$(cat "$OUT")" = "$before" ] && ok "a measured diff is not re-measured on a rerun" || bad "rerun changed the TSV"
+[ "$(wc -l < "$TMP/calls")" = "$calls_before" ] && ok "a measured diff is not re-measured on a rerun (no CLI call)" \
+  || bad "rerun called the CLI again: $(wc -l < "$TMP/calls") calls, was $calls_before"
 
 echo "=== a run where every call fails exits non-zero ==="
 printf '#!/bin/sh\ncat >/dev/null; exit 3\n' > "$TMP/bin/claude"

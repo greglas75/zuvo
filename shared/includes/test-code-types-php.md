@@ -151,7 +151,7 @@ public function methodName($dto): bool|null|Result {
 }
 ```
 
-Test each method with exactly 3 tests:
+Test each method with up to 3 tests — only the paths it actually has:
 1. **Success:** mock delegate → returns expected → assert true/result
 2. **Null-client:** set dep to null → assert false/null (no delegate called)
 3. **Exception:** mock delegate → throws → assert false/null

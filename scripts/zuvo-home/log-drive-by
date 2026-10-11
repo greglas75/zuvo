@@ -46,7 +46,8 @@ _count() {
   case "$2" in
     '') printf 0 ;;
     *[!0-9]*) echo "log-drive-by: ignored non-numeric --$1 value: $2" >&2; printf 0 ;;
-    *) printf '%s' "$((10#${2:0:6}))" ;;
+    ???????*) echo "log-drive-by: --$1 value $2 clipped to 999999" >&2; printf 999999 ;;
+    *) printf '%s' "$((10#$2))" ;;
   esac
 }
 SEC="$(_count sec "$SEC")" BUG="$(_count bug "$BUG")" SIZE="$(_count size "$SIZE")" DUP="$(_count dup "$DUP")"

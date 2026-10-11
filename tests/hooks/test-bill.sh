@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 bill_path, tmp = sys.argv[1], sys.argv[2]
 zh, binp, proj = f"{tmp}/zh", f"{tmp}/bin", f"{tmp}/proj"
 os.environ.update(ZUVO_HOME=zh, BILL_MAX_TRIES="3", BILL_MIN_AGE_MINUTES="30", BILL_MAX_AGE_HOURS="48",
-                  PATH=f"{binp}:{os.environ['PATH']}")
+                  PATH=f"{binp}:{os.environ.get('PATH', '/usr/bin:/bin')}")
 spec = importlib.util.spec_from_loader("bill", importlib.machinery.SourceFileLoader("bill", bill_path))
 bill = importlib.util.module_from_spec(spec); spec.loader.exec_module(bill)
 os.makedirs(bill.BD, exist_ok=True)
@@ -85,10 +85,15 @@ for n in range(3):
     bill.settle({"run": "r-bad", "project": proj, "findings": 1, "error": "timeout"}, [], attempts, done_f)
 check("after BILL_MAX_TRIES failed attempts the run is given up (catches a paid call every tick for 48 h)",
       open(done_f).read().split() == ["r-bad"] and "r-bad" not in attempts, (open(done_f).read(), attempts))
+for n in range(4):
+    bill.settle({"run": "r-limited", "project": proj, "findings": 1, "error": "x", "limited": True}, [], attempts, done_f)
+check("a rate-limited call does not use up the run's tries (catches giving up a review the account could not run)",
+      "r-limited" not in open(done_f).read().split() and "r-limited" not in attempts, attempts)
 
-rows = [{"id": "a.py:1:x", "lane": "codex"}, {"id": "a.py:2:y", "lane": "kimi"}, {"id": "a.py:3:z", "lane": "agy"}]
+rows = [{"id": "a.py:1:x", "lane": "codex"}, {"id": "a.py:2:y", "lane": "kimi"}, {"id": "a.py:3:z", "lane": "agy"},
+        {"id": "a.py:6:u", "lane": "codex"}]   # a.py:6:u: the agent recorded `fixed` (ledger fixture)
 verdicts = {"defects": [
-    {"verdict": "real", "finding_ids": ["a.py:1:x", "forged:9:id"]},
+    {"verdict": "real", "finding_ids": ["a.py:1:x", "forged:9:id", "a.py:6:u"]},
     {"verdict": "false_positive", "finding_ids": ["a.py:2:y"]},
     {"verdict": "uncertain", "finding_ids": ["a.py:3:z"]}], "lessons": ["l1"]}
 script(f"{zh}/adversarial-review", f"echo \"$@\" > {tmp}/driver.args; exit 1\n")
@@ -102,7 +107,7 @@ script(f"{zh}/adversarial-review", f"echo \"$@\" > {tmp}/driver.args; exit 0\n")
 bill.settle({"run": "r-ok", "project": proj, "findings": 3, "verdicts": json.loads(json.dumps(verdicts))},
             rows, attempts, done_f)
 args = open(f"{tmp}/driver.args").read().split()
-check("real -> deferred, false_positive -> rejected, uncertain -> nothing; a forged id is dropped",
+check("real -> deferred, false_positive -> rejected, uncertain -> nothing; a forged id and one the agent already judged are left alone",
       args == ["--record-disposition", "a.py:1:x", "deferred", "--record-disposition", "a.py:2:y", "rejected"], args)
 check("a recorded run is done and its 3 defects are written once",
       "r-ok" in open(done_f).read().split() and len(open(f"{bill.BD}/defects.jsonl").readlines()) == 3)

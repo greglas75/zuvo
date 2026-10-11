@@ -40,12 +40,13 @@ mkdir -p "$D/prompts" "$D/subs/usage-raw"
 [ -s "$OUT" ] || printf 'id\trc\tsecs\tin\tcache_read\tcache_write\tout\treasoning\treported_usd\n' > "$OUT"
 TOOLS=$(mktemp -d); trap 'rm -rf "$TOOLS"' EXIT
 
-# The driver and the modules that build its prompt; any change to them invalidates the prompt cache.
+# The driver and its adversarial-* modules (they build the prompt); any change re-captures.
 DDIR=$(dirname "$DRIVER")
 DRV_SUM=$(cat "$DRIVER" "$DDIR"/lib/adversarial-*.sh "$DDIR"/adversarial-*.sh 2>/dev/null | cksum | cut -d' ' -f1)
 
 # The exact prompts the driver builds for a diff: a spy client records each call's stdin into its own
-# file (a chunked diff is several calls, possibly concurrent) and answers "clean". Prints the directory.
+# file (a chunked diff is several calls, possibly concurrent) and answers "NO ISSUES FOUND.". Prints the
+# directory. A capture whose driver failed is discarded: a crash mid-diff would cache only some chunks.
 capture_prompts() {
   local id=$1 dir="$D/prompts/$DRV_SUM/$1" tmp
   if ! ls "$dir"/call-*.txt >/dev/null 2>&1; then
@@ -57,12 +58,13 @@ SPY
     chmod +x "$TOOLS/claude"
     # A private capture dir, renamed into place whole: several measure runs may capture one diff at once.
     tmp=$(mktemp -d "$D/prompts/.capture-XXXX") || return 1
+    local drc=0
     SPY_DIR="$tmp" ZUVO_CLAUDE_BIN="$TOOLS/claude" CLAUDE_MODEL=claude-opus-5-5 \
       ZUVO_ADVERSARIAL_LOG_FILE="$TOOLS/adv.log" "$DRIVER" --provider claude --mode code \
-      < "$D/judge2/$id/CODE.diff" > /dev/null 2>&1
+      < "$D/judge2/$id/CODE.diff" > /dev/null 2>&1 || drc=$?
     for f in "$tmp"/call-*; do [ -s "$f" ] && mv "$f" "$f.txt"; done
     mkdir -p "$(dirname "$dir")"
-    if ls "$tmp"/call-*.txt >/dev/null 2>&1 && mv "$tmp" "$dir" 2>/dev/null; then :; else rm -rf "$tmp"; fi
+    if [ "$drc" = 0 ] && ls "$tmp"/call-*.txt >/dev/null 2>&1 && mv "$tmp" "$dir" 2>/dev/null; then :; else rm -rf "$tmp"; fi
   fi
   ls "$dir"/call-*.txt >/dev/null 2>&1 && printf '%s' "$dir"
 }
@@ -182,7 +184,7 @@ for id in $DIFFS; do
     parts="$parts${r#*$'\t'}"$'\n'
   done
   secs=$(( $(date +%s) - s ))
-  # Sum the calls column by column; a column no call reported stays empty, not 0.
+  # Sum the calls column by column; reasoning and reported_usd stay empty when no call reported them.
   u=$(printf '%s' "$parts" | awk -F'\t' 'NF { for (i = 1; i <= 6; i++) if ($i != "") { t[i] += $i; seen[i] = 1 } }
       END { for (i = 1; i <= 6; i++) printf "%s%s", (i > 1 ? "\t" : ""), (seen[i] ? t[i] : (i <= 4 ? 0 : "")) }')
   t=$(mktemp "$OUT.XXXX") && awk -F'\t' -v id="$id" 'NR==1 || $1!=id' "$OUT" > "$t" && mv "$t" "$OUT"
