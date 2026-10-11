@@ -51,8 +51,9 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
 1. **Dedup first.** Run `backlog-archive.py lookup` per `backlog-protocol.md`: `OPEN` → bump that entry
    (`Seen`, date, add the source); `ARCHIVED` → re-open it as a REGRESSION; `ABSENT` → append.
    Never a second entry for a known problem.
-2. **Append to the MAIN checkout's `memory/backlog.md`** (worktree-safe resolution per
-   `backlog-protocol.md`), one line each:
+2. **Append to `memory/backlog.md` resolved per `backlog-protocol.md` "Where the Backlog Lives"**
+   (a tracked backlog is the current checkout's copy; an untracked one is the MAIN checkout's),
+   one line each:
 
    ```
    - [ ] B-<file-stem>-<tag>-<short-slug> <path>:<line> — [<TAG>] <the defect, one sentence> | evidence: <what proves it> | severity: <critical|high|medium|low> | source: drive-by:<skill> | conf: NN | <YYYY-MM-DD>
