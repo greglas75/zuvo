@@ -24,6 +24,11 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
   **NEVER the whole suite** — this is a touched-surface gate, not `test-audit all`. E2E files stay
   out unless the run itself wrote them.
 - `FIX_COMMIT_PREFIX` — e.g. `test(<refactor-scope>):` or `test(plan):`.
+- `CHANGE_BASE` — the commit the run's change starts from (build: `BUILD_BASE`; execute:
+  `plan_base_sha`; refactor/write-tests: the base they recorded; else
+  `git merge-base HEAD <default branch>`). The audit scores Q7/Q11 on the production lines changed
+  since it, so a small change's tests are not failed for a large file's untouched branches; a covering
+  test of a production file the run did not change is still scored on that whole file.
 
 ## Sequence
 
@@ -32,8 +37,11 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
    calling skill's own coverage gate — do not silently use N/A to dodge that.)
 2. **Dispatch the real skill:**
    ```
-   Skill(skill="zuvo:test-audit", args="<TEST_SCOPE files, space-separated> --deep --read-only --commit=off")
+   Skill(skill="zuvo:test-audit", args="<TEST_SCOPE files, space-separated> --base <CHANGE_BASE> --deep --read-only --commit=off")
    ```
+   `--base` scopes Q7/Q11 to the changed lines; the report lists what lies outside them as
+   `Out-of-scope gaps` — pre-existing debt, never a reason to fail this gate. The audit is `--read-only`,
+   so the calling skill backlogs them, with the below-A files of step 5.
    `--read-only` because the CALLING skill owns fixes and commits (its own commit gates apply);
    `--deep` because the fix loop needs per-finding evidence, not binary triage.
 3. **Read per-file tiers from the report.** Target: **tier A per file**. Existing unrelated noncritical debt follows the behavior-scope exception below; an explicit all-tests-to-A request retains the full target.

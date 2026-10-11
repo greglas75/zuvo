@@ -9,6 +9,7 @@
 #   test-audit-batch group   --owner <pid> --nbatch <N> --first <F> --token <run token> [--bound <s>] [--grace <s>]
 #   test-audit-batch save    --batch <N>
 #   test-audit-batch release --owner <pid> --token <run token>
+#   test-audit-batch ranges  --base <ref> <production file>
 #
 # Every subcommand works in <repo root>/zuvo/audits/.test-audit-batch (the repository of the current
 # directory).
@@ -35,6 +36,10 @@
 #          Exit 0 saved | 1 not saved | 2 usage.
 # release  Removes the run lock when it names this owner and token.
 #          Exit 0 released, or there was no lock | 3 the lock is another run's (left alone).
+# ranges   The third field of a batch-N.files line: the lines of <production file> that changed since
+#          <ref> (its working-tree state against <ref>), as `L<a>-<b>[,L<a>-<b>…]`, or `whole` when the file
+#          is new since <ref> or did not change (an unchanged file is scored whole, as without --base).
+#          A pure deletion is the line it happened at. Exit 0 | 2 usage | 4 git cannot diff it.
 #
 # --bound and --grace exist for the tests and for tuning; the skill never passes them.
 #
@@ -79,21 +84,32 @@ tab_prompt_ok() {
        END { exit !(NR > 0 && !bad && vc && of) }' "$1"
 }
 
-# tab_listing_ok <files> [any] — status 0 when every line of <files> is exactly two TAB fields: a test
-# path and a production path or ORPHAN, and there is at least one line. Both paths must be absolute
+# tab_listing_ok <files> [any] — status 0 when every line of <files> is two or three TAB fields: a test
+# path, a production path or ORPHAN, and optionally the production lines in scope (`whole` or
+# `L<a>-<b>[,L<a>-<b>…]`, what `ranges` prints; never beside ORPHAN), and there is at least one line. Both paths must be absolute
 # (the subprocess reviewer runs in a neutral directory) unless `any` is given: an in-harness agent
 # runs in the repository and is listed the paths it was handed.
 tab_listing_ok() {
   awk -F '\t' -v any="${2:-}" '
-    NF != 2 { bad = 1 }
+    NF != 2 && NF != 3 { bad = 1 }
+    NF == 3 && ($2 == "ORPHAN" || $3 !~ /^(whole|L[0-9]+-[0-9]+(,L[0-9]+-[0-9]+)*)$/) { bad = 1 }
+    NF == 3 && $3 != "whole" {  # each range as ranges prints it: starts at 1, never backwards
+      n = split($3, R, ","); for (i = 1; i <= n; i++) { split(substr(R[i], 2), E, "-"); if (E[1] + 0 < 1 || E[2] + 0 < E[1] + 0) bad = 1 }
+    }
     any == "" && ($1 !~ /^\// || ($2 !~ /^\// && $2 != "ORPHAN")) { bad = 1 }
     any != "" && ($1 !~ /[^ \t]/ || $2 !~ /[^ \t]/) { bad = 1 }
     END { exit bad || NR == 0 }' "$1" 2>/dev/null
 }
 
 # tab_render_listing <files> — the listing as the reviewer reads it, one line per file, on stdout.
+# A third field becomes `; changed lines: 12-30, 88-91` or `; whole file` inside the parentheses.
 tab_render_listing() {
-  awk -F '\t' '{ print $1 " (production: " $2 ")" }' "$1"
+  awk -F '\t' '{
+    scope = ""
+    if (NF == 3 && $3 == "whole") scope = "; whole file"
+    else if (NF == 3) { s = $3; gsub(/L/, "", s); gsub(/,/, ", ", s); scope = "; changed lines: " s }
+    print $1 " (production: " $2 scope ")"
+  }' "$1"
 }
 
 # tab_gate <files> <report> — the per-file check, ONE implementation for the DONE gate of a model-run
@@ -418,6 +434,44 @@ cmd_release() {
   rm -f "$TAB_DIR/.lock"
 }
 
+cmd_ranges() {
+  local opt_base="" file dir rel listed hunks
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --base) [ $# -ge 2 ] && [ -n "$2" ] || tab_usage "--base needs a ref"; opt_base="$2"; shift 2 ;;
+      --) shift; break ;;
+      -*) tab_usage "unknown argument: $1" ;;
+      *) break ;;
+    esac
+  done
+  [ -n "$opt_base" ] || tab_usage "ranges needs --base <ref>"
+  [ $# -eq 1 ] || tab_usage "ranges takes exactly one production file"
+  file="$1"
+  case "$opt_base" in -*) tab_usage "--base: a ref, got option-like '$opt_base'" ;; esac
+  # Every git call runs in the FILE's work tree: the listing carries absolute paths, and the caller's
+  # directory may be another repository, or none.
+  dir="$(dirname -- "$file")"
+  rel="$(git -C "$dir" rev-parse --show-prefix 2>/dev/null)" || { echo "ranges: $file is not in a git work tree" >&2; exit 4; }
+  rel="$rel$(basename -- "$file")"
+  git -C "$dir" rev-parse -q --verify "$opt_base^{commit}" >/dev/null || { echo "ranges: unknown ref $opt_base" >&2; exit 4; }
+  # ls-tree tells "not in the base" (empty output) from a git that failed (non-zero exit).
+  listed="$(git -C "$dir" ls-tree --full-tree --name-only "$opt_base" -- ":(top,literal)$rel")" \
+    || { echo "ranges: git ls-tree $opt_base failed for $file" >&2; exit 4; }
+  [ -n "$listed" ] || { echo whole; return 0; }  # new since the base: every line is in scope
+  hunks="$(git -C "$dir" -c core.quotePath=false diff -U0 --no-color --no-ext-diff --no-textconv --no-renames \
+    "$opt_base" -- ":(top,literal)$rel")" || { echo "ranges: git diff $opt_base -- $file failed" >&2; exit 4; }
+  printf '%s\n' "$hunks" | awk '
+    /^@@/ {
+      if (match($0, /\+[0-9]+(,[0-9]+)?/)) {
+        spec = substr($0, RSTART + 1, RLENGTH - 1); n = split(spec, P, ",")
+        a = P[1] + 0; c = (n > 1) ? P[2] + 0 : 1
+        if (c == 0) { if (a < 1) a = 1; b = a } else b = a + c - 1
+        out = out (out == "" ? "" : ",") "L" a "-" b
+      }
+    }
+    END { print (out == "" ? "whole" : out) }'  # no hunk: an unchanged file is scored whole
+}
+
 # Sourced: the definitions above only.
 if [ "${BASH_SOURCE[0]:-$0}" != "$0" ]; then return 0; fi
 
@@ -432,10 +486,10 @@ case "$TAB_HOME" in
 esac
 [ -n "$TAB_HOME" ] || TAB_HOME="${HOME:-}/.zuvo"
 
-[ $# -ge 1 ] || tab_usage "a subcommand is required (setup, group, save, release)"
+[ $# -ge 1 ] || tab_usage "a subcommand is required (setup, group, save, release, ranges)"
 sub="$1"; shift
 case "$sub" in
-  setup|group|save|release) "cmd_$sub" "$@" ;;
+  setup|group|save|release|ranges) "cmd_$sub" "$@" ;;
   -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" ;;
   *) tab_usage "unknown subcommand: $sub" ;;
 esac

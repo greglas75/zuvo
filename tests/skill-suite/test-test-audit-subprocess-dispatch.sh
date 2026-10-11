@@ -512,6 +512,14 @@ fi
 
 echo "== SKILL.md references the include and no longer embeds the prompt body =="
 
+require_text_in "$PROMPT" '- CHANGED-LINES SCOPE: a listed file whose production entry carries `changed lines: <ranges>`' \
+  "the batch prompt scores Q7/Q11 on the changed lines when the listing names them"
+require_text_in "$PROMPT" 'Out-of-scope gaps: [path:line of each Q7/Q11 gap outside the changed lines' \
+  "the batch prompt's FULL format carries the out-of-scope gaps line"
+require_text_in "$ROOT/shared/includes/test-quality-gate.md" '--base <CHANGE_BASE> --deep --read-only --commit=off' \
+  "the Test Quality Gate dispatches test-audit with the run's base, so the audit is scoped to the change"
+require_text_in "$SKILL" '~/.zuvo/test-audit-batch ranges --base <ref> <production path>' \
+  "test-audit tells the orchestrator to take each pairing's scope from the ranges subcommand"
 require_text_in "$SKILL" '../../shared/includes/test-audit-batch-prompt.md' \
   "SKILL.md references ../../shared/includes/test-audit-batch-prompt.md"
 
@@ -1431,7 +1439,45 @@ exec /bin/mkdir "$@"
   { lit_in "$(gout 1)" "batch-1 FAILED rc=listing-invalid" && lit_in "$(gout 1)" "batch-2 FAILED rc=listing-invalid" \
       && lit_in "$(gout 2)" "batch-3 FAILED rc=listing-invalid" && [ -z "$(started)" ] \
       && lit_in "$(cat "$X/log/group-2.err")" "listing-invalid: batch-3"; }
-  hres "empty, blank-only and 3-field listings are FAILED rc=listing-invalid with a named error, and never run (S1/P5)" $?
+  hres "empty, blank-only and listings whose third field is not a scope are FAILED rc=listing-invalid with a named error, and never run (S1/P5)" $?
+
+  # --- --base scope: a third field `L<a>-<b>,…` or `whole` is rendered for the reviewer; anything else is refused
+  reset_log
+  PRE_GROUP="printf '/abs/t1.test.ts\t/abs/p1.ts\tL5-5,L11-12\n/abs/t2.test.ts\t/abs/p2.ts\twhole\n/abs/t3.test.ts\tORPHAN\n' > '$B/batch-1.files'" one_run 1 1
+  printf '%s\n' '/abs/t1.test.ts (production: /abs/p1.ts; changed lines: 5-5, 11-12)' \
+    '/abs/t2.test.ts (production: /abs/p2.ts; whole file)' '/abs/t3.test.ts (production: ORPHAN)' | cmp -s - "$B/batch-1.list"
+  hres "a scoped listing runs, and the reviewer reads '; changed lines: 5-5, 11-12' / '; whole file' inside the parentheses" $?
+  reset_log
+  PRE_GROUP="printf '/abs/t1.test.ts\t/abs/p1.ts\tL5\n' > '$B/batch-1.files'; printf '/abs/t2.test.ts\tORPHAN\twhole\n' > '$B/batch-2.files'; printf '/abs/t3.test.ts\t/abs/p3.ts\t5-6\n' > '$B/batch-3.files'" one_run 3 1 3
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=listing-invalid" && lit_in "$(gout 1)" "batch-2 FAILED rc=listing-invalid" \
+      && lit_in "$(gout 2)" "batch-3 FAILED rc=listing-invalid" && [ -z "$(started)" ]; }
+  hres "a scope that is not L<a>-<b>, a scope beside ORPHAN, and a bare range are listing-invalid, never run" $?
+  reset_log
+  PRE_GROUP="printf '/abs/t1.test.ts\t/abs/p1.ts\tL9-2\n' > '$B/batch-1.files'; printf '/abs/t2.test.ts\t/abs/p2.ts\tL0-0\n' > '$B/batch-2.files'" one_run 2 1
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=listing-invalid" && lit_in "$(gout 1)" "batch-2 FAILED rc=listing-invalid" && [ -z "$(started)" ]; }
+  hres "a backwards range (L9-2) and a range from line 0 are listing-invalid: ranges never prints either" $?
+
+  # --- ranges: the lines that changed since --base (a deletion is the line it happened at), whole for a new
+  #     or an unchanged file, rc 4 for a ref git does not know, rc 2 without --base
+  RG="$X/rng"; mkdir -p "$RG/src"
+  ( cd "$RG" && git init -q -b main . && git config user.email t@t && git config user.name t \
+    && seq 1 20 > src/a.txt && seq 1 3 > src/same.txt && git add . && git commit -qm a ) >/dev/null 2>&1
+  rg_base="$(git -C "$RG" rev-parse HEAD)"
+  awk 'NR == 5 { print "five"; next } NR == 12 { next } { print } END { print "x"; print "y" }' "$RG/src/a.txt" > "$RG/a.tmp" \
+    && mv "$RG/a.tmp" "$RG/src/a.txt" && echo new > "$RG/src/n.txt"
+  rg_run() { ( cd "$RG/src" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" ranges "$@" ) 2>/dev/null; }
+  rg_got="$(rg_run --base "$rg_base" "$RG/src/a.txt")|$(rg_run --base "$rg_base" a.txt)|$(rg_run --base "$rg_base" n.txt)|$(rg_run --base "$rg_base" same.txt)"
+  [ "$rg_got" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21|whole|whole" ]
+  hres "ranges: changed lines by absolute and relative path, a deletion at its line, whole for a new and an unchanged file ($rg_got)" $?
+  rg_far="$( ( cd "$X" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" ranges --base "$rg_base" "$RG/src/a.txt" ) 2>/dev/null)"
+  git -C "$RG" config color.ui always
+  rg_color="$(rg_run --base "$rg_base" a.txt)"
+  git -C "$RG" config --unset color.ui
+  [ "$rg_far|$rg_color" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21" ]
+  hres "ranges: from a directory outside the file's repository, and under color.ui=always, the same ranges ($rg_far|$rg_color)" $?
+  rg_run --base no-such-ref a.txt > /dev/null; rc4=$?; rg_run a.txt > /dev/null; rc2=$?
+  [ "$rc4|$rc2" = "4|2" ]
+  hres "ranges: an unknown ref is rc 4, a call without --base is a usage error 2 ($rc4|$rc2)" $?
 
   # --- item 2: a relative field 1, and a field 2 that is neither absolute nor ORPHAN, are listing-invalid
   reset_log
