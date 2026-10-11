@@ -422,6 +422,30 @@ the checkout to origin/main; anything still needed in the driver is ported into 
   interpreter. | severity: low | category: Infrastructure | conf: 85
 
 ## Archived from backlog.md on 2026-10-11 (3 completed items moved out)
+## B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER control (d) fails an agent for the answer its own contract calls free
+
+**Found by running, not fixed.** Control (d) caught the verifier — 4 of 4 seeds missed, which is the
+control working. But **two of those four misses are the seeds' fault, not the agent's**:
+
+```
+expected STALE-FIXED | agent: NOT-VERIFIABLE
+  seed text: "B- -cb8b1c - [B-secaudit-2] pentest SCA preflight (0.5b): snippet is advisory; 4 adversarial rou…"
+```
+
+A closed seed is built from an archived entry with its resolution markers STRIPPED, so the answer is not
+legible from the text — that is deliberate and right. The side effect is that what remains is an
+amputated fragment (`B- -cb8b1c -`) indistinguishable from the metadata continuation lines this backlog
+is full of. The agent contract states, in its own words, that `NOT-VERIFIABLE` is "cheap, legitimate and
+costs you nothing" and is "the correct answer, not the cautious one" when unsure — and control (d) then
+fails the run for using it. **The seed measures something other than what it claims.**
+
+The other two misses are honest agent errors (`AGENTS.md:1 still reads …` is checkable with one `Read`),
+so the control is not wrong in general — it is wrong about this half of its seeds.
+
+Fix direction: build closed seeds from entries whose text still states the PROBLEM after stripping (the
+stripper already knows which span it removed), or grade a closed seed as passed on `NOT-VERIFIABLE` and
+reserve the miss for an actively wrong verdict.
+
 - [x] B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER — FIXED: BOTH directions it offered were taken. A closed
       seed is no longer failed on `NOT-VERIFIABLE` (graded as an abstention and reported on a
       `SEED-ABSTAIN` control line; a LIVE seed still misses, because its proof is the line it quotes), AND

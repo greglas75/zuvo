@@ -4990,31 +4990,6 @@ ANY path the entry names, not only the first.
 
 confidence:99 source:first live verify run 2026-10-06, 21/88 rows on this repo's own backlog
 
-## B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER control (d) fails an agent for the answer its own contract calls free
-
-**Found by running, not fixed.** Control (d) caught the verifier — 4 of 4 seeds missed, which is the
-control working. But **two of those four misses are the seeds' fault, not the agent's**:
-
-```
-expected STALE-FIXED | agent: NOT-VERIFIABLE
-  seed text: "B- -cb8b1c - [B-secaudit-2] pentest SCA preflight (0.5b): snippet is advisory; 4 adversarial rou…"
-```
-
-A closed seed is built from an archived entry with its resolution markers STRIPPED, so the answer is not
-legible from the text — that is deliberate and right. The side effect is that what remains is an
-amputated fragment (`B- -cb8b1c -`) indistinguishable from the metadata continuation lines this backlog
-is full of. The agent contract states, in its own words, that `NOT-VERIFIABLE` is "cheap, legitimate and
-costs you nothing" and is "the correct answer, not the cautious one" when unsure — and control (d) then
-fails the run for using it. **The seed measures something other than what it claims.**
-
-The other two misses are honest agent errors (`AGENTS.md:1 still reads …` is checkable with one `Read`),
-so the control is not wrong in general — it is wrong about this half of its seeds.
-
-Fix direction: build closed seeds from entries whose text still states the PROBLEM after stripping (the
-stripper already knows which span it removed), or grade a closed seed as passed on `NOT-VERIFIABLE` and
-reserve the miss for an actively wrong verdict.
-
-
 ## B-20261007-NO-RESPONSE-HANDOFF the lane has no defined path from the agent's answer to the response file
 
 **Deliberate workaround, never designed.** The verifier is READ-ONLY by contract and correctly writes
@@ -5257,3 +5232,4 @@ re-run the b/c/d suites: a refusal there changes what (b) reports for an absolut
 - [ ] B-bill-split-tick-modules scripts/zuvo-home/bill:268 — [SIZE] bill is ~400 lines with tick()/settle()/install_schedule() in one file; split into zuvo_bill_*.py modules (another session plans this: review learning loop) | evidence: structure auditor STRUCT-6, pre-push review f5e4f4b..2b36f72 | severity: low | source: review/2026-10-11 | defer-reason: structural-refactor (multi-file) | 2026-10-11
 - [ ] B-bill-judged-fingerprint-alltime scripts/zuvo-home/bill:119 — [BUG] `judged` is keyed (project, fingerprint) over the whole ledger, so a new finding whose file:line:slug equals one judged weeks ago is skipped as already judged | evidence: behavior auditor BEHAV-8, adversarial pass 3 (bill:211:all-time-judged-drops-findings) | severity: low | source: review/2026-10-11 | defer-reason: NIT (pre-existing design, needs a run-scoped verdict key in the ledger) | 2026-10-11
 - [ ] B-bill-systemd-linger-undocumented scripts/zuvo-home/bill:391 — [READ] `bill --install-schedule` on Linux installs a systemd USER timer, which stops at logout unless `loginctl enable-linger` is set; neither done nor documented | evidence: behavior auditor BEHAV-8 | severity: low | source: review/2026-10-11 | defer-reason: NIT | 2026-10-11
+- [ ] B-append-runlog-sweep-splits-heading-entry scripts/zuvo-home/append-runlog — [BUG] the run-log wrapper's archive sweep moves a heading-dialect entry's `- [x] <ID>` closure line to backlog-done.md and leaves its `## <ID>` section in backlog.md; backlog-archive drop-stale then refuses that id ("not defined in backlog.md", rc 29 in groom) and test-backlog-grooming-smoke went red (f74ca9d9, B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER; data repaired by hand in the v1.6.84 release) | evidence: release suite 2026-10-11, A7/B4/C13 failures; smoke 100/0 after moving the section | severity: medium | source: review/2026-10-11 | 2026-10-11
