@@ -59,7 +59,7 @@ for _ras_c in "$_ras_dir/pipeline-gate-lib.sh" "$_ras_dir/lib/pipeline-gate-lib.
 done
 if [ "${PG_LIB_LOADED:-}" != 1 ] || ! command -v path_contained >/dev/null 2>&1 \
    || ! command -v pg_artifact_proof_verdict >/dev/null 2>&1 \
-   || ! command -v pg_artifact_proof_refs >/dev/null 2>&1 \
+   || ! command -v pg_artifact_proof_refs >/dev/null 2>&1 || ! command -v pg_reviews_dir >/dev/null 2>&1 \
    || ! command -v pg_proof_ref_is_prose >/dev/null 2>&1 || ! command -v _pgl_clean >/dev/null 2>&1; then
   echo "review-artifact-sync: cannot compute the gate's verdict — pipeline-gate-lib.sh (with path-contain.sh) not found beside this script or in ~/.claude/hooks/lib; reinstall zuvo" >&2
   exit 2
@@ -108,6 +108,10 @@ resolve_root() {
   # repo toplevel of a dir (accepts the toplevel itself or any subdir)
   ( cd "$1" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null ) || return 1
 }
+
+# reviews_dir <root> — where the gate reads this checkout's artifacts: the lib's own rule, so the two
+# can never disagree.
+reviews_dir() { pg_reviews_dir "$1"; }
 
 # read_refs <artifact> <name> — every proof ref the gate reads, into REFS. A header the gate
 # refuses as a whole (unreadable, over the ref caps) is named here instead of counting 0 proofs.
@@ -205,7 +209,7 @@ lint_proofs() {
 do_check() {
   local root found=0
   root="$(resolve_root "${SRC:-.}")" || { echo "Not a git checkout: ${SRC:-.}" >&2; exit 2; }
-  for art in "$root"/memory/reviews/*.md; do
+  for art in "$(reviews_dir "$root")"/*.md; do
     [ -e "$art" ] || continue
     if [ -n "$SLUG" ]; then
       case "$(basename "$art")" in *"$SLUG"*) : ;; *) continue ;; esac
@@ -217,10 +221,10 @@ do_check() {
     if [ -n "$SLUG" ]; then
       # A slug that matches nothing must FAIL: post-run validation citing a typo'd
       # slug would otherwise print nothing and exit 0 — a passing-looking no-op.
-      echo "FAIL: no artifact matching --slug '$SLUG' under $root/memory/reviews/" >&2
+      echo "FAIL: no artifact matching --slug '$SLUG' under $(reviews_dir "$root")/" >&2
       exit 1
     fi
-    echo "No artifacts under $root/memory/reviews/"
+    echo "No artifacts under $(reviews_dir "$root")/"
   fi
   exit "$fail"
 }
@@ -244,7 +248,7 @@ do_sync() {
   droot="$(resolve_root "$DST")" || { echo "Not a git checkout: $DST" >&2; exit 2; }
   [ "$sroot" = "$droot" ] && { echo "--from and --to resolve to the same checkout: $sroot" >&2; exit 2; }
 
-  for art in "$sroot"/memory/reviews/*.md; do
+  for art in "$(reviews_dir "$sroot")"/*.md; do
     [ -e "$art" ] || continue
     local name rest ref shown
     name="$(basename "$art")"
@@ -317,6 +321,7 @@ do_archive() {
   local root adir art name rest ref a=0 n=0 miss=0 prose=0
   root="$(resolve_root "${SRC:-$PWD}")" || return 2
   adir="$(archive_dir_for "$root")"
+  # Its OWN directory only: archiving moves files, and the main checkout's are other worktrees' too.
   for art in "$root"/memory/reviews/*.md; do
     [ -f "$art" ] || continue
     name="$(basename "$art")"

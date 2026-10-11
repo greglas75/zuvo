@@ -806,7 +806,8 @@ Record the doc paths for the `### Documentation` line in the BUILD COMPLETE bloc
 ### 4.8b Content-keyed review artifact (REQUIRED — on success only)
 
 After verify + acceptance proofs pass (and ONLY then), write the content-keyed review
-artifact `memory/reviews/<base7>..<head7>-<slug>.md` carrying the machine-readable
+artifact `memory/reviews/<base7>..<head7>-<slug>.md` (in a linked worktree with no `memory/`, the main
+checkout's — `review-artifact.md` → Path; never create `memory/` there) carrying the machine-readable
 `range:` / `files:` / **`adversarial:`** header per `../../shared/includes/review-artifact.md`.
 Compute the range worktree-safe (`git -C "$repo_root" merge-base HEAD <default-branch>..HEAD`)
 and list the production files this build touched in `files:` (or `*`). Set `adversarial:` to the

@@ -1672,4 +1672,29 @@ rm -rf "$_missing_dir"
   && pass "agent_env: missing detector → fail-closed agent classification" \
   || bad "missing detector must fail-closed as agent"
 
+# ── a linked worktree with no memory/ reads the MAIN checkout's memory/reviews/ ─────────────────────
+# Repos that keep memory/ in the main checkout only (tgm-survey-platform's rule) had to copy or symlink
+# memory/reviews into every worktree, or every push from one was "never reviewed" (retros 2026-10-09/10).
+WTM="$(mktemp -d)/main"; mkdir -p "$WTM"
+(
+  cd "$WTM" && git init -q -b main . && git config user.email t@t && git config user.name t \
+    && mkdir -p src && echo w > src/w.sh && git add src && git commit -qm base \
+    && git worktree add -q -b feat "$WTM-wt" && cd "$WTM-wt" && echo "w2" > src/w.sh && git commit -qam change
+) >/dev/null 2>&1
+WTB="$(git -C "$WTM" rev-parse main)"; WTH="$(git -C "$WTM-wt" rev-parse HEAD)"
+mkdir -p "$WTM/memory/reviews"
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/w.sh\nverdict: PASS\n-->\nbody\n' "$WTB" "$WTH" > "$WTM/memory/reviews/wt-cov.md"
+[ ! -e "$WTM-wt/memory" ] && [ "$(pg_reviews_dir "$WTM-wt")" = "$WTM/memory/reviews" ] \
+  && pass "reviews_dir: a linked worktree with no memory/ resolves to the main checkout's memory/reviews" \
+  || bad "reviews_dir: got [$(pg_reviews_dir "$WTM-wt")], want [$WTM/memory/reviews]"
+PG_REPO_ROOT="$WTM-wt" pg_range_reviewed "$WTB..$WTH"; rc=$?
+[ "$rc" -eq 0 ] && pass "range_reviewed: an artifact in the main checkout covers the worktree's change (no memory/ there)" \
+  || bad "main-checkout artifact should cover the worktree's change, got $rc"
+mkdir -p "$WTM-wt/memory/reviews"
+PG_REPO_ROOT="$WTM-wt" pg_range_reviewed "$WTB..$WTH"; rc=$?
+[ "$rc" -eq 1 ] && [ "$(pg_reviews_dir "$WTM-wt")" = "$WTM-wt/memory/reviews" ] \
+  && pass "range_reviewed: a worktree's OWN memory/reviews wins, even empty — the fallback is only for a worktree without one" \
+  || bad "own memory/reviews should win (want 1 and the own dir), got $rc / $(pg_reviews_dir "$WTM-wt")"
+rm -rf "$(dirname "$WTM")"
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

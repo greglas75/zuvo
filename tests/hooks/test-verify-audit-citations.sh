@@ -97,6 +97,36 @@ out=$(report "scripts/zuvo-home/poll-cost:1"); rc=$?
   && pass "a stale stamp is rejected against the fixture HEAD" \
   || bad "stale stamp accepted or wrong failure: $out"
 
+# ── a report kept in the MAIN checkout, verified from a linked worktree, is checked against the worktree ──
+# A linked worktree's memory/reviews is often the main checkout's (a symlink, or the gate's fallback). Its
+# findings cite the worktree's branch; resolving the root from the report's location checked them against
+# whatever the main checkout had out, and every citation of a new file came back "does not exist".
+WM="$TMP/wm"; mkdir -p "$WM"
+git -C "$WM" init -q -b main && git -C "$WM" -c user.name=T -c user.email=t@t commit -q --allow-empty -m base || exit 1
+git -C "$WM" worktree add -q -b feat "$TMP/wm-wt" || exit 1
+mkdir -p "$TMP/wm-wt/src" && printf 'x = 1\ny = 2\n' > "$TMP/wm-wt/src/only.py"
+git -C "$TMP/wm-wt" add src/only.py && git -C "$TMP/wm-wt" -c user.name=T -c user.email=t@t commit -qm only || exit 1
+mkdir -p "$WM/memory/reviews"
+cat > "$WM/memory/reviews/wt.md" <<EOF
+# Review — worktree
+**R-1 [MUST-FIX] probe finding**
+  File: \`src/only.py:2\`
+  Verified-against: $(git -C "$TMP/wm-wt" rev-parse --short=7 HEAD)
+  Evidence: synthetic.
+EOF
+out=$( cd "$TMP/wm-wt" && python3 "$BIN" "$WM/memory/reviews/wt.md" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && grep -q "unverified:        0" <<< "$out" \
+  && pass "a report in the main checkout, verified from the linked worktree, resolves against the worktree" \
+  || bad "worktree report from the main checkout: rc=$rc out=$out"
+out=$( cd "$WM" && python3 "$BIN" "$WM/memory/reviews/wt.md" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && grep -q "does not exist\|not exist\|does not match" <<< "$out" \
+  && pass "control: verified from the main checkout itself, the same report is checked against main (the file is not there)" \
+  || bad "main-checkout control: rc=$rc out=$out"
+out=$( cd "$FIXTURE" && python3 "$BIN" "$WM/memory/reviews/wt.md" 2>&1 ); rc=$?
+[ "$rc" -ne 0 ] && grep -q "Current SHA: $(git -C "$WM" rev-parse --short HEAD)" <<< "$out" \
+  && pass "control: from ANOTHER repository's checkout the report keeps its own root, the main checkout (a different git common dir)" \
+  || bad "foreign-repo control: rc=$rc out=$out"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1
