@@ -1452,6 +1452,10 @@ exec /bin/mkdir "$@"
   { lit_in "$(gout 1)" "batch-1 FAILED rc=listing-invalid" && lit_in "$(gout 1)" "batch-2 FAILED rc=listing-invalid" \
       && lit_in "$(gout 2)" "batch-3 FAILED rc=listing-invalid" && [ -z "$(started)" ]; }
   hres "a scope that is not L<a>-<b>, a scope beside ORPHAN, and a bare range are listing-invalid, never run" $?
+  reset_log
+  PRE_GROUP="printf '/abs/t1.test.ts\t/abs/p1.ts\tL9-2\n' > '$B/batch-1.files'; printf '/abs/t2.test.ts\t/abs/p2.ts\tL0-0\n' > '$B/batch-2.files'" one_run 2 1
+  { lit_in "$(gout 1)" "batch-1 FAILED rc=listing-invalid" && lit_in "$(gout 1)" "batch-2 FAILED rc=listing-invalid" && [ -z "$(started)" ]; }
+  hres "a backwards range (L9-2) and a range from line 0 are listing-invalid: ranges never prints either" $?
 
   # --- ranges: the lines that changed since --base (a deletion is the line it happened at), whole for a new
   #     or an unchanged file, rc 4 for a ref git does not know, rc 2 without --base
@@ -1465,6 +1469,12 @@ exec /bin/mkdir "$@"
   rg_got="$(rg_run --base "$rg_base" "$RG/src/a.txt")|$(rg_run --base "$rg_base" a.txt)|$(rg_run --base "$rg_base" n.txt)|$(rg_run --base "$rg_base" same.txt)"
   [ "$rg_got" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21|whole|whole" ]
   hres "ranges: changed lines by absolute and relative path, a deletion at its line, whole for a new and an unchanged file ($rg_got)" $?
+  rg_far="$( ( cd "$X" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" ranges --base "$rg_base" "$RG/src/a.txt" ) 2>/dev/null)"
+  git -C "$RG" config color.ui always
+  rg_color="$(rg_run --base "$rg_base" a.txt)"
+  git -C "$RG" config --unset color.ui
+  [ "$rg_far|$rg_color" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21" ]
+  hres "ranges: from a directory outside the file's repository, and under color.ui=always, the same ranges ($rg_far|$rg_color)" $?
   rg_run --base no-such-ref a.txt > /dev/null; rc4=$?; rg_run a.txt > /dev/null; rc2=$?
   [ "$rc4|$rc2" = "4|2" ]
   hres "ranges: an unknown ref is rc 4, a call without --base is a usage error 2 ($rc4|$rc2)" $?

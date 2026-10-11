@@ -93,6 +93,9 @@ tab_listing_ok() {
   awk -F '\t' -v any="${2:-}" '
     NF != 2 && NF != 3 { bad = 1 }
     NF == 3 && ($2 == "ORPHAN" || $3 !~ /^(whole|L[0-9]+-[0-9]+(,L[0-9]+-[0-9]+)*)$/) { bad = 1 }
+    NF == 3 && $3 != "whole" {  # each range as ranges prints it: starts at 1, never backwards
+      n = split($3, R, ","); for (i = 1; i <= n; i++) { split(substr(R[i], 2), E, "-"); if (E[1] + 0 < 1 || E[2] + 0 < E[1] + 0) bad = 1 }
+    }
     any == "" && ($1 !~ /^\// || ($2 !~ /^\// && $2 != "ORPHAN")) { bad = 1 }
     any != "" && ($1 !~ /[^ \t]/ || $2 !~ /[^ \t]/) { bad = 1 }
     END { exit bad || NR == 0 }' "$1" 2>/dev/null
@@ -432,7 +435,7 @@ cmd_release() {
 }
 
 cmd_ranges() {
-  local opt_base="" file hunks
+  local opt_base="" file dir rel listed hunks
   while [ $# -gt 0 ]; do
     case "$1" in
       --base) [ $# -ge 2 ] && [ -n "$2" ] || tab_usage "--base needs a ref"; opt_base="$2"; shift 2 ;;
@@ -445,17 +448,18 @@ cmd_ranges() {
   [ $# -eq 1 ] || tab_usage "ranges takes exactly one production file"
   file="$1"
   case "$opt_base" in -*) tab_usage "--base: a ref, got option-like '$opt_base'" ;; esac
-  git rev-parse -q --verify "$opt_base^{commit}" >/dev/null || { echo "ranges: unknown ref $opt_base" >&2; exit 4; }
-  # Repo-relative, for `<ref>:<path>`: the batch listing carries absolute paths.
-  local dir rel
+  # Every git call runs in the FILE's work tree: the listing carries absolute paths, and the caller's
+  # directory may be another repository, or none.
   dir="$(dirname -- "$file")"
   rel="$(git -C "$dir" rev-parse --show-prefix 2>/dev/null)" || { echo "ranges: $file is not in a git work tree" >&2; exit 4; }
   rel="$rel$(basename -- "$file")"
-  if ! git cat-file -e "$opt_base:$rel" 2>/dev/null; then
-    echo whole; return 0  # new since the base: every line is in scope
-  fi
-  hunks="$(git -c core.quotePath=false diff -U0 --no-ext-diff --no-textconv --no-renames "$opt_base" -- "$file")" \
-    || { echo "ranges: git diff $opt_base -- $file failed" >&2; exit 4; }
+  git -C "$dir" rev-parse -q --verify "$opt_base^{commit}" >/dev/null || { echo "ranges: unknown ref $opt_base" >&2; exit 4; }
+  # ls-tree tells "not in the base" (empty output) from a git that failed (non-zero exit).
+  listed="$(git -C "$dir" ls-tree --full-tree --name-only "$opt_base" -- ":(top,literal)$rel")" \
+    || { echo "ranges: git ls-tree $opt_base failed for $file" >&2; exit 4; }
+  [ -n "$listed" ] || { echo whole; return 0; }  # new since the base: every line is in scope
+  hunks="$(git -C "$dir" -c core.quotePath=false diff -U0 --no-color --no-ext-diff --no-textconv --no-renames \
+    "$opt_base" -- ":(top,literal)$rel")" || { echo "ranges: git diff $opt_base -- $file failed" >&2; exit 4; }
   printf '%s\n' "$hunks" | awk '
     /^@@/ {
       if (match($0, /\+[0-9]+(,[0-9]+)?/)) {
@@ -465,7 +469,7 @@ cmd_ranges() {
         out = out (out == "" ? "" : ",") "L" a "-" b
       }
     }
-    END { print (out == "" ? "whole" : out) }'
+    END { print (out == "" ? "whole" : out) }'  # no hunk: an unchanged file is scored whole
 }
 
 # Sourced: the definitions above only.

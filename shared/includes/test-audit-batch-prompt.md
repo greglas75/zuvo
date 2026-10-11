@@ -229,8 +229,9 @@ IMPORTANT:
 - CHANGED-LINES SCOPE: a listed file whose production entry carries `changed lines: <ranges>` is
   scored for the change. Q7 and Q11 count the contract cases and branches whose code lies in those
   lines, together with the function or method that encloses each; a case or branch wholly outside
-  them is not scored, but list it under `Out-of-scope gaps` with its path:line. Every other Q and AP
-  is scored on the test file as always. `whole file`, or no scope at all: score the whole production
+  them is not scored, but list it under `Out-of-scope gaps` with its path:line. Changed lines that hold
+  no contract case and no branch (a constant, an import, a type, a pure deletion) make Q7/Q11 N/A,
+  with that reason. Every other Q and AP is scored on the test file as always. `whole file`, or no scope at all: score the whole production
   file, as before.
 - Q7 DOMAIN: List accepted inputs and every specified reject/filter/sentinel/fallback path, with production branch locations and exact test assertions. Do not invent throws for out-of-domain typed null; malformed inputs at real untrusted boundaries still require testing.
 - Q17 ECHO vs COMPUTED: mock returns X, test asserts X = echo (Q17=0). Mock returns raw data, test asserts transformation = computed (Q17=1).
