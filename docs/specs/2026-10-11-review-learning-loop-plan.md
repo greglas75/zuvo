@@ -234,6 +234,7 @@ Remote install for proofs on ryzen-dev (referred to as RSYNC-HELPERS): `scp $(fi
   - `bill.log` rows carry `diff_added`/`diff_removed` counted from the diff (bug: no reviewed-lines denominator)
   - `install_unit`: the 600 s plist / systemd unit is byte-identical to today's; launchctl/systemctl stubbed, HOME sandboxed (bug: live job rescheduled)
   - `--status --by-lane` and `--by-agreement` (precision by `len(lanes)`) from a fixture defects.jsonl
+  - a ledger row whose project column is a bare basename resolves to the main checkout (`~/DEV/<basename>` or a `remote_roots` match) for `--record-disposition`; unresolvable → counted `unrecordable` in `--status`, never silently judged-but-unrecorded (bug: Bill judged basename rows and dropped the verdict — architect item 3)
 - [ ] GREEN: `install_unit(label, argv, interval_s | calendar)` + uninstall; status tables.
 - [ ] Verify: `python3 -m unittest -v tests/hooks/test_bill_unit.py && bash tests/hooks/test-bill.sh && LINT`
   Expected: exit 0
