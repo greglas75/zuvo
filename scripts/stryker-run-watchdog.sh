@@ -96,7 +96,10 @@ back_up_in_place() {
   mkdir -p "$WORK/backup" || usage_die "cannot make the in-place backup directory"
   while IFS= read -r f || [ -n "$f" ]; do
     f="${f%$'\r'}"
-    [ -n "$f" ] && [ -f "$f" ] || continue
+    [ -n "$f" ] || continue
+    if [ ! -f "$f" ]; then echo "$ME: WARNING not backed up: $f (not a regular file)" >&2; continue; fi
+    grep -q "$INSTRUMENTED" -- "$f" 2>/dev/null \
+      && echo "$ME: WARNING $f is instrumented already (an earlier killed run?) — it cannot be restored from this copy" >&2
     i=$((i + 1))
     cp -p -- "$f" "$WORK/backup/$i" || usage_die "cannot back up $f before an in-place run"
     BACKED+=("$f" "$WORK/backup/$i")
@@ -109,7 +112,12 @@ restore_in_place() {
   for ((k = 0; k < ${#BACKED[@]}; k += 2)); do
     f="${BACKED[k]}"; b="${BACKED[k + 1]}"
     [ -f "$b" ] || continue
-    if [ -f "$f" ] && grep -q "$INSTRUMENTED" -- "$f" 2>/dev/null && ! grep -q "$INSTRUMENTED" -- "$b"; then
+    local st=1
+    [ -f "$f" ] && { grep -q "$INSTRUMENTED" -- "$f"; st=$?; }
+    if [ "$st" -gt 1 ]; then  # unreadable: whether it is instrumented is unknown, so the copy is kept
+      echo "$ME: ERROR cannot read $f to check it — its original is kept at $b" >&2; continue
+    fi
+    if [ "$st" -eq 0 ] && ! grep -q "$INSTRUMENTED" -- "$b"; then
       if cp -p -- "$b" "$f"; then echo "$ME: restored $f — the in-place run left it instrumented" >&2
       else echo "$ME: ERROR could not restore $f — its original is $b" >&2; continue; fi
     fi

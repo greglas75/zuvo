@@ -36,6 +36,7 @@ fixture() {
   printf 'node_modules/\n' > "$r/.gitignore"
   mkdir -p "$r/src" && printf 'export const a = 1;\n' > "$r/src/a.ts" && printf 'import "./a";\n' > "$r/src/a.test.ts"
   printf 'export default {};\n' > "$r/vitest.config.ts"
+  printf '{"compilerOptions":{}}\n' > "$r/tsconfig.json"  # so a sentinel that named a real file would be caught
   git -C "$r" add -A && git -C "$r" commit -qm init && git -C "$r" checkout -qb feature
   printf 'export const a = 2;\n' > "$r/src/a.ts" && git -C "$r" commit -qam change
   case "$ts" in
@@ -78,11 +79,25 @@ for kind in with-api none; do
   fi
 done
 
+# ── 2b. the TypeScript Stryker itself imports decides: core carries its own 7 next to a project 5 ───────
+fixture core-ts7 with-api || bad "fixture core-ts7"
+C="$TMP/core-ts7/node_modules/@stryker-mutator/core"; mkdir -p "$C/node_modules/typescript"
+printf '{"name":"@stryker-mutator/core","version":"10.0.0"}\n' > "$C/package.json"
+printf '{"name":"typescript","version":"7.0.0","main":"index.js"}\n' > "$C/node_modules/typescript/package.json"
+printf 'module.exports = { version: "7.0.0" };\n' > "$C/node_modules/typescript/index.js"
+out="$(scope core-ts7)"
+[ "$(kv "$out" in_place)" = true ] && [ "$(kv "$out" in_place_reason)" = "typescript 7.0.0 has no parseConfigFileTextToJson" ] \
+  && pass "the TypeScript resolved from @stryker-mutator/core decides, not the project's own 5" \
+  || bad "core-ts7: in_place=$(kv "$out" in_place) reason=[$(kv "$out" in_place_reason)]"
+
 # ── 3. the switches: --in-place on a healthy TypeScript keeps its preprocessor; --no-in-place wins ────
 out="$(scope ok-with-api --in-place)"; cfg="$(kv "$out" config_path)"
 [ "$(cfg_key "$cfg" inPlace)" = true ] && [ "$(cfg_key "$cfg" tsconfigFile)" = absent ] && [ "$(kv "$out" in_place_reason)" = "--in-place" ] \
   && pass "--in-place: in place, the working preprocessor left on" \
   || bad "--in-place: inPlace=$(cfg_key "$cfg" inPlace) tsconfigFile=$(cfg_key "$cfg" tsconfigFile) reason=[$(kv "$out" in_place_reason)]"
+out="$(scope ts7 --in-place --no-in-place)"; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'contradict' "$TMP/ts7.err" && pass "--in-place with --no-in-place: usage error 2" \
+  || bad "--in-place --no-in-place: rc=$rc err=[$(head -c 200 "$TMP/ts7.err")]"
 out="$(scope ts7 --no-in-place)"; cfg="$(kv "$out" config_path)"
 [ "$(cfg_key "$cfg" inPlace)" = absent ] && [ "$(kv "$out" in_place)" = false ] \
   && pass "--no-in-place: sandboxed even on typescript 7 (the caller's call)" \
@@ -98,8 +113,9 @@ printf 'a.ts\nb.ts\nmissing.ts\n' > "$W/list"
   sh -c 'printf "function stryMutAct_9fa48(){}\n" >> a.ts; printf "export const b = 2;\n" > b.ts; echo started; sleep 30') \
   >"$TMP/wd.out" 2>"$TMP/wd.err"; rc=$?
 if [ "$rc" -eq 124 ] && [ "$(cat "$W/a.ts")" = "export const a = 1;" ] && [ "$(stat -c %a "$W/a.ts" 2>/dev/null || stat -f %Lp "$W/a.ts")" = 640 ] \
-   && grep -q 'restored a.ts' "$TMP/wd.err" && [ "$(cat "$W/b.ts")" = "export const b = 2;" ] && ! grep -q 'restored b.ts' "$TMP/wd.err"; then
-  pass "killed in-place run: the instrumented file is restored with its mode and named; a hand edit without the marker is kept"
+   && grep -q 'restored a.ts' "$TMP/wd.err" && [ "$(cat "$W/b.ts")" = "export const b = 2;" ] && ! grep -q 'restored b.ts' "$TMP/wd.err" \
+   && grep -q 'not backed up: missing.ts' "$TMP/wd.err"; then
+  pass "killed in-place run: the instrumented file is restored with its mode and named; a hand edit without the marker is kept; a listed file that does not exist is named"
 else
   bad "killed in-place run: rc=$rc a=[$(cat "$W/a.ts")] b=[$(cat "$W/b.ts")] err=[$(head -c 300 "$TMP/wd.err")]"
 fi
@@ -107,9 +123,14 @@ fi
 printf 'export const a = 1;\n' > "$W/a.ts"
 (cd "$W" && timeout -s KILL 40 bash "$WD" --idle-timeout 5 --in-place-files list -- \
   sh -c 'cp a.ts a.bak; printf "function stryMutAct_9fa48(){}\n" >> a.ts; mv a.bak a.ts; echo done') >"$TMP/wd2.out" 2>"$TMP/wd2.err"; rc=$?
-[ "$rc" -eq 0 ] && [ ! -s "$TMP/wd2.err" ] && [ "$(cat "$W/a.ts")" = "export const a = 1;" ] \
+[ "$rc" -eq 0 ] && ! grep -q restored "$TMP/wd2.err" && [ "$(cat "$W/a.ts")" = "export const a = 1;" ] \
   && pass "clean in-place run: exit 0, nothing restored, nothing said" \
   || bad "clean in-place run: rc=$rc err=[$(cat "$TMP/wd2.err")]"
+printf 'export const c = 1;\nfunction stryMutAct_9fa48(){}\n' > "$W/c.ts"; printf 'c.ts\n' > "$W/list-c"
+(cd "$W" && timeout -s KILL 20 bash "$WD" --in-place-files list-c -- true) >/dev/null 2>"$TMP/wd4.err"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'c.ts is instrumented already' "$TMP/wd4.err" \
+  && pass "a listed file instrumented before the run (an earlier killed run): named, since this copy cannot restore it" \
+  || bad "pre-instrumented file: rc=$rc err=[$(cat "$TMP/wd4.err")]"
 (cd "$W" && timeout -s KILL 20 bash "$WD" --in-place-files nope -- true) >/dev/null 2>"$TMP/wd3.err"; rc=$?
 [ "$rc" -eq 125 ] && grep -q -- '--in-place-files: no such readable file' "$TMP/wd3.err" \
   && pass "--in-place-files naming no file: usage error 125 before anything runs" \

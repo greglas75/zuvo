@@ -155,8 +155,8 @@ while [ $# -gt 0 ]; do
     --no-progress-timeout) need_val $# "$1"; IDLE_TIMEOUT="$2"; shift 2 ;;
     --dry-run-timeout-min) need_val $# "$1"; DRY_RUN_MIN="$2"; shift 2 ;;
     --print-config) PRINT_CONFIG=1; shift ;;
-    --in-place)    IN_PLACE="on"; shift ;;
-    --no-in-place) IN_PLACE="off"; shift ;;
+    --in-place)    [ "$IN_PLACE" = off ] && die "--in-place and --no-in-place contradict each other"; IN_PLACE="on"; shift ;;
+    --no-in-place) [ "$IN_PLACE" = on ] && die "--in-place and --no-in-place contradict each other"; IN_PLACE="off"; shift ;;
     -h|--help)     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *)             die "unknown argument: $1" ;;
   esac
@@ -601,8 +601,12 @@ const watchdogFile = `.stryker-scoped-${tag}.watchdog.sh`;
 // preprocessor calls it: every sandboxed run dies before the first mutant. Retros 2026-10-09/10 hand-built
 // the same two-key workaround over and over, so it is detected here — by the function, not by a version.
 const tsWithoutPreprocessorApi = () => {
+  // The TypeScript Stryker itself would import: resolved from where @stryker-mutator/core is installed (a
+  // monorepo may hoist a different one than a workspace's own), else from the repo.
+  const from = [repo];
+  try { from.unshift(path.dirname(require.resolve('@stryker-mutator/core/package.json', { paths: [repo] }))); } catch { /* not installed */ }
   let entry;
-  try { entry = require.resolve('typescript', { paths: [repo] }); } catch { return null; }  // no TypeScript: nothing to break
+  try { entry = require.resolve('typescript', { paths: from }); } catch { return null; }  // no TypeScript: nothing to break
   try {
     const ts = require(entry);
     return typeof ts.parseConfigFileTextToJson === 'function' ? null : `typescript ${ts.version || 'unknown'}`;
