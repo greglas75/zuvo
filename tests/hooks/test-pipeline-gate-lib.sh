@@ -1675,7 +1675,8 @@ rm -rf "$_missing_dir"
 # ── a linked worktree with no memory/ reads the MAIN checkout's memory/reviews/ ─────────────────────
 # Repos that keep memory/ in the main checkout only (tgm-survey-platform's rule) had to copy or symlink
 # memory/reviews into every worktree, or every push from one was "never reviewed" (retros 2026-10-09/10).
-WTM="$(mktemp -d)/main"; mkdir -p "$WTM"
+# Physical path: on macOS mktemp gives /var/..., while git (worktree list) reports /private/var/....
+WTM="$(cd "$(mktemp -d)" && pwd -P)/main"; mkdir -p "$WTM"
 (
   cd "$WTM" && git init -q -b main . && git config user.email t@t && git config user.name t \
     && mkdir -p src && echo w > src/w.sh && git add src && git commit -qm base \
