@@ -16,8 +16,13 @@
 # counter differs from the previous heartbeat. Every other non-blank line counts as progress, unless it
 # repeats the line before it.
 #
-# Usage: stryker-run-watchdog.sh [--idle-timeout <s>] -- <command> [args...]
+# Usage: stryker-run-watchdog.sh [--idle-timeout <s>] [--in-place-files <list>] -- <command> [args...]
 #   --idle-timeout <s>   seconds without progress before the run is aborted (integer >= 1, default 600)
+#   --in-place-files <list>  a file naming, one per line, the files an in-place Stryker run instruments.
+#                        Each is copied before the command starts; when the run is over — however it
+#                        ended — any that still holds Stryker's instrumentation (`stryMutAct_9fa48`) is
+#                        put back, mode included, and named on stderr. A TERM/KILL from this watchdog
+#                        gives Stryker no chance to restore them itself.
 #
 # The command runs in its own process group (setsid, else perl setpgrp). Its stdout and stderr are
 # merged and forwarded to stdout line by line.
@@ -33,6 +38,8 @@ set -u
 
 IDLE=600
 GRACE=10
+IN_PLACE_LIST=""
+INSTRUMENTED='stryMutAct_9fa48'
 ME="stryker-run-watchdog"
 
 usage_die() { echo "$ME: $1" >&2; exit 125; }
@@ -42,6 +49,9 @@ while [ $# -gt 0 ]; do
     --idle-timeout)
       [ $# -ge 2 ] || usage_die "missing value for --idle-timeout"
       IDLE="$2"; shift 2 ;;
+    --in-place-files)
+      [ $# -ge 2 ] || usage_die "missing value for --in-place-files"
+      IN_PLACE_LIST="$2"; shift 2 ;;
     --) shift; break ;;
     -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *) usage_die "unknown argument: $1 (the command goes after --)" ;;
@@ -53,6 +63,8 @@ done
 [ $# -gt 0 ] || usage_die "no command given (usage: $ME [--idle-timeout <s>] -- <command> [args...])"
 [[ "$IDLE" =~ ^[0-9]{1,9}$ ]] && [ "$((10#$IDLE))" -ge 1 ] || usage_die "--idle-timeout must be an integer >= 1, got '$IDLE'"
 IDLE=$((10#$IDLE))  # base 10: shell arithmetic would read a zero-padded 0600 as octal 384
+[ -z "$IN_PLACE_LIST" ] || { [ -f "$IN_PLACE_LIST" ] && [ -r "$IN_PLACE_LIST" ]; } \
+  || usage_die "--in-place-files: no such readable file: $IN_PLACE_LIST"
 
 if command -v setsid >/dev/null 2>&1; then
   NEWGROUP=(setsid)
@@ -77,7 +89,37 @@ kill_group() {
   group_alive && kill -KILL -- "-$PID" 2>/dev/null
   return 0
 }
-cleanup() { exec 3<&- 2>/dev/null; rm -f "$FIFO"; rmdir "$WORK" 2>/dev/null; }
+BACKED=()  # pairs: original path, backup path
+back_up_in_place() {
+  local f i=0
+  [ -n "$IN_PLACE_LIST" ] || return 0
+  mkdir -p "$WORK/backup" || usage_die "cannot make the in-place backup directory"
+  while IFS= read -r f || [ -n "$f" ]; do
+    f="${f%$'\r'}"
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    i=$((i + 1))
+    cp -p -- "$f" "$WORK/backup/$i" || usage_die "cannot back up $f before an in-place run"
+    BACKED+=("$f" "$WORK/backup/$i")
+  done < "$IN_PLACE_LIST"
+}
+# Only a file that STILL holds instrumentation, and whose copy does not: Stryker restores the rest itself,
+# and a file edited by hand meanwhile is the editor's, not the run's.
+restore_in_place() {
+  local k f b
+  for ((k = 0; k < ${#BACKED[@]}; k += 2)); do
+    f="${BACKED[k]}"; b="${BACKED[k + 1]}"
+    [ -f "$b" ] || continue
+    if [ -f "$f" ] && grep -q "$INSTRUMENTED" -- "$f" 2>/dev/null && ! grep -q "$INSTRUMENTED" -- "$b"; then
+      if cp -p -- "$b" "$f"; then echo "$ME: restored $f — the in-place run left it instrumented" >&2
+      else echo "$ME: ERROR could not restore $f — its original is $b" >&2; continue; fi
+    fi
+    rm -f -- "$b"
+  done
+  BACKED=()
+}
+# restore_in_place first: `exec 3<&- 2>/dev/null` sends this shell's stderr to /dev/null for good, and the
+# restore must be able to say what it put back.
+cleanup() { restore_in_place; exec 3<&- 2>/dev/null; rm -f "$FIFO"; rmdir "$WORK/backup" "$WORK" 2>/dev/null; }
 on_signal() { kill_group; cleanup; exit "$1"; }
 trap 'on_signal 130' INT
 trap 'on_signal 143' TERM
@@ -85,6 +127,8 @@ trap 'on_signal 129' HUP
 # A reader that goes away (`… | head`) must not kill the watchdog alone and orphan the run.
 trap 'on_signal 141' PIPE
 trap 'kill_group; cleanup' EXIT
+
+back_up_in_place
 
 # The redirect opens the FIFO in the child; the `exec 3<` below opens the read end. Opening in this
 # order means neither side can block forever on the other.
