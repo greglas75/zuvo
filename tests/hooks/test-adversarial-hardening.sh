@@ -2049,6 +2049,25 @@ has "F67 …HEAD's committed line reaches the prompt" "+const f = 2;" "$(out f67
 hasnt "F67 …the uncommitted edit does not" "const f = 3;" "$(out f67)"
 fi
 
+if only F68; then
+echo "=== F68 --diff <ref> in a shallow clone with no visible merge base: refused, never the two-tree diff (mutation) ==="
+# CI checkouts are shallow: the merge base exists but is not fetched, so the two trees would be the moved-ref
+# diff F66 fixed. F66's shape, cloned at depth 1 with main fetched at depth 1 too.
+F68R="$T/f68-repo"; F68O="$T/f68-origin"; mkdir -p "$F68O"
+( cd "$F68O" && git init -q -b main . && git config user.email t@t && git config user.name t \
+  && printf 'const f = 1;\n' > f.js && printf 'const m = 1;\n' > m.js && git add . && git commit -qm base \
+  && git checkout -qb feature && printf 'const f = 2;\n' > f.js && git commit -qam feature \
+  && git checkout -q main && printf 'const m = 9;\n' > m.js && git commit -qam moved-on ) >/dev/null 2>&1
+git clone -q --depth 1 --branch feature "file://$F68O" "$F68R" >/dev/null 2>&1 \
+  && git -C "$F68R" fetch -q --depth 1 origin main:refs/remotes/origin/main >/dev/null 2>&1
+same "F68 premise: the clone is shallow and has no merge base for origin/main" "true|1" \
+  "$(git -C "$F68R" rev-parse --is-shallow-repository)|$(git -C "$F68R" merge-base origin/main HEAD >/dev/null 2>&1; echo $?)"
+rc="$(REPO="$F68R" drive f68 -- --single --dry-run --diff origin/main)"
+same "F68 refused (exit 2)" "2" "$rc"
+has "F68 …naming the shallow clone and the fix" "no merge base in this shallow clone" "$(err f68)"
+hasnt "F68 …and main's commit never reaches a prompt" "const m = 9;" "$(out f68)"
+fi
+
 if only F54; then
 echo "=== F54 a chunk's child review killed by TERM stops the chunked review there (mutation) ==="
 # A part whose child died of TERM (an orchestrator stopping it, a process group reaped) is an interruption, not a

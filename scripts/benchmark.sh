@@ -168,17 +168,24 @@ collect_input() {
       timeout 10 cat || true
       ;;
     diff)
-      # From the merge base, so a REF that moved on adds nothing; two trees when there is none; the working
-      # tree only when neither range printed anything, never appended to part of a failed diff.
+      # The driver's order (lib/adversarial-input.sh): from the merge base, so a REF that moved on adds nothing;
+      # two trees only when there is no merge base outside a shallow clone; the working tree only when the
+      # range form printed nothing. Output that a failed git diff printed part of is refused, never spliced.
       local out rc=0
       out="$(git diff "$DIFF_REF"...HEAD 2>/dev/null)" || rc=$?
       if [[ "$rc" -ne 0 && -z "$out" ]] && ! git merge-base "$DIFF_REF" HEAD >/dev/null 2>&1; then
+        if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" == true ]]; then
+          echo "ERROR: --diff $DIFF_REF: no merge base in this shallow clone — fetch the history first" >&2; return 1
+        fi
         rc=0; out="$(git diff "$DIFF_REF"..HEAD 2>/dev/null)" || rc=$?
       fi
-      if [[ "$rc" -ne 0 && -n "$out" ]]; then
-        echo "ERROR: git diff $DIFF_REF failed after printing part of the diff" >&2; return 1
+      if [[ "$rc" -ne 0 && -z "$out" ]]; then
+        rc=0; out="$(git diff "$DIFF_REF")" || rc=$?
       fi
-      if [[ "$rc" -ne 0 ]]; then git diff "$DIFF_REF"; else printf '%s\n' "$out"; fi
+      if [[ "$rc" -ne 0 ]]; then
+        echo "ERROR: git diff $DIFF_REF failed (exit $rc)${out:+ after printing part of the diff}" >&2; return 1
+      fi
+      [[ -z "$out" ]] || printf '%s\n' "$out"
       ;;
     files)
       # Support space-separated and newline-separated file lists

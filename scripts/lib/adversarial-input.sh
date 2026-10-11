@@ -186,6 +186,11 @@ collect_input() {
       local _df=0
       _ar_diff_form "$DIFF_REF"...HEAD 2 || _df=$?
       if [[ "$_df" -eq 1 ]] && ! git merge-base "$DIFF_REF" HEAD >/dev/null 2>&1; then
+        # A shallow clone has a merge base it cannot see; two trees there are the moved-ref diff again.
+        if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" == true ]]; then
+          echo "ERROR: --diff $DIFF_REF: no merge base in this shallow clone — fetch the history (git fetch --unshallow, or --deepen=N) and re-run" >&2
+          return 3
+        fi
         _df=0; _ar_diff_form "$DIFF_REF"..HEAD 2 || _df=$?
       fi
       if [[ "$_df" -eq 1 ]]; then
