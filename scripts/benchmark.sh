@@ -168,7 +168,17 @@ collect_input() {
       timeout 10 cat || true
       ;;
     diff)
-      git diff "$DIFF_REF"...HEAD 2>/dev/null || git diff "$DIFF_REF"  # from the merge base: a moved REF adds nothing
+      # From the merge base, so a REF that moved on adds nothing; two trees when there is none; the working
+      # tree only when neither range printed anything, never appended to part of a failed diff.
+      local out rc=0
+      out="$(git diff "$DIFF_REF"...HEAD 2>/dev/null)" || rc=$?
+      if [[ "$rc" -ne 0 && -z "$out" ]] && ! git merge-base "$DIFF_REF" HEAD >/dev/null 2>&1; then
+        rc=0; out="$(git diff "$DIFF_REF"..HEAD 2>/dev/null)" || rc=$?
+      fi
+      if [[ "$rc" -ne 0 && -n "$out" ]]; then
+        echo "ERROR: git diff $DIFF_REF failed after printing part of the diff" >&2; return 1
+      fi
+      if [[ "$rc" -ne 0 ]]; then git diff "$DIFF_REF"; else printf '%s\n' "$out"; fi
       ;;
     files)
       # Support space-separated and newline-separated file lists

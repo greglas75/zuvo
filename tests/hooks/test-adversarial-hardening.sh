@@ -2035,6 +2035,20 @@ has "F66 …the feature's change reaches the prompt" "+const f = 2;" "$(out f66)
 hasnt "F66 …main's later commit does not, in either direction" "const m = 9;" "$(out f66)"
 fi
 
+if only F67; then
+echo "=== F67 --diff <a ref with no merge base> (the empty tree) is the two-tree diff, not the working tree (mutation) ==="
+# REF...HEAD needs a merge base; the empty tree has none. Its meaning is "all of HEAD" — the committed
+# feature line, never an uncommitted edit, which the working-tree form would pick up.
+F67R="$T/f67-repo"; mkdir -p "$F67R"
+( cd "$F67R" && git init -q -b main . && git config user.email t@t && git config user.name t \
+  && printf 'const f = 2;\n' > f.js && git add . && git commit -qm one && printf 'const f = 3;\n' > f.js ) >/dev/null 2>&1
+F67E="$(cd "$F67R" && git hash-object -t tree /dev/null)"
+rc="$(REPO="$F67R" drive f67 -- --single --dry-run --diff "$F67E")"
+same "F67 --diff <empty tree>: reviewed (dry run, exit 0)" "0" "$rc"
+has "F67 …HEAD's committed line reaches the prompt" "+const f = 2;" "$(out f67)"
+hasnt "F67 …the uncommitted edit does not" "const f = 3;" "$(out f67)"
+fi
+
 if only F54; then
 echo "=== F54 a chunk's child review killed by TERM stops the chunked review there (mutation) ==="
 # A part whose child died of TERM (an orchestrator stopping it, a process group reaped) is an interruption, not a
