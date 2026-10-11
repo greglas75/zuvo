@@ -22,12 +22,14 @@ WHAT IT WRITES
                                      and an agent's later verdict wins (latest row wins).
   ~/.zuvo/bill-data/defects.jsonl         one record per judged defect: class, verdict, severity, reason, lanes, ids
   ~/.zuvo/bill-data/lessons.jsonl         the generalizable lessons, per review (the knowledge base)
-  ~/.zuvo/bill-data/judged-runs.txt       run ids already judged (Bill's own state)
-  ~/.zuvo/bill-data/bill.log              one line per judged review: seconds, tokens, API-price USD
+  ~/.zuvo/bill-data/judged-runs.txt       run ids already judged or given up on (Bill's own state)
+  ~/.zuvo/bill-data/attempts.json         failed attempts per run; after BILL_MAX_TRIES the run is given up
+  ~/.zuvo/bill-data/bill.log              one line per attempt: seconds, tokens, API-price USD, error
 
 USAGE
 
-    bill                  one tick: judge the newest unjudged reviews until the time budget runs out
+    bill                  one tick: start judging the newest unjudged reviews until the time budget runs out
+                          (calls already in flight finish, each within CALL_TIMEOUT)
     bill --dry-run        list what a tick would judge, call nothing
     bill --install-schedule   every 10 minutes: launchd on macOS, a systemd user timer on Linux
     bill --status         judged reviews, verdict counts, cost of the last 24 h
@@ -35,15 +37,25 @@ USAGE
 ENV
 
     BILL_MODEL (claude-opus-5-5)  BILL_EFFORT (xhigh)  BILL_WORKERS (3)  BILL_TICK_SECONDS (540)
-    BILL_MAX_AGE_HOURS (48)       ZUVO_HOME (~/.zuvo)  touch ~/.zuvo/bill-data/PAUSE to stop it without unscheduling
+    BILL_MAX_AGE_HOURS (48)  BILL_MIN_AGE_MINUTES (30)  BILL_MAX_TRIES (3)  ZUVO_HOME (~/.zuvo)
+    touch ~/.zuvo/bill-data/PAUSE to stop it without unscheduling
 """
 import concurrent.futures as cf
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+
+
+def _env_int(name, default):
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
 
 ZH = os.environ.get("ZUVO_HOME") or os.path.expanduser("~/.zuvo")
 LEDGER = os.environ.get("ZUVO_FINDINGS_LOG_FILE") or os.path.join(ZH, "adversarial-findings.log")
@@ -51,11 +63,18 @@ INPUTS = os.path.join(ZH, "adversarial-inputs")
 BD = os.path.join(ZH, "bill-data")
 MODEL = os.environ.get("BILL_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("BILL_EFFORT", "xhigh")
-WORKERS = int(os.environ.get("BILL_WORKERS", "3"))
-BUDGET = int(os.environ.get("BILL_TICK_SECONDS", "540"))
-MAX_AGE_H = int(os.environ.get("BILL_MAX_AGE_HOURS", "48"))
+WORKERS = _env_int("BILL_WORKERS", 3)
+BUDGET = _env_int("BILL_TICK_SECONDS", 540)
+MAX_AGE_H = _env_int("BILL_MAX_AGE_HOURS", 48)
+# A review younger than this is still being triaged by the agent that ran it; Bill's verdict, written
+# after a long call, would land later and win over the agent's (latest row wins).
+MIN_AGE_M = _env_int("BILL_MIN_AGE_MINUTES", 30)
+# Each attempt is a paid xhigh call; without a cap one poisoned review was retried every tick for 48 h.
+MAX_TRIES = _env_int("BILL_MAX_TRIES", 3)
 CALL_TIMEOUT = 1800
 VERDICT_TO_DISPOSITION = {"real": "deferred", "false_positive": "rejected"}
+# Matched against the CLI's own error text only — never a parse error, whose "column 1429" matched "429".
+LIMIT_RE = re.compile(r"\b(rate|usage)[ -]limit|\b429\b|hit your limit", re.I)
 
 PROMPT = """You are Bill, the judge of adversarial code-review findings. Several reviewer models (lanes)
 reviewed the diff below. Each finding is identified by its `id` (file:line:the reviewer's own slug), with
@@ -93,33 +112,42 @@ def append(path, line):
         f.write(line + "\n")
 
 
+def stamp(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def read_ledger():
-    """(runs: run_id -> {project, ts, rows[]}, judged: {(project, fingerprint)})"""
+    """(runs: run_id -> {project, ts, rows[]}, judged: {(project, fingerprint)}).
+    Only `new` rows inside the age window are kept: the ledger is never rotated, and holding every
+    row of every review ever run grew without bound on each 10-minute tick."""
     runs, judged = {}, set()
+    oldest = stamp(now() - timedelta(hours=MAX_AGE_H))
     try:
-        fh = open(LEDGER, errors="replace")
+        fh = open(LEDGER, encoding="utf-8", errors="replace")
     except OSError:
         return runs, judged
-    for line in fh:
-        c = line.rstrip("\n").split("\t")
-        if len(c) < 11 or c[0] == "date" or c[0].startswith("#"):
-            continue
-        ts, run, mode, lane, model, fp, sev, conf, file, disp, proj = c[:11]
-        if disp == "new" and lane:
-            if mode != "code" or lane.startswith("mock-"):
+    with fh:
+        for line in fh:
+            c = line.rstrip("\n").split("\t")
+            if len(c) < 11 or c[0] == "date" or c[0].startswith("#"):
                 continue
-            r = runs.setdefault(run, {"project": proj, "ts": ts, "rows": []})
-            r["rows"].append({"id": fp, "lane": lane, "model": model, "severity": sev, "confidence": conf, "file": file})
-        elif disp in ("fixed", "deferred", "rejected"):
-            judged.add((proj, fp))
+            ts, run, mode, lane, model, fp, sev, conf, file, disp, proj = c[:11]
+            if disp == "new" and lane:
+                if mode != "code" or lane.startswith("mock-") or ts < oldest:
+                    continue
+                r = runs.setdefault(run, {"project": proj, "ts": ts, "rows": []})
+                r["rows"].append({"id": fp, "lane": lane, "model": model, "severity": sev, "confidence": conf, "file": file})
+            elif disp in ("fixed", "deferred", "rejected"):
+                judged.add((proj, fp))
     return runs, judged
 
 
 def pending(runs, judged, done):
-    cutoff = (now() - timedelta(hours=MAX_AGE_H)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    oldest = stamp(now() - timedelta(hours=MAX_AGE_H))
+    youngest = stamp(now() - timedelta(minutes=MIN_AGE_M))
     out = []
     for run, r in runs.items():
-        if run in done or r["ts"] < cutoff or not os.path.exists(os.path.join(INPUTS, run + ".diff")):
+        if run in done or not oldest <= r["ts"] <= youngest or not os.path.exists(os.path.join(INPUTS, run + ".diff")):
             continue
         open_rows = [x for x in r["rows"] if (r["project"], x["id"]) not in judged]
         if open_rows:
@@ -130,50 +158,123 @@ def pending(runs, judged, done):
 
 def judge(item):
     ts, run, project, rows = item
-    diff = open(os.path.join(INPUTS, run + ".diff"), errors="replace").read()
+    with open(os.path.join(INPUTS, run + ".diff"), encoding="utf-8", errors="replace") as f:
+        diff = f.read()
     fl = "\n".join(f"- id={x['id']} | lane={x['lane']} ({x['model']}) | {x['severity']} | conf={x['confidence']} | {x['file']}"
                    for x in rows)
+    rec = {"run": run, "project": project, "findings": len(rows), "diff_chars": len(diff),
+           "lanes": len({x["lane"] for x in rows})}
     t0 = time.time()
-    p = subprocess.run(["claude", "-p", "--model", MODEL, "--effort", EFFORT, "--output-format", "json", "--tools", "",
-                        "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config", "--no-session-persistence"],
-                       input=PROMPT.replace("{findings}", fl).replace("{diff}", diff),
-                       capture_output=True, text=True, timeout=CALL_TIMEOUT, cwd="/tmp")
-    rec = {"run": run, "project": project, "secs": round(time.time() - t0), "rc": p.returncode, "findings": len(rows),
-           "diff_chars": len(diff), "lanes": len({x["lane"] for x in rows})}
+    try:
+        p = subprocess.run(["claude", "-p", "--model", MODEL, "--effort", EFFORT, "--output-format", "json", "--tools", "",
+                            "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config", "--no-session-persistence"],
+                           input=PROMPT.replace("{findings}", fl).replace("{diff}", diff),
+                           capture_output=True, text=True, timeout=CALL_TIMEOUT, cwd="/tmp")
+    except (subprocess.TimeoutExpired, OSError) as ex:
+        rec.update(secs=round(time.time() - t0), rc=None, error=f"{type(ex).__name__}: {str(ex)[:200]}")
+        return rec, rows
+    rec.update(secs=round(time.time() - t0), rc=p.returncode)
+    cli_error = p.stderr or ""
     try:
         d = json.loads(p.stdout)
+        if d.get("is_error"):
+            cli_error += " " + str(d.get("result", ""))
         u = d.get("usage") or {}
         rec.update(usd=d.get("total_cost_usd"), tokens_in=u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
                    + u.get("cache_read_input_tokens", 0), tokens_out=u.get("output_tokens", 0))
         txt = d.get("result", "")
-        rec["verdicts"] = json.loads(txt[txt.find("{"): txt.rfind("}") + 1])
-    except Exception as ex:  # noqa: BLE001 — a failed call is logged and retried next tick
+        rec["verdicts"] = valid_verdicts(json.loads(txt[txt.find("{"): txt.rfind("}") + 1]))
+    except Exception as ex:  # noqa: BLE001 — counted as a failed attempt, retried up to MAX_TRIES
         rec["error"] = f"{type(ex).__name__}: {str(ex)[:200]} | {(p.stderr or p.stdout)[-300:]}"
+    rec["limited"] = bool(LIMIT_RE.search(cli_error))
     return rec, rows
 
 
+def valid_verdicts(v):
+    """The model's JSON, shape-checked: a malformed answer is a failed attempt, never a crash mid-record."""
+    if not isinstance(v, dict) or not isinstance(v.get("defects"), list):
+        raise ValueError("verdicts: no defects list")
+    defects = [d for d in v["defects"] if isinstance(d, dict) and isinstance(d.get("finding_ids"), list)]
+    lessons = [x for x in v.get("lessons") or [] if isinstance(x, str)] if isinstance(v.get("lessons"), list) else []
+    return {"defects": defects, "lessons": lessons}
+
+
 def record(rec, rows):
-    """Write the verdict rows through the driver (it validates the ids against this project's ledger)."""
+    """Write the verdict rows through the driver (it validates the ids against this project's ledger), and
+    the defects/lessons only once the ledger accepted them — a retried run must not duplicate them.
+    Sets rec["recorded"]: True, False (driver refused: retry), or "project-missing" (cannot ever land)."""
     lanes = {x["id"]: x["lane"] for x in rows}
-    args, stamp = [], now().strftime("%Y-%m-%dT%H:%M:%SZ")
-    for d in rec["verdicts"].get("defects", []):
-        ids = [i for i in d.get("finding_ids", []) if i in lanes]
-        append(os.path.join(BD, "defects.jsonl"), json.dumps({
-            "ts": stamp, "run": rec["run"], "project": rec["project"], "defect_key": d.get("defect_key"),
-            "class": d.get("class"), "verdict": d.get("verdict"), "severity": d.get("severity"),
-            "reason": d.get("reason"), "lanes": sorted({lanes[i] for i in ids}), "finding_ids": ids}, ensure_ascii=False))
+    args, ts, defects, covered = [], stamp(now()), [], set()
+    for d in rec["verdicts"]["defects"]:
+        ids = [i for i in d["finding_ids"] if i in lanes]
+        covered.update(ids)
+        defects.append({"ts": ts, "run": rec["run"], "project": rec["project"], "defect_key": d.get("defect_key"),
+                        "class": d.get("class"), "verdict": d.get("verdict"), "severity": d.get("severity"),
+                        "reason": d.get("reason"), "lanes": sorted({lanes[i] for i in ids}), "finding_ids": ids})
         disp = VERDICT_TO_DISPOSITION.get(d.get("verdict"))
         if disp:
             for i in ids:
                 args += ["--record-disposition", i, disp]
-    for lesson in rec["verdicts"].get("lessons", []):
-        append(os.path.join(BD, "lessons.jsonl"), json.dumps(
-            {"ts": stamp, "run": rec["run"], "project": rec["project"], "lesson": lesson}, ensure_ascii=False))
-    if args and os.path.isdir(rec["project"]):
+    # Ids the model left out stay unjudged; re-asking would re-pay the whole review, so they are counted.
+    rec["omitted"] = len(set(lanes) - covered)
+    if not args:
+        rec["recorded"] = True
+    elif not os.path.isdir(rec["project"]):
+        rec["recorded"] = "project-missing"
+    else:
         env = dict(os.environ, ZUVO_RUN_ID="bill")
         r = subprocess.run([os.path.join(ZH, "adversarial-review")] + args, cwd=rec["project"], env=env,
                            capture_output=True, text=True, timeout=120)
         rec["recorded"] = r.returncode == 0
+        if r.returncode != 0:
+            rec["error"] = f"record-disposition rc={r.returncode}: {r.stderr.strip()[-200:]}"
+    if rec["recorded"] is not False:
+        for x in defects:
+            append(os.path.join(BD, "defects.jsonl"), json.dumps(x, ensure_ascii=False))
+        for lesson in rec["verdicts"]["lessons"]:
+            append(os.path.join(BD, "lessons.jsonl"), json.dumps(
+                {"ts": ts, "run": rec["run"], "project": rec["project"], "lesson": lesson}, ensure_ascii=False))
+    return rec
+
+
+def load_attempts():
+    try:
+        with open(os.path.join(BD, "attempts.json")) as f:
+            a = json.load(f)
+        return a if isinstance(a, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_attempts(a):
+    p = os.path.join(BD, "attempts.json")
+    with open(p + ".tmp", "w") as f:
+        json.dump(a, f)
+    os.replace(p + ".tmp", p)
+
+
+def settle(rec, rows, attempts, done_f):
+    """One finished attempt: record it, decide done / retry / give up, log it. Never raises."""
+    if rec.get("verdicts"):
+        try:
+            record(rec, rows)
+        except Exception as ex:  # noqa: BLE001 — a driver timeout or a missing driver: retried like a failed call
+            rec["recorded"], rec["error"] = False, f"record: {type(ex).__name__}: {str(ex)[:200]}"
+    finished = rec.get("verdicts") and rec.get("recorded") is not False
+    if not finished:
+        attempts[rec["run"]] = attempts.get(rec["run"], 0) + 1
+        if attempts[rec["run"]] >= MAX_TRIES:
+            rec["gave_up"] = True
+    if finished or rec.get("gave_up"):
+        append(done_f, rec["run"])
+        attempts.pop(rec["run"], None)
+    v = rec.pop("verdicts", None) or {}
+    rec["defects"] = len(v.get("defects", []))
+    rec["ts"] = stamp(now())
+    append(os.path.join(BD, "bill.log"), json.dumps(rec, ensure_ascii=False))
+    print(f"bill: {rec['run']} {rec.get('secs')}s findings={rec['findings']} defects={rec['defects']} "
+          f"usd={rec.get('usd')} recorded={rec.get('recorded')}{' GAVE-UP' if rec.get('gave_up') else ''} "
+          f"{rec.get('error', '')}", flush=True)
     return rec
 
 
@@ -185,66 +286,87 @@ def tick(dry):
     try:
         os.mkdir(lock)
     except FileExistsError:
-        if time.time() - os.path.getmtime(lock) < 3 * 3600:
+        try:
+            fresh = time.time() - os.path.getmtime(lock) < 3 * 3600
+        except OSError:                      # the other tick released it between the two calls
+            fresh = True
+        if fresh:
             print("bill: a tick is already running"); return 0
-        os.rmdir(lock); os.mkdir(lock)
+        try:
+            os.rmdir(lock); os.mkdir(lock)
+        except OSError:                      # another tick took over the same stale lock first
+            print("bill: a tick is already running"); return 0
     try:
         done_f = os.path.join(BD, "judged-runs.txt")
-        done = set(open(done_f).read().split()) if os.path.exists(done_f) else set()
+        done = set()
+        if os.path.exists(done_f):
+            with open(done_f) as f:
+                done = set(f.read().split())
         runs, judged = read_ledger()
         queue = pending(runs, judged, done)
-        print(f"bill: {len(queue)} review(s) with unjudged findings in the last {MAX_AGE_H} h")
+        print(f"bill: {len(queue)} review(s) with unjudged findings between {MIN_AGE_M} min and {MAX_AGE_H} h old")
         if dry:
             for ts, run, proj, rows in queue[:30]:
                 print(f"  {ts} {run} {os.path.basename(proj)} {len(rows)} finding(s)")
             return 0
+        attempts = load_attempts()
         deadline, i, futs = time.time() + BUDGET, 0, {}
         with cf.ThreadPoolExecutor(WORKERS) as ex:
-            while (futs or i < len(queue)):
+            while futs or i < len(queue):
                 while i < len(queue) and len(futs) < WORKERS and time.time() < deadline:
                     futs[ex.submit(judge, queue[i])] = queue[i]; i += 1
                 if not futs:
                     break
                 fin, _ = cf.wait(futs, return_when=cf.FIRST_COMPLETED)
                 for f in fin:
-                    futs.pop(f)
+                    item = futs.pop(f)
                     try:
                         rec, rows = f.result()
-                    except Exception as e:  # noqa: BLE001
-                        print(f"bill: call failed: {e}"); continue
-                    if rec.get("verdicts"):
-                        record(rec, rows)
-                        append(done_f, rec["run"])
-                    v = rec.pop("verdicts", None) or {}
-                    rec["defects"] = len(v.get("defects", []))
-                    rec["ts"] = now().strftime("%Y-%m-%dT%H:%M:%SZ")
-                    append(os.path.join(BD, "bill.log"), json.dumps(rec, ensure_ascii=False))
-                    print(f"bill: {rec['run']} {rec['secs']}s findings={rec['findings']} defects={rec['defects']} "
-                          f"usd={rec.get('usd')} {rec.get('error', '')}", flush=True)
-                    if "error" in rec and ("limit" in rec["error"].lower() or "429" in rec["error"]):
+                    except Exception as e:  # noqa: BLE001 — judge() catches the call's own errors; this is the diff read
+                        rec, rows = {"run": item[1], "project": item[2], "findings": len(item[3]),
+                                     "error": f"judge: {type(e).__name__}: {str(e)[:200]}"}, item[3]
+                    settle(rec, rows, attempts, done_f)
+                    save_attempts(attempts)
+                    if rec.get("limited"):
                         print("bill: rate/usage limit — stopping this tick"); deadline = 0
         return 0
     finally:
         os.rmdir(lock)
 
 
+def jsonl(path):
+    """Every parseable object in a JSON-lines file; a torn last line (a write in progress) is skipped."""
+    out = []
+    if os.path.exists(path):
+        with open(path, errors="replace") as f:
+            for x in f:
+                try:
+                    o = json.loads(x)
+                except ValueError:
+                    continue
+                if isinstance(o, dict):
+                    out.append(o)
+    return out
+
+
 def status():
-    log = os.path.join(BD, "bill.log")
-    recs = [json.loads(x) for x in open(log)] if os.path.exists(log) else []
-    since = (now() - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    recs = jsonl(os.path.join(BD, "bill.log"))
+    since = stamp(now() - timedelta(hours=24))
     day = [r for r in recs if r.get("ts", "") >= since]
-    print(f"judged reviews: {len(recs)} total, {len(day)} in 24 h; errors 24 h: {sum('error' in r for r in day)}")
+    print(f"attempts: {len(recs)} total, {len(day)} in 24 h; errors 24 h: {sum('error' in r for r in day)}; "
+          f"given up 24 h: {sum(bool(r.get('gave_up')) for r in day)}")
     print(f"API-price USD 24 h: {sum(r.get('usd') or 0 for r in day):.2f}; mean seconds: "
-          f"{(sum(r['secs'] for r in day) / len(day)) if day else 0:.0f}")
-    dp = os.path.join(BD, "defects.jsonl")
-    if os.path.exists(dp):
-        from collections import Counter
-        c = Counter(json.loads(x).get("verdict") for x in open(dp))
+          f"{(sum(r.get('secs') or 0 for r in day) / len(day)) if day else 0:.0f}")
+    from collections import Counter
+    c = Counter(d.get("verdict") for d in jsonl(os.path.join(BD, "defects.jsonl")))
+    if c:
         print("defect verdicts:", dict(c))
 
 
 def install_schedule():
+    from xml.sax.saxutils import escape
     me = os.path.join(ZH, "bill")
+    path = os.environ.get("PATH", "/usr/bin:/bin")
     os.makedirs(BD, exist_ok=True)
     if sys.platform == "darwin":
         plist = os.path.expanduser("~/Library/LaunchAgents/com.zuvo.bill.plist")
@@ -252,11 +374,11 @@ def install_schedule():
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.zuvo.bill</string>
-  <key>ProgramArguments</key><array><string>{me}</string></array>
+  <key>ProgramArguments</key><array><string>{escape(me)}</string></array>
   <key>StartInterval</key><integer>600</integer>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>{os.environ.get('PATH', '/usr/bin:/bin')}</string></dict>
-  <key>StandardOutPath</key><string>{BD}/tick.log</string>
-  <key>StandardErrorPath</key><string>{BD}/tick.log</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>{escape(path)}</string></dict>
+  <key>StandardOutPath</key><string>{escape(BD)}/tick.log</string>
+  <key>StandardErrorPath</key><string>{escape(BD)}/tick.log</string>
 </dict></plist>
 """)
         subprocess.run(["launchctl", "unload", plist], capture_output=True)
@@ -266,7 +388,7 @@ def install_schedule():
         ud = os.path.expanduser("~/.config/systemd/user"); os.makedirs(ud, exist_ok=True)
         open(os.path.join(ud, "zuvo-bill.service"), "w").write(
             f"[Unit]\nDescription=zuvo Bill — judge adversarial findings\n\n[Service]\nType=oneshot\n"
-            f"Environment=PATH={os.environ.get('PATH', '/usr/bin:/bin')}\nExecStart={me}\n"
+            f"Environment=\"PATH={path.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))}\"\nExecStart={me}\n"
             f"StandardOutput=append:{BD}/tick.log\nStandardError=append:{BD}/tick.log\n")
         open(os.path.join(ud, "zuvo-bill.timer"), "w").write(
             "[Unit]\nDescription=zuvo Bill every 10 minutes\n\n[Timer]\nOnBootSec=5min\nOnUnitInactiveSec=10min\n"

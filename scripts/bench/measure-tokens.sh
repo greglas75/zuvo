@@ -14,12 +14,14 @@
 #   measure-tokens.sh gemini-3.8-flash-medium agy "Gemini 3.8 Flash (Medium)"
 #   measure-tokens.sh muse-spark-1.3 muse muse-spark-1.3
 #
-# Each diff gets the EXACT prompt the driver sends (captured once through a spy client, cached in
-# $BENCH_HOME/prompts/<id>.txt). Output: $BENCH_HOME/subs/usage-<label>.tsv
+# Each diff gets the EXACT prompts the driver sends — one per call, so a diff the driver splits into
+# chunks is measured as that many calls and summed. They are captured through a spy client and cached
+# in $BENCH_HOME/prompts/<driver-cksum>/<id>/, so a changed driver or prompt module re-captures.
+# Output: $BENCH_HOME/subs/usage-<label>.tsv
 #   id  rc  secs  in  cache_read  cache_write  out  reasoning  reported_usd
-# `in` excludes cached input; `out` includes reasoning (every vendor here bills reasoning as output);
-# `reasoning` is informational. reported_usd is the CLI's own API-price figure where it gives one
-# (claude). Rows already present are skipped, so an interrupted run resumes.
+# claude/codex/cursor/kimi: `in` excludes cached input. agy and muse report their own fields, passed
+# through as given. `reasoning` is informational; reported_usd is the CLI's own API-price figure where
+# it gives one (claude). A row with rc 0 and output tokens is skipped, so an interrupted run resumes.
 #
 # Env: BENCH_HOME (default ~/.zuvo/bench); MEASURE_DIFFS (space-separated ids; default five diffs
 # spread across the corpus' size range); MEASURE_TIMEOUT (default 900 s, the bench's lane ceiling).
@@ -38,22 +40,42 @@ mkdir -p "$D/prompts" "$D/subs/usage-raw"
 [ -s "$OUT" ] || printf 'id\trc\tsecs\tin\tcache_read\tcache_write\tout\treasoning\treported_usd\n' > "$OUT"
 TOOLS=$(mktemp -d); trap 'rm -rf "$TOOLS"' EXIT
 
-# The exact prompt the driver builds for a diff: a spy client records its stdin and answers "clean".
-capture_prompt() {
-  local id=$1 p="$D/prompts/$1.txt"
-  [ -s "$p" ] && return 0
-  cat > "$TOOLS/claude" <<'SPY'
+# The driver and the modules that build its prompt; any change to them invalidates the prompt cache.
+DDIR=$(dirname "$DRIVER")
+DRV_SUM=$(cat "$DRIVER" "$DDIR"/lib/adversarial-*.sh "$DDIR"/adversarial-*.sh 2>/dev/null | cksum | cut -d' ' -f1)
+
+# The exact prompts the driver builds for a diff: a spy client records each call's stdin into its own
+# file (a chunked diff is several calls, possibly concurrent) and answers "clean". Prints the directory.
+capture_prompts() {
+  local id=$1 dir="$D/prompts/$DRV_SUM/$1" tmp
+  if ! ls "$dir"/call-*.txt >/dev/null 2>&1; then
+    cat > "$TOOLS/claude" <<'SPY'
 #!/bin/sh
 case "$1" in --version) echo "2.9.0 (Claude Code)"; exit 0;; esac
-cat > "$SPY_OUT"; printf 'NO ISSUES FOUND.\n'
+cat > "$(mktemp "$SPY_DIR/call-XXXXXX")"; printf 'NO ISSUES FOUND.\n'
 SPY
-  chmod +x "$TOOLS/claude"
-  # A per-process temp name: several measure runs may capture the same diff at once.
-  SPY_OUT="$p.$$.tmp" ZUVO_CLAUDE_BIN="$TOOLS/claude" CLAUDE_MODEL=claude-opus-5-5 \
-    ZUVO_ADVERSARIAL_LOG_FILE="$TOOLS/adv.log" "$DRIVER" --provider claude --mode code \
-    < "$D/judge2/$id/CODE.diff" > /dev/null 2>&1
-  if [ -s "$p.$$.tmp" ]; then mv "$p.$$.tmp" "$p"; else rm -f "$p.$$.tmp"; fi
-  [ -s "$p" ]
+    chmod +x "$TOOLS/claude"
+    # A private capture dir, renamed into place whole: several measure runs may capture one diff at once.
+    tmp=$(mktemp -d "$D/prompts/.capture-XXXX") || return 1
+    SPY_DIR="$tmp" ZUVO_CLAUDE_BIN="$TOOLS/claude" CLAUDE_MODEL=claude-opus-5-5 \
+      ZUVO_ADVERSARIAL_LOG_FILE="$TOOLS/adv.log" "$DRIVER" --provider claude --mode code \
+      < "$D/judge2/$id/CODE.diff" > /dev/null 2>&1
+    for f in "$tmp"/call-*; do [ -s "$f" ] && mv "$f" "$f.txt"; done
+    mkdir -p "$(dirname "$dir")"
+    if ls "$tmp"/call-*.txt >/dev/null 2>&1 && mv "$tmp" "$dir" 2>/dev/null; then :; else rm -rf "$tmp"; fi
+  fi
+  ls "$dir"/call-*.txt >/dev/null 2>&1 && printf '%s' "$dir"
+}
+
+# measure_call <prompt> <raw> — one CLI call from a fresh empty workdir; prints rc TAB usage.
+measure_call() {
+  local wd rc=0 u
+  wd=$(mktemp -d "${TMPDIR:-/tmp}/mtok-$LAB-XXXX") || { printf '96\t'; return; }
+  run_cli "$1" "$2" "$wd" 2> "$2.err" || rc=$?
+  u=$(parse_usage "$2" "$wd" 2>>"$2.err")
+  rm -rf "$wd"
+  [ -n "$u" ] || { [ "$rc" = 0 ] && rc=97; }
+  printf '%s\t%s' "$rc" "$u"
 }
 
 agent_file() {
@@ -147,24 +169,25 @@ n=0; ok=0
 for id in $DIFFS; do
   if awk -F'\t' -v id="$id" 'NR>1 && $1==id && $2==0 && $7>0 {f=1} END{exit !f}' "$OUT"; then continue; fi
   [ -f "$D/judge2/$id/CODE.diff" ] || { echo "  $id: no diff in the corpus, skipped" >&2; continue; }
-  capture_prompt "$id" || { echo "  $id: could not capture the driver prompt" >&2; continue; }
+  pdir=$(capture_prompts "$id") || { echo "  $id: could not capture the driver prompt" >&2; continue; }
   # agy and kimi take the prompt as ONE argv string; Linux caps a single argument at 128 KiB (E2BIG).
-  if [ "$CLI" = agy ] || [ "$CLI" = kimi ]; then
-    if [ "$(uname -s)" = Linux ] && [ "$(wc -c < "$D/prompts/$id.txt")" -gt 131000 ]; then
-      echo "  $id: prompt over the Linux 128 KiB argv limit for $CLI, skipped" >&2; continue
-    fi
+  if { [ "$CLI" = agy ] || [ "$CLI" = kimi ]; } && [ "$(uname -s)" = Linux ] \
+     && [ "$(wc -c "$pdir"/call-*.txt | awk '$2 != "total" && $1 > m {m = $1} END {print m + 0}')" -gt 131000 ]; then
+    echo "  $id: a prompt is over the Linux 128 KiB argv limit for $CLI, skipped" >&2; continue
   fi
-  wd=$(mktemp -d "${TMPDIR:-/tmp}/mtok-$LAB-XXXX" | tr -d '\n')
-  raw="$D/subs/usage-raw/$LAB-$id.raw"
-  s=$(date +%s); rc=0
-  run_cli "$D/prompts/$id.txt" "$raw" "$wd" 2> "$raw.err" || rc=$?
+  s=$(date +%s); rc=0; parts=""; k=0
+  for pf in "$pdir"/call-*.txt; do
+    k=$((k+1)); r=$(measure_call "$pf" "$D/subs/usage-raw/$LAB-$id-$k.raw")
+    [ "${r%%$'\t'*}" = 0 ] || [ "$rc" != 0 ] || rc=${r%%$'\t'*}
+    parts="$parts${r#*$'\t'}"$'\n'
+  done
   secs=$(( $(date +%s) - s ))
-  u=$(parse_usage "$raw" "$wd" 2>>"$raw.err")
-  [ -n "$u" ] || { [ "$rc" = 0 ] && rc=97; u=$'0\t0\t0\t0\t\t'; }
-  rm -rf "$wd"
+  # Sum the calls column by column; a column no call reported stays empty, not 0.
+  u=$(printf '%s' "$parts" | awk -F'\t' 'NF { for (i = 1; i <= 6; i++) if ($i != "") { t[i] += $i; seen[i] = 1 } }
+      END { for (i = 1; i <= 6; i++) printf "%s%s", (i > 1 ? "\t" : ""), (seen[i] ? t[i] : (i <= 4 ? 0 : "")) }')
   t=$(mktemp "$OUT.XXXX") && awk -F'\t' -v id="$id" 'NR==1 || $1!=id' "$OUT" > "$t" && mv "$t" "$OUT"
   printf '%s\t%s\t%s\t%s\n' "$id" "$rc" "$secs" "$u" >> "$OUT"
-  echo "  $LAB $id rc=$rc ${secs}s usage: $(printf '%s' "$u" | tr '\t' ' ')"
+  echo "  $LAB $id rc=$rc ${secs}s calls=$k usage: $(printf '%s' "$u" | tr '\t' ' ')"
   n=$((n+1)); [ "$rc" = 0 ] && ok=$((ok+1))
 done
 echo "MEASURED $LAB: $n attempted, $ok succeeded, $(($(wc -l < "$OUT") - 1)) total rows in $OUT"

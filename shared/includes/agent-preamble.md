@@ -25,7 +25,7 @@
    - **26-50%** — Include in your report but mark as low-confidence. These get tracked in the backlog.
    - **0-25%** — Discard silently. This range indicates likely hallucination or insufficient evidence.
 
-5. **Separate scope from backlog.** Issues that fall within your assigned scope go in your main report. Issues you notice that are outside your scope belong in a separate `BACKLOG ITEMS` section at the end of your output. The orchestrating agent will persist backlog items using the backlog protocol. Prefix each with its drive-by tag (`[SEC]`, `[BUG]`, `[SIZE]`, `[DUP]`, `[CPLX]`, `[PERF]`, `[DEAD]`, `[READ]`) and hold it to that tag's bar in `drive-by-findings.md`: at least 51% confidence, except `[SEC]`, which is reported from 26% at any severity. Cite a secret's kind and location, never its value.
+5. **Separate scope from backlog.** Issues that fall within your assigned scope go in your main report. Issues you notice that are outside your scope belong in a separate `BACKLOG ITEMS` section at the end of your output. The orchestrating agent will persist backlog items using the backlog protocol. Prefix each with its drive-by tag (`[SEC]`, `[BUG]`, `[SIZE]`, `[DUP]`, `[CPLX]`, `[PERF]`, `[DEAD]`, `[READ]`) and hold it to that tag's bar — read `shared/includes/drive-by-findings.md` (beside this file) before writing the section: at least 51% confidence, except `[SEC]`, which is reported from 26% at any severity. An out-of-scope observation that fits no tag or clears no bar is not a backlog item; the bars are the filter. Item 4's 26-50% band applies to in-scope findings, not to this section. Cite a secret's kind and location, never its value.
 
 ## Output Structure
 

@@ -46,9 +46,9 @@ passes the Worth Gate, table-driven where cases share a shape, and stop. Never a
 
 | Code Type | Detection Signals | Test budget (upper bound) |
 |-----------|------------------|-------------------|
-| VALIDATOR | Declarative per-field constraints attached to a data shape — schema objects, decorator/annotation validators, typed DTOs with field rules (e.g. Zod, class-validator, Pydantic `BaseModel`+`@field_validator`, Python dataclass DTO) | Fields × 3 (valid + invalid + boundary) |
+| VALIDATOR | Declarative per-field constraints attached to a data shape — schema objects, decorator/annotation validators, typed DTOs with field rules (e.g. Zod, class-validator, Pydantic `BaseModel`+`@field_validator`, Python dataclass DTO) | Project-decided rules × 3 (valid + invalid + boundary); a standard decorator alone (`@IsString`, `max:255`) is 0 — see VALIDATOR Depth |
 | SERVICE | Business-logic unit calling I/O collaborators (DB/HTTP/queue) through injected or imported deps — any framework or none (e.g. `@Injectable`, plain class, module of functions) | Methods × 3 |
-| CONTROLLER | HTTP entrypoint mapping request→response — decorators OR file-convention handlers (e.g. Nest `@Get`, Next.js App Router `export function GET/POST` / `export const POST = wrap(...)`, FastAPI path functions, invokable PHP controllers) | Endpoints × 4 (happy + auth + validation + error) |
+| CONTROLLER | HTTP entrypoint mapping request→response — decorators OR file-convention handlers (e.g. Nest `@Get`, Next.js App Router `export function GET/POST` / `export const POST = wrap(...)`, FastAPI path functions, invokable PHP controllers) | Endpoints × 4 at most (happy + auth + validation + error — only the cases the endpoint has; a pass-through controller is 0) |
 | HOOK | Reusable stateful frontend logic unit with lifecycle/effects (e.g. React `use*`, Vue composables) | States × 3 + lifecycle tests |
 | PURE | No I/O, no side effects — transforms, formatters, calculators | Functions × 4 + property-based |
 | COMPONENT | UI unit rendering from props/state with interaction handlers (e.g. React/Vue/Svelte component, Astro island) | Render states × 2 + interaction tests |
@@ -193,14 +193,14 @@ Each code type has specific things to test and a recommended mock strategy. This
 |-----------|-------------|---------------|-------------|
 | **ORCHESTRATOR** | Middleware ordering invariants, route mounting, auth boundaries (presence + order), path isolation | Mock route modules + external-dep middleware as pass-through. Keep pure middleware real. | Ordering log array (see stack-specific template) |
 | **SERVICE** | Business logic branches, error paths, transaction boundaries, caller contracts, state-changing side effects | Mock external I/O only (DB, HTTP, email). Use real code for internal deps. Behaviour that depends on SQL semantics (tenant `where`, transactions, unique, cascade) → integration test on a real DB; a mocked `$transaction` proves nothing. | Test computed output, not mock echo. CalledWith only for state-changing effects (send, charge, enqueue, write) — never for reads. |
-| **CONTROLLER** | Input validation (400), auth (401/403), success (200/201), error shapes, security S1-S4 | Mock service layer. Real validation + guards. | Every endpoint × 4 (happy + auth + validation + error) |
+| **CONTROLLER** | Input validation (400), auth (401/403), success (200/201), error shapes, security S1-S4 | Mock service layer. Real validation + guards. | Up to endpoint × 4 (happy + auth + validation + error), only the cases the endpoint actually has |
 | **PURE/VALIDATOR** | All branches, edge cases per parameter type, property-based tests | Zero mocks | State matrix: input combinations → expected outputs |
 | **GUARD/MIDDLEWARE** | Request without header → expected behavior, wrong header → 4xx, correct header → next() called, ordering relative to other middleware | Mock downstream only | Positive AND negative assertions |
 | **HOOK** | Return values, state transitions, side effects, cleanup | Mock external effects (fetch, timers) | Test lifecycle: mount → interact → verify → cleanup |
 | **COMPONENT** | Render states the component itself decides (loading/error/empty/data), user flows (action → state → callback), a11y, dispatch/routing | Mock the network once, not each hook. Real render, real store. Mock child components with testid stubs only for dispatch. | Presentational → Worth Gate, 0 tests. No "renders"/"exists" tests, no one-test-per-displayed-field; a calculation needing >3 cases → extract a pure function and table-test it. |
 | **API-CALL** | Success + error + timeout, retry behavior, response parsing | Mock HTTP layer | Test transformed output, not raw response echo |
 | **STATE-MACHINE** | All transitions, invalid transitions rejected, lifecycle flows, reset behavior | Zero or minimal mocks | Transition matrix: state × event → new state |
-| **ORM/DB** | Query construction, empty results, constraint violations, transaction rollback | Real DB with transaction rollback, or mock query builder | Test query RESULTS not query SHAPE |
+| **ORM/DB** | Query construction, empty results, constraint violations, transaction rollback | Real DB with transaction rollback. A mocked query builder only for query-construction logic that does not depend on SQL semantics (where/tenant scope, unique, cascade need the real DB) | Test query RESULTS not query SHAPE |
 
 ### Private Method Testing
 
@@ -219,7 +219,7 @@ Add interaction tests that prove:
 - the competing handler does **not** fire
 - visible state or feedback is asserted when the component owns it
 
-One representative interaction test per distinct routing decision is the minimum. If the file has zero interaction tests, it does not satisfy the COMPONENT flow requirement.
+One representative interaction test per distinct routing decision is the minimum. A file that owns such a decision and has zero interaction tests does not satisfy the COMPONENT flow requirement; a component that only passes callbacks through unchanged owns none (Worth Gate: NO_BEHAVIOUR).
 
 ### VALIDATOR Depth Requirements
 

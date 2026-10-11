@@ -845,7 +845,7 @@ COMPLETION GATE CHECK
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/adversarial: header — the adversarial: field points at the saved `--artifact` output (≥2 providers); an artifact without a real proof no longer grants coverage (on success only)
 [ ] Retrospective ran (no "trivial session" opt-out)
 [ ] Backlog updated with deferred findings or "none"
-[ ] Drive-by findings recorded per drive-by-findings.md, every SEC listed in BUILD COMPLETE, `~/.zuvo/log-drive-by` receipt written (zeros allowed)
+[ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
 
@@ -863,6 +863,7 @@ CQ: [critical gates PASS | score/applicable on N files]
 Q: [critical gates PASS | score/applicable on N test files]
 Backlog: [N items persisted | "none"]
 Drive-by: [N recorded (SEC:a BUG:b SIZE:c DUP:d CPLX:e PERF:f DEAD:g READ:h) | 0 recorded]
+[⚠ SECURITY (drive-by) <path>:<line> — <defect> [<severity>]   — one line per SEC finding]
 Commit: [hash] — [message]
 [Tag: [tag name]]
 

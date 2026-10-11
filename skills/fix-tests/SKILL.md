@@ -401,7 +401,7 @@ COMPLETION GATE CHECK
 [ ] Every production bug surfaced by a strengthened assertion was FIXED in-run (test-bugfix-protocol.md) or escalated loudly with file:line — a backlog row for an in-scope bug is an incomplete run
 [ ] fix-tests-progress.md updated
 [ ] Backlog holds only genuinely out-of-scope or user-declined items
-[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
 

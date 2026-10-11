@@ -30,12 +30,12 @@ stats:
   - label: "Critical Gates"
     value: "5"
     detail: "Q7, Q11, Q13, Q15, Q17 — must all pass"
-  - label: "Min Tests Formula"
-    value: "per type"
-    detail: "e.g., SERVICE: methods × 3; CONTROLLER: endpoints × 4"
+  - label: "Test Budget"
+    value: "per type, a ceiling"
+    detail: "e.g., SERVICE: up to methods × 3; CONTROLLER: up to endpoints × 4; no tests for views, wiring, pure delegation"
 
 problem: |
-  Untested production files accumulate silently. When you finally add tests, generic patterns produce type-check stubs, skipped placeholders, and assertions that only verify a value exists — not what it equals. `zuvo:write-tests` reads the actual production code first, classifies each file into one of 11 code types, selects the correct test patterns for that type, enforces a minimum test count, and runs Q1-Q25 gates before calling it done. The result is tests that actually exercise production behavior, not ones that inflate coverage metrics.
+  Untested production files accumulate silently. When you finally add tests, generic patterns produce type-check stubs, skipped placeholders, and assertions that only verify a value exists — not what it equals. `zuvo:write-tests` reads the actual production code first, classifies each file into one of 11 code types, selects the correct test patterns for that type, sizes the suite to the behaviours the code has (budgets are ceilings, not targets), and runs Q1-Q25 gates before calling it done. The result is tests that actually exercise production behavior, not ones that inflate coverage metrics.
 
 how_it_works:
   - step: "Context gathering and baseline"
@@ -92,7 +92,7 @@ examples:
               .rejects.toThrow("userId required");
           });
         });
-    explanation: "SERVICE type requires methods × 3 minimum tests. The generated tests assert computed output (result.id), verify mock arguments (toHaveBeenCalledWith), and cover both empty and undefined userId branches — satisfying Q7 (error paths) and Q17 (computed output assertions)."
+    explanation: "SERVICE budget is up to methods × 3 tests. The generated tests assert computed output (result.id), verify mock arguments (toHaveBeenCalledWith), and cover both empty and undefined userId branches — satisfying Q7 (error paths) and Q17 (computed output assertions)."
   - title: "Auto-discover and batch-write uncovered files"
     type: invocation
     command: "zuvo:write-tests auto"
@@ -166,7 +166,7 @@ agents:
     role: "Independently runs Q1-Q25 on written test files and produces an evidence-backed score for comparison with the self-evaluation."
 
 benchmarks:
-  - claim: "11 code type categories with distinct minimum test count formulas (e.g., SERVICE: methods × 3, CONTROLLER: endpoints × 4)."
+  - claim: "11 code type categories with distinct test-budget ceilings (e.g., SERVICE: up to methods × 3, CONTROLLER: up to endpoints × 4)."
     type: coverage
     verifiable: true
     source: "SKILL.md Code-Type Gate table"

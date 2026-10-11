@@ -306,6 +306,7 @@ mentions, not problems — check before working the list.
 | `com.greglas.zuvo-runlog-sync` | every 2 h | `runlog-sync.sh` (telemetry upload) |
 | `com.greglas.zuvo-backlog-sync` | every 2 h | `backlog sync` |
 | `com.greglas.zuvo-popebot-sync` | every 30 min | `sync-popebot.sh` (pull fleet-bot retros) |
+| `com.zuvo.bill` (Linux: `zuvo-bill.timer`) | every 10 min | `~/.zuvo/bill` — Opus judges adversarial findings no agent triaged (reviews 30 min–48 h old), writes `run_id=bill` verdicts to the findings ledger; a run that fails `BILL_MAX_TRIES` (3) paid attempts is given up. `bill --status` = cost/errors/give-ups of the last 24 h; `touch ~/.zuvo/bill-data/PAUSE` stops it. Installed by `bill --install-schedule`, not by `install.sh` |
 
 ### Checking them — `launchctl list` is NOT the check (2026-08-12)
 

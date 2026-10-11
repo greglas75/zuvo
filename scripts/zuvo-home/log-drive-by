@@ -40,10 +40,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Digits only, or 0 named on stderr: stripping `3.5` to 35 would record a count nobody gave.
 # Clipped so an absurd count cannot overflow TOTAL.
-_count() { local v; v="$(printf '%s' "$1" | tr -cd '0-9')"; v="${v:0:6}"; printf '%s' "${v:-0}"; }
-SEC="$(_count "$SEC")" BUG="$(_count "$BUG")" SIZE="$(_count "$SIZE")" DUP="$(_count "$DUP")"
-CPLX="$(_count "$CPLX")" PERF="$(_count "$PERF")" DEAD="$(_count "$DEAD")" READ="$(_count "$READ")"
+_count() {
+  case "$2" in
+    '') printf 0 ;;
+    *[!0-9]*) echo "log-drive-by: ignored non-numeric --$1 value: $2" >&2; printf 0 ;;
+    *) printf '%s' "$((10#${2:0:6}))" ;;
+  esac
+}
+SEC="$(_count sec "$SEC")" BUG="$(_count bug "$BUG")" SIZE="$(_count size "$SIZE")" DUP="$(_count dup "$DUP")"
+CPLX="$(_count cplx "$CPLX")" PERF="$(_count perf "$PERF")" DEAD="$(_count dead "$DEAD")" READ="$(_count read "$READ")"
 TOTAL=$((10#$SEC + 10#$BUG + 10#$SIZE + 10#$DUP + 10#$CPLX + 10#$PERF + 10#$DEAD + 10#$READ))
 
 [ -n "$SKILL" ] || SKILL="unknown"

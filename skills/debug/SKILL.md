@@ -628,7 +628,7 @@ COMPLETION GATE CHECK
 [ ] CQ self-eval on modified production files
 [ ] Adversarial review ran on staged diff
 [ ] Backlog updated
-[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
 

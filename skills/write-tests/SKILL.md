@@ -640,7 +640,7 @@ count, or an already-high test count are not valid waivers.
 **Context resume guard:** after a compaction resume, prior-session claims ("clean blind audit") are UNVERIFIABLE — only tool output in the current window counts; re-run Steps 3.5/4 for the current file pair.
 
 1. **Anti-tautology check:** grep for mock-return-echoed-in-assertion; every expected value spec-derived. Exception: THIN pure delegation — echo + `CalledWith` IS the behavioral test (P-70 does not apply).
-1b. **COMPONENT interaction gate:** production forwards callbacks + test has 0 `fireEvent`/`userEvent` → STOP, add flow tests. Every owned handler-routing decision gets ≥1 interaction test proving the right handler fires and the competing one does not. Render/label-only assertions never satisfy Q3/Q14 for routing rows.
+1b. **COMPONENT interaction gate** (files that passed the Worth Gate — a component that only passes callbacks through unchanged is NO_BEHAVIOUR and has no test to gate): production routes or wraps callbacks + test has 0 `fireEvent`/`userEvent` → STOP, add flow tests. Every owned handler-routing decision gets ≥1 interaction test proving the right handler fires and the competing one does not. Render/label-only assertions never satisfy Q3/Q14 for routing rows.
 2. **Q1-Q25 self-eval** per `quality-gates.md`, with per-gate `test-file:line` evidence for the critical gates:
    ```
    Self-eval: Q1=1 Q2=1 ... → [N]/[applicable] [PASS|FIX|REWRITE]
@@ -905,7 +905,7 @@ COMPLETION GATE CHECK
 [ ] Step 5: coverage.md rows fully populated (Status+Gate+Blind+Adversarial)
 [ ] Step A1/A2: [GATE: test-quality] emitted from a REAL zuvo:test-audit dispatch (on-disk zuvo/audits report) over touched + pre-existing in-scope test files; sub-A files fixed (or WARN + backlog); validator + blind audit re-run for A2-modified files
 [ ] Step 2b: review artifact written IF production files changed
-[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Final test run: all tests pass (N/N)
 ```
 

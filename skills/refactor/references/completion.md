@@ -176,7 +176,7 @@ COMPLETION GATE CHECK
 [ ] Mutation gate (Phase 3.6 Step 2) ran: the REAL `zuvo:mutation-test` dispatched over the tests this refactor created or touched (including Step 0's new specs), survivors CLOSED in-run — never `--report-only`, never `--no-install` — and `prove.mutation = "<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>"` recorded from the artifact. Phase 2.5's probes do NOT satisfy this item: they probe the pre-refactor lock, not the specs this run wrote. `N/A` only as `N/A:<why>` with a nameable condition
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
-[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Terminal state A (terminal-state.md): processes launched = N, still alive = 0   (PIDs + how each ended)
 [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
 [ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)

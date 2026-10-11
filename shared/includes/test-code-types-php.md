@@ -156,7 +156,7 @@ Test each method with exactly 3 tests:
 2. **Null-client:** set dep to null → assert false/null (no delegate called)
 3. **Exception:** mock delegate → throws → assert false/null
 
-For a service with 7 identical-pattern methods = 21 tests minimum. Use **per-pattern contract mode** (see test-contract.md).
+For a service with 7 identical-pattern methods the budget is at most 21 tests — a ceiling, not a target (Worth Gate); **per-pattern contract mode** (see test-contract.md) covers identical patterns without one test per method.
 
 **Watch for inconsistencies between methods** — e.g., one catches `Throwable` while others catch `S3Exception`. These are bugs, not style choices. Flag them in bug scan.
 

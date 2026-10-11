@@ -1057,7 +1057,7 @@ COMPLETION GATE CHECK
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/adversarial: header — the adversarial: field points at the saved `--artifact` output (≥2 providers); an artifact without a real proof no longer grants coverage (on success; skip staged/uncommitted)
 [ ] reviewed/<hash> tags created (skip for staged/uncommitted scope)
 [ ] Knowledge curation ran (if knowledge-curate.md loaded)
-[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Retrospective ran OR explicit "RETRO: skipped (<reason>)" printed
 [ ] Run: TSV line printed and appended to ~/.zuvo/runs.log
 ```

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests ~/.zuvo/log-drive-by (scripts/zuvo-home/log-drive-by). Records a receipt that the
 # "Drive-by findings" step ran, with per-category counts, without forcing findings.
-# Level: small — one process per case, each case in its own temp ZUVO_HOME.
+# Level: medium — real processes, git repos and file I/O, each case in its own temp ZUVO_HOME.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LD="$ROOT/scripts/zuvo-home/log-drive-by"
@@ -65,7 +65,7 @@ proj_of() {
 }
 mkdir -p "$TMP/main-repo" "$TMP/plain dir"
 git -C "$TMP/main-repo" init -q && git -C "$TMP/main-repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-git -C "$TMP/main-repo" worktree add -q "$TMP/linked-wt" -b wt 2>/dev/null
+git -C "$TMP/main-repo" worktree add -q "$TMP/linked-wt" -b wt 2>/dev/null || bad "fixture: git worktree add failed"
 [ "$(proj_of "$TMP/main-repo")" = "main-repo" ] && ok "inside a repo: the repo's basename" || bad "repo: $(proj_of "$TMP/main-repo")"
 [ "$(proj_of "$TMP/linked-wt")" = "main-repo" ] && ok "inside a linked worktree: the MAIN checkout's name, not the worktree's" || bad "worktree: $(proj_of "$TMP/linked-wt")"
 [ "$(PROJECT=plan-slug proj_of "$TMP/main-repo")" = "main-repo" ] && ok "an inherited PROJECT env var is ignored (an orchestrator's plan-slug must not mis-attribute the row)" || bad "inherited PROJECT used"
@@ -79,7 +79,7 @@ if [ -z "$TO" ]; then
   bad "no timeout/gtimeout on PATH — the hang regression cannot be checked here"
 else
   for args in "--skill" "--sec" "--project" "--sec 3 --skill" "--skill build --read"; do
-    ZUVO_HOME="$TMP/hang" "$TO" 3 bash "$LD" $args >/dev/null 2>&1
+    ZUVO_HOME="$TMP/hang" "$TO" 10 bash "$LD" $args >/dev/null 2>&1
     rc=$?
     [ "$rc" -eq 0 ] && ok "no hang, exit 0: [$args]" || bad "rc=$rc (124 = HANG) on trailing flag: [$args]"
   done
@@ -93,8 +93,12 @@ run typo --skill build --secc 2
 expect_row "…and the row still records SEC=0, not 2" "build${T}p${T}0${T}0${T}0${T}0${T}0${T}0${T}0${T}0${T}0"
 run stray --skill build extra
 [ "$ERR" = "log-drive-by: ignored stray argument: extra" ] && ok "a stray argument is named on stderr" || bad "stray stderr: [$ERR]"
-run inject --skill "x'; rm -rf /tmp/xx" --sec "9a9" --bug 99999999999999999999
-expect_row "skill sanitized, non-digits stripped (9a9 -> 99), absurd count clipped to 6 digits" "xrm-rftmpxx${T}p${T}1000098${T}99${T}999999${T}0${T}0${T}0${T}0${T}0${T}0"
+run inject --skill "x'; rm -rf /tmp/xx" --sec "9a9" --bug 99999999999999999999 --dup 3.5
+expect_row "skill sanitized, non-numeric counts recorded as 0 (not 9a9 -> 99), absurd count clipped to 6 digits" "xrm-rftmpxx${T}p${T}999999${T}0${T}999999${T}0${T}0${T}0${T}0${T}0${T}0"
+[ "$ERR" = "log-drive-by: ignored non-numeric --sec value: 9a9
+log-drive-by: ignored non-numeric --dup value: 3.5" ] && ok "each non-numeric count is named on stderr" || bad "non-numeric stderr: [$ERR]"
+run octal --skill build --sec 08 --bug 09
+expect_row "08 and 09 are read as decimal 8 and 9 (catches a dropped 10#: octal error, non-zero exit)" "build${T}p${T}17${T}8${T}9${T}0${T}0${T}0${T}0${T}0${T}0"
 
 echo "=== a receipt that cannot be written says so and still exits 0 ==="
 mkdir -p "$TMP/dirlog/drive-by.log"            # a directory where the file should be

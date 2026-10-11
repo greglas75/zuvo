@@ -91,7 +91,9 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
 ## What this step is not
 
 - Not an audit: no scoring, no repo scan, no verdict change. Neither a finding nor a failed
-  receipt fails or blocks the calling skill; skipping the step is what a completion check flags.
+  receipt fails or blocks the calling skill; skipping the step is what the skill's own completion
+  checklist flags. Nothing reads `~/.zuvo/drive-by.log` automatically yet — it is the record later
+  mining compares against runs.log, not a gate.
 - Not a licence to fix outside the fence.
 - Not a substitute for `zuvo:security-audit`: it catches what a run happened to read, never the
   code nobody opened.

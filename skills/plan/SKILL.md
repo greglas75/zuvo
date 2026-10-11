@@ -601,7 +601,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial validation ran (--mode plan)
 [ ] Plan status is Approved (interactive) or Reviewed (async)
 [ ] Active plan pointer written to zuvo/plans/active-plan.md
-[ ] Drive-by findings recorded per drive-by-findings.md (every SEC in the summary) and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
