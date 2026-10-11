@@ -84,5 +84,5 @@ assert_eq "x-high_2" "$(eff 'provider_effort codex-5.3')" "digits, - and _ after
 start_test "le.6 a record with no lane name writes nothing"
 rm -f "$LETMP/run"/effort*
 assert_eq "rc=0" "$(eff 'record_lane_effort "" high; echo "rc=$?"')" "returns 0"
-assert_eq "" "$(ls "$LETMP/run" | grep '^effort' )" "no effort file at all (not one named effort-)"
+assert_eq "" "$(for f in "$LETMP/run"/effort*; do [ -e "$f" ] && basename "$f"; done)" "no effort file at all (not one named effort-)"
 assert_eq "high" "$(eff 'record_lane_effort claude high; provider_effort claude')" "control: a named lane still records"

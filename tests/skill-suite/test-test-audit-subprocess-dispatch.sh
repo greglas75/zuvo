@@ -1467,17 +1467,17 @@ exec /bin/mkdir "$@"
     && mv "$RG/a.tmp" "$RG/src/a.txt" && echo new > "$RG/src/n.txt"
   rg_run() { ( cd "$RG/src" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" ranges "$@" ) 2>/dev/null; }
   rg_got="$(rg_run --base "$rg_base" "$RG/src/a.txt")|$(rg_run --base "$rg_base" a.txt)|$(rg_run --base "$rg_base" n.txt)|$(rg_run --base "$rg_base" same.txt)"
-  [ "$rg_got" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21|whole|whole" ]
-  hres "ranges: changed lines by absolute and relative path, a deletion at its line, whole for a new and an unchanged file ($rg_got)" $?
+  if [ "$rg_got" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21|whole|whole" ]; then r=0; else r=1; fi
+  hres "ranges: changed lines by absolute and relative path, a deletion at its line, whole for a new and an unchanged file ($rg_got)" "$r"
   rg_far="$( ( cd "$X" && env HOME="$X/home" "$X/home/.zuvo/test-audit-batch" ranges --base "$rg_base" "$RG/src/a.txt" ) 2>/dev/null)"
   git -C "$RG" config color.ui always
   rg_color="$(rg_run --base "$rg_base" a.txt)"
   git -C "$RG" config --unset color.ui
-  [ "$rg_far|$rg_color" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21" ]
-  hres "ranges: from a directory outside the file's repository, and under color.ui=always, the same ranges ($rg_far|$rg_color)" $?
+  if [ "$rg_far|$rg_color" = "L5-5,L11-11,L20-21|L5-5,L11-11,L20-21" ]; then r=0; else r=1; fi
+  hres "ranges: from a directory outside the file's repository, and under color.ui=always, the same ranges ($rg_far|$rg_color)" "$r"
   rg_run --base no-such-ref a.txt > /dev/null; rc4=$?; rg_run a.txt > /dev/null; rc2=$?
-  [ "$rc4|$rc2" = "4|2" ]
-  hres "ranges: an unknown ref is rc 4, a call without --base is a usage error 2 ($rc4|$rc2)" $?
+  if [ "$rc4|$rc2" = "4|2" ]; then r=0; else r=1; fi
+  hres "ranges: an unknown ref is rc 4, a call without --base is a usage error 2 ($rc4|$rc2)" "$r"
 
   # --- item 2: a relative field 1, and a field 2 that is neither absolute nor ORPHAN, are listing-invalid
   reset_log

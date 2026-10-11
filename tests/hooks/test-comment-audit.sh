@@ -448,7 +448,7 @@ fx fx_envleak; OTHER="$TMP/other-$n"; mkdir -p "$OTHER/objects" && git -C "$R" c
   || { bad "$FIX: env leak targets"; finish; }
 leaks=""
 for leak in "GIT_DIR=$OTHER/repo/.git" "GIT_WORK_TREE=$OTHER/repo" "GIT_INDEX_FILE=$OTHER/empty.index" "GIT_OBJECT_DIRECTORY=$OTHER/objects"; do
-  BIN=env audit "$leak" "$CLI" --files n.py t.py
+  BIN="env" audit "$leak" "$CLI" --files n.py t.py
   leaks="$leaks ${leak%%=*}:$rc:$(row n.py)/$(row t.py)"
 done
 check "$leaks" " GIT_DIR:1:breach/unchanged GIT_WORK_TREE:1:breach/unchanged GIT_INDEX_FILE:1:breach/unchanged GIT_OBJECT_DIRECTORY:1:breach/unchanged" \
