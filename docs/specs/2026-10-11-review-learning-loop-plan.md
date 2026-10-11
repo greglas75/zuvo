@@ -24,7 +24,7 @@ not reduce their defect class are retired.
   installer change.
 - Data is per host (`~/.zuvo/`); ryzen-dev holds ~98% of reviews. Escapes + curation run on ONE curator host
   (where `bill --install-schedule --curate` is installed — ryzen-dev); readers also walk `~/.zuvo/remote/**`.
-- New stores (HOME-local, never in a repo): `~/.zuvo/review-escapes/<project>.jsonl`,
+- New stores (HOME-local, never in a repo): `~/.zuvo/review-escapes-data/<project>.jsonl`,
   `~/.zuvo/knowledge/<project>/{anti-patterns,gotchas,codebase-facts}.jsonl` + `metrics.jsonl`,
   `~/.zuvo/knowledge-surfaced.log`.
 - Driver: new module `scripts/lib/adversarial-agreement.sh`, additive top-level JSON key `agreement`, text-mode block
@@ -127,6 +127,8 @@ not reduce their defect class are retired.
   test suites whose cases are listed in RED); "happy-path only" (RED tables carry the error cases); stale `$B`
   finding (fixed in rev 3). Accepted as notes: Task 8 bundles curate+metrics+promote (one helper surface, budgets
   set); live proofs depend on real data (they are the point of a live proof).
+- [POST-CAP: SPEC-AMENDED] execute Task 1 spec review: `~/.zuvo/review-escapes` was both the helper file and the
+  store directory (the bill/bill-data collision class) → store renamed `~/.zuvo/review-escapes-data/`; ccsync excludes that name.
 - Status gate: Approved — owner 2026-10-11 "tak aż do końca" (carry the whole loop through, no pauses)
 - Cross-model validation: pending
 
@@ -166,15 +168,15 @@ Remote install for proofs on ryzen-dev (referred to as RSYNC-HELPERS): `scp $(fi
 **Failure:** halt
 **Execution routing:** default implementation tier
 
-- [ ] RED: `Z=$(sed -n "s/^ZSTATE='\(.*\)'$/\1/p" ~/DEV/cc-remote/bin/ccsync); printf 'knowledge\n' | grep -qE "$Z"` exits 1 today (knowledge and review-escapes would be pushed Mac→host as helpers).
-- [ ] GREEN: `ZSTATE` += `knowledge|review-escapes`; `ZLOGS` mirrors `adversarial-findings.log`, `knowledge-surfaced.log`, `bill-data/defects.jsonl`, `bill-data/lessons.jsonl` into `remote/…`; a one-way pull host `~/.zuvo/knowledge/` → Mac (no `--delete`). Commit in cc-remote (launchd runs ccsync from the repo, so it is live on commit).
-- [ ] Verify: `Z=$(sed -n "s/^ZSTATE='\(.*\)'$/\1/p" ~/DEV/cc-remote/bin/ccsync); for n in knowledge review-escapes; do printf '%s\n' "$n" | grep -qE "$Z" || exit 1; done; bash -n ~/DEV/cc-remote/bin/ccsync`
+- [ ] RED: `Z=$(sed -n "s/^ZSTATE='\(.*\)'$/\1/p" ~/DEV/cc-remote/bin/ccsync); printf 'knowledge\n' | grep -qE "$Z"` exits 1 today (knowledge and review-escapes-data would be pushed Mac→host as helpers).
+- [ ] GREEN: `ZSTATE` += `knowledge|review-escapes-data`; `ZLOGS` mirrors `adversarial-findings.log`, `knowledge-surfaced.log`, `bill-data/defects.jsonl`, `bill-data/lessons.jsonl` into `remote/…`; a one-way pull host `~/.zuvo/knowledge/` → Mac (no `--delete`). Commit in cc-remote (launchd runs ccsync from the repo, so it is live on commit).
+- [ ] Verify: `Z=$(sed -n "s/^ZSTATE='\(.*\)'$/\1/p" ~/DEV/cc-remote/bin/ccsync); for n in knowledge review-escapes-data; do printf '%s\n' "$n" | grep -qE "$Z" || exit 1; done; bash -n ~/DEV/cc-remote/bin/ccsync`
   Expected: exit 0
 - [ ] Acceptance Proof:
   - C4 — Surface: integration — Proof: `mkdir -p ~/.zuvo/knowledge/zz-probe && echo mac > ~/.zuvo/knowledge/zz-probe/probe.jsonl && ~/DEV/cc-remote/bin/ccsync; ssh ryzen-dev 'test ! -e ~/.zuvo/knowledge/zz-probe/probe.jsonl'; r=$?; rm -r ~/.zuvo/knowledge/zz-probe; test $r = 0` (a Mac-side file never reaches the curator host)
   - Expected: exit 0
   - Artifact: `zuvo/proofs/task-1-ccsync.txt`
-- [ ] Commit: (cc-remote) `ccsync: the curator host owns ~/.zuvo/knowledge and review-escapes — never push them`
+- [ ] Commit: (cc-remote) `ccsync: the curator host owns ~/.zuvo/knowledge and review-escapes-data — never push them`
 
 ### Task 2: Shared review modules — ledger reader, class vocabulary, LLM call, production filter
 **Files:** scripts/zuvo-home/zuvo_review_ledger.py, zuvo_review_classes.py, zuvo_review_llm.py, zuvo_review_prodpath.py; tests/hooks/review_testlib.py, tests/hooks/test_review_shared.py, tests/hooks/test-review-shared-unit.sh, tests/hooks/test-prodpath-parity.sh
@@ -288,7 +290,7 @@ Remote install for proofs on ryzen-dev (referred to as RSYNC-HELPERS): `scp $(fi
 - [ ] Verify: `python3 -m unittest -v tests/hooks/test_escapes_coverage.py && bash tests/hooks/test-review-escapes-unit.sh && LINT`
   Expected: exit 0
 - [ ] Acceptance Proof:
-  - G2 — Surface: db-data — Proof: `RSYNC-HELPERS && ssh ryzen-dev 'python3 ~/.zuvo/review-escapes --repo ~/DEV/tgm-survey-platform --since 30d --classify --classify-max 5 >/dev/null && cat ~/.zuvo/review-escapes/tgm-survey-platform.jsonl' | python3 -c 'import json,sys; R=[json.loads(l) for l in sys.stdin if l.strip()]; L={"flagged-accepted","flagged-dismissed","flagged-unjudged","reviewed","unreviewed"}  # range_unresolved / provisional are evidence fields, not labels; assert R and all(r["coverage"] in L for r in R); assert sum(1 for r in R if r.get("class"))<=5'`
+  - G2 — Surface: db-data — Proof: `RSYNC-HELPERS && ssh ryzen-dev 'python3 ~/.zuvo/review-escapes --repo ~/DEV/tgm-survey-platform --since 30d --classify --classify-max 5 >/dev/null && cat ~/.zuvo/review-escapes-data/tgm-survey-platform.jsonl' | python3 -c 'import json,sys; R=[json.loads(l) for l in sys.stdin if l.strip()]; L={"flagged-accepted","flagged-dismissed","flagged-unjudged","reviewed","unreviewed"}  # range_unresolved / provisional are evidence fields, not labels; assert R and all(r["coverage"] in L for r in R); assert sum(1 for r in R if r.get("class"))<=5'`
   - Expected: exit 0
   - Artifact: `zuvo/proofs/task-6-coverage.txt`
 - [ ] Commit: `feat(review-escapes): say for each escaped bug whether a review saw it, flagged it, or let it through`
