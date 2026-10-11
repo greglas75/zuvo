@@ -48,6 +48,13 @@
 #   --report <path>       JSON report path (default: <repo>/.stryker-scoped-<tag>.report.json)
 #   --runner <name>       jest|vitest|mocha|command — default: detected
 #   --concurrency <n>     default: 4 (farm-safe; a native run is the heaviest thing this repo starts)
+#   --in-place | --no-in-place
+#                         run Stryker in the working tree instead of a sandbox. Default: on exactly when
+#                         the project's TypeScript has no `parseConfigFileTextToJson` (TypeScript 7, the
+#                         native port), which Stryker's tsconfig preprocessor calls and dies on
+#                         (`ts.parseConfigFileTextToJson is not a function`); the config then also points
+#                         `tsconfigFile` at a file that does not exist, which turns that preprocessor off.
+#                         The watchdog restores any scoped file a killed run leaves instrumented.
 #   --coverage <mode>     off|all|perTest — default: perTest (off with --include-static)
 #   --timeout-ms <n>      default: 60000
 #   --no-progress-timeout <s>  abort the run after <s> s without progress (stryker-run-watchdog.sh,
@@ -69,7 +76,8 @@
 # dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged | not-source |
 # glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
 # vitest_include_source (explicit|colocated|workspace-include), vitest_include_count (<n>|unknown)
-# and one vitest_include=<glob> per glob, Vitest-root-relative; then run_command, which runs Stryker
+# and one vitest_include=<glob> per glob, Vitest-root-relative; in_place (true|false) and
+# in_place_reason (--in-place | typescript <version> has no parseConfigFileTextToJson | none); then run_command, which runs Stryker
 # under stryker-run-watchdog.sh (exit 124 = no progress for --no-progress-timeout s). Plus ONE summary
 # line on stderr that repeats the vitest_* values.
 #
@@ -103,6 +111,7 @@ FILES=()
 VITEST_CONFIG=""
 TESTS_FLAG=0
 TESTS=()
+IN_PLACE="auto"
 
 die() { echo "$1" >&2; exit "${2:-2}"; }
 
@@ -146,6 +155,8 @@ while [ $# -gt 0 ]; do
     --no-progress-timeout) need_val $# "$1"; IDLE_TIMEOUT="$2"; shift 2 ;;
     --dry-run-timeout-min) need_val $# "$1"; DRY_RUN_MIN="$2"; shift 2 ;;
     --print-config) PRINT_CONFIG=1; shift ;;
+    --in-place)    [ "$IN_PLACE" = off ] && die "--in-place and --no-in-place contradict each other"; IN_PLACE="on"; shift ;;
+    --no-in-place) [ "$IN_PLACE" = on ] && die "--in-place and --no-in-place contradict each other"; IN_PLACE="off"; shift ;;
     -h|--help)     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *)             die "unknown argument: $1" ;;
   esac
@@ -293,7 +304,7 @@ fi
 TESTS_JOINED="$(printf '%s\n' ${REL_TESTS[@]+"${REL_TESTS[@]}"})"
 node - "$REPO" "$OUT" "$REPORT" "$TEST_RUNNER" "$COVERAGE" "$CONCURRENCY" "$TIMEOUT_MS" \
   "$INCLUDE_STATIC" "$WHOLE_FILES" "$FILES_FLAG" "$DIFF_BASE" "$PRINT_CONFIG" "$$" \
-  "$REL_VITEST_CONFIG" "$TESTS_JOINED" "$VITEST_LIB" "$IDLE_TIMEOUT" "$DRY_RUN_MIN" "$WATCHDOG_SRC" \
+  "$REL_VITEST_CONFIG" "$TESTS_JOINED" "$VITEST_LIB" "$IDLE_TIMEOUT" "$DRY_RUN_MIN" "$WATCHDOG_SRC" "$IN_PLACE" \
   ${REL_FILES[@]+"${REL_FILES[@]}"} <<'NODE'
 const fs = require('fs');
 const path = require('path');
@@ -302,7 +313,7 @@ const crypto = require('crypto');
 
 const [repo, outArg, reportArg, runner, coverage, concurrency, timeoutMs, includeStaticArg,
   wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, vitestConfigArg, testsArg,
-  vitestLib, idleTimeout, dryRunMin, watchdogSrc, ...rawFiles] = process.argv.slice(2);
+  vitestLib, idleTimeout, dryRunMin, watchdogSrc, inPlaceArg, ...rawFiles] = process.argv.slice(2);
 const explicitTests = [...new Set(testsArg.split('\n').filter(Boolean))];
 const givenFiles = [...new Set(rawFiles)];
 const includeStatic = includeStaticArg === '1';
@@ -586,6 +597,28 @@ let vlib = null;
 const vitestConfigFile = `.stryker-scoped-${tag}.vitest.config.mts`;
 // In the repo, not the plugin: `rt` ships the repo to the farm, and run_command must work there.
 const watchdogFile = `.stryker-scoped-${tag}.watchdog.sh`;
+// TypeScript 7 (the native port) has no JS `parseConfigFileTextToJson`, and Stryker's sandbox tsconfig
+// preprocessor calls it: every sandboxed run dies before the first mutant. Retros 2026-10-09/10 hand-built
+// the same two-key workaround over and over, so it is detected here — by the function, not by a version.
+const tsWithoutPreprocessorApi = () => {
+  // The TypeScript Stryker itself would import: resolved from where @stryker-mutator/core is installed (a
+  // monorepo may hoist a different one than a workspace's own), else from the repo.
+  const from = [repo];
+  try { from.unshift(path.dirname(require.resolve('@stryker-mutator/core/package.json', { paths: [repo] }))); } catch { /* not installed */ }
+  let entry;
+  try { entry = require.resolve('typescript', { paths: from }); } catch { return null; }  // no TypeScript: nothing to break
+  try {
+    const ts = require(entry);
+    return typeof ts.parseConfigFileTextToJson === 'function' ? null : `typescript ${ts.version || 'unknown'}`;
+  } catch (e) {
+    return `typescript (unloadable: ${String(e && e.message).split('\n')[0]})`;
+  }
+};
+const tsBroken = inPlaceArg === 'off' ? null : tsWithoutPreprocessorApi();
+const inPlaceReason = inPlaceArg === 'on' ? '--in-place'
+  : tsBroken ? `${tsBroken} has no parseConfigFileTextToJson` : null;
+// The scoped files the watchdog backs up and restores if a killed in-place run leaves them instrumented.
+const inPlaceListFile = `.stryker-scoped-${tag}.inplace-files`;
 if (runner === 'vitest') {
   vlib = require(vitestLib);
   const r = vlib.resolveVitest({ repo, files: [...scopedFiles], override: vitestConfigArg || null,
@@ -639,6 +672,16 @@ const cfg = {
   dryRunTimeoutMinutes: Number(dryRunMin),
 };
 
+if (inPlaceReason) {
+  // In the working tree: no sandbox copy, so nothing for the preprocessor to rewrite, and a workspace's
+  // `../../tsconfig.base.json` resolves as it does for the project itself.
+  cfg.inPlace = true;
+  // A path that does not exist: Stryker skips its tsconfig preprocessor, which TypeScript 7 cannot run.
+  if (tsBroken) cfg.tsconfigFile = `.stryker-scoped-${tag}.no-tsconfig.json`;
+  say(`in-place: ${inPlaceReason} — Stryker instruments the ${scopedFiles.size} scoped file(s) in the working tree ` +
+    'for the run; the watchdog restores any a killed run leaves instrumented. Do not edit them while it runs.');
+}
+
 if (runner === 'jest') {
   // next/jest and ts-jest both build their config through a loader, so pointing Stryker at a
   // raw config object loses the transform. `projectType: custom` + configFile keeps the
@@ -656,7 +699,8 @@ if (runner === 'jest') {
   cfg.commandRunner = { command: 'npm test' };
 }
 
-const runFiles = [watchdogFile, vitestConfigFile, path.relative(repo, out), path.relative(repo, report)]
+const runFiles = [watchdogFile, vitestConfigFile, path.relative(repo, out), path.relative(repo, report),
+  ...(inPlaceReason ? [inPlaceListFile] : [])]
   .filter((f) => !f.startsWith('..'));
 const ignored = isGit() ? runFiles.filter((f) => git(['check-ignore', '-q', f], { allowFail: true }) !== null) : [];
 if (ignored.length) {
@@ -674,6 +718,7 @@ try {
       vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
   }
   write(path.join(repo, watchdogFile), fs.readFileSync(watchdogSrc));
+  if (inPlaceReason) write(path.join(repo, inPlaceListFile), [...scopedFiles].map((f) => `${f}\n`).join(''));
   write(out, JSON.stringify(cfg, null, 2) + '\n');
 } catch (e) {
   for (const f of written) { try { fs.unlinkSync(f); } catch { /* already gone */ } }
@@ -685,7 +730,7 @@ const pct = changedLines ? ` (${Math.round((100 * mutatedLines) / changedLines)}
 say(`scope=${wholeFiles ? 'WHOLE-FILES' : 'changed-lines'} base=${baseLabel} files=${scopedFiles.size} ` +
   `line_ranges=${rangeCount} whole_files=${entries.length - rangeCount} mutated_lines=${mutatedLines} ` +
   `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${!includeStatic}` +
-  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length}` +
+  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length} in_place=${Boolean(inPlaceReason)}` +
   (vitest ? ` vitest_config=${vitest.config} vitest_root=${vitest.root} vitest_include_source=${vitest.source} ` +
     `vitest_include_count=${vitest.count} vitest_include=${vitest.printed.join(' ')}` : ''));
 
@@ -713,11 +758,14 @@ const kv = [
     ...vitest.printed.map((g) => ['vitest_include', g]),
     // workspace-include is all-or-nothing: these files are why the narrowing was given up.
     ...(vitest.missing || []).map((f) => ['vitest_missing_tests', f])] : []),
+  ['in_place', String(Boolean(inPlaceReason))],
+  ['in_place_reason', inPlaceReason || 'none'],
   // The CWD is pinned on purpose: `mutate` entries are repo-relative and Stryker resolves them
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
   // 100% run, the exact silent failure the scope validation above exists to prevent.
-  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile} --idle-timeout ${idleTimeout} -- npx stryker run ${shq(portable(out))})`],
+  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile} --idle-timeout ${idleTimeout}` +
+    `${inPlaceReason ? ` --in-place-files ./${inPlaceListFile}` : ''} -- npx stryker run ${shq(portable(out))})`],
 ];
 process.stdout.write(kv.map(([k, v]) => `${k}=${v}\n`).join(''));
 if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFileSync(out, 'utf8'));

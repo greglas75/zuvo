@@ -885,6 +885,15 @@ every constraint below without exception:
    for an aggregator's workspace — and report each group's score separately; never fall back to the
    root config.
 
+   **A project whose TypeScript has no `parseConfigFileTextToJson` (TypeScript 7) runs in place.**
+   Stryker's sandbox tsconfig preprocessor calls that function and dies before the first mutant
+   (`ts.parseConfigFileTextToJson is not a function`). The helper detects it and writes `inPlace:
+   true` plus a `tsconfigFile` that does not exist, printing `in_place=true` and the reason. Use the
+   config as written; do not hand-build one. `--in-place` / `--no-in-place` override the detection. In
+   place, Stryker instruments the scoped files in the working tree: do not edit them during the run.
+   `run_command` then passes `--in-place-files`, and the watchdog restores any file a killed run left
+   instrumented (named on stderr). Keep that flag when running the command through `rt`.
+
    **`run_command` runs Stryker under `stryker-run-watchdog.sh`** (copied into the repo as
    `.stryker-scoped-<tag>.watchdog.sh`; the scoper's `--no-progress-timeout <s>` becomes the
    watchdog's `--idle-timeout <s>`). Stryker bounds one mutant and the
