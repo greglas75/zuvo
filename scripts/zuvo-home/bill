@@ -187,7 +187,6 @@ def judge(item):
         rec["verdicts"] = valid_verdicts(json.loads(txt[txt.find("{"): txt.rfind("}") + 1]))
     except Exception as ex:  # noqa: BLE001 — counted as a failed attempt, retried up to MAX_TRIES
         rec["error"] = f"{type(ex).__name__}: {str(ex)[:200]} | {(p.stderr or p.stdout)[-300:]}"
-        cli_error += " " + (p.stdout or "")[-500:]   # not JSON: the CLI's own text, never the parse error
     rec["limited"] = bool(LIMIT_RE.search(cli_error))
     return rec, rows
 
@@ -206,7 +205,8 @@ def record(rec, rows):
     the defects/lessons only once the ledger accepted them — a retried run must not duplicate them.
     Sets rec["recorded"]: True, False (driver refused: retry), or "project-missing" (cannot ever land)."""
     # Re-read just before writing: the agent may have recorded its own verdict during Bill's long call,
-    # and Bill's row, written later, would otherwise win (latest row wins).
+    # and Bill's row, written later, would win (latest row wins). This narrows that window to the
+    # driver call; it does not close it.
     _, judged_now = read_ledger()
     lanes = {x["id"]: x["lane"] for x in rows if (rec["project"], x["id"]) not in judged_now}
     rec["agent_judged_meanwhile"] = len(rows) - len(lanes)

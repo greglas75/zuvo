@@ -43,11 +43,13 @@ done
 # Digits only, or 0 named on stderr: stripping `3.5` to 35 would record a count nobody gave.
 # Clipped so an absurd count cannot overflow TOTAL.
 _count() {
-  case "$2" in
+  local v="${2#"${2%%[!0]*}"}"                     # leading zeros off: 0000010 is 10, not a 7-digit count
+  [ -n "$2" ] && [ -z "$v" ] && v=0
+  case "$v" in
     '') printf 0 ;;
     *[!0-9]*) echo "log-drive-by: ignored non-numeric --$1 value: $2" >&2; printf 0 ;;
     ???????*) echo "log-drive-by: --$1 value $2 clipped to 999999" >&2; printf 999999 ;;
-    *) printf '%s' "$((10#$2))" ;;
+    *) printf '%s' "$v" ;;
   esac
 }
 SEC="$(_count sec "$SEC")" BUG="$(_count bug "$BUG")" SIZE="$(_count size "$SIZE")" DUP="$(_count dup "$DUP")"

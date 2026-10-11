@@ -98,8 +98,8 @@ expect_row "skill sanitized, non-numeric counts recorded as 0 (not 9a9 -> 99), a
 [ "$ERR" = "log-drive-by: ignored non-numeric --sec value: 9a9
 log-drive-by: --bug value 99999999999999999999 clipped to 999999
 log-drive-by: ignored non-numeric --dup value: 3.5" ] && ok "each non-numeric or clipped count is named on stderr" || bad "non-numeric stderr: [$ERR]"
-run octal --skill build --sec 08 --bug 09
-expect_row "08 and 09 are read as decimal 8 and 9 (catches a dropped 10#: octal error, non-zero exit)" "build${T}p${T}17${T}8${T}9${T}0${T}0${T}0${T}0${T}0${T}0"
+run octal --skill build --sec 08 --bug 09 --dup 0000010 --cplx 000
+expect_row "08/09 read as decimal (no octal error), 0000010 is 10 not a clipped 7-digit count, 000 is 0" "build${T}p${T}27${T}8${T}9${T}0${T}10${T}0${T}0${T}0${T}0"
 
 echo "=== a receipt that cannot be written says so and still exits 0 ==="
 mkdir -p "$TMP/dirlog/drive-by.log"            # a directory where the file should be
