@@ -554,8 +554,28 @@ if (!entries.length) {
 // A tag that is unique per invocation AND per scope, so two scoped runs on one box never share a
 // sandbox. Decision 2: `.stryker-tmp` is the default for every run in the repo.
 const tag = `${crypto.createHash('sha1').update(entries.join('\n')).digest('hex').slice(0, 10)}-${shellPid}`;
-const out = outArg || path.join(repo, `.stryker-scoped-${tag}.conf.json`);
-const report = reportArg || path.join(repo, `.stryker-scoped-${tag}.report.json`);
+// A given --out/--report means what it says at the invocation's CWD; the printed paths are absolute.
+const out = outArg ? path.resolve(outArg) : path.join(repo, `.stryker-scoped-${tag}.conf.json`);
+const report = reportArg ? path.resolve(reportArg) : path.join(repo, `.stryker-scoped-${tag}.report.json`);
+// What the config and run_command carry is read where the run happens — on the farm `rt` mirrors the repo
+// at another path — so a path inside the repo is written repo-relative (both start at the repo root).
+// Compared physically: --repo may be a symlinked path (`cd && pwd` keeps it) while path.resolve() uses
+// the physical CWD, and the two would never relate. A part not created yet is joined onto the physical
+// path of its nearest existing ancestor.
+const physical = (p) => {
+  let head = p; const tail = [];
+  for (;;) {
+    try { return path.join(fs.realpathSync.native(head), ...tail); } catch (e) {
+      const up = path.dirname(head);
+      if ((e.code !== 'ENOENT' && e.code !== 'ENOTDIR') || up === head) return p;  // degrade: the path as given
+      tail.unshift(path.basename(head)); head = up;
+    }
+  }
+};
+const portable = (p) => {
+  const r = path.relative(physical(repo), physical(p));
+  return r && !r.startsWith('..') && !path.isAbsolute(r) ? `./${r}` : p;
+};
 const tempDir = `.stryker-tmp-${tag}`;
 
 // Decided BEFORE anything is written, so a refusal (exit 5) leaves nothing behind.
@@ -606,7 +626,7 @@ const cfg = {
   ignoreStatic: !includeStatic,
   // progress-append-only is the watchdog's heartbeat: a moving "tested" counter is progress.
   reporters: ['json', 'clear-text', 'progress-append-only'],
-  jsonReporter: { fileName: report },
+  jsonReporter: { fileName: portable(report) },
   // Decision 2 + 4: a private sandbox, and a report path outside it so the farm run's discarded
   // sandbox does not take the only copy of the measurement with it.
   tempDirName: tempDir,
@@ -697,7 +717,7 @@ const kv = [
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
   // 100% run, the exact silent failure the scope validation above exists to prevent.
-  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile} --idle-timeout ${idleTimeout} -- npx stryker run ${shq(out)})`],
+  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile} --idle-timeout ${idleTimeout} -- npx stryker run ${shq(portable(out))})`],
 ];
 process.stdout.write(kv.map(([k, v]) => `${k}=${v}\n`).join(''));
 if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFileSync(out, 'utf8'));

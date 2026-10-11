@@ -901,8 +901,9 @@ every constraint below without exception:
    `ERROR:` line goes to stderr. It needs bash >= 4 (macOS `/bin/bash` 3.2 gets 125). Run the
    helper's `run_command` as printed (locally), or through `rt` from the
    repo root as `rt bash ./.stryker-scoped-<tag>.watchdog.sh --idle-timeout <s> -- npx stryker run
-   ./.stryker-scoped-<tag>.conf.json` (generate the config with `--report ./<name>.json` for a farm run:
-   the default report path is absolute and names this machine) — the watchdog, the config and the
+   ./.stryker-scoped-<tag>.conf.json` (the config names every in-repo path repo-relative, so it runs
+   unchanged on the farm mirror; `report_path` is printed absolute for reading it here; a `--report`
+   or `--out` OUTSIDE the repo stays absolute and works only on this machine) — the watchdog, the config and the
    generated Vitest config are
    copied into the repo for exactly that reason, so do not `.gitignore` `.stryker-scoped-*`. These
    `.stryker-scoped-<tag>.*` files are run artifacts: never stage them (commit explicit paths only)
