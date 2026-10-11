@@ -20,6 +20,13 @@ memory/reviews/<base7>..<head7>-<slug>.md
 - `<head7>` — short (7-char) SHA of `HEAD` at completion (range end)
 - `<slug>`  — kebab-case feature / scope slug
 
+**Where `memory/reviews/` is.** The checkout's own, when it has a `memory/` directory. A linked
+worktree WITHOUT `memory/` (a repo that keeps `memory/` in the main checkout only, as
+tgm-survey-platform's rules require) writes into the MAIN checkout's `memory/reviews/` — never create
+`memory/` in such a worktree, and no symlink is needed. The pipeline gate reads the same place: its
+own `memory/reviews/` when that exists, else the main checkout's (`pg_reviews_dir`). The proof file
+stays in the worktree's own `zuvo/proofs/`, where the gate resolves it.
+
 Compute the range worktree-safe (ALWAYS pass `-C "$repo_root"` so it resolves identically
 from any checkout of the repo):
 
@@ -29,7 +36,13 @@ default_branch=$(git -C "$repo_root" symbolic-ref --short refs/remotes/origin/HE
 base=$(git -C "$repo_root" merge-base HEAD "$default_branch" 2>/dev/null || git -C "$repo_root" rev-parse HEAD)
 head=$(git -C "$repo_root" rev-parse HEAD)
 base7=$(git -C "$repo_root" rev-parse --short "$base"); head7=$(git -C "$repo_root" rev-parse --short "$head")
-art="memory/reviews/${base7}..${head7}-<slug>.md"
+reviews="$repo_root/memory/reviews"
+if [ ! -d "$repo_root/memory" ]; then   # a linked worktree with no memory/: the main checkout's
+  main=$(git -C "$repo_root" worktree list --porcelain | sed -n '1s/^worktree //p')
+  [ -d "$main/memory" ] && reviews="$main/memory/reviews"
+fi
+mkdir -p "$reviews"
+art="$reviews/${base7}..${head7}-<slug>.md"
 ```
 
 ## Machine-readable header (the FIRST lines of the file)

@@ -109,6 +109,20 @@ resolve_root() {
   ( cd "$1" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null ) || return 1
 }
 
+# reviews_dir <root> — where the gate reads this checkout's artifacts: its own memory/reviews/, else (a
+# linked worktree without one) the main checkout's. The same rule as pg_reviews_dir in
+# hooks/lib/pipeline-gate-lib.sh, which this script must agree with.
+reviews_dir() {
+  local main
+  if [ ! -d "$1/memory/reviews" ]; then
+    main="$(git -C "$1" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    if [ -n "$main" ] && [ "$main" != "$1" ] && [ -d "$main/memory/reviews" ]; then
+      printf '%s\n' "$main/memory/reviews"; return 0
+    fi
+  fi
+  printf '%s\n' "$1/memory/reviews"
+}
+
 # read_refs <artifact> <name> — every proof ref the gate reads, into REFS. A header the gate
 # refuses as a whole (unreadable, over the ref caps) is named here instead of counting 0 proofs.
 read_refs() {
@@ -205,7 +219,7 @@ lint_proofs() {
 do_check() {
   local root found=0
   root="$(resolve_root "${SRC:-.}")" || { echo "Not a git checkout: ${SRC:-.}" >&2; exit 2; }
-  for art in "$root"/memory/reviews/*.md; do
+  for art in "$(reviews_dir "$root")"/*.md; do
     [ -e "$art" ] || continue
     if [ -n "$SLUG" ]; then
       case "$(basename "$art")" in *"$SLUG"*) : ;; *) continue ;; esac
@@ -217,10 +231,10 @@ do_check() {
     if [ -n "$SLUG" ]; then
       # A slug that matches nothing must FAIL: post-run validation citing a typo'd
       # slug would otherwise print nothing and exit 0 — a passing-looking no-op.
-      echo "FAIL: no artifact matching --slug '$SLUG' under $root/memory/reviews/" >&2
+      echo "FAIL: no artifact matching --slug '$SLUG' under $(reviews_dir "$root")/" >&2
       exit 1
     fi
-    echo "No artifacts under $root/memory/reviews/"
+    echo "No artifacts under $(reviews_dir "$root")/"
   fi
   exit "$fail"
 }
@@ -244,7 +258,7 @@ do_sync() {
   droot="$(resolve_root "$DST")" || { echo "Not a git checkout: $DST" >&2; exit 2; }
   [ "$sroot" = "$droot" ] && { echo "--from and --to resolve to the same checkout: $sroot" >&2; exit 2; }
 
-  for art in "$sroot"/memory/reviews/*.md; do
+  for art in "$(reviews_dir "$sroot")"/*.md; do
     [ -e "$art" ] || continue
     local name rest ref shown
     name="$(basename "$art")"
@@ -317,6 +331,7 @@ do_archive() {
   local root adir art name rest ref a=0 n=0 miss=0 prose=0
   root="$(resolve_root "${SRC:-$PWD}")" || return 2
   adir="$(archive_dir_for "$root")"
+  # Its OWN directory only: archiving moves files, and the main checkout's are other worktrees' too.
   for art in "$root"/memory/reviews/*.md; do
     [ -f "$art" ] || continue
     name="$(basename "$art")"
