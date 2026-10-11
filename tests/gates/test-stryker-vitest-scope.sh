@@ -439,4 +439,47 @@ before="$(written)"
   && pass "scoper without the watchdog beside it: exit 2, never an unwatched run_command" \
   || bad "scoper without watchdog: rc=$rc err=$(head -c 200 "$TMP/nowd.err")"
 
+# ── portability: what the config carries must hold on the farm, where `rt` mirrors the repo elsewhere ──
+# Bug: jsonReporter.fileName was the absolute local path, so on the farm the json reporter failed in
+# wrapUp ("EACCES: mkdir '/Users'") and the report was lost while the run still exited 0.
+cfg_of() { sed -n 's/^config_path=//p' <<<"$1"; }
+out="$(scope --runner vitest --file apps/a/src/x.ts)"; cfg="$(cfg_of "$out")"
+name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).jsonReporter.fileName)' "$cfg" 2>/dev/null)"
+case "$name" in ./.stryker-scoped-*.report.json) pass "portable: the default report path in the config is repo-relative ($name)" ;;
+  *) bad "portable: jsonReporter.fileName is '$name', want ./.stryker-scoped-<tag>.report.json" ;; esac
+grep -qF -- "$M" "$cfg" && bad "portable: the generated config still names the local repo path $M" \
+  || pass "portable: no value in the generated config names the local repo path"
+case "$(sed -n 's/^run_command=//p' <<<"$out")" in *"npx stryker run ./.stryker-scoped-"*.conf.json\)) pass "portable: run_command passes the config repo-relative" ;;
+  *) bad "portable: run_command=$(sed -n 's/^run_command=//p' <<<"$out")" ;; esac
+[ "$(sed -n 's/^report_path=//p' <<<"$out")" = "$M/${name#./}" ] && pass "portable: report_path is still printed absolute, for reading it here" \
+  || bad "portable: report_path=$(sed -n 's/^report_path=//p' <<<"$out")"
+# A relative --report/--out means the invocation's CWD; inside the repo it is written repo-relative.
+mkdir -p "$M/apps/a/sub"
+out="$(cd "$M/apps/a/sub" && bash "$STRYKER" --repo "$M" --whole-files --runner vitest --file apps/a/src/x.ts \
+  --report ./r.json --out ./c.json 2>"$TMP/scope.err")"; rc=$?
+name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).jsonReporter.fileName)' "$M/apps/a/sub/c.json" 2>/dev/null)"
+{ [ "$rc" = 0 ] && [ "$name" = ./apps/a/sub/r.json ] && [ "$(sed -n 's/^report_path=//p' <<<"$out")" = "$M/apps/a/sub/r.json" ] \
+  && case "$(sed -n 's/^run_command=//p' <<<"$out")" in *"npx stryker run ./apps/a/sub/c.json)") true ;; *) false ;; esac; } \
+  && pass "portable: relative --report/--out from a subdirectory resolve there and are written repo-relative" \
+  || bad "portable: subdir --report/--out: rc=$rc fileName=$name out=$(tr '\n' ' ' <<<"$out" | head -c 400)"
+# --repo through a symlink while the CWD is the physical path: still repo-relative, not the absolute fallback.
+ln -s "$M" "$TMP/mono-link"
+out="$(cd "$M/apps/a/sub" && bash "$STRYKER" --repo "$TMP/mono-link" --whole-files --runner vitest --file apps/a/src/x.ts \
+  --report ./r2.json 2>"$TMP/scope.err")"; rc=$?; cfg="$(cfg_of "$out")"
+name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).jsonReporter.fileName)' "$cfg" 2>/dev/null)"
+[ "$rc" = 0 ] && [ "$name" = ./apps/a/sub/r2.json ] && pass "portable: a symlinked --repo with a physical CWD still writes the report repo-relative" \
+  || bad "portable: symlinked --repo: rc=$rc fileName='$name'"
+# The same with a report directory that does not exist yet: the missing part joins the physical ancestor.
+out="$(cd "$M/apps/a/sub" && bash "$STRYKER" --repo "$TMP/mono-link" --whole-files --runner vitest --file apps/a/src/x.ts \
+  --report ./new/r3.json 2>"$TMP/scope.err")"; rc=$?; cfg="$(cfg_of "$out")"
+name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).jsonReporter.fileName)' "$cfg" 2>/dev/null)"
+[ "$rc" = 0 ] && [ "$name" = ./apps/a/sub/new/r3.json ] && pass "portable: a not-yet-created report dir under a symlinked --repo is still repo-relative" \
+  || bad "portable: symlinked --repo + new report dir: rc=$rc fileName='$name'"
+# Outside the repo the operator chose a local file: it stays absolute.
+mkdir -p "$TMP/reports"
+out="$(scope --runner vitest --file apps/a/src/x.ts --report "$TMP/reports/r.json")"; cfg="$(cfg_of "$out")"
+name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).jsonReporter.fileName)' "$cfg" 2>/dev/null)"
+[ "$name" = "$TMP/reports/r.json" ] && pass "portable: a --report outside the repo stays absolute" \
+  || bad "portable: outside --report written as '$name'"
+
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi

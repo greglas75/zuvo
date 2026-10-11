@@ -4,8 +4,9 @@
 # Proves what the gate tests cannot: that the generated Vitest config, loaded by vite from inside
 # Stryker's sandbox, imports the SANDBOX copy of the workspace config (mutants are killed, none
 # "survive" against unmutated originals), that only the co-located tests run (an unrelated test that
-# throws would fail the initial run), that a `[id]` path survives include escaping, and that
-# run_command goes through the watchdog and ends 0.
+# throws would fail the initial run), that a `[id]` path survives include escaping, that run_command
+# goes through the watchdog and ends 0, and that the run works from a RELOCATED copy of the repo, as
+# `rt` runs it on the farm mirror (an absolute report path in the config lost the report there).
 #
 # Not a test-*.sh: run-all.sh never picks it up, because it installs Stryker and Vitest from the npm
 # registry. Run it on the farm when the scoper, its lib or the watchdog changes:
@@ -80,17 +81,26 @@ kv() { sed -n "s/^$1=//p" <<<"$out"; }
 cmd="$(kv run_command)"
 [[ "$cmd" =~ "&& bash ./.stryker-scoped-"[^\ ]+".watchdog.sh --idle-timeout "[0-9]+" -- npx stryker run " ]] \
   && ok "run_command runs npx stryker under the watchdog" || bad "run_command: $cmd"
+# The farm runs the repo from another path: move it, then run run_command without its local `cd`
+# (the SKILL's `rt` form). Every path the config carries must still resolve there.
+farm_cmd="${cmd#*&& }"; farm_cmd="${farm_cmd%)}"
+MIRROR="$TMP/mirror"; mv "$P" "$MIRROR" && cd "$MIRROR" || exit 1
+REPORT="$(node -e 'const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  process.stdout.write(require("path").resolve(c.jsonReporter.fileName))' "${farm_cmd##* }" 2>/dev/null)"
 start=$SECONDS
-timeout 900 bash -c "$cmd" >"$TMP/run.log" 2>&1; run_rc=$?
+timeout 900 bash -c "$farm_cmd" >"$TMP/run.log" 2>&1; run_rc=$?
 echo "stryker run: exit $run_rc in $((SECONDS - start))s"
 [ -s "$TMP/run.log" ] || bad "the Stryker run printed nothing"
 grep -q 'UNRELATED TEST RAN' "$TMP/run.log" && bad "a test outside the covering set ran (another project or file)" \
   || ok "no test outside the covering set ran (the other project's and the unrelated file's throwing tests)"
-if [ "$run_rc" = 0 ]; then ok "run_command exited 0"; else bad "run_command exited $run_rc"; tail -30 "$TMP/run.log"; fi
+if [ "$run_rc" = 0 ]; then ok "run_command exited 0 from the relocated repo"; else bad "run_command exited $run_rc"; tail -30 "$TMP/run.log"; fi
+case "$REPORT" in "$MIRROR"/*) [ -s "$REPORT" ] ;; *) false ;; esac \
+  && ok "the JSON report landed inside the relocated repo ($REPORT)" \
+  || bad "no report inside the relocated repo: '$REPORT' — the config still names the original path"
 counts="$(node -e '
   const r = require(require("path").resolve(process.argv[1])); const c = {};
   for (const f of Object.values(r.files)) for (const m of f.mutants) c[m.status] = (c[m.status] || 0) + 1;
-  process.stdout.write(JSON.stringify(c));' "$(kv report_path)" 2>/dev/null)"
+  process.stdout.write(JSON.stringify(c));' "$REPORT" 2>/dev/null)"
 echo "mutants: ${counts:-<no report>}"
 node -e 'const c = JSON.parse(process.argv[1] || "{}");
   process.exit((c.Killed || 0) >= 2 && Object.keys(c).every((k) => k === "Killed" || k === "Ignored") ? 0 : 1)' "$counts" \
@@ -100,7 +110,7 @@ node -e 'const c = JSON.parse(process.argv[1] || "{}");
 node -e '
   const r = require(require("path").resolve(process.argv[1]));
   const f = Object.entries(r.files).find(([k]) => k.endsWith("[id]/bar.ts"));
-  process.exit(f && f[1].mutants.some((m) => m.status === "Killed") ? 0 : 1);' "$(kv report_path)" 2>/dev/null \
+  process.exit(f && f[1].mutants.some((m) => m.status === "Killed") ? 0 : 1);' "$REPORT" 2>/dev/null \
   && ok "the [id]/bar.ts mutants were killed: its escaped include reached Vitest" \
   || bad "no killed mutant in [id]/bar.ts — its co-located test did not run"
 
