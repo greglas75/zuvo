@@ -1348,8 +1348,14 @@ if [ "<run mode>" = continue ]; then   # reuse ONLY on continue, and only a stem
   STEM=$(python3 -c "$GET_STEM" "$STATE" 2>/dev/null)
   case "$STEM" in *..*) STEM="" ;; "$ZUVO_DIR/audits/"*) [ -f "$STEM.md" ] || STEM="" ;; *) STEM="" ;; esac
 fi
+# <scope> inside a QUOTED heredoc: a branch name or path holding `$(`, `"` or `'` stays data. Only a
+# line equal to the delimiter could end it early — impossible in a branch name (no newlines in refs).
+SCOPE=$(cat <<'ZUVO_SCOPE_END_9F3A'
+<scope>
+ZUVO_SCOPE_END_9F3A
+)
 if [ -z "$STEM" ]; then
-  STEM=$(~/.zuvo/alloc-report-stem --dir "$ZUVO_DIR/audits" --prefix mutation-test --scope "<scope>") || { echo "STOP: alloc-report-stem failed (rc $?)"; exit 2; }
+  STEM=$(~/.zuvo/alloc-report-stem --dir "$ZUVO_DIR/audits" --prefix mutation-test --scope "$SCOPE") || { echo "STOP: alloc-report-stem failed (rc $?)"; exit 2; }
 fi
 python3 -c "$SET_STEM" "$STATE" "$STEM" || { echo "STOP: cannot record report_stem"; exit 2; }
 echo "STEM=$STEM"

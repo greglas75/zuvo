@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests ~/.zuvo/alloc-report-stem (scripts/zuvo-home/alloc-report-stem): the report stem a skill
 # writes its .md/.json/.report.json under. Each row names the overwrite or escape it prevents.
+# Level: medium — the real helper on a real temp filesystem, as subprocesses; no network.
 set -u
 export GIT_CONFIG_GLOBAL=/dev/null
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -146,19 +147,21 @@ EOF
 if [ -w "$ro" ]; then
   echo "  - SKIP unwritable-dir row: this user can write a 555 dir (root)"
 else
-  bash "$H" --dir "$ro" --prefix mutation-test --scope x --date "$D" >/dev/null 2>&1
-  rc=$?
-  [ "$rc" = "2" ] && ok "the -w precheck refuses an unwritable dir (exit 2) instead of looping over 99 stems" \
-    || bad "unwritable dir: rc=$rc, want 2"
+  err=$(bash "$H" --dir "$ro" --prefix mutation-test --scope x --date "$D" 2>&1 >/dev/null); rc=$?
+  # Bug: without the -w precheck the claim fails as a generic 'cannot create', naming no cause.
+  { [ "$rc" = "2" ] && case "$err" in *"--dir is not writable: $ro"*) true ;; *) false ;; esac; } \
+    && ok "an unwritable dir is refused by name ('is not writable'), not as a failed claim" \
+    || bad "unwritable dir: rc=$rc, want 2 'is not writable'; stderr: $err"
 fi
 nx=$(fresh_dir nosearch); chmod 200 "$nx"
 if [ -x "$nx" ]; then
   echo "  - SKIP unsearchable-dir row: this user can search a 200 dir (root)"
 else
-  bash "$H" --dir "$nx" --prefix mutation-test --scope x --date "$D" >/dev/null 2>&1
-  rc=$?
-  [ "$rc" = "2" ] && ok "a writable but unsearchable dir exits 2 (sibling checks there would all read 'absent')" \
-    || bad "mode-200 dir: rc=$rc, want 2"
+  err=$(bash "$H" --dir "$nx" --prefix mutation-test --scope x --date "$D" 2>&1 >/dev/null); rc=$?
+  # Bug: without the -x precheck every sibling check reads 'absent' and the failure is a generic one.
+  { [ "$rc" = "2" ] && case "$err" in *"--dir is not searchable: $nx"*) true ;; *) false ;; esac; } \
+    && ok "a writable but unsearchable dir is refused by name ('is not searchable')" \
+    || bad "mode-200 dir: rc=$rc, want 2 'is not searchable'; stderr: $err"
 fi
 
 echo "=== help and a claim that cannot be created ==="
@@ -188,17 +191,18 @@ for b in nodate nopy; do
 done
 ln -s "$real_py" "$TMP/nodate/python3"
 dir=$(fresh_dir pydate)
-PATH="$TMP/nodate" "$bash_bin" "$H" --dir "$dir" --prefix mutation-test --scope x --date 2026-02-31 >/dev/null 2>&1
-rc=$?
-[ "$rc" = "2" ] && ok "python strptime rejects 2026-02-31 when date cannot" || bad "python validator: rc=$rc, want 2"
+err=$(PATH="$TMP/nodate" "$bash_bin" "$H" --dir "$dir" --prefix mutation-test --scope x --date 2026-02-31 2>&1 >/dev/null); rc=$?
+{ [ "$rc" = "2" ] && case "$err" in *"--date is not a calendar date: 2026-02-31"*) true ;; *) false ;; esac; } \
+  && ok "python strptime rejects 2026-02-31 when date cannot ('not a calendar date')" \
+  || bad "python validator: rc=$rc, want 2 'not a calendar date'; stderr: $err"
 PATH="$TMP/nopy" "$bash_bin" "$H" --dir "$dir" --prefix mutation-test --scope x --date 2026-10-11 >/dev/null 2>&1
 rc=$?
 [ "$rc" = "0" ] && ok "with no calendar validator a well-shaped date is still accepted (degrade, not block)" \
   || bad "no validator, 2026-10-11: rc=$rc, want 0"
-PATH="$TMP/nopy" "$bash_bin" "$H" --dir "$dir" --prefix mutation-test --scope x --date 2026-13-01 >/dev/null 2>&1
-rc=$?
-[ "$rc" = "2" ] && ok "with no calendar validator the shape check still rejects month 13" \
-  || bad "no validator, 2026-13-01: rc=$rc, want 2"
+err=$(PATH="$TMP/nopy" "$bash_bin" "$H" --dir "$dir" --prefix mutation-test --scope x --date 2026-13-01 2>&1 >/dev/null); rc=$?
+{ [ "$rc" = "2" ] && case "$err" in *"2026-13-01"*) true ;; *) false ;; esac; } \
+  && ok "with no calendar validator the shape check still rejects month 13, naming the date" \
+  || bad "no validator, 2026-13-01: rc=$rc, want 2 naming the date; stderr: $err"
 
 echo "=== the default date is the local day ==="
 # A date shim pins "today" so the row cannot straddle midnight; every other date call (the
