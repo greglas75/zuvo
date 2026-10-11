@@ -203,11 +203,11 @@ def _python_statement(acc: _Lines, tokens: list[tokenize.TokenInfo], lines: list
     code. The parentheses of a documentation statement mark nothing."""
     parens = [t.type == tokenize.OP and t.string in ("(", ")") for t in tokens]
     shape = "".join(t.string if paren else "s" if t.type == tokenize.STRING else "x"
-                    for paren, t in zip(parens, tokens, strict=True))
+                    for paren, t in zip(parens, tokens))  # noqa: B905 — 3.8 floor; same length by construction
     wrap = re.fullmatch(r"(\(*)s+(\)*)", shape)  # strings inside balanced parentheses, nothing else
     is_doc = (wrap is not None and len(wrap.group(1)) == len(wrap.group(2))
               and not lines[tokens[0].start[0] - 1].startswith(POLYGLOT))
-    for paren, tok in zip(parens, tokens, strict=True):
+    for paren, tok in zip(parens, tokens):  # noqa: B905 — comment-audit runs on Python 3.8+
         first = tok.start[0] - 1
         if is_doc and paren:
             continue
