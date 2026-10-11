@@ -258,6 +258,14 @@ Record each dismissal as a one-line `FP: <class> — <token/evidence>` in the ou
 count toward the known-concerns limit and do NOT block the verdict. **Verify before dismissing** —
 an unverified "probably FP" is not a dismissal, it's a skipped finding.
 
+**Triage order — lane agreement first.** A location several lanes raised independently is the best predictor
+of a real defect. With `--json`, walk the findings in the order of the document's `.agreement` array: groups of
+findings on the same file CHAINED by line — each within ±`ZUVO_ADV_AGREE_WINDOW` lines (default 5) of its
+neighbour, so a group can span more than the window — most lanes first, then highest severity. Each group lists
+its `lanes`, `ids` and `max_severity`; `.agreement` is `null` when it could not be computed (then triage by
+severity). A text review prints the multi-lane locations on stderr, in an `AGREEMENT:` block after the
+`VERDICTS:` hint. Agreement orders the work; it never dismisses a single-lane finding.
+
 Before applying any fix policy, validate each remaining finding for mandatory evidence.
 
 **Every CRITICAL or WARNING finding MUST include:**

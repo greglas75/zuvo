@@ -6,7 +6,7 @@
 #
 # Phases: ar_report_no_review, ar_count_findings, ar_warn_clean_large_input, ar_build_output,
 # ar_emit_output, ar_log_run, ar_log_summary_and_exit. Functions: write_artifact, _ar_keep_pass,
-# _ar_json_add_lane.
+# _ar_json_add_lane. Lane agreement (_ar_agreement_json, _ar_print_agreement) is adversarial-agreement.sh's.
 #
 # Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
 # multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
@@ -425,6 +425,14 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     done
     TOTAL_FINDINGS=$((CRITICAL_COUNT + WARNING_COUNT + INFO_COUNT))
   fi
+  # Lane agreement over the answers the document carries — the dropped lanes left out with their counts.
+  _ar_agreement_json "$json_dropped" "$JSON_TMPDIR/agreement.json"
+  # --slurpfile fails the whole document on a missing or non-JSON file: anything but an array or null → null.
+  json_agreement_file="$JSON_TMPDIR/agreement.json"
+  if ! jq -e 'type == "array" or type == "null"' "$json_agreement_file" >/dev/null 2>&1; then
+    json_agreement_file="$JSON_TMPDIR/agreement-null.json"
+    printf 'null' > "$json_agreement_file" || true
+  fi
 
   # DERIVED_STATUS computed above (output-format-agnostic).
   # R-1 fix: emit BOTH providers_used (comma-string, back-compat) AND providers_used_list
@@ -448,8 +456,11 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --slurpfile results "$json_results_file" \
     --argjson models "$json_models" \
     --arg review_access "$(review_access_name)" \
-    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, models: $models, review_access: $review_access, results: $results[0]}')
+    --slurpfile agreement "$json_agreement_file" \
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, models: $models, review_access: $review_access, results: $results[0], agreement: $agreement[0]}')
 else
+  # Text output: the agreement goes to stderr (ar_emit_output), never into the banners.
+  _ar_agreement_json "" "$JSON_TMPDIR/agreement.json"
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER
 ===============================================================
@@ -502,6 +513,8 @@ _tamper_verify
 
 printf '%s\n' "$FINAL_OUTPUT"
 print_verdict_hint
+# The --json document carries the agreement itself; a text review gets the short block on stderr.
+[[ "$OUTPUT_FORMAT" == "json" ]] || _ar_print_agreement "$JSON_TMPDIR/agreement.json"
 
 # Disable strict mode for best-effort logging below. Partial-status runs (some
 # providers timed out) can have grep -c returning 1 on missing markers, and we

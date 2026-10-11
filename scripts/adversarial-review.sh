@@ -280,7 +280,7 @@ client_available() {
 # equal to what Main and the router actually call.
 AR_MODULES="adversarial-cli.sh adversarial-ledger.sh adversarial-input.sh adversarial-prompt.sh
   adversarial-providers.sh adversarial-lanes.sh adversarial-lanes-http.sh adversarial-dispatch.sh
-  adversarial-run.sh adversarial-blind-audit.sh adversarial-report.sh"
+  adversarial-run.sh adversarial-blind-audit.sh adversarial-agreement.sh adversarial-report.sh"
 AR_REQUIRED_FNS="ar_init_options ar_init_failure_cache ar_parse_args ar_reconcile_append_artifact
   ar_init_findings_ledger ar_cmd_record_disposition ar_cmd_effectiveness ar_resolve_provider_env
   ar_validate_mode ar_ba_setup ar_check_plan_budget ar_guard_file_list ar_collect_input
@@ -353,6 +353,7 @@ unset _ar_self_bytes
 . "$AR_LIB_DIR/adversarial-dispatch.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-dispatch.sh did not load"
 . "$AR_LIB_DIR/adversarial-run.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-run.sh did not load"
 . "$AR_LIB_DIR/adversarial-blind-audit.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-blind-audit.sh did not load"
+. "$AR_LIB_DIR/adversarial-agreement.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-agreement.sh did not load"
 . "$AR_LIB_DIR/adversarial-report.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-report.sh did not load"
 for _ar_f in $AR_REQUIRED_FNS; do
   declare -F "$_ar_f" >/dev/null || _ar_module_error "$_ar_f is not defined by the modules in $AR_LIB_DIR (a partial or older copy)"

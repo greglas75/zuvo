@@ -229,8 +229,8 @@ scripts/lib/model-subprocess.sh — THE shared reviewer runner (zms_*): Codex ho
                                   sourcing); install.sh and every build ship scripts/lib/ beside each
                                   installed driver. Missing library = codex/claude lanes `no-runner`,
                                   router fail-closed sentinel — never a silent fallback.
-scripts/lib/adversarial-*.sh    — the adversarial driver's eleven modules (cli, ledger, input, prompt,
-                                  providers, lanes, lanes-http, dispatch, run, blind-audit, report).
+scripts/lib/adversarial-*.sh    — the adversarial driver's twelve modules (cli, ledger, input, prompt,
+                                  providers, lanes, lanes-http, dispatch, run, blind-audit, agreement, report).
                                   scripts/adversarial-review.sh keeps the bootstrap and Main, the phases
                                   in the order they run. The driver loads them all-or-nothing from ONE
                                   directory beside it (lib/ → flat; NO ~/.zuvo fallback) and exits 2 when
