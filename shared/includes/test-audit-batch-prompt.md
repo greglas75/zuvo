@@ -174,6 +174,8 @@ FOR ALL OTHERS, use FULL format:
 ### [filename]
 Production file: [absolute branch/worktree path or ORPHAN]
 Evidence scope: [production symbols; matching test paths; commit and dirty-tree identity]
+Scope: [changed lines <ranges from the listing> | whole file]
+Out-of-scope gaps: [path:line of each Q7/Q11 gap outside the changed lines, or "none" — not scored]
 Verification: [command, cwd, run ID/artifact, exit/result summary, skips/unrun checks]
 Complexity: [THIN/STANDARD/COMPLEX] ([LOC] LOC, [N] branches)
 Red flags: ["none"]
@@ -224,6 +226,13 @@ IMPORTANT:
 - COVERAGE COMPLETENESS: List all public methods in production file. For each, check if test exercises it. Flag untested methods. Exclude control flow keywords, built-ins, SQL keywords. API endpoint exception: test calling client.get("/path") IS testing the handler. Page component exception: render(<Component />) IS testing the export. Re-export exception: only test functions DEFINED in the file, not re-exports.
 - PHANTOM MOCK DETECTION: List all mocked modules in test. For each: does production code actually call it? Unused mock = phantom mock.
 - SUITE-AWARE MODE: Sibling test files for the same production file may supply Q7/Q11 evidence; name each contributing test and actual production branch. A helper test is not evidence for its caller unless it executes and asserts that caller behavior. Coverage/mutation claims require matching file/symbol and tree identity.
+- CHANGED-LINES SCOPE: a listed file whose production entry carries `changed lines: <ranges>` is
+  scored for the change. Q7 and Q11 count the contract cases and branches whose code lies in those
+  lines, together with the function or method that encloses each; a case or branch wholly outside
+  them is not scored, but list it under `Out-of-scope gaps` with its path:line. Changed lines that hold
+  no contract case and no branch (a constant, an import, a type, a pure deletion) make Q7/Q11 N/A,
+  with that reason. Every other Q and AP is scored on the test file as always. `whole file`, or no scope at all: score the whole production
+  file, as before.
 - Q7 DOMAIN: List accepted inputs and every specified reject/filter/sentinel/fallback path, with production branch locations and exact test assertions. Do not invent throws for out-of-domain typed null; malformed inputs at real untrusted boundaries still require testing.
 - Q17 ECHO vs COMPUTED: mock returns X, test asserts X = echo (Q17=0). Mock returns raw data, test asserts transformation = computed (Q17=1).
 - Q15 API ROUTE CALIBRATION: Status code checks, error body checks, response field checks, auth guard verification all count as Q15=1 for API routes.
