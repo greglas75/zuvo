@@ -185,10 +185,10 @@ c=json.load(open(sys.argv[1]))
 assert c["mutate"]==["src/a.js","src/b.js"], c["mutate"]
 assert c["ignoreStatic"] is True and c["coverageAnalysis"]=="perTest", (c["ignoreStatic"], c["coverageAnalysis"])
 assert c["tempDirName"] != ".stryker-tmp", "shared temp dir — concurrent runs corrupt each other"
-assert c["jsonReporter"]["fileName"].startswith("/"), "report path must be absolute"
+assert c["jsonReporter"]["fileName"].startswith("./"), "in-repo report path must be repo-relative (934f9a5f: the farm runs the repo at another path)"
 PY
   then
-    pass "stryker: config carries the full scope, a private temp dir and an absolute report path"
+    pass "stryker: config carries the full scope, a private temp dir and a repo-relative report path"
   else
     bad "stryker: generated config failed its shape assertions"
   fi
