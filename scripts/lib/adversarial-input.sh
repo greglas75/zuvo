@@ -175,14 +175,29 @@ collect_input() {
       fi
       ;;
     diff)
-      # The range form first; the working-tree form only when the range form failed WITHOUT printing
+      # The range form first, from the merge base (`REF...HEAD`): `REF..HEAD` compares the two trees, so a REF
+      # that moved on after the branch left it (`--diff origin/develop`) put its own new commits into the review,
+      # reversed — 275 files in 22 chunks for an 11-file change (retros, 2026-10-09/10). For a REF that is an
+      # ancestor of HEAD both forms are the same diff. With no merge base (the empty tree, an unrelated
+      # history) `...` fails having printed nothing, and the two-tree form is then the meaning asked for.
+      # The working-tree form only when the range forms failed WITHOUT printing
       # anything, so a different diff is never appended to a partial one. A git diff that fails after printing
       # part of the change (a corrupt object, a failing textconv) is status 3 — refused, never reviewed whole.
-      _ar_diff_form "$DIFF_REF"..HEAD 2 || {
-        local _df=$?
-        [[ "$_df" -eq 1 ]] || return 3
-        _ar_diff_form "$DIFF_REF" 1 || { [[ $? -eq 1 ]] && return 0; return 3; }
-      }
+      local _df=0
+      _ar_diff_form "$DIFF_REF"...HEAD 2 || _df=$?
+      if [[ "$_df" -eq 1 ]] && ! git merge-base "$DIFF_REF" HEAD >/dev/null 2>&1; then
+        # A shallow clone has a merge base it cannot see; two trees there are the moved-ref diff again.
+        if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" == true ]]; then
+          echo "ERROR: --diff $DIFF_REF: no merge base in this shallow clone — fetch the history (git fetch --unshallow, or --deepen=N) and re-run" >&2
+          return 3
+        fi
+        _df=0; _ar_diff_form "$DIFF_REF"..HEAD 2 || _df=$?
+      fi
+      if [[ "$_df" -eq 1 ]]; then
+        _df=0; _ar_diff_form "$DIFF_REF" 1 || _df=$?
+        [[ "$_df" -eq 1 ]] && _df=0   # nothing to review: the empty input is refused downstream, by name
+      fi
+      [[ "$_df" -eq 0 ]] || return 3
       ;;
   esac
 }
