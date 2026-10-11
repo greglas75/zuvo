@@ -2020,6 +2020,21 @@ same "F53 the range form fails after printing exactly ZUVO_ADV_MAX_INPUT_BYTES: 
 has "F53 …as a failed git diff, not passed on whole" "failed (exit 128) after printing part of the diff" "$(err f53-ceil)"
 fi
 
+if only F66; then
+echo "=== F66 --diff <branch> reviews the change since the merge base, never the branch's own later commits (mutation) ==="
+# main gets a commit after the feature branch leaves it. `main..HEAD` (two trees) would review that commit
+# reversed; `main...HEAD` (from the merge base) is the feature's change alone.
+F66R="$T/f66-repo"; mkdir -p "$F66R"
+( cd "$F66R" && git init -q -b main . && git config user.email t@t && git config user.name t \
+  && printf 'const f = 1;\n' > f.js && printf 'const m = 1;\n' > m.js && git add . && git commit -qm base \
+  && git checkout -qb feature && printf 'const f = 2;\n' > f.js && git commit -qam feature \
+  && git checkout -q main && printf 'const m = 9;\n' > m.js && git commit -qam moved-on && git checkout -q feature ) >/dev/null 2>&1
+rc="$(REPO="$F66R" drive f66 -- --single --dry-run --diff main)"
+same "F66 --diff main from a feature branch: reviewed (dry run, exit 0)" "0" "$rc"
+has "F66 …the feature's change reaches the prompt" "+const f = 2;" "$(out f66)"
+hasnt "F66 …main's later commit does not, in either direction" "const m = 9;" "$(out f66)"
+fi
+
 if only F54; then
 echo "=== F54 a chunk's child review killed by TERM stops the chunked review there (mutation) ==="
 # A part whose child died of TERM (an orchestrator stopping it, a process group reaped) is an interruption, not a

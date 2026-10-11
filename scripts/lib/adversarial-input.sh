@@ -175,10 +175,14 @@ collect_input() {
       fi
       ;;
     diff)
-      # The range form first; the working-tree form only when the range form failed WITHOUT printing
+      # The range form first, from the merge base (`REF...HEAD`): `REF..HEAD` compares the two trees, so a REF
+      # that moved on after the branch left it (`--diff origin/develop`) put its own new commits into the review,
+      # reversed — 275 files in 22 chunks for an 11-file change (retros, 2026-10-09/10). For a REF that is an
+      # ancestor of HEAD both forms are the same diff.
+      # The working-tree form only when the range form failed WITHOUT printing
       # anything, so a different diff is never appended to a partial one. A git diff that fails after printing
       # part of the change (a corrupt object, a failing textconv) is status 3 — refused, never reviewed whole.
-      _ar_diff_form "$DIFF_REF"..HEAD 2 || {
+      _ar_diff_form "$DIFF_REF"...HEAD 2 || {
         local _df=$?
         [[ "$_df" -eq 1 ]] || return 3
         _ar_diff_form "$DIFF_REF" 1 || { [[ $? -eq 1 ]] && return 0; return 3; }

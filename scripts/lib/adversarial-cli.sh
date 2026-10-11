@@ -222,7 +222,7 @@ Output:
   --dry-run        Print the prompt that would be sent, then exit (debug)
 
 Input:
-  --diff REF       Review diff from REF to HEAD
+  --diff REF       Review the diff from the merge base of REF and HEAD to HEAD (REF...HEAD)
   --files "f1\nf2"  Review specific files (newline-separated, supports spaces in paths)
   --file PATH      Review one file; REPEAT --file for multiple. Prefer this over --files —
                    no shell quoting ambiguity (a mis-quoted newline list reads as ONE filename)

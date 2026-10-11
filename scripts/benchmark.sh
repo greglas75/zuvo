@@ -168,7 +168,7 @@ collect_input() {
       timeout 10 cat || true
       ;;
     diff)
-      git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
+      git diff "$DIFF_REF"...HEAD 2>/dev/null || git diff "$DIFF_REF"  # from the merge base: a moved REF adds nothing
       ;;
     files)
       # Support space-separated and newline-separated file lists
