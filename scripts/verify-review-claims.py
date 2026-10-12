@@ -77,11 +77,28 @@ DISPATCH_TOOLS = {"Agent", "Task"}          # Task = older harness name for the 
 # pipe/semicolon/&&/subshell, allowing leading VAR=value env assignments and a path prefix.
 # `args` captures the rest of THAT command (up to the next separator) so --help can be excluded
 # and --multi attributed to the invocation that actually carried it.
+# Each piece matches ONE way only: two readings of the same text backtrack exponentially, and this
+# scans every Bash command, heredocs included. A bare newline ends a command.
+_WS = r"(?:[^\S\n]|\\\n)"
+_VAR = r"\$(?:\{[^}\s]*\}|\(\([^)]*\)\)|\w+)"            # $T ${T} ${T:-1500} $((60*25))
+_OPERAND = rf"""(?:\.?\d[\d.]*[smhd]?|"?{_VAR}"?)"""      # a duration or a variable
+_LEAD_IN = rf"(?:if|then|do|else|elif|while|until|exec)\b|time\b(?:{_WS}+-p\b)?|!"
+# Words that start a lead-in or a wrapper: never an option's argument, or each would read two ways.
+_WORD = r"(?:if|then|do|else|elif|while|until|exec|time|timeout|nice|nohup|env|stdbuf|command)"
+# A quoted value must close its quote: `X="… adversarial-review …"` is a value, not a command.
+_ENV_ASSIGN = (r"""[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\[\s\S])*"|'[^']*'"""
+               r"""|(?!["'])(?:[^\s;&|(){}]|\$\([^()\n]*\)|\$\{[^\s{}]*\})+|)"""
+               rf"(?={_WS}|$)")
+# Wrappers take the command position; `echo`/`grep` do not (their argument is text), nor does
+# `command` with a -v/-V among its options (`command -v`, `-pv`, `-p -V` are lookups).
+_TIMEOUT = (rf"timeout(?:{_WS}+(?:--|-{{1,2}}[A-Za-z][\w=.-]*)(?:{_WS}+[\w.$\"{{}}]+)?)*"
+            rf"{_WS}+{_OPERAND}(?={_WS})")
+_WRAPPER = (rf"(?:nice|nohup|env|stdbuf|command\b(?!(?:{_WS}+-[A-Za-z]+)*?{_WS}+-[A-Za-z]*[vV]))"
+            rf"(?:{_WS}+-[\w=.-]+(?:{_WS}+(?:{_OPERAND}|(?!{_WORD}\b)[A-Za-z_]\w*))?)*(?={_WS})")
 ADVERSARIAL_RE = re.compile(
-    r"(?:^|[|;&({]|\n)"                             # command position
-    r"(?:\s*(?:if|then|do|else|elif|while|until|time|exec)\b|\s*!)*"  # control-flow lead-ins
-    r"(?:\s*[A-Za-z_][A-Za-z0-9_]*=\S*)*"           # optional env assignments
-    r"\s*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
+    r"(?:^|[|;&({]|(?<!\\)\n)"                      # command position (a continuation is not one)
+    rf"(?:{_WS}*(?:{_LEAD_IN}|{_ENV_ASSIGN}|{_TIMEOUT}|{_WRAPPER}))*"
+    rf"{_WS}*(?:(?:[\w./~\"-]|\$(?:\{{[^}}\s]*\}}|\w+(?!\w)))*/)?adversarial-review(?:\.sh)?\b"
     r"(?P<args>(?:\\\n|[^|;&\n])*)"                 # this command's own arguments
 )
 # `args` deliberately consumes a backslash-newline continuation rather than stopping at it.
