@@ -154,6 +154,7 @@ fi
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"nice -n 5 nohup adversarial-review --multi --mode code < d"}}]}}'
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo timeout 1500 adversarial-review --multi"}}]}}'
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"command -v adversarial-review --multi"}}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"command -p -v adversarial-review --multi; command -pV adversarial-review --multi"}}]}}'
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"timeout \"$T\" \\\n  adversarial-review --multi --mode code < d"}}]}}'
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"timeout .5h adversarial-review --multi < d"}}]}}'
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"NOTE=\"two words\" adversarial-review --multi < d"}}]}}'

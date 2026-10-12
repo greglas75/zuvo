@@ -304,8 +304,10 @@ def consolidate(dry: bool) -> dict:
         mr = Path(mr)
         if mr.resolve() == repo.resolve():
             continue  # this IS the main checkout
-        # A path test, not a string prefix: /home/greg2 is not inside /home/greg.
-        if not mr.is_relative_to(Path.home()):  # lexical, as git reports it: a linked-in repo stays in
+        # Inside HOME as written or as resolved (a repo linked in from another disk; a symlinked HOME
+        # that git reports resolved), and a path test either way: /home/greg2 is not in /home/greg.
+        home = Path.home()
+        if not (mr.is_relative_to(home) or mr.resolve().is_relative_to(home.resolve())):
             continue
         # this repo dir is a linked worktree of mr
         candidates = [("memory/backlog.md", "md"), ("memory/ideas.md", "md")]
