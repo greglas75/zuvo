@@ -1,0 +1,86 @@
+#!/bin/sh
+# Polyglot sh/python header — same as bill: /bin/sh re-execs this file with the machine's Python 3.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+from __future__ import annotations
+
+USAGE = """review-escapes — the defects code review let through, traced from each fix to its origin.
+
+    review-escapes --repo P [--since 30d] [--ref R] [--fetch] [--max-age 180d] [--mass-files 200]
+        [--deadline 900] [--line-window 10] [--classify [--classify-max 20]] [--reclassify] [--json]
+
+Walks the fix commits on --ref (default: the upstream of develop, main or master, else origin/develop,
+then origin/main), blames each production line a fix removes or rewrites, says whether a review saw
+(memory/reviews artifacts) or flagged (findings ledger, Bill) it, and upserts one row per line into
+~/.zuvo/review-escapes-data/<project>.jsonl (zuvo_escapes_store, _coverage). --classify asks a model for
+the defect class of up to --classify-max unclassified fix/intro pairs (zuvo_escapes_classify). The
+store's lock is taken before the scan and held to the write, so a run never builds on a store another
+run is rewriting. --deadline counts from the start: no fix is scanned and no model call starts after
+it. Prints the ref and a summary: fixes, escapes (rows), escape_pairs, unattributed (fixes only adding
+lines), deadline_hit (scan or classification cut short), skipped by reason, coverage labels per row and
+pair over the WHOLE store (every stored row is re-annotated each run), kept_unkeyed, classify counts.
+
+Exit: 0 done; 2 usage, git, I/O or install error (nothing written); 3 another run holds the store's lock
+(refused before any scan or model call).
+"""
+
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+try:
+    import zuvo_escapes_cli as cli
+    import zuvo_escapes_coverage as coverage
+    import zuvo_escapes_fixwalk as fixwalk
+    import zuvo_escapes_store as store
+except ImportError as exc:  # a half-copied install must say so, not print a traceback
+    sys.stderr.write(f"review-escapes: error: cannot load its modules: {exc}\n")
+    sys.exit(2)
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog="review-escapes", description=USAGE,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--repo", required=True, help="a checkout (or worktree) of the repository")
+    p.add_argument("--since", type=cli.duration, default=cli.duration("30d"), help="fix window (30d)")
+    p.add_argument("--ref", help="branch the fixes land on (default: see above)")
+    p.add_argument("--fetch", action="store_true", help="git fetch the ref's remote branch first")
+    p.add_argument("--max-age", type=cli.duration, default=cli.duration("180d"),
+                   help="skip lines introduced longer ago than this (180d)")
+    p.add_argument("--mass-files", type=cli.at_least(1), default=200,
+                   help="skip a fix touching this many files")
+    p.add_argument("--deadline", type=cli.at_least(0), default=900,
+                   help="seconds after which no fix is scanned and no model call starts (900)")
+    p.add_argument("--line-window", type=cli.at_least(0), default=10, help="ledger line distance (10)")
+    p.add_argument("--classify", action="store_true", help="ask a model for the class of unclassified pairs")
+    p.add_argument("--classify-max", type=cli.at_least(0), default=20,
+                   help="model calls per run at most (20)")
+    p.add_argument("--reclassify", action="store_true", help="drop the stored classification of every row")
+    p.add_argument("--json", action="store_true", help="print the summary as JSON")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str], now: dt.datetime | None = None) -> int:
+    args = parse_args(argv)
+    deadline_at = time.monotonic() + args.deadline
+    repo, now = os.path.abspath(os.path.expanduser(args.repo)), now or dt.datetime.now(dt.timezone.utc)
+    try:
+        project, ref, sha = fixwalk.resolve_run(repo, args.ref, args.fetch)
+        path = store.store_path(project)
+        with store.locked(path):
+            out, total = cli.locked_run(args, repo, project, ref, sha, path, now, deadline_at)
+    except (fixwalk.GitError, store.BadProject, OSError) as exc:
+        sys.stderr.write(f"review-escapes: error: {exc}\n")
+        return 2
+    except store.StoreBusy as exc:
+        sys.stderr.write(f"review-escapes: busy: {exc}\n")
+        return 3
+    print(json.dumps(out, sort_keys=True) if args.json else coverage.report(project, out, path, total))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

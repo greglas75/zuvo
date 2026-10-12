@@ -134,6 +134,8 @@ not reduce their defect class are retired.
   is develop's configured upstream, falling back to origin/develop.
 - [POST-CAP: SPEC-AMENDED] execute Task 6: classification is per fix/intro pair and copied onto every row of the
   pair, so the G2 proof counts classified PAIRS (≤ --classify-max), not rows.
+- [POST-CAP: SPEC-AMENDED] execute Task 6 review round: modules added to stay within budget (discover, hunks,
+  gitbatch, cli) and a separate classify spec file; Task 5 and Task 6 land as one commit (the Task 5 snapshot was lost).
 - Status gate: Approved — owner 2026-10-11 "tak aż do końca" (carry the whole loop through, no pauses)
 - Cross-model validation: pending
 
@@ -277,8 +279,8 @@ Remote install for proofs on ryzen-dev (referred to as RSYNC-HELPERS): `scp $(fi
 - [ ] Commit: `feat(review-escapes): trace each fix back to the commit that introduced the bug`
 
 ### Task 6: review-escapes — review coverage of each escape, optional classification
-**Files:** scripts/zuvo-home/zuvo_escapes_artifacts.py, zuvo_escapes_ledgerjoin.py, zuvo_escapes_classify.py, review-escapes; tests/hooks/test_escapes_coverage.py, tests/hooks/test-review-escapes-unit.sh
-(coverage split in two modules per budget ≤300)
+**Files:** scripts/zuvo-home/zuvo_escapes_artifacts.py, zuvo_escapes_discover.py, zuvo_escapes_ledgerjoin.py, zuvo_escapes_coverage.py, zuvo_escapes_classify.py, zuvo_escapes_hunks.py, zuvo_escapes_gitbatch.py, zuvo_escapes_cli.py, review-escapes; tests/hooks/test_escapes_coverage.py, tests/hooks/test_escapes_classify.py, tests/hooks/test-review-escapes-unit.sh
+(coverage, discovery, prompt hunks, batched git reads and the locked run each in their own module per budget ≤300; launcher ≤100)
 **Surface:** backend-logic
 **Complexity:** complex
 **Dependencies:** Task 5, Task 2
