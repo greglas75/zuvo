@@ -5233,3 +5233,23 @@ re-run the b/c/d suites: a refusal there changes what (b) reports for an absolut
 - [ ] B-bill-judged-fingerprint-alltime scripts/zuvo-home/bill:119 — [BUG] `judged` is keyed (project, fingerprint) over the whole ledger, so a new finding whose file:line:slug equals one judged weeks ago is skipped as already judged | evidence: behavior auditor BEHAV-8, adversarial pass 3 (bill:211:all-time-judged-drops-findings) | severity: low | source: review/2026-10-11 | defer-reason: NIT (pre-existing design, needs a run-scoped verdict key in the ledger) | 2026-10-11
 - [ ] B-bill-systemd-linger-undocumented scripts/zuvo-home/bill:391 — [READ] `bill --install-schedule` on Linux installs a systemd USER timer, which stops at logout unless `loginctl enable-linger` is set; neither done nor documented | evidence: behavior auditor BEHAV-8 | severity: low | source: review/2026-10-11 | defer-reason: NIT | 2026-10-11
 - [ ] B-append-runlog-sweep-splits-heading-entry scripts/zuvo-home/append-runlog — [BUG] the run-log wrapper's archive sweep moves a heading-dialect entry's `- [x] <ID>` closure line to backlog-done.md and leaves its `## <ID>` section in backlog.md; backlog-archive drop-stale then refuses that id ("not defined in backlog.md", rc 29 in groom) and test-backlog-grooming-smoke went red (f74ca9d9, B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER; data repaired by hand in the v1.6.84 release) | evidence: release suite 2026-10-11, A7/B4/C13 failures; smoke 100/0 after moving the section | severity: medium | source: review/2026-10-11 | 2026-10-11
+
+- [ ] B-20261012-CONSOLIDATE-LINE-GRANULAR-BODIES [P3][zuvo-home][conf 80]
+**Fingerprint:** scripts/zuvo-home/backlog-consolidate.py|merge_md|multi-line-entry-body
+**Source:** adversarial review of the S-66 fix, 2026-10-12 (round 2, cursor-agent, `multiline-entry-line-granularity`).
+**What:** entries are keyed by ID, but an entry's body lines (indented bullets, `**Fix:**` lines under a list item)
+are still merged one line at a time by their text. A body line edited in a worktree is appended to main as a new line
+at the end of the file, under a `## Merged from worktree` header, away from its entry and beside the old one; the
+parent entry is not listed as EDITED.
+**Fix:** parse an entry as its head line plus the lines that belong to it (until the next top-level entry or
+heading), key the block by the head's ID, and compare whole blocks — a differing block is EDITED, a new one is
+appended intact.
+**Residual loss (zuvo:review of S-66, 2026-10-12):** the review made a NEW entry's body arrive whole and counts
+repeats of an ID-less line, but one loss path stays until blocks are compared: a body line ADDED under an entry
+main already holds, whose text main also holds elsewhere while the worktree lacks that other copy (forked before
+it arrived), or MOVED there from another entry, is matched against main's copy, dropped, and lost when the
+worktree copy is stubbed.
+
+- [ ] B-20261012-CONSOLIDATE-HOME-PREFIX scripts/zuvo-home/backlog-consolidate.py:276 — [SEC] `str(mr).startswith(str(Path.home()))` is a string-prefix containment test (`/home/greg2` passes for `/home/greg`); use `Path.is_relative_to` | evidence: CQ auditor CQ31 | severity: low | source: review/2026-10-12 | defer-reason: NIT (pre-existing, path comes from git) | 2026-10-12
+- [ ] B-20261012-CONSOLIDATE-MAIN-GUARD scripts/zuvo-home/backlog-consolidate.py:265 — [READ] the run is a module-level loop (nesting 5) with no main()/`__main__` guard, unlike the sibling backlog helpers, so it cannot be imported or unit-tested; no return annotations; the merge header is written by an f-string and matched by MERGED_HEADER separately | evidence: CQ auditor CQ2/CQ11/CQ12/CQ25 | severity: low | source: review/2026-10-12 | defer-reason: NIT | 2026-10-12
+- [ ] B-verify-review-claims-BUG-timeout-prefix scripts/verify-review-claims.py:80 — [BUG] ADVERSARIAL_RE accepts only control-flow words and VAR= assignments before adversarial-review, so `… | timeout 1500 ~/.zuvo/adversarial-review --multi …` is not seen and a self-review that used --multi is reported as a DISAGREEMENT ("no invocation carries --multi") | evidence: zuvo:review of S-66 ran 9 such passes; the verifier observed 9 calls (the --record-disposition ones) with --multi: 0 | severity: medium | source: drive-by:review | conf: 90 | 2026-10-12
