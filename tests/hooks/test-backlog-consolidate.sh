@@ -205,5 +205,14 @@ check "dry-run reports +1" 'has_line "  plain-wt5/memory/backlog.md: +1 unique -
 check "dry-run leaves main untouched" '[ "$(sha "$main")" = "$main_before" ]'
 check "dry-run leaves worktree untouched" '[ "$(sha "$DEV/plain-wt5/memory/backlog.md")" = "$wt5_before" ]'
 
+# ── 9. a file name with glob characters is looked up literally ─────────────────────────────────────
+echo "9. literal lookup"
+# As a pathspec, knowledge/f*.jsonl matches the tracked knowledge/facts.jsonl: read as "tracked", the
+# untracked copy would be left behind instead of merged.
+printf '{"id":"g1"}\n' > "$DEV/tracked-wt/knowledge/f*.jsonl"
+out="$(consolidate)"
+check "untracked f*.jsonl merged, not reported TRACKED" \
+  'has_line "  tracked-wt/knowledge/f*.jsonl: +1 unique -> tracked/knowledge/f*.jsonl"'
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

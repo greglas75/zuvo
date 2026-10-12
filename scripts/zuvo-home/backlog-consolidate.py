@@ -45,8 +45,9 @@ DEV = Path.home() / "DEV"
 # notice was stamped 2026-07-19 forever, too.
 TODAY = datetime.date.today().isoformat()
 DRY = "--dry-run" in sys.argv
-# Byte-exact round trip whatever the locale: a stray non-UTF-8 byte survives into main and the backup
-# instead of becoming U+FFFD (or crashing the append under LC_ALL=C).
+sys.stdout.reconfigure(errors="backslashreplace")  # a path git returned undecodable must not crash the report
+# Whatever the locale, a stray non-UTF-8 byte survives into main unchanged instead of becoming U+FFFD
+# (or crashing the append under LC_ALL=C). The backup is a byte copy.
 ENC = {"encoding": "utf-8", "errors": "surrogateescape"}
 
 def sh(args, cwd=None):
@@ -67,10 +68,10 @@ def main_root(repo_dir):
 def is_tracked(repo_dir, relpath):
     """git's answer, or OSError when git gives none: "untracked" is what licenses a write and a stub,
     so a failed lookup must not read as one."""
-    rc, out = sh(["git", "ls-files", "--", relpath], cwd=repo_dir)
+    rc, out = sh(["git", "ls-files", "-z", "--", f":(literal){relpath}"], cwd=repo_dir)
     if rc != 0:
         raise OSError(f"git ls-files failed (rc {rc}) in {repo_dir}")
-    return bool(out)
+    return relpath in out.split("\0")
 
 def ws(line):
     return " ".join(line.split())
