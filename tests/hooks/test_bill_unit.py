@@ -3,27 +3,33 @@ onto the shared review modules must not break. Behaviour Bill already had is pin
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import shlex
+import signal
 import sys
 import time
 import unittest
 from typing import Any
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bill_testlib import BillTestCase, ago  # noqa: E402
-from review_testlib import verdict  # noqa: E402
+from review_testlib import finding, verdict  # noqa: E402
 
 BROKEN_INSTALLS: dict[str, dict[str, Any]] = {
     "missing module": {"skip": "zuvo_bill_status"},
-    "API mismatch": {"api": {"zuvo_bill_judge": 2}},
+    "a module of the release before (API 1)": {"api": {"zuvo_bill_judge": 1}},
 }
 
 
 class InstallGuard(BillTestCase):
     def test_tick_on_a_broken_install_exits_0_saying_install_in_progress(self) -> None:
         # bug: the installer replaces files one at a time; a tick between two of them tracebacks every
-        # 10 minutes (a module raising at import included) instead of waiting for the install to finish
+        # 10 minutes (a module raising at import included), or runs an old module whose lock contract
+        # (acquire_lock: True/False before API 2) the new tick reads inverted
         raises: dict[str, Any] = {"tail": {"zuvo_bill_tick": "\nraise OSError('at import')\n"}}
         cases = {**BROKEN_INSTALLS, "module raises at import": raises}
         for label, how in cases.items():
@@ -52,7 +58,7 @@ class InstallGuard(BillTestCase):
 
     def test_a_repaired_install_is_no_longer_reported_broken(self) -> None:
         # bug: a guard file outliving the repair reports an install broken that works again
-        self.run_bill(launcher=self.install_set(api={"zuvo_bill_judge": 2}))
+        self.run_bill(launcher=self.install_set(api={"zuvo_bill_judge": 1}))
         # A fresh directory: rewritten in place within the same second, at the same size, a module would
         # be loaded from its stale __pycache__ entry (the pyc check is mtime-in-seconds + size).
         status = self.run_bill("--status", launcher=self.install_set(where="repaired"))
@@ -71,7 +77,7 @@ class Tick(BillTestCase):
         self.fake_claude_answer({"defects": defects, "lessons": ["l1"]},
                                 total_cost_usd=0.5, usage={"output_tokens": 7})
         import zuvo_bill_tick
-        zuvo_bill_tick.tick(False)
+        self.assertEqual(zuvo_bill_tick.tick(False), 0)
         bd = os.path.join(self.zuvo, "bill-data")
         self.assertEqual(self.read_lines(args), ["--record-disposition", "a.py:1:x", "deferred",
                                                  "--record-disposition", "a.py:2:y", "rejected"])
@@ -86,7 +92,7 @@ class Tick(BillTestCase):
         self.fake_driver()
         self.fake_claude_answer({"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}]})
         import zuvo_bill_tick
-        zuvo_bill_tick.tick(False)
+        self.assertEqual(zuvo_bill_tick.tick(False), 0)
         bd = os.path.join(self.zuvo, "bill-data")
         self.assertEqual(self.read_lines(f"{bd}/judged-runs.txt"), ["r-1"])
         self.assertEqual(len(self.read_lines(f"{bd}/defects.jsonl")), 1)
@@ -94,14 +100,18 @@ class Tick(BillTestCase):
 
     def test_a_ledger_path_that_cannot_be_read_skips_the_tick_and_releases_the_lock(self) -> None:
         # bug: the shared reader raises on a read error (here the ledger path is a directory) where bill's
-        # own reader returned nothing; uncaught, the tick tracebacks every 10 minutes and the lock it
-        # leaves makes every tick of the next 3 hours report "already running"
+        # own reader returned nothing; uncaught, the tick tracebacks every 10 minutes, and a lock kept
+        # past it makes the next tick report "already running"
         os.makedirs(os.path.join(self.zuvo, "adversarial-findings.log"))
-        p = self.run_bill()
-        self.assertEqual(p.returncode, 1)
-        self.assertNotIn("Traceback", p.stdout + p.stderr)
-        self.assertIn("bill: cannot read the ledger", p.stdout)
-        self.assertFalse(os.path.exists(os.path.join(self.zuvo, "bill-data", ".lock")))
+        import zuvo_bill_config
+        import zuvo_bill_tick
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            self.assertEqual(zuvo_bill_tick.tick(False), 1)
+        self.assertIn("bill: cannot read the ledger", out.getvalue())
+        # flock locks taken through two open() calls conflict even inside one process: a kept fd fails this
+        self.addCleanup(zuvo_bill_config.release_lock)
+        self.assertIsNone(zuvo_bill_config.acquire_lock())
 
     def test_limit_reported_as_a_cli_exit_stops_the_tick_without_using_a_try(self) -> None:
         # bug: a limit the CLI reports by exiting 1 with the message on stderr (no envelope; run_claude's
@@ -149,6 +159,352 @@ class Config(BillTestCase):
         self.assertEqual(zuvo_bill_config.bill_data(), os.path.join(other, "bill-data"))
         self.assertEqual(zuvo_bill_config.ledger(), os.path.join(other, "adversarial-findings.log"))
 
+
+def good_defect(fid: str = "a.py:1:x") -> dict[str, Any]:
+    return {"verdict": "real", "finding_ids": [fid]}
+
+
+FINDING_ROW = {"lane": "codex", "model": "m", "severity": "W", "confidence": "1"}
+
+
+def kill_quietly(pid: int) -> None:
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+
+
+class Verdicts(BillTestCase):
+    def test_bad_or_conflicting_defects_are_dropped_and_the_rest_of_the_answer_kept(self) -> None:
+        # bug: one malformed element threw away a whole paid answer; an id in two defects wrote two
+        # conflicting disposition rows; an unknown verdict or a non-string id reached the driver
+        import zuvo_bill_judge
+        defects = [good_defect("a.py:1:x"),
+                   {"verdict": "maybe", "finding_ids": ["a.py:2:y"]},              # unknown verdict
+                   {"verdict": ["real"], "finding_ids": ["a.py:3:z"]},             # verdict not a string
+                   {"verdict": "real", "finding_ids": [7]},                        # id not a string
+                   {"verdict": "real", "finding_ids": "a.py:4:w"},                 # ids not a list
+                   "a.py:5:v is real",                                             # not an object
+                   good_defect("a.py:6:u"), {"verdict": "false_positive", "finding_ids": ["a.py:6:u"]},
+                   {"verdict": "uncertain", "finding_ids": ["a.py:7:t", "a.py:7:t"]}]   # repeat inside one
+        got, dropped = zuvo_bill_judge.valid_verdicts({"defects": defects, "lessons": ["l", 3]})
+        self.assertEqual(got, {"defects": [good_defect("a.py:1:x"),
+                                           {"verdict": "uncertain", "finding_ids": ["a.py:7:t"]}],
+                               "lessons": ["l"]})
+        self.assertEqual(dropped, 7)
+        with self.assertRaises(ValueError):
+            zuvo_bill_judge.valid_verdicts({"defects": None})
+
+    def test_reviewer_text_holding_a_placeholder_is_never_expanded(self) -> None:
+        # bug: replace() ran twice, so a finding id holding `{diff}` pulled the whole diff into the
+        # findings list (and a diff line holding `{findings}` the findings into the diff)
+        import zuvo_bill_judge
+        rows = [{**FINDING_ROW, "id": "a.py:1:{diff}", "file": "a.py:1"}]
+        prompt = zuvo_bill_judge.build_prompt(rows, "+x = '{findings}'\n")
+        self.assertIn("id=a.py:1:{diff} |", prompt)
+        self.assertIn("+x = '{findings}'\n", prompt)
+        self.assertEqual(prompt.count("+x = "), 1)
+
+    def test_a_diff_over_the_cap_is_cut_at_a_line_end_and_says_how_to_judge_the_rest(self) -> None:
+        # bug: a multi-megabyte diff went into the prompt whole (a paid call failing on context size);
+        # cut mid-line or mid-character it showed the model code that does not exist
+        import zuvo_bill_judge
+        cap = zuvo_bill_judge.DIFF_CAP_BYTES
+        line = "+ zażółć gęślą jaźń — ünïcödé\n"
+        width = len(line.encode("utf-8"))
+        full = line * (cap // width + 50)
+        self.diff("r-1", full)
+        prompt = os.path.join(self.tmp, "prompt")
+        self.fake_exe("claude", f'cat > "{prompt}"; echo "{{}}"\n')
+        row = {**FINDING_ROW, "id": "a", "file": "a"}
+        rec, _ = zuvo_bill_judge.judge((ago(hours=2), "r-1", self.tmp, [row]))
+        with open(prompt, "rb") as f:
+            sent = f.read().decode("utf-8", errors="replace").split("=== DIFF ===\n", 1)[1]
+        shown, marker = sent.split("[diff truncated: ", 1)
+        self.assertEqual(shown, line * (cap // width))
+        self.assertTrue(marker.startswith(f"{(cap // width) * width} of {len(full.encode('utf-8'))} bytes]"))
+        self.assertIn("`uncertain`, never `false_positive`", marker)
+        self.assertEqual((rec["diff_bytes"], rec["diff_bytes_sent"]),
+                         (len(full.encode("utf-8")), (cap // width) * width))
+
+    def test_a_first_line_longer_than_the_cap_is_cut_at_a_character_boundary(self) -> None:
+        # bug: one minified line over the cap gave an empty diff, or one cut inside a character
+        import zuvo_bill_judge
+        cap = zuvo_bill_judge.DIFF_CAP_BYTES
+        self.diff("r-1", "+" + "é" * cap + "\n")
+        diff = zuvo_bill_judge.read_diff(os.path.join(self.zuvo, "adversarial-inputs", "r-1.diff"))
+        self.assertEqual(diff.sent, cap - 1)                        # "+" then whole 2-byte characters
+        self.assertTrue(diff.text.startswith("+" + "é" * ((cap - 1) // 2) + "\n[diff truncated: "))
+
+    def test_a_false_positive_on_a_file_the_cut_diff_does_not_show_becomes_uncertain(self) -> None:
+        # bug: the model rejected a finding in a file it never saw — a permanent `rejected` row
+        import zuvo_bill_judge
+        big = "+a = 1\n" * (zuvo_bill_judge.DIFF_CAP_BYTES // 7 + 9)        # shown.py alone fills the cap
+        self.diff("r-1", f"--- a/shown.py\n+++ b/shown.py\n{big}--- a/cut.py\n+++ b/cut.py\n+b = 2\n")
+        self.fake_claude_answer({"defects": [{"verdict": "false_positive", "finding_ids": ["shown.py:1:x"]},
+                                             {"verdict": "false_positive", "finding_ids": ["cut.py:1:x"]}]})
+        rows = [{**FINDING_ROW, "id": f"{p}:1:x", "file": f"{p}:1"} for p in ("shown.py", "cut.py")]
+        rec, _ = zuvo_bill_judge.judge((ago(hours=2), "r-1", self.tmp, rows))
+        self.assertEqual([d["verdict"] for d in rec["verdicts"]["defects"]], ["false_positive", "uncertain"])
+        self.assertEqual(rec["unseen_to_uncertain"], 1)
+
+    def test_a_run_id_that_is_not_a_plain_name_is_never_judged(self) -> None:
+        # bug: the run id joins a path (adversarial-inputs/<run>.diff): `../x` read a file outside it
+        proj = os.path.join(self.tmp, "proj")
+        self.write_ledger([finding(ago(hours=2), run, "a.py:1:x", "a.py:1", proj)
+                           for run in ("../outside", "r 1", "r-1")])
+        for run in ("../outside", "r 1", "r-1"):
+            self.diff(run)
+        import zuvo_bill_judge
+        import zuvo_bill_tick
+        runs, judged = zuvo_bill_tick.read_ledger()
+        self.assertEqual([q[1] for q in zuvo_bill_tick.pending(runs, judged, done=set())], ["r-1"])
+        with self.assertRaises(ValueError):
+            zuvo_bill_judge.judge((ago(hours=2), "../outside", proj, []))
+
+
+class Lock(BillTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        os.makedirs(os.path.join(self.zuvo, "bill-data"))
+
+    def acquire(self) -> Any:
+        import zuvo_bill_config
+        got = zuvo_bill_config.acquire_lock()
+        if got is None:
+            self.addCleanup(zuvo_bill_config.release_lock)
+        return got
+
+    def test_the_lock_is_refused_while_another_process_holds_it_and_free_once_it_is_gone(self) -> None:
+        # bug: a lock that outlives its holder (a killed tick) or is taken from a live one (a laptop
+        # asleep mid-tick, a wall-clock staleness guess) stops Bill or runs two ticks paying twice
+        import zuvo_bill_config
+        for how in ("released", "killed"):
+            with self.subTest(how):
+                holder = self.lock_holder()
+                self.assertEqual(self.acquire(), zuvo_bill_config.Refused("a tick is already running", False))
+                if how == "released":
+                    self.assertEqual(self.tell(holder, "release"), "released")
+                else:
+                    holder.kill()
+                    holder.wait(10)
+                self.assertIsNone(self.acquire())
+                zuvo_bill_config.release_lock()
+
+    def test_a_child_of_a_dead_tick_does_not_keep_the_lock(self) -> None:
+        # bug: claude or the driver inheriting the lock's fd would hold the lock after the tick died,
+        # until that child exits (up to the 30-minute call timeout)
+        holder = self.lock_holder()
+        child = int(self.tell(holder, "spawn"))
+        self.addCleanup(kill_quietly, child)
+        holder.kill()
+        holder.wait(10)
+        self.assertIsNone(self.acquire())
+
+    def test_a_tick_of_the_release_before_is_respected_until_its_lock_is_old(self) -> None:
+        # bug: during an upgrade the old release's tick (a `.lock` directory) and a new tick both ran;
+        # a dead old tick's directory must not block Bill for good either
+        import zuvo_bill_config
+        legacy = os.path.join(self.zuvo, "bill-data", ".lock")
+        for age_h, refused in ((1, True), (4, False)):
+            with self.subTest(age_h=age_h):
+                os.makedirs(legacy, exist_ok=True)
+                then = time.time() - age_h * 3600
+                os.utime(legacy, (then, then))
+                got = self.acquire()
+                expected = zuvo_bill_config.Refused("a tick is already running (legacy lock)", False)
+                self.assertEqual(got, expected if refused else None)
+                self.assertIs(os.path.isdir(legacy), refused)
+                zuvo_bill_config.release_lock()
+
+    def test_a_lock_that_cannot_be_checked_refuses_with_its_reason_and_leaks_no_fd(self) -> None:
+        # bug: an unopenable lock file or an unreadable legacy path raised out of the tick (a traceback
+        # every 10 minutes) and left the lock fd open
+        cases = {"lock file is a directory": lambda bd: os.mkdir(os.path.join(bd, "tick.flock")),
+                 "legacy path loops": lambda bd: os.symlink(".lock", os.path.join(bd, ".lock"))}
+        for label, breaks in cases.items():
+            with self.subTest(label):
+                self.setenv(ZUVO_HOME=os.path.join(self.tmp, label))
+                bd = os.path.join(self.tmp, label, "bill-data")
+                os.makedirs(bd)
+                breaks(bd)
+                before = len(os.listdir("/dev/fd"))
+                got = self.acquire()
+                self.assertEqual(len(os.listdir("/dev/fd")), before)
+                self.assertIsNotNone(got)
+                self.assertTrue(got.error, got)
+
+    def test_status_names_the_process_holding_the_lock(self) -> None:
+        # bug: flock has no age takeover, so a hung live tick stops Bill — invisibly without this
+        holder = self.lock_holder()
+        out = self.run_bill("--status")
+        self.assertRegex(out.stdout, rf"lock held by pid {holder.pid} since \d{{4}}-\d\d-\d\dT")
+        self.tell(holder, "release")
+        self.assertNotIn("lock held", self.run_bill("--status").stdout)
+
+
+class Schedule(BillTestCase):
+    def install(self, platform: str, cmd: str, step: str) -> tuple[int, str, list[str]]:
+        """install_schedule() in a fresh HOME — named after the steps, so a check matching inside the
+        path shows — with launchctl/systemctl stubs that log every call; `cmd` fails (exit 3) only on
+        an argv starting with `step`, and a trailing \xff makes it print undecodable bytes."""
+        import zuvo_bill_schedule
+        home = os.path.join(self.tmp, f"home-load-enable-daemon-reload-{len(os.listdir(self.tmp))}")
+        os.makedirs(home)
+        self.setenv(HOME=home)
+        if step == "no-agents-dir":
+            self.write(os.path.join(home, "Library"), "a file, not a directory")
+        log = shlex.quote(os.path.join(home, "calls"))
+        fail = step.rstrip("\xff")
+        say = r"printf '\377 refused\n' >&2" if step.endswith("\xff") else "echo refused >&2"
+        for name in ("launchctl", "systemctl"):
+            fails = f'case "$*" in "{fail}"|"{fail} "*) {say}; exit 3;; esac\n' if name == cmd else ""
+            self.fake_exe(name, f'echo "{name} $*" >> {log}\n{fails}')
+        err = io.StringIO()
+        with mock.patch.object(sys, "platform", platform), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = zuvo_bill_schedule.install_schedule()
+        calls = os.path.join(home, "calls")
+        return rc, err.getvalue(), self.read_lines(calls) if os.path.exists(calls) else []
+
+    def test_install_schedule_fails_loudly_when_the_scheduler_refuses(self) -> None:
+        # bug: a refused launchctl/systemctl call (or no LaunchAgents dir, or undecodable output) still
+        # exited 0 or tracebacked — the owner believed Bill was scheduled while nothing would run it
+        cases = [("darwin", "launchctl", "load"), ("darwin", "launchctl", "load\xff"),
+                 ("darwin", "", "no-agents-dir"), ("linux", "systemctl", "--user daemon-reload"),
+                 ("linux", "systemctl", "--user enable")]
+        for platform, cmd, step in cases:
+            with self.subTest(platform=platform, step=step):
+                rc, err, calls = self.install(platform, cmd, step)
+                self.assertEqual(rc, 1)
+                self.assertIn("schedule not installed", err)
+                if cmd:
+                    self.assertIn(f"{cmd} {step.rstrip(chr(255))}", "\n".join(calls))
+
+    def test_a_failed_daemon_reload_does_not_enable_the_timer(self) -> None:
+        # bug: enabling after a failed daemon-reload starts units systemd has not re-read
+        _rc, _err, calls = self.install("linux", "systemctl", "--user daemon-reload")
+        self.assertEqual(calls, ["systemctl --user daemon-reload"])
+
+    def test_install_schedule_succeeds_when_the_scheduler_accepts(self) -> None:
+        # bug: an install the scheduler accepted reported as refused (exit 1, a reason on stderr), or the
+        # job never handed to the scheduler at all
+        for platform, last in (("darwin", "launchctl load"), ("linux", "systemctl --user enable")):
+            with self.subTest(platform):
+                rc, err, calls = self.install(platform, "", "")
+                self.assertEqual((rc, err), (0, ""))
+                self.assertTrue(calls[-1].startswith(last), calls)
+
+
+class State(BillTestCase):
+    def test_a_tick_that_cannot_write_its_state_stops_before_any_paid_call(self) -> None:
+        # bug: with judged-runs.txt or attempts.json unwritable a finished run was paid for, and its
+        # defects recorded, again on every tick — the try cap could not persist either
+        self.skip_if_root()
+        cases = {"bill-data read-only": lambda bd: os.chmod(bd, 0o555),
+                 "judged-runs.txt read-only":
+                     lambda bd: os.chmod(self.write(f"{bd}/judged-runs.txt", ""), 0o444),
+                 "attempts.json.tmp a directory": lambda bd: os.mkdir(f"{bd}/attempts.json.tmp")}
+        for label, breaks in cases.items():
+            with self.subTest(label):
+                self.setenv(ZUVO_HOME=os.path.join(self.tmp, label, "zh"))
+                self.zuvo = os.environ["ZUVO_HOME"]
+                self.queue_review("r-1", ["a.py:1:x"])
+                calls = os.path.join(self.tmp, label, "calls")
+                self.fake_exe("claude", f'cat >/dev/null; echo call >> "{calls}"; exit 1\n')
+                bd = os.path.join(self.zuvo, "bill-data")
+                os.makedirs(bd)
+                self.write(f"{bd}/tick.flock", "")
+                breaks(bd)
+                self.addCleanup(os.chmod, bd, 0o755)
+                p = self.run_bill()
+                self.assertEqual((p.returncode, "Traceback" in p.stdout + p.stderr), (1, False))
+                self.assertIn("tick skipped before any paid call", p.stdout)
+                self.assertFalse(os.path.exists(calls))
+
+    def test_settle_reports_a_state_write_it_cannot_make_and_goes_on(self) -> None:
+        # bug: settle() claims never to raise, but an OSError writing bill.log or judged-runs.txt (a
+        # file going read-only mid-tick) escaped it and killed the tick with a traceback
+        self.skip_if_root()
+        import zuvo_bill_tick
+        bd = os.path.join(self.zuvo, "bill-data")
+        for name in ("bill.log", "judged-runs.txt"):
+            with self.subTest(name):
+                os.chmod(self.write(os.path.join(bd, name), ""), 0o444)
+                self.addCleanup(os.chmod, os.path.join(bd, name), 0o644)
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    zuvo_bill_tick.settle({"run": "r-1", "project": "", "findings": 1, "error": "x"},
+                                          [], {"r-1": 2}, os.path.join(bd, "judged-runs.txt"))
+                self.assertIn(f"cannot write {name}", err.getvalue())
+
+    def test_a_run_settled_but_not_marked_done_keeps_counting_tries(self) -> None:
+        # bug: a run settled (answered all-uncertain, or given up) while judged-runs.txt could not take
+        # it had its tries forgotten — re-queued with a fresh budget, paid for on every tick
+        self.skip_if_root()
+        import zuvo_bill_tick
+        done_f = os.path.join(self.zuvo, "bill-data", "judged-runs.txt")
+        os.chmod(self.write(done_f, ""), 0o444)
+        answered = {"run": "r-1", "project": "", "findings": 1,
+                    "verdicts": {"defects": [{"verdict": "uncertain", "finding_ids": ["a.py:1:x"]}],
+                                 "lessons": []}}
+        for label, rec, before, after in (("answered", answered, {}, {"r-1": 1}),
+                                          ("given up", {"run": "r-1", "project": "", "findings": 1,
+                                                        "error": "x"}, {"r-1": 2}, {"r-1": 3})):
+            with self.subTest(label), contextlib.redirect_stderr(io.StringIO()), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                attempts = dict(before)
+                zuvo_bill_tick.settle(json.loads(json.dumps(rec)), [{"id": "a.py:1:x", "lane": "c"}],
+                                      attempts, done_f)
+                self.assertEqual(attempts, after)
+
+    def test_a_corrupt_attempts_file_is_moved_aside_and_reported(self) -> None:
+        # bug: a corrupt attempts.json silently read as {} every tick — the cap on paid retries reset
+        # with no trace of why
+        import zuvo_bill_state
+        bd = os.path.join(self.zuvo, "bill-data")
+        self.write(os.path.join(bd, "attempts.json"), '{"r-1": 2,')
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(zuvo_bill_state.load_attempts({"r-1"}), {})
+        self.assertFalse(os.path.exists(os.path.join(bd, "attempts.json")))
+        self.assertEqual(len([n for n in os.listdir(bd) if n.startswith("attempts.json.corrupt-")]), 1)
+        self.assertIn("attempts.json", err.getvalue())
+
+
+class Status(BillTestCase):
+    def test_status_counts_what_settled_answers_left_unjudged(self) -> None:
+        # bug: findings an answer did not cover and defects dropped from it stay unjudged by design,
+        # but nothing showed how many; counting a retried attempt too counts them once per try
+        import zuvo_bill_status
+        rows = [{"ts": ago(hours=1), "omitted": 2, "dropped_defects": 1, "recorded": True},
+                {"ts": ago(hours=2), "omitted": 1, "recorded": "project-missing"},
+                {"ts": ago(hours=30), "omitted": 4, "dropped_defects": 2, "recorded": True},
+                {"ts": ago(hours=1), "omitted": 5, "dropped_defects": 9, "recorded": False},   # retried
+                {"ts": ago(hours=1), "omitted": 6, "recorded": 1},      # not a settled marker
+                {"ts": ago(hours=1)}]
+        log = "".join(f"{json.dumps(r)}\n" for r in rows)
+        self.write(os.path.join(self.zuvo, "bill-data", "bill.log"), log)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            zuvo_bill_status.status()
+        self.assertIn("omitted findings: 7 total, 3 in 24 h; dropped defects: 3 total, 1 in 24 h",
+                      out.getvalue())
+
+
+class EnvInts(BillTestCase):
+    def test_a_count_or_timeout_that_is_not_positive_falls_back_to_the_default_once_said(self) -> None:
+        # bug: BILL_MAX_TRIES=0 or BILL_WORKERS=-1 silently meant 1 (one try, one worker) — a typo
+        # changed how Bill pays without a word
+        import zuvo_bill_config as C
+        table = [("BILL_MAX_TRIES", C.max_tries, "0", 3), ("BILL_WORKERS", C.workers, "-1", 3),
+                 ("BILL_TICK_SECONDS", C.budget, "x", 540), ("BILL_MAX_AGE_HOURS", C.max_age_h, "5", 5)]
+        for var, read, raw, expected in table:
+            with self.subTest(var=var, raw=raw):
+                self.setenv(**{var: raw})
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    got = [read(), read()]
+                self.assertEqual(got, [expected, expected])
+                self.assertEqual(err.getvalue().count(var), 0 if raw == "5" else 1)
 
 if __name__ == "__main__":
     unittest.main()

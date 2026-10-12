@@ -8,22 +8,44 @@ files one at a time, and a launcher running beside modules of another release mu
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
+import re
+import sys
 import time
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from zuvo_review_ledger import ledger_path, zuvo_home
 
-API = 1
+API = 2
 CALL_TIMEOUT = 1800
-STALE_LOCK_SECONDS = 3 * 3600
+# The lock directory bill used before tick.flock. A tick of that older release may still be running
+# during an upgrade; one older than this is a dead tick's (that release took such a lock over too).
+LEGACY_LOCK_STALE_SECONDS = 3 * 3600
+# A run id names its diff file (adversarial-inputs/<run>.diff): anything else could point outside it.
+RUN_ID = re.compile(r"[A-Za-z0-9._-]+")
+_warned: set[str] = set()
 
 
 def env_int(name: str, default: int) -> int:
-    try:
-        return max(1, int(os.environ.get(name, default)))
-    except ValueError:
+    """A positive count or timeout from the environment; anything else is `default`, said once on stderr
+    (a 0 there meant one worker, one try, a one-second budget)."""
+    raw = os.environ.get(name)
+    if raw is None:
         return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value > 0:
+        return value
+    if name not in _warned:
+        _warned.add(name)
+        print(f"bill: {name}={raw!r} is not a positive integer — using {default}",
+              file=sys.stderr, flush=True)
+    return default
 
 
 def home() -> str:
@@ -91,28 +113,79 @@ def paused() -> bool:
     return os.path.exists(os.path.join(bill_data(), "PAUSE"))
 
 
-def acquire_lock() -> bool:
-    """The tick lock (a directory: mkdir is atomic). A lock older than STALE_LOCK_SECONDS belonged to a
-    tick that died without releasing it and is taken over; False when another tick holds it."""
-    lock = os.path.join(bill_data(), ".lock")
+_lock_fd: list[int] = []   # the open lock file while this process holds it
+
+
+class Refused(NamedTuple):
+    reason: str
+    error: bool     # True: the lock could not be checked at all (the tick exits 1), not merely held
+
+
+def lock_path() -> str:
+    return os.path.join(bill_data(), "tick.flock")
+
+
+def acquire_lock() -> Refused | None:
+    """None when this tick now holds the lock, else why not.
+
+    An flock on bill-data/tick.flock (never deleted). The kernel releases it when its process EXITS,
+    however it dies, and it holds while a laptop sleeps mid-tick — no age guess. A hung live tick keeps
+    it: `--status` names the holder (its pid and start, written into the file). The file is opened
+    non-inheritable, so claude and the driver never carry the lock past this process. A tick of the
+    release before (a `.lock` directory) is respected until it is LEGACY_LOCK_STALE_SECONDS old."""
     try:
-        os.mkdir(lock)
-        return True
-    except FileExistsError:
-        pass
+        fd = os.open(lock_path(), os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as ex:
+        return Refused(f"cannot open the tick lock {lock_path()} ({type(ex).__name__}: {ex})", True)
+    held = False
     try:
-        fresh = time.time() - os.path.getmtime(lock) < STALE_LOCK_SECONDS
-    except OSError:                      # the other tick released it between the two calls
-        fresh = True
-    if fresh:
-        return False
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return Refused("a tick is already running", False)
+        legacy = os.path.join(bill_data(), ".lock")
+        try:
+            legacy_age: float | None = time.time() - os.stat(legacy).st_mtime
+        except FileNotFoundError:
+            legacy_age = None
+        if legacy_age is not None and legacy_age < LEGACY_LOCK_STALE_SECONDS:
+            return Refused("a tick is already running (legacy lock)", False)
+        if legacy_age is not None:
+            with contextlib.suppress(OSError):   # left behind, the next tick tries again
+                os.rmdir(legacy)
+        with contextlib.suppress(OSError):       # who holds it is for --status only
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, f"{os.getpid()} {stamp(now())}\n".encode(), 0)
+        held = True
+        _lock_fd[:] = [fd]
+        return None
+    except OSError as ex:
+        return Refused(f"cannot lock {lock_path()} ({type(ex).__name__}: {ex})", True)
+    finally:
+        if not held:
+            os.close(fd)
+
+
+def lock_holder() -> str | None:
+    """`<pid> <since>` of the tick holding the lock now ("" before it has written them), or None when
+    nobody holds it."""
     try:
-        os.rmdir(lock)
-        os.mkdir(lock)
-    except OSError:                      # another tick took over the same stale lock first
-        return False
-    return True
+        fd = os.open(lock_path(), os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return os.pread(fd, 200, 0).decode("utf-8", errors="replace").strip()
+        return None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
 
 
 def release_lock() -> None:
-    os.rmdir(os.path.join(bill_data(), ".lock"))
+    """Closing the file releases the flock; nothing to do when this process holds none."""
+    while _lock_fd:
+        os.close(_lock_fd.pop())

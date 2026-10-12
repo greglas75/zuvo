@@ -8,9 +8,11 @@ a fake-executable directory first on PATH.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -21,8 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from review_testlib import ZUVO_HOME_SRC, ReviewTestCase, finding  # noqa: E402
 
 LAUNCHER = ZUVO_HOME_SRC / "bill"
-BILL_MODULES = ("zuvo_bill_config", "zuvo_bill_judge", "zuvo_bill_tick", "zuvo_bill_schedule",
-                "zuvo_bill_status")
 
 
 def ago(**delta: float) -> str:
@@ -59,6 +59,7 @@ class BillTestCase(ReviewTestCase):
         proj = os.path.join(self.tmp, "proj")
         os.makedirs(proj, exist_ok=True)
         rows = [finding(ago(hours=hours), run, fp, fp.rsplit(":", 1)[0], proj) for fp in fps]
+        os.makedirs(self.zuvo, exist_ok=True)
         with open(os.path.join(self.zuvo, "adversarial-findings.log"), "a", encoding="utf-8") as f:
             f.write("\n".join(rows) + "\n")
         self.diff(run)
@@ -80,6 +81,42 @@ class BillTestCase(ReviewTestCase):
     def read_lines(self, path: str) -> list[str]:
         with open(path, encoding="utf-8") as f:
             return f.read().splitlines()
+
+    def skip_if_root(self) -> None:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root ignores file modes")
+
+    def lock_holder(self) -> subprocess.Popen[str]:
+        """Another process holding the tick lock. It answers commands on stdin: `release` (prints
+        `released`), `spawn` (starts `sleep 30` the way a careless spawn would, close_fds=False, and
+        prints its pid). It and anything it spawned are killed at cleanup."""
+        code = ("import subprocess, sys; sys.path.insert(0, sys.argv[1]); import zuvo_bill_config as C\n"
+                "r = C.acquire_lock(); print('held' if r is None else f'refused: {r}', flush=True)\n"
+                "for cmd in sys.stdin:\n"
+                "    if cmd.strip() == 'release': C.release_lock(); print('released', flush=True)\n"
+                "    if cmd.strip() == 'spawn':\n"
+                "        print(subprocess.Popen(['sleep', '30'], close_fds=False).pid, flush=True)\n")
+        p = subprocess.Popen([sys.executable, "-c", code, str(ZUVO_HOME_SRC)], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, text=True, env=dict(os.environ))
+        assert p.stdin is not None and p.stdout is not None
+        for cleanup in (p.stdout.close, p.stdin.close, functools.partial(p.wait, 10), p.kill):
+            self.addCleanup(cleanup)   # run last-first: kill, reap, close the pipes
+        self.assertEqual(self.read_reply(p), "held")
+        return p
+
+    def tell(self, p: subprocess.Popen[str], command: str) -> str:
+        assert p.stdin is not None
+        p.stdin.write(command + "\n")
+        p.stdin.flush()
+        return self.read_reply(p)
+
+    def read_reply(self, p: subprocess.Popen[str], timeout: float = 10) -> str:
+        """The holder's next line; a holder that never answers fails the test instead of hanging it."""
+        assert p.stdout is not None
+        ready, _, _ = select.select([p.stdout], [], [], timeout)
+        if not ready:
+            self.fail(f"lock holder {p.pid} sent nothing in {timeout} s")
+        return p.stdout.readline().strip()
 
     def run_bill(self, *args: str, launcher: str = str(LAUNCHER)) -> subprocess.CompletedProcess[str]:
         """The launcher as cron runs it: its own process, this test's environment."""

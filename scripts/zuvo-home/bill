@@ -11,7 +11,7 @@ Every --json review writes one ledger row per finding (~/.zuvo/adversarial-findi
 reviews since 10-03, 360 with any verdict — so per-lane precision rested on ~6 % of the reviews. Bill judges
 what nobody judged: every few minutes it takes the newest reviews without verdicts, shows Opus the diff and
 every lane's findings at once, and records a verdict per finding plus the lessons it drew.
-What it writes: see the zuvo_bill_tick.py docstring.
+What it writes: see the zuvo_bill_state.py docstring.
 
 USAGE
 
@@ -33,11 +33,12 @@ import os
 import sys
 import time
 
-# The logic lives in flat modules beside this file. The installer replaces files one at a time, so a
-# tick can start between two of them: a missing, half-written or other-release module makes the tick
-# exit 0 (never a traceback every 10 minutes), and `--status` shows how long that has lasted.
-API = 1
-MODULES = ("zuvo_bill_config", "zuvo_bill_judge", "zuvo_bill_tick", "zuvo_bill_schedule", "zuvo_bill_status")
+# The installer replaces files one at a time: a missing, half-written or other-release module makes a
+# tick exit 0 (no traceback every 10 minutes) and `--status` say since when. Any change to a contract
+# between modules bumps API here and in every module (2: acquire_lock returns a refusal).
+API = 2
+MODULES = ("zuvo_bill_config", "zuvo_bill_state", "zuvo_bill_judge", "zuvo_bill_tick", "zuvo_bill_schedule",
+           "zuvo_bill_status")
 
 
 def guard_file():
