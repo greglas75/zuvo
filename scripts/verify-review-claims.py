@@ -77,26 +77,30 @@ DISPATCH_TOOLS = {"Agent", "Task"}          # Task = older harness name for the 
 # pipe/semicolon/&&/subshell, allowing leading VAR=value env assignments and a path prefix.
 # `args` captures the rest of THAT command (up to the next separator) so --help can be excluded
 # and --multi attributed to the invocation that actually carried it.
-_WS = r"(?:\s|\\\n)"                                # whitespace, incl. a backslash-newline
-_OPERAND = r"""(?:\.?\d[\d.]*[smhd]?|"?\$\{?\w+\}?"?)"""  # 25m, .5s, $T, "${T}"
+# Each piece matches ONE way only: two readings of the same text backtrack exponentially, and this
+# scans every Bash command, heredocs included. A bare newline ends a command.
+_WS = r"(?:[^\S\n]|\\\n)"
+_VAR = r"\$(?:\{[^}\s]*\}|\(\([^)]*\)\)|\w+)"            # $T ${T} ${T:-1500} $((60*25))
+_OPERAND = rf"""(?:\.?\d[\d.]*[smhd]?|"?{_VAR}"?)"""      # a duration or a variable
+_LEAD_IN = rf"(?:if|then|do|else|elif|while|until|exec)\b|time\b(?:{_WS}+-p\b)?|!"
+# Words that start a lead-in or a wrapper: never an option's argument, or each would read two ways.
+_WORD = r"(?:if|then|do|else|elif|while|until|exec|time|timeout|nice|nohup|env|stdbuf|command)"
+# A quoted value must close its quote: `X="… adversarial-review …"` is a value, not a command.
+_ENV_ASSIGN = (r"""[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\[\s\S])*"|'[^']*'"""
+               r"""|(?!["'])(?:[^\s;&|(){}]|\$\([^()\n]*\)|\$\{[^\s{}]*\})+|)"""
+               rf"(?={_WS}|$)")
+# Wrappers take the command position; `echo`/`grep` do not (their argument is text), nor does
+# `command` with a -v/-V among its options (`command -v`, `-pv`, `-p -V` are lookups).
+_TIMEOUT = (rf"timeout(?:{_WS}+(?:--|-{{1,2}}[A-Za-z][\w=.-]*)(?:{_WS}+[\w.$\"{{}}]+)?)*"
+            rf"{_WS}+{_OPERAND}(?={_WS})")
+_WRAPPER = (rf"(?:nice|nohup|env|stdbuf|command\b(?!(?:{_WS}+-[A-Za-z]+)*?{_WS}+-[A-Za-z]*[vV]))"
+            rf"(?:{_WS}+-[\w=.-]+(?:{_WS}+(?:{_OPERAND}|(?!{_WORD}\b)[A-Za-z_]\w*))?)*(?={_WS})")
 ADVERSARIAL_RE = re.compile(
-    r"(?:^|[|;&({]|\n)"                             # command position
-    rf"(?:{_WS}*(?:if|then|do|else|elif|while|until|time|exec)\b|{_WS}*!"  # control-flow lead-ins,
-    # env assignments; a value that opens with a quote must close it, so `X="… adversarial-review …"`
-    # is a value, not a command:
-    rf"|{_WS}*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s\"']\S*|)"
-    rf"|{_WS}*timeout(?:{_WS}+-{{1,2}}[A-Za-z][\w=.-]*(?:{_WS}+[\w.$\"{{}}]+)?)*{_WS}+{_OPERAND}(?={_WS})"
-    # other wrappers:
-    rf"|{_WS}*(?:nice|nohup|env|stdbuf|command\b(?!(?:{_WS}+-[A-Za-z]+)*?{_WS}+-[A-Za-z]*[vV]))(?:{_WS}+-[\w=.-]+(?:{_WS}+-?{_OPERAND})?)*(?={_WS}))*"
-    rf"{_WS}*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
+    r"(?:^|[|;&({]|(?<!\\)\n)"                      # command position (a continuation is not one)
+    rf"(?:{_WS}*(?:{_LEAD_IN}|{_ENV_ASSIGN}|{_TIMEOUT}|{_WRAPPER}))*"
+    rf"{_WS}*(?:(?:[\w./~\"-]|\$(?:\{{[^}}\s]*\}}|\w+(?!\w)))*/)?adversarial-review(?:\.sh)?\b"
     r"(?P<args>(?:\\\n|[^|;&\n])*)"                 # this command's own arguments
 )
-# The wrappers that run a command (`timeout 1500 …`, `nice -n 5 …`, `nohup …`) take the command
-# position too, in any order with env assignments: zuvo:review runs every pass as
-# `timeout 1500 ~/.zuvo/adversarial-review --multi …`, and without them nine real --multi passes
-# scored --multi: 0 and an honest review was accused (2026-10-12). `echo`, `grep` and the like are
-# deliberately NOT wrappers — their argument is text, not a command; `command` is one only without
-# a -v/-V among its options (`command -v`, `-pv`, `-p -V`: a lookup, not a run).
 # `args` deliberately consumes a backslash-newline continuation rather than stopping at it.
 # Stopping made `… | adversarial-review \<newline>  --multi --mode code` capture just `\`, so a
 # real `--multi` pass scored adversarial_multi=0 and the verifier ACCUSED an honest reviewer of

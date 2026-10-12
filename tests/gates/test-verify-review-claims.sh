@@ -169,6 +169,66 @@ else
   bad "wrapped invocations miscounted (rc=$rc): $out"
 fi
 
+# ── 6d. the wrapper forms 6c does not cover; a continuation is not a command position ──
+# `timeout "${TO:-1500}"`, `env -u FOO`, `stdbuf -o L`, `time -p` and an escaped quote inside an env
+# value each hid a real --multi pass (an undercount accuses an honest review). `echo foo \<newline>
+# adversarial-review` is echo's argument, not an invocation.
+python3 - "$TMP/wrapped-more.jsonl" <<'PY'
+import json, sys
+commands = [
+    'timeout "${TO:-1500}" adversarial-review --multi < d',
+    'timeout "$((60*25))" adversarial-review --multi < d',
+    'env -u FOO adversarial-review --multi < d',
+    'env -i PATH=/bin adversarial-review --multi < d',
+    'stdbuf -o L adversarial-review --multi < d',
+    'stdbuf -oL adversarial-review --multi < d',
+    'time -p adversarial-review --multi < d',
+    'X="a \\"b\\"" adversarial-review --multi < d',
+    'X="a\\\nb" adversarial-review --multi < d',
+    'X=1 Y=$(id -u) adversarial-review --multi < d',
+    'timeout -- 1500 adversarial-review --multi < d',
+    '"$HOME"/.zuvo/adversarial-review --multi < d',
+    '"$ZUVO_BASE/scripts/adversarial-review.sh" --multi < d',
+    'echo foo \\\n  adversarial-review --multi',
+]
+with open(sys.argv[1], "w") as f:
+    for c in commands:
+        rec = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": c}}]}}
+        f.write(json.dumps(rec) + "\n")
+PY
+out="$(printf 'adversarial:\n  passes_run: 13\n  self_review_flag: yes — used --multi\n' \
+  | python3 "$V" --claims - --transcript "$TMP/wrapped-more.jsonl" --strict 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "(--multi: 13)"; then
+  pass "env/stdbuf/time -p, \${T:-N}/\$((…)) durations, timeout --, \$(…) and escaped-quote values, a \$VAR path are counted; a continued echo is not"
+else
+  bad "wrapper forms miscounted (rc=$rc): $out"
+fi
+
+# ── 6e. no input makes the scan exponential or quadratic ──────────────────
+# An assignment value that could end anywhere (`a=a=a=…x`) split exponentially many ways, and each
+# newline of a long run of newlines or backslash-newlines rescanned the rest. Heredocs reach this
+# regex too, so the verifier hung.
+python3 - "$TMP/pathological.jsonl" <<'PY'
+import json, sys
+commands = ["a=" * 40 + "x", "OPTS=" + ",".join(f"k{i}=v" for i in range(40)) + "=",
+            "env -i " * 40 + "x", "a=1;" * 10000, "a=b(" * 5000,
+            "|" + "\\\n" * 40000 + "x", "\n" * 40000 + "x"]
+with open(sys.argv[1], "w") as f:
+    for c in commands:
+        rec = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": c}}]}}
+        f.write(json.dumps(rec) + "\n")
+PY
+TMO=(); command -v timeout >/dev/null 2>&1 && TMO=(timeout 30)   # no timeout binary: a hang hangs the suite instead
+out="$(printf 'adversarial:\n  passes_run: 0\n' \
+  | ${TMO[@]+"${TMO[@]}"} python3 "$V" --claims - --transcript "$TMP/pathological.jsonl" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -q Traceback; then
+  pass "pathological commands are scanned in linear time"
+else
+  bad "verifier hung or crashed on pathological commands (rc=$rc): $(printf '%s' "$out" | tail -2)"
+fi
+
 # ── 7. partial mismatch (some evidence, not enough) is accused ─────────────
 # the elif branches: observed > 0 but fewer than claimed. Previously untested — a bug here would
 # only surface as a silent clear on a half-done review.

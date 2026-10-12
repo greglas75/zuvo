@@ -258,8 +258,16 @@ def drop_stub(text):
 
 REPORT = ("merged", "stubbed", "tracked", "edited", "hand_merge", "linked", "failed")
 
-def consolidate_file(repo: Path, mr: Path, rel: str, kind: str, dry: bool, report: dict) -> None:
+def state_files(repo: Path) -> list:
+    """The per-repository state files a worktree may hold a copy of, relative to its root."""
+    rels = ["memory/backlog.md", "memory/ideas.md"]
+    if (repo / "knowledge").exists():
+        rels += [str(kf.relative_to(repo)) for kf in sorted((repo / "knowledge").glob("*.jsonl"))]
+    return rels
+
+def consolidate_file(repo: Path, mr: Path, rel: str, dry: bool, report: dict) -> None:
     """Merge one worktree copy into main (or leave it, and say why) and stub it once main holds it."""
+    kind = "jsonl" if rel.endswith(".jsonl") else "md"
     wt = repo / rel
     if not wt.exists() and not wt.is_symlink():
         return
@@ -291,9 +299,21 @@ def consolidate_file(repo: Path, mr: Path, rel: str, kind: str, dry: bool, repor
         wt.write_text(STUB.format(main=mr, rel=rel), **ENC)
     report["stubbed"].append((repo.name, rel))
 
+def repos(report: dict) -> list:
+    """The git checkouts under ~/DEV; one that cannot be read is reported, not a crash of the run."""
+    found = set()
+    for p in DEV.glob("*/"):
+        try:
+            if (p / ".git").exists():
+                found.add(p)
+        except OSError as e:
+            report["failed"].append((p.name, "worktree scan", str(e)))
+    return sorted(found)
+
 def consolidate(dry: bool) -> dict:
     report = {k: [] for k in REPORT}
-    for repo in sorted({p for p in DEV.glob("*/") if (p / ".git").exists()}):
+    home = Path.home().resolve()
+    for repo in repos(report):
         try:
             mr = main_root(str(repo))
         except OSError as e:
@@ -301,21 +321,20 @@ def consolidate(dry: bool) -> dict:
             continue
         if not mr:
             continue
-        mr = Path(mr)
-        if mr.resolve() == repo.resolve():
-            continue  # this IS the main checkout
-        # Inside HOME as written or as resolved (a repo linked in from another disk; a symlinked HOME
-        # that git reports resolved), and a path test either way: /home/greg2 is not in /home/greg.
-        home = Path.home()
-        if not (mr.is_relative_to(home) or mr.resolve().is_relative_to(home.resolve())):
+        try:
+            # git reports the main checkout by its real path, so a main checkout outside HOME stays
+            # out even when ~/DEV links to it, and a symlinked HOME is compared resolved too. A path
+            # test, not a string prefix: /home/greg2 is not in /home/greg.
+            mr = Path(mr).resolve()
+            if mr == repo.resolve() or not mr.is_relative_to(home):
+                continue  # this IS the main checkout, or one outside HOME
+            rels = state_files(repo)  # this repo dir is a linked worktree of mr
+        except (OSError, RuntimeError) as e:  # a symlink loop or an unreadable dir: this repo only
+            report["failed"].append((repo.name, "worktree scan", str(e)))
             continue
-        # this repo dir is a linked worktree of mr
-        candidates = [("memory/backlog.md", "md"), ("memory/ideas.md", "md")]
-        for kf in sorted((repo / "knowledge").glob("*.jsonl")) if (repo / "knowledge").exists() else []:
-            candidates.append((str(kf.relative_to(repo)), "jsonl"))
-        for rel, kind in candidates:
+        for rel in rels:
             try:
-                consolidate_file(repo, mr, rel, kind, dry, report)
+                consolidate_file(repo, mr, rel, dry, report)
             except Exception as e:  # reported FAILED below; one bad copy must not abort the others
                 report["failed"].append((repo.name, rel, str(e)))
     return report

@@ -506,5 +506,34 @@ run
 check "main checkout in a sibling of HOME left untouched" \
   '[ "$(sha "$T/home2/outside/memory/backlog.md")" = "$outside_before" ] && ! printf "%s\n" "$out" | grep -q "outside-wt/"'
 
+# ── an unreadable directory in ~/DEV is that directory's problem, not the run's ──────────────────
+echo "unreadable directory in DEV"
+# `(p / ".git").exists()` raised PermissionError outside every try: one locked folder in ~/DEV ended
+# the run in a traceback, with no report for any other repository.
+mkdir -p "$DEV/locked/.git" && chmod 000 "$DEV/locked"
+if [ "$(id -u)" = 0 ]; then
+  echo "  SKIP: unreadable directory (root reads anything)"
+else
+  run_rc --dry-run
+  check "unreadable directory: the report still prints, no traceback" \
+    'printf "%s\n" "$out" | grep -q "^DRY-RUN CONSOLIDATION REPORT" && ! printf "%s\n" "$out" | grep -q "^Traceback"'
+fi
+chmod 755 "$DEV/locked"
+
+# ── a symlinked HOME: git reports the main checkout resolved, and it is still inside HOME ──────────
+echo "symlinked HOME"
+# Compared unresolved, `$T/home/DEV/symhome` (what git prints) is not inside `$T/homelink`, and every
+# worktree of a user whose HOME is a link was skipped without a word.
+init_repo symhome 'memory/
+'
+git -C "$DEV/symhome" worktree add -q "$DEV/symhome-wt" -b feat
+mkdir -p "$DEV/symhome/memory" "$DEV/symhome-wt/memory"
+printf '| B-1 | one |\n' > "$DEV/symhome/memory/backlog.md"
+printf '| B-1 | one |\n| B-2 | two |\n' > "$DEV/symhome-wt/memory/backlog.md"
+ln -s "$HOME" "$T/homelink"
+HOME="$T/homelink" run --dry-run
+check "worktree under a symlinked HOME is consolidated" \
+  'has_line "  symhome-wt/memory/backlog.md: +1 unique -> symhome/memory/backlog.md"'
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
