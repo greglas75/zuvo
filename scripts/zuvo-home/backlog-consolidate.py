@@ -51,10 +51,11 @@ ENC = {"encoding": "utf-8", "errors": "surrogateescape"}
 
 def sh(args, cwd=None):
     try:
-        r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15)
+        r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15,
+                           encoding="utf-8", errors="replace")
         return r.returncode, r.stdout.strip()
     except Exception:
-        return 1, ""
+        return -1, ""
 
 def main_root(repo_dir):
     rc, out = sh(["git", "worktree", "list", "--porcelain"], cwd=repo_dir)
@@ -64,8 +65,12 @@ def main_root(repo_dir):
     return out if rc == 0 else None
 
 def is_tracked(repo_dir, relpath):
+    """git's answer, or OSError when git gives none: "untracked" is what licenses a write and a stub,
+    so a failed lookup must not read as one."""
     rc, _ = sh(["git", "ls-files", "--error-unmatch", relpath], cwd=repo_dir)
-    return rc == 0
+    if rc in (0, 1):
+        return rc == 0
+    raise OSError(f"git ls-files failed (rc {rc}) in {repo_dir}")
 
 def ws(line):
     return " ".join(line.split())
@@ -80,9 +85,9 @@ def norm(line):
 
 # An entry's ID: `B-12`, `S-66`, `LGN-1`, `B-20261005-import-choice-pool-blank-upload`. Markup, a size
 # tag and a status word in front are not part of it (`| DONE B-12 |`, `| ~~B-12~~ |`,
-# `- [x] **[S] B-12 [P3]** …`), and it ends at a boundary, so `B-12x` is not `B-12`.
+# `- [x] **[S] B-12 [P3]** …`, `- [B-12](url) …`), and it ends at a boundary, so `B-12x` is not `B-12`.
 ENTRY_ID = re.compile(
-    r"(?:\[[A-Z]{1,3}\]\s+)?"
+    r"(?:\[[A-Z]{1,3}\]\s+)?\[?"
     r"(?:(?i:DONE|FIXED|WONTFIX|CLOSED|OPEN|WIP|TODO|BLOCKED|DEFERRED|PARTIAL|REJECTED|SUPERSEDED):?\s+)?"
     r"([A-Z][A-Z0-9]{0,9}-[A-Za-z0-9][A-Za-z0-9._-]*)(?=$|[\s|*`~:,;)\]])")
 LIST_ITEM = re.compile(r"(?:[-*+]|\d{1,3}[.)])\s+(?:\[[ xX]\]\s+)?")
@@ -126,7 +131,7 @@ def append(main_file: Path, block: str):
     backup(main_file)
     main_file.parent.mkdir(parents=True, exist_ok=True)
     with main_file.open("a", **ENC) as f:
-        f.write(block)  # one write: no header left dangling without its entries
+        f.write(block)  # header and entries in one write call, not two
 
 def merge_md(main_file: Path, wt_file: Path, label: str, write=True):
     """Append the entries of wt_file that main_file lacks — by entry ID (entry_id), else by the
@@ -146,8 +151,8 @@ def merge_md(main_file: Path, wt_file: Path, label: str, write=True):
     uniq, differs = [], []
     for l in wt_file.read_text(**ENC).splitlines():
         n = norm(l)
-        if not n or n.startswith("#"):
-            continue  # headings are structure, not entries — incl. this script's own "## Merged from …"
+        if not n or n.startswith("# ") or n.startswith("## Merged from worktree "):
+            continue  # the file's title, and the section headers this script itself writes
         k = entry_key(l)
         if k not in have:
             uniq.append(l)
@@ -226,7 +231,7 @@ for repo in repos:
         try:
             if not wt.exists() or wt.stat().st_size == 0:
                 continue
-            if "MOVED — canonical" in wt.read_text(**ENC)[:200]:
+            if wt.read_text(**ENC).startswith(STUB.split("\n", 1)[0]):
                 continue  # already stubbed
             main_file = mr / rel
             if is_tracked(str(repo), rel):

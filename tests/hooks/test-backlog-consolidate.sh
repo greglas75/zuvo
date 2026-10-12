@@ -109,6 +109,7 @@ cat > "$DEV/plain/memory/backlog.md" <<'MD'
 | B-15 | open |
 - [ ] **B-20** list entry
 - [ ] **[S] B-18 [P3]** sized entry
+- [B-19](https://example.test/19) linked entry
 - B-30 parent
   - B-31 is mentioned in a body line
 MD
@@ -124,30 +125,33 @@ cat > "$DEV/plain-wt/memory/backlog.md" <<'MD'
 | B-13 | new row |
 - [x] **B-20** list entry
 - [ ] **[S] B-18 [P3]** sized entry, rewritten
+- [B-19](https://example.test/19) linked entry, rewritten
 - [ ] **[M] B-17 [P2]** new sized entry
 1. B-21 new numbered entry
 - B-30 parent
   - B-31 is mentioned in another body line
+## A new section
 a free-text note
 MD
 cp "$DEV/plain-wt/memory/backlog.md" "$T/wt-content.md"
 out="$(consolidate)"
 main="$DEV/plain/memory/backlog.md"
-check "report: +5 unique" 'has_line "  plain-wt/memory/backlog.md: +5 unique -> plain/memory/backlog.md"'
+check "report: +6 unique" 'has_line "  plain-wt/memory/backlog.md: +6 unique -> plain/memory/backlog.md"'
 check "new row B-13 appended once" '[ "$(count "$main" "| B-13 |")" = 1 ]'
 check "new sized entry B-17 appended once" '[ "$(count "$main" "B-17")" = 1 ]'
 check "new numbered entry B-21 appended once" '[ "$(count "$main" "B-21")" = 1 ]'
 check "indented body line appended (not keyed as B-31)" '[ "$(count "$main" "in another body line")" = 1 ]'
+check "a new section heading appended once" '[ "$(count "$main" "## A new section")" = 1 ]'
 check "free-text line appended once" '[ "$(count "$main" "a free-text note")" = 1 ]'
-check "edited B-12/B-14/B-15/B-18/B-20 not duplicated" \
-  'for id in B-12 B-14 B-15 B-18 B-20; do [ "$(count "$main" "$id")" = 1 ] || exit 1; done'
+check "edited B-12/B-14/B-15/B-18/B-19/B-20 not duplicated" \
+  'for id in B-12 B-14 B-15 B-18 B-19 B-20; do [ "$(count "$main" "$id")" = 1 ] || exit 1; done'
 check "table header not duplicated" '[ "$(count "$main" "| ID | Title |")" = 1 ]'
 check "a copied \"## Merged from\" heading not appended" '[ "$(count "$main" "Merged from worktree other")" = 0 ]'
 check "backup of main written" 'ls "$DEV/plain/memory" | grep -q "^backlog.md.bak-"'
 # A status word, a ticked box, a rewrite: the same entry (not appended) but an edit all the same —
 # the stub would erase it, so the worktree copy stays and the report names each.
 check "worktree copy holding the edits kept" 'cmp -s "$T/wt-content.md" "$DEV/plain-wt/memory/backlog.md"'
-check "report names the edited entries" 'has_line "  EDITED: plain-wt/memory/backlog.md: B-14, B-15, B-20, B-18"'
+check "report names the edited entries" 'has_line "  EDITED: plain-wt/memory/backlog.md: B-14, B-15, B-20, B-18, B-19"'
 
 # ── 5. a worktree with nothing new or edited is stubbed; re-runs change nothing ────────────────────
 echo "5. stub and re-run"
