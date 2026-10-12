@@ -27,6 +27,9 @@ pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
 [ -f "$BIN" ] || { bad "scripts/zuvo-home/append-runlog does not exist"; exit 1; }
+# session-start exports this into every Claude session (CLAUDE_ENV_FILE); inherited, it overrides
+# the glob in every case below. The cases that need it set it on their own command line.
+unset ZUVO_INCLUDES_FILE
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT          # only this run's directory — never a shared wildcard
