@@ -82,7 +82,7 @@ ADVERSARIAL_RE = re.compile(
     r"(?:\s*(?:if|then|do|else|elif|while|until|time|exec)\b|\s*!"  # control-flow lead-ins,
     r"|\s*[A-Za-z_][A-Za-z0-9_]*=\S*"               # env assignments,
     r"|\s*timeout(?:\s+-{1,2}[A-Za-z][\w=.-]*(?:\s+[\w.]+)?)*\s+\d[\d.]*[smhd]?\b"  # `timeout [-k 10] 25m`,
-    r"|\s*(?:nice|nohup|env|command|stdbuf)(?:\s+-[\w=.-]+(?:\s+-?\d+)?)*(?=\s))*"  # other wrappers
+    r"|\s*(?:nice|nohup|env|stdbuf)(?:\s+-[\w=.-]+(?:\s+-?\d+)?)*(?=\s))*"  # other wrappers
     r"\s*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
     r"(?P<args>(?:\\\n|[^|;&\n])*)"                 # this command's own arguments
 )
@@ -90,7 +90,8 @@ ADVERSARIAL_RE = re.compile(
 # position too, in any order with env assignments: zuvo:review runs every pass as
 # `timeout 1500 ~/.zuvo/adversarial-review --multi …`, and without them nine real --multi passes
 # scored --multi: 0 and an honest review was accused (2026-10-12). `echo`, `grep` and the like are
-# deliberately NOT wrappers — their argument is text, not a command.
+# deliberately NOT wrappers — their argument is text, not a command; nor is `command`, whose
+# `command -v adversarial-review` is a lookup, not a run.
 # `args` deliberately consumes a backslash-newline continuation rather than stopping at it.
 # Stopping made `… | adversarial-review \<newline>  --multi --mode code` capture just `\`, so a
 # real `--multi` pass scored adversarial_multi=0 and the verifier ACCUSED an honest reviewer of

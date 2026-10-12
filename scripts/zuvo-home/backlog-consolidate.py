@@ -154,7 +154,7 @@ def append(main_file: Path, block: str):
     with main_file.open("a", **ENC) as f:
         f.write(block)  # header and entries in one write call, not two
 
-def merge_md(main_file: Path, wt_text: str, label: str, write=True):
+def merge_md(main_file: Path, wt_text: str, label: str, *, write: bool):
     """Append the entries of wt_text that main_file lacks — by entry ID (entry_id), else by the
     normalised line. Returns (count merged, entries whose worktree text differs from main's).
 
@@ -207,7 +207,7 @@ def jsonl_key(line):
     h = hashlib.sha1(line.encode("utf-8", "surrogateescape")).hexdigest()
     return h, h
 
-def merge_jsonl(main_file: Path, wt_text: str, write=True):
+def merge_jsonl(main_file: Path, wt_text: str, *, write: bool):
     """Append the records of wt_text whose id main_file lacks. Returns (count merged, ids whose
     record differs from main's) — the same contract as merge_md."""
     bodies = {}
@@ -230,10 +230,10 @@ def merge_jsonl(main_file: Path, wt_text: str, write=True):
         append(main_file, "\n".join(uniq) + "\n")
     return len(uniq), differs
 
-def merge(kind, main_file, wt_text, label, write=True):
+def merge(kind, main_file, wt_text, label, *, write: bool):
     if kind == "md":
-        return merge_md(main_file, wt_text, label, write)
-    return merge_jsonl(main_file, wt_text, write)
+        return merge_md(main_file, wt_text, label, write=write)
+    return merge_jsonl(main_file, wt_text, write=write)
 
 STUB_TAIL = ("Canonical: ", "One state file per repository (zuvo backlog-protocol")
 STUB = ("# MOVED — canonical copy lives in the MAIN checkout\n\n"
@@ -269,7 +269,7 @@ def consolidate_file(repo: Path, mr: Path, rel: str, kind: str, dry: bool, repor
         # a link leads to a file this copy does not own (often the canonical one)
         report["linked"].append((repo.name, rel))
         return
-    text = drop_stub(wt.read_text(**ENC).lstrip("﻿"))
+    text = drop_stub(wt.read_text(**ENC).lstrip("\ufeff"))
     if not text.strip():
         return  # empty, or a stub with nothing written below it
     if is_tracked(str(repo), rel):
@@ -304,7 +304,8 @@ def consolidate(dry: bool) -> dict:
         mr = Path(mr)
         if mr.resolve() == repo.resolve():
             continue  # this IS the main checkout
-        if not mr.is_relative_to(Path.home()):  # a path prefix, not a string one: /home/greg2 ≠ /home/greg
+        # A path test, not a string prefix: /home/greg2 is not inside /home/greg.
+        if not mr.resolve().is_relative_to(Path.home().resolve()):
             continue
         # this repo dir is a linked worktree of mr
         candidates = [("memory/backlog.md", "md"), ("memory/ideas.md", "md")]
