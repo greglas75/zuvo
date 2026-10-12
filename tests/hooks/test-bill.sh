@@ -9,15 +9,18 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/zh/adversarial-inputs" "$TMP/proj"
 
 python3 - "$ROOT/scripts/zuvo-home/bill" "$TMP" <<'PY'
-import importlib.machinery, importlib.util, json, os, stat, sys
+import json, os, stat, sys
 from datetime import datetime, timedelta, timezone
 
 bill_path, tmp = sys.argv[1], sys.argv[2]
 zh, binp, proj = f"{tmp}/zh", f"{tmp}/bin", f"{tmp}/proj"
 os.environ.update(ZUVO_HOME=zh, BILL_MAX_TRIES="3", BILL_MIN_AGE_MINUTES="30", BILL_MAX_AGE_HOURS="48",
                   PATH=f"{binp}:{os.environ.get('PATH', '/usr/bin:/bin')}")
-spec = importlib.util.spec_from_loader("bill", importlib.machinery.SourceFileLoader("bill", bill_path))
-bill = importlib.util.module_from_spec(spec); spec.loader.exec_module(bill)
+sys.path.insert(0, os.path.dirname(bill_path))   # Bill's logic: flat modules beside the launcher
+import types, zuvo_bill_config, zuvo_bill_judge, zuvo_bill_tick
+bill = types.SimpleNamespace(LEDGER=zuvo_bill_config.ledger(), BD=zuvo_bill_config.bill_data(),
+                             read_ledger=zuvo_bill_tick.read_ledger, pending=zuvo_bill_tick.pending,
+                             judge=zuvo_bill_judge.judge, settle=zuvo_bill_tick.settle)
 os.makedirs(bill.BD, exist_ok=True)
 
 fails = 0
