@@ -91,6 +91,9 @@ expect_row "--skill --sec 3 keeps SEC=3 (a value-less flag must not swallow the 
 run typo --skill build --secc 2
 [ "$ERR" = "log-drive-by: ignored unknown flag: --secc" ] && ok "a misspelled flag is named on stderr" || bad "typo stderr: [$ERR]"
 expect_row "…and the row still records SEC=0, not 2" "build${T}p${T}0${T}0${T}0${T}0${T}0${T}0${T}0${T}0${T}0"
+run helpfirst --help --skill build --secc 2
+[ "$RC" -eq 0 ] && [ ! -e "$CASE_HOME/drive-by.log" ] && [ -z "$ERR" ] \
+  && ok "--help first: usage only, no receipt and no diagnostics for the rest" || bad "help first: rc=$RC err=[$ERR]"
 for h in --help -h --help=x; do
   run "help$h" --skill build "$h"
   # The whole leading comment block, de-commented: its first line and its last usage line.

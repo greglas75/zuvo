@@ -63,7 +63,8 @@ Column definitions:
 - **File**: File path with line number
 - **Problem**: One-line description of the issue
 - **Severity**: `critical`, `high`, `medium`, `low`
-- **Category**: Rule family (CQ, Q, S, SA, DB, etc.)
+- **Category**: Rule family (CQ, Q, S, SA, DB, etc.); a drive-by entry uses its tag (SEC, BUG,
+  SIZE, DUP, CPLX, PERF, DEAD, READ)
 - **Source**: Which skill or agent produced this finding. An observation outside the task's fence
   carries the token `drive-by:<skill>` — the exact rule is in `drive-by-findings.md` step 2
 - **Seen**: How many times this finding has been observed

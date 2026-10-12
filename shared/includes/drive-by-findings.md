@@ -54,8 +54,8 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
 2. **Append to `memory/backlog.md` resolved per `backlog-protocol.md` "Where the Backlog Lives"**
    (a tracked backlog is the current checkout's copy; an untracked one is the MAIN checkout's),
    in the format that file already uses — `backlog-protocol.md`'s table by default. Two fields are
-   fixed whatever the format, because they are the only way to tell a drive-by entry from the
-   task's own follow-ups:
+   fixed whatever the format: the source is the only way to tell a drive-by entry from the task's
+   own follow-ups, and the tag is what those entries are counted by.
    - **The source carries the token `drive-by:<skill>`.** A new entry's source IS that token,
      optionally followed by a space and a ticket or run id (`drive-by:build RD-2981`). A bump of an
      existing entry (step 1) adds it as one more comma-separated source (`zuvo:review,
@@ -65,10 +65,12 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
    - **The tag is the Category** (table) or the `[<TAG>]` prefix of the problem text (list line).
 
    Table row (`backlog-protocol.md` columns; a `|` inside a cell is written `\|`, as in the
-   fingerprint; `<severity>` is one of critical, high, medium, low):
+   fingerprint; `<severity>` is one of critical, high, medium, low). The id is descriptive, like the
+   list line's, so concurrent runs cannot both take the next `B-<N>`; the evidence and confidence
+   ride in the Problem cell, which is the table's only free-text column:
 
    ```
-   | B-<N> | OPEN | <file>\|<TAG>\|<short-slug> | <path>:<line> | <the defect, one sentence> | <severity> | <TAG> | drive-by:<skill> | 1 | <YYYY-MM-DD> |
+   | B-<file-stem>-<TAG>-<short-slug> | OPEN | <file>\|<TAG>\|<short-slug> | <path>:<line> | <the defect, one sentence> — evidence: <what proves it> (conf NN) | <severity> | <TAG> | drive-by:<skill> | 1 | <YYYY-MM-DD> |
    ```
 
    List line (a backlog kept as a checklist):
