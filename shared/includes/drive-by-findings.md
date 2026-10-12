@@ -56,25 +56,26 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
    in the format that file already uses — `backlog-protocol.md`'s table by default. Two fields are
    fixed whatever the format, because they are the only way to tell a drive-by entry from the
    task's own follow-ups:
-   - **Source starts with the literal `drive-by:<skill>`** — a ticket or run id may follow after a
-     space (`drive-by:build RD-2981`), never before it. `build RD-2981 / final review` is NOT a
-     drive-by source: on 2026-10-12, 80 counted drive-by findings left only ~17 entries anyone
-     could find, because the rest were filed under sources like that.
+   - **The source carries the token `drive-by:<skill>`.** A new entry's source IS that token,
+     optionally followed by a space and a ticket or run id (`drive-by:build RD-2981`). A bump of an
+     existing entry (step 1) adds it as one more comma-separated source (`zuvo:review,
+     drive-by:build`). Anything that merely mentions a ticket — `build RD-2981 / final review` —
+     is NOT a drive-by source: on 2026-10-12, 80 counted drive-by findings left only ~17 entries
+     anyone could find, because the rest were filed under sources like that.
    - **The tag is the Category** (table) or the `[<TAG>]` prefix of the problem text (list line).
 
-   Table row (`backlog-protocol.md` columns):
+   Table row (`backlog-protocol.md` columns; a `|` inside a cell is written `\|`, as in the
+   fingerprint; `<severity>` is one of critical, high, medium, low):
 
    ```
-   | B-<N> | OPEN | <file>|<TAG>|<short-slug> | <path>:<line> | <the defect, one sentence> | <critical|high|medium|low> | <TAG> | drive-by:<skill> | 1 | <YYYY-MM-DD> |
+   | B-<N> | OPEN | <file>\|<TAG>\|<short-slug> | <path>:<line> | <the defect, one sentence> | <severity> | <TAG> | drive-by:<skill> | 1 | <YYYY-MM-DD> |
    ```
 
    List line (a backlog kept as a checklist):
 
    ```
-   - [ ] B-<file-stem>-<tag>-<short-slug> <path>:<line> — [<TAG>] <the defect, one sentence> | evidence: <what proves it> | severity: <critical|high|medium|low> | source: drive-by:<skill> | conf: NN | <YYYY-MM-DD>
+   - [ ] B-<file-stem>-<tag>-<short-slug> <path>:<line> — [<TAG>] <the defect, one sentence> | evidence: <what proves it> | severity: <severity> | source: drive-by:<skill> | conf: NN | <YYYY-MM-DD>
    ```
-
-   A bump of an existing entry (step 1) appends `drive-by:<skill>` to its source.
 
 3. **Never copy a secret into the backlog or the summary.** For a hardcoded credential or PII in a
    log, cite `file:line` and the KIND (`AWS secret key`, `customer e-mail`) — never the value.

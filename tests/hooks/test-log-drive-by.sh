@@ -91,9 +91,12 @@ expect_row "--skill --sec 3 keeps SEC=3 (a value-less flag must not swallow the 
 run typo --skill build --secc 2
 [ "$ERR" = "log-drive-by: ignored unknown flag: --secc" ] && ok "a misspelled flag is named on stderr" || bad "typo stderr: [$ERR]"
 expect_row "…and the row still records SEC=0, not 2" "build${T}p${T}0${T}0${T}0${T}0${T}0${T}0${T}0${T}0${T}0"
-for h in --help -h; do
+for h in --help -h --help=x; do
   run "help$h" --skill build "$h"
-  [ "$RC" -eq 0 ] && [ ! -e "$CASE_HOME/drive-by.log" ] && [ -z "$ERR" ] && case "$OUT" in *"Usage:"*) true ;; *) false ;; esac \
+  # The whole leading comment block, de-commented: its first line and its last usage line.
+  [ "$RC" -eq 0 ] && [ ! -e "$CASE_HOME/drive-by.log" ] && [ -z "$ERR" ] \
+    && [ "$(printf '%s\n' "$OUT" | head -1)" = "~/.zuvo/log-drive-by — one-line receipt that a skill's \"Drive-by findings\" step RAN." ] \
+    && case "$OUT" in *"--skill build [--sec N]"*"that was NOT written says so on stderr"*) true ;; *) false ;; esac \
     && ok "$h prints the usage and writes no receipt (a syntax probe is not a run)" || bad "$h: rc=$RC out=[$OUT] err=[$ERR] log=$(ls "$CASE_HOME" 2>&1)"
 done
 run stray --skill build extra

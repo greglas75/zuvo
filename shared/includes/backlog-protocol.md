@@ -65,7 +65,7 @@ Column definitions:
 - **Severity**: `critical`, `high`, `medium`, `low`
 - **Category**: Rule family (CQ, Q, S, SA, DB, etc.)
 - **Source**: Which skill or agent produced this finding. An observation outside the task's fence
-  starts with the literal `drive-by:<skill>` (`drive-by-findings.md`); a ticket id may follow it
+  carries the token `drive-by:<skill>` — the exact rule is in `drive-by-findings.md` step 2
 - **Seen**: How many times this finding has been observed
 - **Added**: Date first recorded
 
