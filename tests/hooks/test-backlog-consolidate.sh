@@ -131,17 +131,18 @@ cat > "$DEV/plain-wt/memory/backlog.md" <<'MD'
 - B-30 parent
   - B-31 is mentioned in another body line
 ## A new section
+# A new top-level section
 a free-text note
 MD
 cp "$DEV/plain-wt/memory/backlog.md" "$T/wt-content.md"
 out="$(consolidate)"
 main="$DEV/plain/memory/backlog.md"
-check "report: +6 unique" 'has_line "  plain-wt/memory/backlog.md: +6 unique -> plain/memory/backlog.md"'
+check "report: +7 unique" 'has_line "  plain-wt/memory/backlog.md: +7 unique -> plain/memory/backlog.md"'
 check "new row B-13 appended once" '[ "$(count "$main" "| B-13 |")" = 1 ]'
 check "new sized entry B-17 appended once" '[ "$(count "$main" "B-17")" = 1 ]'
 check "new numbered entry B-21 appended once" '[ "$(count "$main" "B-21")" = 1 ]'
 check "indented body line appended (not keyed as B-31)" '[ "$(count "$main" "in another body line")" = 1 ]'
-check "a new section heading appended once" '[ "$(count "$main" "## A new section")" = 1 ]'
+check "new headings appended once" '[ "$(count "$main" "## A new section")" = 1 ] && [ "$(count "$main" "# A new top-level section")" = 1 ]'
 check "free-text line appended once" '[ "$(count "$main" "a free-text note")" = 1 ]'
 check "edited B-12/B-14/B-15/B-18/B-19/B-20 not duplicated" \
   'for id in B-12 B-14 B-15 B-18 B-19 B-20; do [ "$(count "$main" "$id")" = 1 ] || exit 1; done'

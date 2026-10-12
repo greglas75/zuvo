@@ -52,7 +52,7 @@ ENC = {"encoding": "utf-8", "errors": "surrogateescape"}
 def sh(args, cwd=None):
     try:
         r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=15,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="surrogateescape")
         return r.returncode, r.stdout.strip()
     except Exception:
         return -1, ""
@@ -67,10 +67,10 @@ def main_root(repo_dir):
 def is_tracked(repo_dir, relpath):
     """git's answer, or OSError when git gives none: "untracked" is what licenses a write and a stub,
     so a failed lookup must not read as one."""
-    rc, _ = sh(["git", "ls-files", "--error-unmatch", relpath], cwd=repo_dir)
-    if rc in (0, 1):
-        return rc == 0
-    raise OSError(f"git ls-files failed (rc {rc}) in {repo_dir}")
+    rc, out = sh(["git", "ls-files", "--", relpath], cwd=repo_dir)
+    if rc != 0:
+        raise OSError(f"git ls-files failed (rc {rc}) in {repo_dir}")
+    return bool(out)
 
 def ws(line):
     return " ".join(line.split())
@@ -151,8 +151,8 @@ def merge_md(main_file: Path, wt_file: Path, label: str, write=True):
     uniq, differs = [], []
     for l in wt_file.read_text(**ENC).splitlines():
         n = norm(l)
-        if not n or n.startswith("# ") or n.startswith("## Merged from worktree "):
-            continue  # the file's title, and the section headers this script itself writes
+        if not n or n.startswith("## Merged from worktree "):
+            continue  # the section headers this script itself writes; any other heading is content
         k = entry_key(l)
         if k not in have:
             uniq.append(l)
