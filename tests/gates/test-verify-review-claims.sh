@@ -154,10 +154,12 @@ fi
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"nice -n 5 nohup adversarial-review --multi --mode code < d"}}]}}'
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo timeout 1500 adversarial-review --multi"}}]}}'
   printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"command -v adversarial-review --multi"}}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"timeout \"$T\" \\\n  adversarial-review --multi --mode code < d"}}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"timeout .5h adversarial-review --multi < d"}}]}}'
 } > "$TMP/wrapped-invoke.jsonl"
-out="$(printf 'adversarial:\n  passes_run: 3\n  self_review_flag: yes — used --multi\n' \
+out="$(printf 'adversarial:\n  passes_run: 5\n  self_review_flag: yes — used --multi\n' \
   | python3 "$V" --claims - --transcript "$TMP/wrapped-invoke.jsonl" --strict 2>&1)"; rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "(--multi: 3)"; then
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "(--multi: 5)"; then
   pass "invocations behind timeout/nice/nohup are counted; an echoed one or a command -v lookup is not"
 else
   bad "wrapped invocations miscounted (rc=$rc): $out"

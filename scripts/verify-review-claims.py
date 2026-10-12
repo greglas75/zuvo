@@ -77,13 +77,16 @@ DISPATCH_TOOLS = {"Agent", "Task"}          # Task = older harness name for the 
 # pipe/semicolon/&&/subshell, allowing leading VAR=value env assignments and a path prefix.
 # `args` captures the rest of THAT command (up to the next separator) so --help can be excluded
 # and --multi attributed to the invocation that actually carried it.
+_WS = r"(?:\s|\\\n)"                                # whitespace, incl. a backslash-newline
+_OPERAND = r"""(?:\.?\d[\d.]*[smhd]?|"?\$\{?\w+\}?"?)"""  # 25m, .5s, $T, "${T}"
 ADVERSARIAL_RE = re.compile(
     r"(?:^|[|;&({]|\n)"                             # command position
-    r"(?:\s*(?:if|then|do|else|elif|while|until|time|exec)\b|\s*!"  # control-flow lead-ins,
-    r"|\s*[A-Za-z_][A-Za-z0-9_]*=\S*"               # env assignments,
-    r"|\s*timeout(?:\s+-{1,2}[A-Za-z][\w=.-]*(?:\s+[\w.]+)?)*\s+\d[\d.]*[smhd]?\b"  # `timeout [-k 10] 25m`,
-    r"|\s*(?:nice|nohup|env|stdbuf)(?:\s+-[\w=.-]+(?:\s+-?\d+)?)*(?=\s))*"  # other wrappers
-    r"\s*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
+    rf"(?:{_WS}*(?:if|then|do|else|elif|while|until|time|exec)\b|{_WS}*!"  # control-flow lead-ins,
+    rf"|{_WS}*[A-Za-z_][A-Za-z0-9_]*=\S*"            # env assignments,
+    rf"|{_WS}*timeout(?:{_WS}+-{{1,2}}[A-Za-z][\w=.-]*(?:{_WS}+[\w.$\"{{}}]+)?)*{_WS}+{_OPERAND}(?={_WS})"
+    # other wrappers:
+    rf"|{_WS}*(?:nice|nohup|env|stdbuf)(?:{_WS}+-[\w=.-]+(?:{_WS}+-?{_OPERAND})?)*(?={_WS}))*"
+    rf"{_WS}*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
     r"(?P<args>(?:\\\n|[^|;&\n])*)"                 # this command's own arguments
 )
 # The wrappers that run a command (`timeout 1500 …`, `nice -n 5 …`, `nohup …`) take the command
