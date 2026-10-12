@@ -129,6 +129,11 @@ not reduce their defect class are retired.
   set); live proofs depend on real data (they are the point of a live proof).
 - [POST-CAP: SPEC-AMENDED] execute Task 1 spec review: `~/.zuvo/review-escapes` was both the helper file and the
   store directory (the bill/bill-data collision class) → store renamed `~/.zuvo/review-escapes-data/`; ccsync excludes that name.
+- [POST-CAP: SPEC-AMENDED] execute Task 5 live proof: the default `--ref origin/develop` read a stale mirror on the
+  curator host (tgm-survey-platform's live remote is `bitbucket`, `origin` a frozen GitHub copy) → the default ref
+  is develop's configured upstream, falling back to origin/develop.
+- [POST-CAP: SPEC-AMENDED] execute Task 6: classification is per fix/intro pair and copied onto every row of the
+  pair, so the G2 proof counts classified PAIRS (≤ --classify-max), not rows.
 - Status gate: Approved — owner 2026-10-11 "tak aż do końca" (carry the whole loop through, no pauses)
 - Cross-model validation: pending
 
@@ -262,7 +267,7 @@ Remote install for proofs on ryzen-dev (referred to as RSYNC-HELPERS): `scp $(fi
   - test/lock/generated/docs paths skipped; commit touching ≥`--mass-files` files skipped; `.git-blame-ignore-revs` honoured, absence harmless; merges and commits older than `--max-age` skipped
   - rerun → byte-identical file; classify fields kept unless `--reclassify`; key fix_sha:file:line_at_parent
   - no author email or diff text in records (CQ5)
-- [ ] GREEN: `review-escapes --repo P [--since 30d] [--ref origin/develop] [--fetch] [--max-age 180d] [--mass-files 200] [--json]`; blame `-w --porcelain`; ancestry cache; atomic upsert; summary {fixes, escapes, unattributed, skipped{reason:n}}.
+- [ ] GREEN: `review-escapes --repo P [--since 30d] [--ref R (default: develop's upstream, e.g. bitbucket/develop; else origin/develop)] [--fetch] [--max-age 180d] [--mass-files 200] [--json]`; blame `-w --porcelain`; ancestry cache; atomic upsert; summary {fixes, escapes, unattributed, skipped{reason:n}}.
 - [ ] Verify: `bash tests/hooks/test-review-escapes-unit.sh && LINT`
   Expected: exit 0
 - [ ] Acceptance Proof:
@@ -290,7 +295,7 @@ Remote install for proofs on ryzen-dev (referred to as RSYNC-HELPERS): `scp $(fi
 - [ ] Verify: `python3 -m unittest -v tests/hooks/test_escapes_coverage.py && bash tests/hooks/test-review-escapes-unit.sh && LINT`
   Expected: exit 0
 - [ ] Acceptance Proof:
-  - G2 — Surface: db-data — Proof: `RSYNC-HELPERS && ssh ryzen-dev 'python3 ~/.zuvo/review-escapes --repo ~/DEV/tgm-survey-platform --since 30d --classify --classify-max 5 >/dev/null && cat ~/.zuvo/review-escapes-data/tgm-survey-platform.jsonl' | python3 -c 'import json,sys; R=[json.loads(l) for l in sys.stdin if l.strip()]; L={"flagged-accepted","flagged-dismissed","flagged-unjudged","reviewed","unreviewed"}  # range_unresolved / provisional are evidence fields, not labels; assert R and all(r["coverage"] in L for r in R); assert sum(1 for r in R if r.get("class"))<=5'`
+  - G2 — Surface: db-data — Proof: `RSYNC-HELPERS && ssh ryzen-dev 'python3 ~/.zuvo/review-escapes --repo ~/DEV/tgm-survey-platform --since 30d --classify --classify-max 5 >/dev/null && cat ~/.zuvo/review-escapes-data/tgm-survey-platform.jsonl' | python3 -c 'import json,sys; R=[json.loads(l) for l in sys.stdin if l.strip()]; L={"flagged-accepted","flagged-dismissed","flagged-unjudged","reviewed","unreviewed"}  # range_unresolved / provisional are evidence fields, not labels; assert R and all(r["coverage"] in L for r in R); assert len({(r["fix_sha"], r["intro_sha"]) for r in R if r.get("class")})<=5'`
   - Expected: exit 0
   - Artifact: `zuvo/proofs/task-6-coverage.txt`
 - [ ] Commit: `feat(review-escapes): say for each escaped bug whether a review saw it, flagged it, or let it through`
