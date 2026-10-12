@@ -144,6 +144,24 @@ else
   bad "backslash-continued --multi was lost -> false accusation (rc=$rc): $out"
 fi
 
+# ── 6c. an invocation behind timeout / nice / nohup is still an invocation ──
+# zuvo:review runs each pass as `timeout 1500 ~/.zuvo/adversarial-review --multi …`; the command-
+# position anchor stopped at `timeout`, so nine real --multi passes scored --multi: 0 and the
+# verifier accused an honest review of not using --multi (2026-10-12, S-66).
+{
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git diff a..b | timeout 1500 ~/.zuvo/adversarial-review --multi --mode code"}}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"FOO=1 timeout -k 10 25m adversarial-review --multi --mode code < d"}}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"nice -n 5 nohup adversarial-review --multi --mode code < d"}}]}}'
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo timeout 1500 adversarial-review --multi"}}]}}'
+} > "$TMP/wrapped-invoke.jsonl"
+out="$(printf 'adversarial:\n  passes_run: 3\n  self_review_flag: yes — used --multi\n' \
+  | python3 "$V" --claims - --transcript "$TMP/wrapped-invoke.jsonl" --strict 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "(--multi: 3)"; then
+  pass "invocations behind timeout/nice/nohup are counted; an echoed one is not"
+else
+  bad "wrapped invocations miscounted (rc=$rc): $out"
+fi
+
 # ── 7. partial mismatch (some evidence, not enough) is accused ─────────────
 # the elif branches: observed > 0 but fewer than claimed. Previously untested — a bug here would
 # only surface as a silent clear on a half-done review.

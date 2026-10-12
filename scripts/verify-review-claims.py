@@ -79,11 +79,18 @@ DISPATCH_TOOLS = {"Agent", "Task"}          # Task = older harness name for the 
 # and --multi attributed to the invocation that actually carried it.
 ADVERSARIAL_RE = re.compile(
     r"(?:^|[|;&({]|\n)"                             # command position
-    r"(?:\s*(?:if|then|do|else|elif|while|until|time|exec)\b|\s*!)*"  # control-flow lead-ins
-    r"(?:\s*[A-Za-z_][A-Za-z0-9_]*=\S*)*"           # optional env assignments
+    r"(?:\s*(?:if|then|do|else|elif|while|until|time|exec)\b|\s*!"  # control-flow lead-ins,
+    r"|\s*[A-Za-z_][A-Za-z0-9_]*=\S*"               # env assignments,
+    r"|\s*timeout(?:\s+-{1,2}[A-Za-z][\w=.-]*(?:\s+[\w.]+)?)*\s+\d[\d.]*[smhd]?\b"  # `timeout [-k 10] 25m`,
+    r"|\s*(?:nice|nohup|env|command|stdbuf)(?:\s+-[\w=.-]+(?:\s+-?\d+)?)*(?=\s))*"  # other wrappers
     r"\s*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
     r"(?P<args>(?:\\\n|[^|;&\n])*)"                 # this command's own arguments
 )
+# The wrappers that run a command (`timeout 1500 …`, `nice -n 5 …`, `nohup …`) take the command
+# position too, in any order with env assignments: zuvo:review runs every pass as
+# `timeout 1500 ~/.zuvo/adversarial-review --multi …`, and without them nine real --multi passes
+# scored --multi: 0 and an honest review was accused (2026-10-12). `echo`, `grep` and the like are
+# deliberately NOT wrappers — their argument is text, not a command.
 # `args` deliberately consumes a backslash-newline continuation rather than stopping at it.
 # Stopping made `… | adversarial-review \<newline>  --multi --mode code` capture just `\`, so a
 # real `--multi` pass scored adversarial_multi=0 and the verifier ACCUSED an honest reviewer of
