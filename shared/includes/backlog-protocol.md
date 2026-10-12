@@ -64,7 +64,8 @@ Column definitions:
 - **Problem**: One-line description of the issue
 - **Severity**: `critical`, `high`, `medium`, `low`
 - **Category**: Rule family (CQ, Q, S, SA, DB, etc.)
-- **Source**: Which skill or agent produced this finding
+- **Source**: Which skill or agent produced this finding. An observation outside the task's fence
+  starts with the literal `drive-by:<skill>` (`drive-by-findings.md`); a ticket id may follow it
 - **Seen**: How many times this finding has been observed
 - **Added**: Date first recorded
 

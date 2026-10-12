@@ -25,6 +25,9 @@ SEC=0 BUG=0 SIZE=0 DUP=0 CPLX=0 PERF=0 DEAD=0 READ=0
 while [ $# -gt 0 ]; do
   _flag="${1%%=*}"
   case "$1" in
+    # Agents probe the syntax with --help: answering it with a receipt logged an empty
+    # `unknown` row per probe (71 of 331 rows on ryzen-dev, 2026-10-12).
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --*=*) _val="${1#*=}"; shift ;;
     --*)   shift
            # A missing value must not swallow the next flag: `--skill --sec 3` keeps --sec.

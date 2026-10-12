@@ -53,11 +53,28 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
    Never a second entry for a known problem.
 2. **Append to `memory/backlog.md` resolved per `backlog-protocol.md` "Where the Backlog Lives"**
    (a tracked backlog is the current checkout's copy; an untracked one is the MAIN checkout's),
-   one line each:
+   in the format that file already uses — `backlog-protocol.md`'s table by default. Two fields are
+   fixed whatever the format, because they are the only way to tell a drive-by entry from the
+   task's own follow-ups:
+   - **Source starts with the literal `drive-by:<skill>`** — a ticket or run id may follow after a
+     space (`drive-by:build RD-2981`), never before it. `build RD-2981 / final review` is NOT a
+     drive-by source: on 2026-10-12, 80 counted drive-by findings left only ~17 entries anyone
+     could find, because the rest were filed under sources like that.
+   - **The tag is the Category** (table) or the `[<TAG>]` prefix of the problem text (list line).
+
+   Table row (`backlog-protocol.md` columns):
+
+   ```
+   | B-<N> | OPEN | <file>|<TAG>|<short-slug> | <path>:<line> | <the defect, one sentence> | <critical|high|medium|low> | <TAG> | drive-by:<skill> | 1 | <YYYY-MM-DD> |
+   ```
+
+   List line (a backlog kept as a checklist):
 
    ```
    - [ ] B-<file-stem>-<tag>-<short-slug> <path>:<line> — [<TAG>] <the defect, one sentence> | evidence: <what proves it> | severity: <critical|high|medium|low> | source: drive-by:<skill> | conf: NN | <YYYY-MM-DD>
    ```
+
+   A bump of an existing entry (step 1) appends `drive-by:<skill>` to its source.
 
 3. **Never copy a secret into the backlog or the summary.** For a hardcoded credential or PII in a
    log, cite `file:line` and the KIND (`AWS secret key`, `customer e-mail`) — never the value.
