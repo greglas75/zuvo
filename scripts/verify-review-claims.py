@@ -82,7 +82,7 @@ _OPERAND = r"""(?:\.?\d[\d.]*[smhd]?|"?\$\{?\w+\}?"?)"""  # 25m, .5s, $T, "${T}"
 ADVERSARIAL_RE = re.compile(
     r"(?:^|[|;&({]|\n)"                             # command position
     rf"(?:{_WS}*(?:if|then|do|else|elif|while|until|time|exec)\b|{_WS}*!"  # control-flow lead-ins,
-    rf"|{_WS}*[A-Za-z_][A-Za-z0-9_]*=\S*"            # env assignments,
+    rf"|{_WS}*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)"  # env assignments, quoted or not,
     rf"|{_WS}*timeout(?:{_WS}+-{{1,2}}[A-Za-z][\w=.-]*(?:{_WS}+[\w.$\"{{}}]+)?)*{_WS}+{_OPERAND}(?={_WS})"
     # other wrappers:
     rf"|{_WS}*(?:nice|nohup|env|stdbuf)(?:{_WS}+-[\w=.-]+(?:{_WS}+-?{_OPERAND})?)*(?={_WS}))*"

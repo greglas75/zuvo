@@ -5249,4 +5249,4 @@ repeats of an ID-less line, but one loss path stays until blocks are compared: a
 main already holds, whose text main also holds elsewhere while the worktree lacks that other copy (forked before
 it arrived), or MOVED there from another entry, is matched against main's copy, dropped, and lost when the
 worktree copy is stubbed.
-
+- [ ] B-20261012-VERIFY-CLAIMS-WRAPPER-ALLOWLIST scripts/verify-review-claims.py:ADVERSARIAL_RE — [BUG] the command position accepts a closed list of wrappers (timeout, nice, nohup, env, stdbuf); `sudo -u x`, `xargs`, `caffeinate -i`, `bash -c '…'` or a shell function still hide a real pass, and an undercount manufactures an accusation | evidence: adversarial review of the S-66 leftovers (qwen, claude), 2026-10-12 | fix: anchor on the command NAME at any word boundary that is not inside a quoted argument of echo/grep/printf, instead of enumerating what may precede it | severity: low | conf: 70 | 2026-10-12
