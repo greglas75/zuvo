@@ -103,6 +103,40 @@ assert_eq "1" "$rc" "mixed batch with one unknown id → exit 1"
 assert_contains "$out" "recorded 1 disposition(s)" "the matched id in the batch is still recorded"
 assert_eq "$((before + 1))" "$(wc -l < "$LEDGER" | tr -d ' ')" "exactly one verdict row added across both calls"
 
+start_test "FL.5b an id raised under the checkout's bare basename is recordable from it; another basename's is not"
+# Bug: rows keyed by a bare name (the driver before the absolute path) could never get a verdict from anyone,
+# and a verdict recorded for one must count in --effectiveness, which joins on the project.
+new_case
+printf '2026-01-01T00:00:00Z\tr\tcode\tmock-findings-a\tunknown\told.ts:1:x\tWARNING\thigh\told.ts:1\tnew\tproj-alpha\n' >> "$LEDGER"
+printf '2026-01-01T00:00:00Z\tr\tcode\tmock-findings-a\tunknown\tbeta.ts:1:x\tWARNING\thigh\tbeta.ts:1\tnew\tproj-beta\n' >> "$LEDGER"
+rc=0; out=$(record "$PROJ_A" --record-disposition "old.ts:1:x" fixed 2>&1) || rc=$?
+assert_eq "0" "$rc" "bare-name raise of this checkout → recorded"
+assert_eq "$PA" "$(awk -F'\t' '$6 == "old.ts:1:x" && $10 == "fixed" { print $11 }' "$LEDGER")" \
+  "the verdict row carries the absolute path"
+rc=0; out=$(record "$PROJ_A" --record-disposition "beta.ts:1:x" fixed 2>&1) || rc=$?
+assert_eq "1" "$rc" "a bare raise of ANOTHER basename → refused"
+effectiveness
+assert_eq "1"    "$(lane_col mock-findings-a 5)" "--effectiveness credits the verdict to the bare-name raise"
+assert_eq "1"    "$(lane_col mock-findings-a 8)" "…and leaves the other basename's raise open"
+
+start_test "FL.5c a bare basename two checkouts share is recordable from neither, and no verdict stands for it"
+# Bug: with …/a/app and …/b/app in the ledger, a bare `app` raise could be either's; accepting it from one
+# credits that checkout's verdict to a finding of the other.
+new_case
+mkdir -p "$FL_TMP/a/app" "$FL_TMP/b/app"
+APP_A="$(cd "$FL_TMP/a/app" && pwd -P)"; APP_B="$(cd "$FL_TMP/b/app" && pwd -P)"
+for p in "$APP_A" "$APP_B"; do
+  printf '2026-01-02T00:00:00Z\tr\tcode\tmock-findings-a\tunknown\town.ts:1:x\tWARNING\thigh\town.ts:1\tnew\t%s\n' "$p" >> "$LEDGER"
+done
+printf '2026-01-01T00:00:00Z\tr\tcode\tmock-findings-b\tunknown\tbare.ts:1:x\tWARNING\thigh\tbare.ts:1\tnew\tapp\n' >> "$LEDGER"
+for d in "$FL_TMP/a/app" "$FL_TMP/b/app"; do
+  rc=0; record "$d" --record-disposition "bare.ts:1:x" fixed >/dev/null 2>&1 || rc=$?
+  assert_eq "1" "$rc" "bare raise of a shared basename refused from ${d#"$FL_TMP"/}"
+done
+printf '2026-01-03T00:00:00Z\tbill\t\t\t\tbare.ts:1:x\t\t\t\tfixed\t%s\n' "$APP_A" >> "$LEDGER"
+effectiveness
+assert_eq "0" "$(lane_col mock-findings-b 5)" "--effectiveness does not credit a verdict to the shared bare raise"
+
 start_test "FL.6 malformed arguments are refused whole — nothing written"
 new_case; seed_review
 before=$(wc -l < "$LEDGER" | tr -d ' ')

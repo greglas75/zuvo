@@ -111,9 +111,21 @@ if [[ -n "$RECORD_ROWS" ]]; then
   # precision this command exists to produce. Usual causes: a re-typed id, the wrong directory,
   # a finding the reviewer gave no ID. Refused by name — the matched ones in the batch are still recorded.
   _rd_run="${ZUVO_RUN_ID:-manual}"; _rd_run="${_rd_run//[[:cntrl:]]/_}"
+  # A raise under the bare basename of this checkout counts too (the driver keyed rows that way before the
+  # absolute path) — unless another absolute project in the ledger has that basename, when the bare row
+  # could be either's. The verdict row is still written under the absolute path; --effectiveness joins them.
+  _rd_base="${_rd_proj%/}"; _rd_base="${_rd_base##*/}"
   # ENVIRON, not -v: awk -v processes backslash escapes, so the value compared would not be
   # the value written.
-  _rd_known="$(RD_PROJ="$_rd_proj" awk -F'\t' '$10 == "new" && $11 == ENVIRON["RD_PROJ"] { print $6 }' \
+  _rd_known="$(RD_PROJ="$_rd_proj" RD_BASE="$_rd_base" awk -F'\t' '
+      BEGIN { p = ENVIRON["RD_PROJ"]; b = ENVIRON["RD_BASE"] }
+      NF < 11 || $1 == "date" { next }
+      { k = $11; sub(/\/+$/, "", k); kb = k; sub(/^.*\//, "", kb)
+        if (k ~ /^\// && k != p && kb == b) shared = 1 }
+      $10 != "new" { next }
+      $11 == p { own[$6] = 1 }
+      b != "" && $11 == b { bare[$6] = 1 }
+      END { for (i in own) print i; if (!shared) for (i in bare) print i }' \
     "$FINDINGS_LOG" 2>/dev/null | sort -u)" || _rd_known=""
   # Verdict rows leave mode/provider/model/severity EMPTY on purpose: attribution comes only
   # from the row that raised the finding. Copying a half-known model here would let a guess
@@ -158,8 +170,15 @@ if [[ "$EFFECTIVENESS" == "true" ]]; then
   # finding the same bug produce the same fingerprint, and both earned it. An OCCURRENCE is the
   # run of raises between two verdicts on a key — a verdict judges what came before it, a later
   # verdict with no raise in between supersedes it, and a raise after it opens a new occurrence.
+  # Two passes: the first finds basenames two absolute projects share — a verdict never stands for a bare
+  # raise there, as --record-disposition never accepts one.
   awk -F'\t' '
     /^#/ || $1 == "date" || NF < 11 { next }
+    FNR == NR {
+      k = $11; sub(/\/+$/, "", k); b = k; sub(/^.*\//, "", b)
+      if (k ~ /^\//) { if (!(b in first)) first[b] = k; else if (first[b] != k) shared[b] = 1 }
+      next
+    }
     {
       fp = $6; if (fp == "" || fp == "unknown") next
       key = $11 SUBSEP fp
@@ -174,6 +193,11 @@ if [[ "$EFFECTIVENESS" == "true" ]]; then
       } else if ($10 ~ /^(fixed|rejected|deferred)$/) {
         verdict[key SUBSEP (ep[key] + 0)] = $10  # last write wins within an occurrence
         closed[key] = 1
+        # It judges the raises under the bare basename too: --record-disposition accepts those ids.
+        b = $11; sub(/\/+$/, "", b); sub(/^.*\//, "", b)
+        if (b != "" && b != $11 && !(b in shared)) {
+          bk = b SUBSEP fp; verdict[bk SUBSEP (ep[bk] + 0)] = $10; closed[bk] = 1
+        }
       }
     }
     END {
@@ -188,7 +212,7 @@ if [[ "$EFFECTIVENESS" == "true" ]]; then
         printf "%d\t%-14s %-34s %7d %6d %6d %6d %6d %6d %10s\n", raised[l], a[1], a[2], raised[l], \
           crit[l], fx[l], df[l], rj[l], raised[l] - judged, prec
       }
-    }' "$FINDINGS_LOG" | sort -t$'\t' -k1,1rn | cut -f2-
+    }' "$FINDINGS_LOG" "$FINDINGS_LOG" | sort -t$'\t' -k1,1rn | cut -f2-
   echo
   echo "precision = (fixed + deferred) / judged; rejected = judged a false positive."
   echo "'open' findings have no verdict yet and are EXCLUDED from precision — an unjudged finding is"

@@ -136,6 +136,12 @@ not reduce their defect class are retired.
   pair, so the G2 proof counts classified PAIRS (≤ --classify-max), not rows.
 - [POST-CAP: SPEC-AMENDED] execute Task 6 review round: modules added to stay within budget (discover, hunks,
   gitbatch, cli) and a separate classify spec file; Task 5 and Task 6 land as one commit (the Task 5 snapshot was lost).
+- [POST-CAP: SPEC-AMENDED] execute Task 4: the driver's --record-disposition accepted only finding rows keyed by
+  the absolute checkout path, so bare-basename rows (92 of ~13k on the Mac) could never be recorded by anyone. Fixed
+  at the root in scripts/lib/adversarial-ledger.sh: a row under the checkout's basename is accepted when no other
+  absolute project in the ledger shares that basename (same guard for --effectiveness). Bill resolves a bare name to
+  ~/DEV/<name> or a mirrored ledger's absolute path; a project that is not a git checkout here is never paid for —
+  counted `unrecordable` and re-checked every tick until it leaves the 48 h window (nothing is marked done for it).
 - Status gate: Approved — owner 2026-10-11 "tak aż do końca" (carry the whole loop through, no pauses)
 - Cross-model validation: pending
 

@@ -10,8 +10,7 @@ Every --json review writes one ledger row per finding (~/.zuvo/adversarial-findi
 (`--record-disposition`, adversarial-loop.md Step 4.9). Measured 2026-10-10 on the sessions host: 6,346
 reviews since 10-03, 360 with any verdict — so per-lane precision rested on ~6 % of the reviews. Bill judges
 what nobody judged: every few minutes it takes the newest reviews without verdicts, shows Opus the diff and
-every lane's findings at once, and records a verdict per finding plus the lessons it drew.
-What it writes: see the zuvo_bill_state.py docstring.
+every lane's findings at once, and records a verdict per finding and its lessons (zuvo_bill_state.py).
 
 USAGE
 
@@ -19,7 +18,8 @@ USAGE
                           (calls already in flight finish, each within CALL_TIMEOUT)
     bill --dry-run        list what a tick would judge, call nothing
     bill --install-schedule   every 10 minutes: launchd on macOS, a systemd user timer on Linux
-    bill --status         judged reviews, verdict counts, cost of the last 24 h
+    bill --status [--by-lane] [--by-agreement]   judged reviews, verdict counts, cost of the last 24 h;
+                          + Bill's precision per lane / per number of lanes raising a defect
 
 ENV
 
@@ -35,10 +35,12 @@ import time
 
 # The installer replaces files one at a time: a missing, half-written or other-release module makes a
 # tick exit 0 (no traceback every 10 minutes) and `--status` say since when. Any change to a contract
-# between modules bumps API here and in every module (2: acquire_lock returns a refusal).
-API = 2
-MODULES = ("zuvo_bill_config", "zuvo_bill_state", "zuvo_bill_judge", "zuvo_bill_tick", "zuvo_bill_schedule",
-           "zuvo_bill_status")
+# between modules bumps API here and in every module.
+API = 3
+TABLES = ("--by-lane", "--by-agreement")   # --status only: any other unknown flag would start a paid tick
+FLAGS = {"--dry-run", "--install-schedule", "--status", *TABLES}
+MODULES = ("zuvo_bill_config", "zuvo_bill_state", "zuvo_bill_judge", "zuvo_bill_project", "zuvo_bill_tick",
+           "zuvo_bill_schedule", "zuvo_bill_status")
 
 
 def guard_file():
@@ -79,13 +81,16 @@ def blocked(reason, want_status):
 def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__); return 0
+    wrong = [a for a in argv if a not in FLAGS or (a in TABLES and "--status" not in argv)]
+    if wrong:
+        print(f"bill: {wrong[0]}: not a flag here (bill --help)", file=sys.stderr); return 2
     mods, reason = load()
     if mods is None:
         return blocked(reason, "--status" in argv)
     with contextlib.suppress(FileNotFoundError):
         os.remove(guard_file())
     if "--status" in argv:
-        return mods["zuvo_bill_status"].status()
+        return mods["zuvo_bill_status"].status("--by-lane" in argv, "--by-agreement" in argv)
     if "--install-schedule" in argv:
         return mods["zuvo_bill_schedule"].install_schedule()
     return mods["zuvo_bill_tick"].tick("--dry-run" in argv)

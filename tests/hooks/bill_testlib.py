@@ -55,9 +55,10 @@ class BillTestCase(ReviewTestCase):
         return os.path.join(dest, "bill")
 
     def queue_review(self, run: str, fps: list[str], hours: float = 2) -> str:
-        """`run`'s findings as new ledger rows of project <tmp>/proj, plus its diff; returns the project."""
+        """`run`'s findings as new ledger rows of project <tmp>/proj (a git checkout: it holds .git), plus its
+        diff; returns the project."""
         proj = os.path.join(self.tmp, "proj")
-        os.makedirs(proj, exist_ok=True)
+        os.makedirs(os.path.join(proj, ".git"), exist_ok=True)
         rows = [finding(ago(hours=hours), run, fp, fp.rsplit(":", 1)[0], proj) for fp in fps]
         os.makedirs(self.zuvo, exist_ok=True)
         with open(os.path.join(self.zuvo, "adversarial-findings.log"), "a", encoding="utf-8") as f:
@@ -71,10 +72,11 @@ class BillTestCase(ReviewTestCase):
         self.fake_exe("claude", f'cat >/dev/null; cat "{out}"\n')
 
     def fake_driver(self, rc: int = 0) -> str:
-        """~/.zuvo/adversarial-review that records its argv (one per line) and exits `rc`."""
+        """~/.zuvo/adversarial-review that records its argv (one per line) and its working directory
+        (driver.args.cwd), and exits `rc`."""
         args = os.path.join(self.tmp, "driver.args")
         path = self.write(os.path.join(self.zuvo, "adversarial-review"),
-                          f'#!/bin/sh\nprintf "%s\\n" "$@" > "{args}"\nexit {rc}\n')
+                          f'#!/bin/sh\nprintf "%s\\n" "$@" > "{args}"\npwd > "{args}.cwd"\nexit {rc}\n')
         os.chmod(path, 0o755)
         return args
 

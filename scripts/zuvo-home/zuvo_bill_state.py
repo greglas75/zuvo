@@ -12,7 +12,10 @@ WHAT IT WRITES
   ~/.zuvo/bill-data/lessons.jsonl         the generalizable lessons, per review (the knowledge base)
   ~/.zuvo/bill-data/judged-runs.txt       run ids already judged or given up on (Bill's own state)
   ~/.zuvo/bill-data/attempts.json         failed attempts per run; after BILL_MAX_TRIES the run is given up
-  ~/.zuvo/bill-data/bill.log              one line per attempt: seconds, tokens, API-price USD, error
+  ~/.zuvo/bill-data/bill.log              one line per attempt: seconds, tokens, API-price USD, error,
+                                          added/removed lines of the diff
+  ~/.zuvo/bill-data/unrecordable.jsonl    runs never judged because their verdicts cannot land in the
+                                          ledger (zuvo_bill_project.py), with the reason
 """
 
 from __future__ import annotations
@@ -25,9 +28,10 @@ from collections.abc import Callable
 
 import zuvo_bill_config as C
 
-API = 2
+API = 3
 # Every file a tick appends to or replaces; attempts.json is replaced through attempts.json.tmp.
-STATE_FILES = ("bill.log", "judged-runs.txt", "attempts.json.tmp", "defects.jsonl", "lessons.jsonl")
+STATE_FILES = ("bill.log", "judged-runs.txt", "attempts.json.tmp", "defects.jsonl", "lessons.jsonl",
+               "unrecordable.jsonl")
 
 
 def unwritable() -> str | None:
@@ -46,7 +50,9 @@ def unwritable() -> str | None:
                     pass
         except OSError as ex:
             return f"{path}: {type(ex).__name__}: {ex}"
-    return None
+    # attempts.json itself is only ever renamed over, which a read-only file allows and a directory does not.
+    attempts = os.path.join(bd, "attempts.json")
+    return f"{attempts}: a directory" if os.path.isdir(attempts) else None
 
 
 def read_done(path: str) -> set[str]:

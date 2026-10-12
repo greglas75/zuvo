@@ -14,11 +14,13 @@ from datetime import timedelta
 from typing import Any
 
 import zuvo_bill_config as C
+import zuvo_bill_project as P
 import zuvo_bill_state as S
 from zuvo_bill_judge import Item, Row, judge
+from zuvo_review_classes import normalize_class
 from zuvo_review_ledger import LedgerRow, latest_verdicts, project_key, read_rows
 
-API = 2
+API = 3
 VERDICT_TO_DISPOSITION = {"real": "deferred", "false_positive": "rejected"}
 Runs = dict[str, dict[str, Any]]
 
@@ -77,9 +79,11 @@ def pending(runs: Runs, judged: Judged, done: set[str]) -> list[Item]:
 
 
 def record(rec: dict[str, Any], rows: list[Row]) -> dict[str, Any]:
-    """Write the verdict rows through the driver (it validates the ids against this project's ledger), and
-    the defects/lessons only once the ledger accepted them — a retried run must not duplicate them.
-    Sets rec["recorded"]: True, False (driver refused: retry), or "project-missing" (cannot ever land)."""
+    """Verdict rows through the driver (run in the resolved checkout), then defects/lessons only once the
+    ledger took them. rec["recorded"] False means retry: the driver refused or could not start, or the
+    checkout went away during the call — that answer is discarded (a known, rare cost) and the next tick
+    re-checks the checkout for free. A defect left with no id is not written; an unknown class becomes
+    `other`."""
     # Re-read just before writing: the agent may have recorded its own verdict during Bill's long call,
     # and Bill's row, written later, would win (latest row wins). This narrows that window to the
     # driver call; it does not close it.
@@ -90,10 +94,13 @@ def record(rec: dict[str, Any], rows: list[Row]) -> dict[str, Any]:
     ts, defects, covered = C.stamp(C.now()), [], set()
     for d in rec["verdicts"]["defects"]:
         ids = [i for i in d["finding_ids"] if i in lanes]
+        if not ids:
+            continue
         covered.update(ids)
         defects.append({"ts": ts, "run": rec["run"], "project": rec["project"],
                         "defect_key": d.get("defect_key"),
-                        "class": d.get("class"), "verdict": d.get("verdict"), "severity": d.get("severity"),
+                        "class": normalize_class(d.get("class")), "verdict": d.get("verdict"),
+                        "severity": d.get("severity"),
                         "reason": d.get("reason"), "lanes": sorted({lanes[i] for i in ids}),
                         "finding_ids": ids})
         disp = VERDICT_TO_DISPOSITION.get(d.get("verdict"))
@@ -104,12 +111,16 @@ def record(rec: dict[str, Any], rows: list[Row]) -> dict[str, Any]:
     rec["omitted"] = len(set(lanes) - covered)
     if not args:
         rec["recorded"] = True
-    elif not os.path.isdir(rec["project"]):
-        rec["recorded"] = "project-missing"
+    elif not P.is_checkout(rec["project"]):
+        rec["recorded"], rec["error"] = False, "project-missing: the checkout went away during the call"
     else:
         env = dict(os.environ, ZUVO_RUN_ID="bill")
-        r = subprocess.run([os.path.join(C.home(), "adversarial-review"), *args], cwd=rec["project"], env=env,
-                           capture_output=True, text=True, timeout=120)
+        try:
+            r = subprocess.run([os.path.join(C.home(), "adversarial-review"), *args], cwd=rec["project"],
+                               env=env, capture_output=True, text=True, timeout=120)
+        except OSError as ex:   # the checkout vanished between the check and the call, or no driver
+            rec["recorded"], rec["error"] = False, f"record-disposition: {type(ex).__name__}: {ex}"[:300]
+            return rec
         rec["recorded"] = r.returncode == 0
         if r.returncode != 0:
             rec["error"] = f"record-disposition rc={r.returncode}: {r.stderr.strip()[-200:]}"
@@ -177,18 +188,23 @@ def tick(dry: bool) -> int:
         bad = sum(not C.RUN_ID.fullmatch(r) for r in runs)
         if bad:
             print(f"bill: {bad} review(s) skipped: bad-run-id (not [A-Za-z0-9._-]+)")
-        queue = pending(runs, judged, done)
+        queue, unresolved = P.split(pending(runs, judged, done))
         print(f"bill: {len(queue)} review(s) with unjudged findings between {C.min_age_m()} min "
               f"and {C.max_age_h()} h old")
+        if unresolved:
+            print(f"bill: {len(unresolved)} review(s) not judged: no checkout to record their verdicts from")
         if dry:
             for ts, run, proj, rows in queue[:30]:
                 print(f"  {ts} {run} {os.path.basename(proj)} {len(rows)} finding(s)")
+            for u in unresolved[:30]:
+                print(f"  {u.item[0]} {u.item[1]} unrecordable: {u.reason} {u.detail}")
             return 0
         blocked = S.unwritable()
         if blocked:
             print(f"bill: cannot write Bill's state ({blocked}) — tick skipped before any paid call",
                   flush=True)
             return 1
+        P.set_aside(unresolved)
         _judge_queue(queue, S.load_attempts(set(runs)), done_f)
         return 0
     finally:

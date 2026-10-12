@@ -3,12 +3,16 @@ onto the shared review modules must not break. Behaviour Bill already had is pin
 
 from __future__ import annotations
 
+import configparser
 import contextlib
+import hashlib
 import io
 import json
 import os
+import plistlib
 import shlex
 import signal
+import subprocess
 import sys
 import time
 import unittest
@@ -17,11 +21,13 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bill_testlib import BillTestCase, ago  # noqa: E402
-from review_testlib import finding, verdict  # noqa: E402
+from review_testlib import ROOT, finding, verdict  # noqa: E402
+
+DRIVER = ROOT / "scripts" / "adversarial-review.sh"
 
 BROKEN_INSTALLS: dict[str, dict[str, Any]] = {
     "missing module": {"skip": "zuvo_bill_status"},
-    "a module of the release before (API 1)": {"api": {"zuvo_bill_judge": 1}},
+    "a module of the release before (API 2)": {"api": {"zuvo_bill_judge": 2}},
 }
 
 
@@ -58,7 +64,7 @@ class InstallGuard(BillTestCase):
 
     def test_a_repaired_install_is_no_longer_reported_broken(self) -> None:
         # bug: a guard file outliving the repair reports an install broken that works again
-        self.run_bill(launcher=self.install_set(api={"zuvo_bill_judge": 1}))
+        self.run_bill(launcher=self.install_set(api={"zuvo_bill_judge": 2}))
         # A fresh directory: rewritten in place within the same second, at the same size, a module would
         # be loaded from its stale __pycache__ entry (the pyc check is mtime-in-seconds + size).
         status = self.run_bill("--status", launcher=self.install_set(where="repaired"))
@@ -234,17 +240,63 @@ class Verdicts(BillTestCase):
         self.assertEqual(diff.sent, cap - 1)                        # "+" then whole 2-byte characters
         self.assertTrue(diff.text.startswith("+" + "é" * ((cap - 1) // 2) + "\n[diff truncated: "))
 
-    def test_a_false_positive_on_a_file_the_cut_diff_does_not_show_becomes_uncertain(self) -> None:
-        # bug: the model rejected a finding in a file it never saw — a permanent `rejected` row
+    def test_a_false_positive_on_a_file_the_cut_diff_does_not_show_whole_becomes_uncertain(self) -> None:
+        # bug: the model rejected a finding in a file it never saw, or saw only the start of (the file
+        # the cap cuts) — a permanent `rejected` row
         import zuvo_bill_judge
-        big = "+a = 1\n" * (zuvo_bill_judge.DIFF_CAP_BYTES // 7 + 9)        # shown.py alone fills the cap
-        self.diff("r-1", f"--- a/shown.py\n+++ b/shown.py\n{big}--- a/cut.py\n+++ b/cut.py\n+b = 2\n")
-        self.fake_claude_answer({"defects": [{"verdict": "false_positive", "finding_ids": ["shown.py:1:x"]},
-                                             {"verdict": "false_positive", "finding_ids": ["cut.py:1:x"]}]})
-        rows = [{**FINDING_ROW, "id": f"{p}:1:x", "file": f"{p}:1"} for p in ("shown.py", "cut.py")]
+        big = "+a = 1\n" * (zuvo_bill_judge.DIFF_CAP_BYTES // 7 + 9)        # part.py alone fills the cap
+        self.diff("r-1", f"--- a/whole.py\n+++ b/whole.py\n+w = 0\n--- a/part.py\n+++ b/part.py\n{big}"
+                         "--- a/cut.py\n+++ b/cut.py\n+b = 2\n")
+        files = ("whole.py", "part.py", "cut.py")
+        self.fake_claude_answer({"defects": [{"verdict": "false_positive", "finding_ids": [f"{p}:1:x"]}
+                                             for p in files]})
+        rows = [{**FINDING_ROW, "id": f"{p}:1:x", "file": f"{p}:1"} for p in files]
         rec, _ = zuvo_bill_judge.judge((ago(hours=2), "r-1", self.tmp, rows))
-        self.assertEqual([d["verdict"] for d in rec["verdicts"]["defects"]], ["false_positive", "uncertain"])
-        self.assertEqual(rec["unseen_to_uncertain"], 1)
+        self.assertEqual([d["verdict"] for d in rec["verdicts"]["defects"]],
+                         ["false_positive", "uncertain", "uncertain"])
+        self.assertEqual(rec["unseen_to_uncertain"], 2)
+
+    def test_a_finding_names_a_shown_file_exactly_or_by_one_unique_suffix(self) -> None:
+        # bug: `a.py` matched whichever of src/a.py and lib/a.py came first, and `x/a.py` matched
+        # `xx/a.py`-style partial segments — a rejection kept for a file the model never saw
+        import zuvo_bill_judge
+        shown = ("diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n+1\n"
+                 "--- a/lib/a.py\n+++ b/lib/a.py\n+2\n--- a/pkg/only.py\n+++ b/pkg/only.py\n+3\n"
+                 "--- a/cut.py\n+++ b/cut.py\n+4\n")
+        table = [("src/a.py", "false_positive"), ("./src/a.py", "false_positive"),
+                 ("/Users/x/DEV/repo/pkg/only.py", "false_positive"),      # unique whole-segment suffix
+                 ("a.py", "uncertain"),                                    # src/a.py or lib/a.py: neither
+                 ("kg/only.py", "uncertain"),                              # not a whole segment
+                 ("cut.py", "uncertain")]                                  # the file the cap cut
+        cut = zuvo_bill_judge.Diff(shown, len(shown) + 100, len(shown))
+        for path, expected in table:
+            with self.subTest(path):
+                defects = [{"verdict": "false_positive", "finding_ids": ["f"]}]
+                zuvo_bill_judge.unseen_to_uncertain(defects, [{"id": "f", "file": f"{path}:1"}], cut)
+                self.assertEqual(defects[0]["verdict"], expected)
+
+    def test_a_diff_shown_whole_keeps_a_false_positive_on_its_last_file(self) -> None:
+        # bug: the cut file's rule applied to an uncut diff — a single-file review could never keep a
+        # false_positive
+        import zuvo_bill_judge
+        text = "--- a/only.py\n+++ b/only.py\n+1\n"
+        defects = [{"verdict": "false_positive", "finding_ids": ["f"]}]
+        rows = [{"id": "f", "file": "only.py:1"}]
+        whole = zuvo_bill_judge.Diff(text, 30, 30)
+        self.assertEqual(zuvo_bill_judge.unseen_to_uncertain(defects, rows, whole), 0)
+        self.assertEqual(defects[0]["verdict"], "false_positive")
+
+    def test_a_quoted_spaced_or_crlf_path_is_read_as_the_file_it_names(self) -> None:
+        # bug: git C-quotes a non-ASCII name ("b/\\303\\251.py") and tab-ends one holding a space; read
+        # raw, both looked unseen and a shown file's false_positive became uncertain
+        import zuvo_bill_judge
+        lf = ('diff --git a/sp ace.py b/sp ace.py\n--- a/sp ace.py\t\n+++ b/sp ace.py\t\n'
+              '@@ -1 +1 @@\n-a\n+b\n'
+              'diff --git "a/\\303\\251.py" "b/\\303\\251.py"\n--- "a/\\303\\251.py"\n+++ "b/\\303\\251.py"\n'
+              "@@ -1 +1 @@\n--- removed sql comment\n+++ added, starts with ++\n--- a/cut.py\n+++ b/cut.py\n")
+        for label, text in (("LF", lf), ("CRLF", lf.replace("\n", "\r\n"))):
+            with self.subTest(label):
+                self.assertEqual(zuvo_bill_judge.diff_files(text), ["sp ace.py", "é.py", "cut.py"])
 
     def test_a_run_id_that_is_not_a_plain_name_is_never_judged(self) -> None:
         # bug: the run id joins a path (adversarial-inputs/<run>.diff): `../x` read a file outside it
@@ -382,7 +434,7 @@ class Schedule(BillTestCase):
     def test_a_failed_daemon_reload_does_not_enable_the_timer(self) -> None:
         # bug: enabling after a failed daemon-reload starts units systemd has not re-read
         _rc, _err, calls = self.install("linux", "systemctl", "--user daemon-reload")
-        self.assertEqual(calls, ["systemctl --user daemon-reload"])
+        self.assertFalse([c for c in calls if " enable" in c], calls)
 
     def test_install_schedule_succeeds_when_the_scheduler_accepts(self) -> None:
         # bug: an install the scheduler accepted reported as refused (exit 1, a reason on stderr), or the
@@ -402,7 +454,8 @@ class State(BillTestCase):
         cases = {"bill-data read-only": lambda bd: os.chmod(bd, 0o555),
                  "judged-runs.txt read-only":
                      lambda bd: os.chmod(self.write(f"{bd}/judged-runs.txt", ""), 0o444),
-                 "attempts.json.tmp a directory": lambda bd: os.mkdir(f"{bd}/attempts.json.tmp")}
+                 "attempts.json.tmp a directory": lambda bd: os.mkdir(f"{bd}/attempts.json.tmp"),
+                 "attempts.json a directory": lambda bd: os.mkdir(f"{bd}/attempts.json")}
         for label, breaks in cases.items():
             with self.subTest(label):
                 self.setenv(ZUVO_HOME=os.path.join(self.tmp, label, "zh"))
@@ -476,7 +529,7 @@ class Status(BillTestCase):
         # but nothing showed how many; counting a retried attempt too counts them once per try
         import zuvo_bill_status
         rows = [{"ts": ago(hours=1), "omitted": 2, "dropped_defects": 1, "recorded": True},
-                {"ts": ago(hours=2), "omitted": 1, "recorded": "project-missing"},
+                {"ts": ago(hours=2), "omitted": 1, "recorded": "project-missing"},   # retired: not settled
                 {"ts": ago(hours=30), "omitted": 4, "dropped_defects": 2, "recorded": True},
                 {"ts": ago(hours=1), "omitted": 5, "dropped_defects": 9, "recorded": False},   # retried
                 {"ts": ago(hours=1), "omitted": 6, "recorded": 1},      # not a settled marker
@@ -486,7 +539,7 @@ class Status(BillTestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             zuvo_bill_status.status()
-        self.assertIn("omitted findings: 7 total, 3 in 24 h; dropped defects: 3 total, 1 in 24 h",
+        self.assertIn("omitted findings: 6 total, 2 in 24 h; dropped defects: 3 total, 1 in 24 h",
                       out.getvalue())
 
 
@@ -505,6 +558,430 @@ class EnvInts(BillTestCase):
                     got = [read(), read()]
                 self.assertEqual(got, [expected, expected])
                 self.assertEqual(err.getvalue().count(var), 0 if raw == "5" else 1)
+
+
+class Classes(BillTestCase):
+    def test_the_prompt_lists_the_closed_class_vocabulary(self) -> None:
+        # bug: the prompt offered a few examples ("e.g. race-condition, …"), so the judge invented
+        # classes and one class written two ways read as two half-sized ones in the per-class rates
+        import zuvo_bill_judge
+        from zuvo_review_classes import CLASSES
+        self.assertIn(", ".join(CLASSES), zuvo_bill_judge.build_prompt([], ""))
+
+    def test_an_answer_class_outside_the_vocabulary_is_normalized_never_dropped(self) -> None:
+        # bug: free text ("Concurrency", "made-up", none) reached defects.jsonl as its own class; a
+        # defect dropped for its class would throw away a paid verdict
+        fps = ["a.py:1:x", "a.py:2:y", "a.py:3:z", "a.py:4:w"]
+        self.queue_review("r-1", fps)
+        self.fake_driver()
+        classes: list[Any] = ["Concurrency", "made-up", None, "logic"]
+        self.fake_claude_answer({"defects": [{"verdict": "real", "class": c, "finding_ids": [fp]}
+                                             for c, fp in zip(classes, fps, strict=True)]})
+        import zuvo_bill_tick
+        self.assertEqual(zuvo_bill_tick.tick(False), 0)
+        rows = self.read_lines(os.path.join(self.zuvo, "bill-data", "defects.jsonl"))
+        self.assertEqual([json.loads(x)["class"] for x in rows],
+                         ["race-condition", "other", "other", "logic"])
+
+
+class DiffCounts(BillTestCase):
+    def test_the_log_counts_added_and_removed_lines_of_the_whole_diff(self) -> None:
+        # bug: no reviewed-lines denominator; counting by prefix alone reads a removed `-- comment` and
+        # an added `++ x` as file headers, and counting the prompt's part stops at the cap
+        import zuvo_bill_judge
+        filler = "+a\n" * (zuvo_bill_judge.DIFF_CAP_BYTES // 3 + 10)          # past the cap on its own
+        n = filler.count("\n")
+        diff = ("diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n"
+                "@@ -1,3 +1,3 @@\n ctx\n--- removed sql comment\n-old\n+++ added, starts with ++\n"
+                "\\ No newline at end of file\n+new\n"
+                f"--- a/big.py\n+++ b/big.py\n@@ -0,0 +1,{n} @@\n{filler}")
+        self.queue_review("r-1", ["q.sql:1:x"])
+        self.diff("r-1", diff)
+        self.fake_driver()
+        self.fake_claude_answer({"defects": [{"verdict": "uncertain", "finding_ids": ["q.sql:1:x"]}]})
+        import zuvo_bill_tick
+        zuvo_bill_tick.tick(False)
+        log = json.loads(self.read_lines(os.path.join(self.zuvo, "bill-data", "bill.log"))[0])
+        self.assertEqual((log["diff_added"], log["diff_removed"]), (2 + n, 2))
+        self.assertLess(log["diff_bytes_sent"], log["diff_bytes"])
+
+
+# sha256 of the units `bill --install-schedule` wrote before install_unit existed, with this test's temp
+# directory written as <TMP> (HOME=<TMP>/home, ZUVO_HOME=<TMP>/home/.zuvo, PATH=<TMP>/bin:/usr/bin:/bin).
+TODAY_UNITS = {
+    ("darwin", "Library/LaunchAgents/com.zuvo.bill.plist"):
+        "32a32c205b2551ffdcfa29c342f06bb05300d9499921a947f639f15ea1133c47",
+    ("linux", ".config/systemd/user/zuvo-bill.service"):
+        "efc40180f0fc1151f03627ec13a3f649b9f9a9d2924000684866349dbcb4d9eb",
+    ("linux", ".config/systemd/user/zuvo-bill.timer"):
+        "8fff88d26370c43b2b8455ba816d7a4e7c2224c368326e22b4b0ced6a88f6503",
+}
+
+
+class UnitCase(BillTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.calls = os.path.join(self.tmp, "calls")
+        for name in ("launchctl", "systemctl"):   # FAIL_ON=<args prefix>: that call prints "failed", exits 3
+            self.fake_exe(name, f'echo "{name} $*" >> "{self.calls}"\n'
+                                'if [ -n "$FAIL_ON" ]; then\n'
+                                '  case "$*" in "$FAIL_ON"*) echo failed >&2; exit 3;; esac\nfi\n')
+        self.setenv(PATH=f"{self.bin}:/usr/bin:/bin", FAIL_ON="")
+
+    def on(self, platform: str, call: Any) -> Any:
+        with mock.patch.object(sys, "platform", platform), contextlib.redirect_stdout(io.StringIO()):
+            return call()
+
+    def unit_text(self, rel: str) -> str:
+        with open(os.path.join(self.home, rel), encoding="utf-8") as f:
+            return f.read()
+
+
+
+class Units(UnitCase):
+    def test_the_ten_minute_job_is_written_byte_for_byte_as_before(self) -> None:
+        # bug: moving the writer behind install_unit changed the live job's unit text — a reinstall on
+        # either host reschedules (or breaks) Bill
+        import zuvo_bill_schedule
+        for (platform, rel), digest in TODAY_UNITS.items():
+            with self.subTest(rel):
+                self.assertEqual(self.on(platform, zuvo_bill_schedule.install_schedule), 0)
+                text = self.unit_text(rel).replace(self.tmp, "<TMP>")
+                self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digest)
+
+    def test_a_calendar_unit_is_well_formed_for_both_schedulers(self) -> None:
+        # bug: the weekly curation unit (Mon 06:00) written with an interval key, a malformed plist, or
+        # an OnCalendar systemd rejects never runs, and nothing says so
+        import zuvo_bill_schedule as S
+        argv = ["/opt/z/bill", "--curate"]
+        when = S.Calendar(weekday=1, hour=6, minute=0)
+        self.assertEqual(self.on("darwin", lambda: S.install_unit("bill-curate", argv, calendar=when,
+                                                                  description="zuvo Bill curation")), 0)
+        plist = plistlib.loads(self.unit_text("Library/LaunchAgents/com.zuvo.bill-curate.plist").encode())
+        self.assertEqual((plist["Label"], plist["ProgramArguments"], plist["StartCalendarInterval"]),
+                         ("com.zuvo.bill-curate", argv, {"Weekday": 1, "Hour": 6, "Minute": 0}))
+        self.assertNotIn("StartInterval", plist)
+        self.assertEqual(self.on("linux", lambda: S.install_unit("bill-curate", argv, calendar=when,
+                                                                 description="zuvo Bill curation")), 0)
+        timer = configparser.ConfigParser(interpolation=None)
+        timer.read_string(self.unit_text(".config/systemd/user/zuvo-bill-curate.timer"))
+        self.assertEqual(dict(timer["Timer"]), {"oncalendar": "Mon *-*-* 06:00:00", "persistent": "true"})
+        service = configparser.ConfigParser(interpolation=None)
+        service.read_string(self.unit_text(".config/systemd/user/zuvo-bill-curate.service"))
+        self.assertEqual(shlex.split(service["Service"]["ExecStart"]), argv)
+
+    def test_uninstall_stops_the_job_and_removes_its_files(self) -> None:
+        # bug: a unit that can only be installed keeps running after its feature is turned off; a stop
+        # the scheduler refused reported as done leaves the job running with nothing to show for it
+        import zuvo_bill_schedule as S
+        plist, units = "Library/LaunchAgents/com.zuvo.bill-x.plist", ".config/systemd/user/zuvo-bill-x"
+        table = [("darwin", [plist], "", 0, [f"launchctl unload {self.home}/{plist}"]),
+                 ("darwin", [plist], "unload", 1, [f"launchctl unload {self.home}/{plist}"]),
+                 ("linux", [f"{units}.service", f"{units}.timer"], "", 0,
+                  ["systemctl --user disable --now zuvo-bill-x.timer", "systemctl --user daemon-reload"]),
+                 ("linux", [f"{units}.service", f"{units}.timer"], "--user disable", 1,
+                  ["systemctl --user disable --now zuvo-bill-x.timer"])]
+        for platform, files, fail, rc, calls in table:
+            with self.subTest(platform=platform, fail=fail):
+                self.setenv(FAIL_ON="")
+                self.on(platform, lambda: S.install_unit("bill-x", ["/b"], interval_s=60, description="x"))
+                self.write(self.calls, "")
+                self.setenv(FAIL_ON=fail)
+                self.assertEqual(self.on(platform, lambda: S.uninstall_unit("bill-x")), rc)
+                self.assertEqual(self.read_lines(self.calls), calls)
+                left = [f for f in files if os.path.exists(os.path.join(self.home, f))]
+                self.assertEqual(left, files if rc else [])
+
+
+def defect(run: str, lanes: list[str], verdict_: str) -> str:
+    return json.dumps({"ts": ago(hours=1), "run": run, "lanes": lanes, "verdict": verdict_}) + "\n"
+
+
+PRECISION_FIXTURE = "".join([
+    defect("r1", ["codex", "kimi"], "real"), defect("r1", ["codex"], "false_positive"),
+    defect("r2", ["kimi"], "uncertain"), defect("r2", ["codex"], "real"),
+    defect("r3", ["agy"], "false_positive"), defect("r3", ["mercury"], "uncertain"),
+    defect("r3", [], "real"),                     # its findings were all judged by the agent meanwhile
+])
+
+
+class PrecisionTables(BillTestCase):
+    def table(self, flag: str) -> dict[str, list[str]]:
+        self.write(os.path.join(self.zuvo, "bill-data", "defects.jsonl"), PRECISION_FIXTURE)
+        out = self.run_bill("--status", flag).stdout
+        rows = out.split(f"precision {flag[2:].replace('-', ' ')}:\n", 1)[1].splitlines()[1:]
+        return {r.split()[0]: r.split()[1:] for r in rows if r.startswith("  ")}
+
+    def test_precision_by_lane(self) -> None:
+        # bug: per-lane precision rested on the agents' ~6 % of verdicts while Bill's own sat unread;
+        # a lane with only uncertain verdicts must read "-", not 0 (or a ZeroDivisionError)
+        self.assertEqual(self.table("--by-lane"), {
+            "codex": ["2", "3", "2", "1", "0", "0.67"], "kimi": ["2", "2", "1", "0", "1", "1.00"],
+            "agy": ["1", "1", "0", "1", "0", "0.00"], "mercury": ["1", "1", "0", "0", "1", "-"]})
+
+    def test_precision_by_how_many_lanes_agreed(self) -> None:
+        # bug: whether a defect raised by two lanes is likelier real than one raised by one was
+        # unmeasured; a defect with no recorded lane counted as an agreement of 0
+        self.assertEqual(self.table("--by-agreement"), {
+            "1": ["3", "5", "1", "2", "2", "0.33"], "2": ["1", "1", "1", "0", "0", "1.00"]})
+
+    def test_plain_status_prints_no_table(self) -> None:
+        # bug: the tables leaking into the plain --status output the bill page and the live checks parse
+        self.write(os.path.join(self.zuvo, "bill-data", "defects.jsonl"), PRECISION_FIXTURE)
+        self.assertNotIn("precision by", self.run_bill("--status").stdout)
+
+
+class Projects(BillTestCase):
+    def queue_under(self, project: str, label: str = "") -> str:
+        """One review of `project` in a ZUVO_HOME of its own; returns the file fake claude logs calls to."""
+        self.setenv(ZUVO_HOME=os.path.join(self.tmp, label or "zh"))
+        self.zuvo = os.environ["ZUVO_HOME"]
+        self.write_ledger([finding(ago(hours=2), "r-1", "a.py:1:x", "a.py:1", project)])
+        self.diff("r-1")
+        calls = os.path.join(self.tmp, label or "zh", "calls")
+        self.fake_exe("claude", f'cat >/dev/null; echo call >> "{calls}"; exit 1\n')
+        return calls
+
+    def tick(self) -> int:
+        import zuvo_bill_tick
+        with contextlib.redirect_stdout(io.StringIO()):
+            return zuvo_bill_tick.tick(False)
+
+    def done(self) -> list[str]:
+        path = os.path.join(self.zuvo, "bill-data", "judged-runs.txt")
+        return self.read_lines(path) if os.path.exists(path) else []
+
+    def test_a_bare_name_is_judged_and_recorded_from_the_checkout_it_names(self) -> None:
+        # bug: rows keyed by a bare name (the driver before absolute paths) were judged and their verdict
+        # dropped, or never judged at all — the driver now records them from their checkout
+        dev = os.path.join(self.home, "DEV", "repo")
+        mirrored = os.path.join(self.tmp, "elsewhere", "repo2")
+        for d in (dev, mirrored):
+            os.makedirs(os.path.join(d, ".git"))
+        table = {"~/DEV/<name>": ("repo", dev), "a mirrored ledger's absolute path": ("repo2", mirrored)}
+        for label, (name, checkout) in table.items():
+            with self.subTest(label):
+                self.queue_under(name, label)
+                self.write(os.path.join(self.zuvo, "remote", "host", "adversarial-findings.log"),
+                           finding(ago(hours=90), "old", "b.py:1:y", "b.py:1", mirrored) + "\n")
+                args = self.fake_driver()
+                self.fake_claude_answer({"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}]})
+                self.assertEqual(self.tick(), 0)
+                self.assertEqual(self.read_lines(args), ["--record-disposition", "a.py:1:x", "deferred"])
+                cwd = self.read_lines(args + ".cwd")[0]
+                self.assertEqual(os.path.realpath(cwd), os.path.realpath(checkout))
+                self.assertEqual(self.done(), ["r-1"])
+
+    def test_a_review_without_a_checkout_is_never_paid_for_and_rechecked_every_tick(self) -> None:
+        # bug: it was judged and its verdict dropped ("project-missing"), or marked done for good though
+        # the checkout could appear within the window (a volume mounted, a repo cloned, a .git restored)
+        not_git = os.path.join(self.tmp, "plain")
+        os.makedirs(not_git)
+        table = {"bare name, no checkout here": ("gone-repo", "no-checkout"),
+                 "no project": ("", "no-project"),
+                 "absolute path, not a git checkout": (not_git, "not-a-checkout"),
+                 "absolute path gone": (os.path.join(self.tmp, "volume", "repo"), "project-gone")}
+        for label, (project, reason) in table.items():
+            with self.subTest(label):
+                calls = self.queue_under(project, label)
+                for _ in range(2):
+                    self.assertEqual(self.tick(), 0)
+                self.assertFalse(os.path.exists(calls))
+                self.assertEqual(self.done(), [])
+                logged = self.read_lines(os.path.join(self.zuvo, "bill-data", "unrecordable.jsonl"))
+                self.assertEqual(len(logged), 1)
+                status = self.run_bill("--status").stdout
+                self.assertIn(f"unjudged inside the 48 h window: 1 — {reason} 1", status)
+
+    def test_a_review_whose_checkout_appears_is_judged_and_no_longer_counted(self) -> None:
+        # bug: a run recorded later, once its checkout was back, still counted as unrecordable for good
+        project = os.path.join(self.tmp, "volume", "repo")
+        self.queue_under(project)
+        self.tick()
+        os.makedirs(os.path.join(project, ".git"))
+        self.fake_driver()
+        self.fake_claude_answer({"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}]})
+        self.tick()
+        self.assertEqual(self.done(), ["r-1"])
+        self.assertNotIn("unrecordable", self.run_bill("--status").stdout)
+
+    def test_the_driver_records_an_id_raised_under_the_checkouts_bare_name(self) -> None:
+        # bug: the contract Bill's bare-name resolution rests on — run from the checkout, the driver
+        # must accept an id raised under its basename, or every such verdict is refused after a paid call
+        repo = os.path.join(self.tmp, "repo")
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        subprocess.run(["git", "init", "-q", repo], check=True, env=env, timeout=30)
+        ledger = self.write_ledger([finding(ago(hours=2), "r-1", "a.py:1:x", "a.py:1", "repo")])
+        p = subprocess.run([str(DRIVER), "--record-disposition", "a.py:1:x", "deferred"], cwd=repo,
+                           env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.read_lines(ledger)[-1].split("\t")[9], "deferred")
+
+
+class Record(BillTestCase):
+    def test_a_defect_left_without_ids_is_not_written(self) -> None:
+        # bug: a defect whose every id was judged by the agent meanwhile, or never raised by the review,
+        # reached defects.jsonl with no lanes — counted in every precision table as Bill's verdict
+        proj = self.queue_review("r-1", ["a.py:1:x", "a.py:2:y"])
+        with open(os.path.join(self.zuvo, "adversarial-findings.log"), "a", encoding="utf-8") as f:
+            f.write(verdict(ago(minutes=1), "a.py:2:y", "fixed", proj) + "\n")
+        self.fake_driver()
+        self.fake_claude_answer({"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]},
+                                             {"verdict": "real", "finding_ids": ["a.py:2:y"]},
+                                             {"verdict": "real", "finding_ids": ["forged:9:id"]}]})
+        import zuvo_bill_tick
+        with contextlib.redirect_stdout(io.StringIO()):
+            zuvo_bill_tick.tick(False)
+        rows = self.read_lines(os.path.join(self.zuvo, "bill-data", "defects.jsonl"))
+        self.assertEqual([json.loads(x)["finding_ids"] for x in rows], [["a.py:1:x"]])
+
+    def test_a_checkout_gone_during_the_call_writes_nothing_and_is_retried(self) -> None:
+        # bug: defects and lessons were written although the ledger never took the verdict, and the run
+        # was marked done — Bill's tables counted verdicts the ledger never saw
+        import zuvo_bill_tick
+        rec = {"run": "r-1", "project": os.path.join(self.tmp, "gone"), "findings": 1,
+               "verdicts": {"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}], "lessons": ["l"]}}
+        attempts: dict[str, int] = {}
+        done_f = os.path.join(self.zuvo, "bill-data", "judged-runs.txt")
+        os.makedirs(os.path.dirname(done_f))
+        with contextlib.redirect_stdout(io.StringIO()):
+            zuvo_bill_tick.settle(rec, [{"id": "a.py:1:x", "lane": "codex"}], attempts, done_f)
+        self.assertEqual((rec["recorded"], attempts), (False, {"r-1": 1}))
+        self.assertEqual(sorted(os.listdir(os.path.dirname(done_f))), ["bill.log"])
+
+
+class RecordDriver(BillTestCase):
+    def test_a_driver_that_cannot_start_is_a_retry_not_a_traceback(self) -> None:
+        # bug: a missing driver (or a cwd gone between the check and the call) raised out of record()
+        import zuvo_bill_tick
+        proj = self.queue_review("r-1", ["a.py:1:x"])
+        rec = {"run": "r-1", "project": proj, "findings": 1,
+               "verdicts": {"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}], "lessons": []}}
+        zuvo_bill_tick.record(rec, [{"id": "a.py:1:x", "lane": "codex"}])
+        self.assertIs(rec["recorded"], False)
+        self.assertIn("FileNotFoundError", str(rec["error"]))
+
+
+class Flags(BillTestCase):
+    def test_a_flag_bill_does_not_take_exits_2_and_never_ticks(self) -> None:
+        # bug: `bill --by-lane` (without --status) or a typo like `--stauts` started a paid tick
+        self.queue_review("r-1", ["a.py:1:x"])
+        calls = os.path.join(self.tmp, "calls")
+        self.fake_exe("claude", f'cat >/dev/null; echo call >> "{calls}"; exit 1\n')
+        for argv in (["--by-lane"], ["--by-agreement", "--dry-run"], ["--stauts"]):
+            with self.subTest(argv=argv):
+                p = self.run_bill(*argv)
+                self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                self.assertIn(f"bill: {argv[0]}: not a flag here", p.stderr)
+        self.assertFalse(os.path.exists(calls))
+
+
+class UnitChecks(UnitCase):
+    def test_a_bad_label_or_time_is_refused_before_anything_is_written(self) -> None:
+        # bug: a label with a slash or a space wrote outside LaunchAgents / an unloadable unit; weekday 0 or
+        # 8 wrapped onto another day; a 1-second interval made a paid job run back to back
+        import zuvo_bill_schedule as S
+        table: list[tuple[str, dict[str, Any]]] = [
+                 ("../evil", {"interval_s": 600}), ("a b", {"interval_s": 600}), ("", {"interval_s": 600}),
+                 ("ok", {"interval_s": 59}), ("ok", {"interval_s": True}), ("ok", {}),
+                 ("ok", {"interval_s": 600, "calendar": S.Calendar(1, 6, 0)}),
+                 ("ok", {"calendar": S.Calendar(0, 6, 0)}), ("ok", {"calendar": S.Calendar(8, 6, 0)}),
+                 ("ok", {"calendar": S.Calendar(1, 24, 0)}), ("ok", {"calendar": S.Calendar(1, 6, 60)})]
+        for label, when in table:
+            with self.subTest(label=label, when=when), self.assertRaises(ValueError):
+                S.install_unit(label, ["/b"], description="x", **when)
+        with self.assertRaises(ValueError):
+            S.uninstall_unit("../evil")
+        self.assertFalse(os.path.exists(os.path.join(self.home, ".config")))
+        self.assertFalse(os.path.exists(self.calls))
+
+    def test_a_refused_install_takes_back_the_files_it_wrote(self) -> None:
+        # bug: a plist launchd refused stayed behind and loaded at the next login; one that replaced a
+        # working unit left the job broken
+        import zuvo_bill_schedule as S
+        plist = os.path.join(self.home, "Library/LaunchAgents/com.zuvo.bill-x.plist")
+        for before in (None, "<plist>the working one</plist>"):
+            with self.subTest(before=before):
+                if before is not None:
+                    self.write(plist, before)
+                self.setenv(FAIL_ON="load")
+                rc = self.on("darwin",
+                             lambda: S.install_unit("bill-x", ["/b"], interval_s=600, description="x"))
+                self.assertEqual(rc, 1)
+                if before is None:
+                    self.assertFalse(os.path.exists(plist))
+                else:
+                    with open(plist, encoding="utf-8") as f:
+                        self.assertEqual(f.read(), before)
+
+    def test_a_refused_start_is_stopped_again(self) -> None:
+        # bug: `load` / `enable --now` can start the job and still report failure; the rollback removed
+        # its files and left it running
+        import zuvo_bill_schedule as S
+        plist = f"{self.home}/Library/LaunchAgents/com.zuvo.bill-x.plist"
+        table = [("darwin", "load", [f"launchctl load {plist}", f"launchctl unload {plist}"]),
+                 ("linux", "--user enable", ["systemctl --user enable --now zuvo-bill-x.timer",
+                                             "systemctl --user disable --now zuvo-bill-x.timer"])]
+        for platform, fail, tail in table:
+            with self.subTest(platform):
+                self.write(self.calls, "")
+                self.setenv(FAIL_ON=fail)
+                self.on(platform, lambda: S.install_unit("bill-x", ["/b"], interval_s=600, description="x"))
+                calls = self.read_lines(self.calls)
+                self.assertEqual(calls[calls.index(tail[0]):calls.index(tail[0]) + 2], tail)
+
+    def test_install_schedule_reports_a_refused_unit_and_exits_1(self) -> None:
+        # bug: install_unit's ValueError escaped `bill --install-schedule` as a traceback
+        import zuvo_bill_schedule as S
+        err = io.StringIO()
+        with mock.patch.object(S, "MIN_INTERVAL_S", 601), contextlib.redirect_stderr(err):
+            self.assertEqual(S.install_schedule(), 1)
+        self.assertIn("schedule not installed — install_unit: interval_s 600", err.getvalue())
+
+    def test_a_percent_in_a_systemd_value_is_escaped(self) -> None:
+        # bug: systemd reads % as a specifier — "50% of runs" or a log path with % became another text
+        import zuvo_bill_schedule as S
+        log = os.path.join(self.tmp, "logs 100%", "curate.log")
+        self.on("linux", lambda: S.install_unit("bill-x", ["/b", "50%"], interval_s=600,
+                                                description="50% of runs", log=log))
+        text = self.unit_text(".config/systemd/user/zuvo-bill-x.service")
+        self.assertIn("Description=50%% of runs\n", text)
+        self.assertIn('ExecStart="/b" "50%%"\n', text)
+        self.assertIn(f"StandardOutput=append:{log.replace('%', '%%')}\n", text)
+
+
+class StatusInput(BillTestCase):
+    def test_status_survives_malformed_rows(self) -> None:
+        # bug: one hand-edited or torn-and-rewritten row (usd "n/a" or NaN, a numeric ts, a list as run id,
+        # a number as lane, "error": null) made --status raise or print nonsense — the one command that
+        # says why Bill is not working
+        bd = os.path.join(self.zuvo, "bill-data")
+        self.write(f"{bd}/bill.log", "".join(json.dumps(r) + "\n" for r in [
+            {"ts": ago(hours=1), "usd": 0.5, "secs": 12, "error": "x"},
+            {"ts": ago(hours=1), "usd": "n/a", "secs": None, "error": None},
+            {"ts": ago(hours=1), "usd": float("nan")}, {"ts": ago(hours=1), "usd": float("inf")},
+            {"ts": 5, "usd": 1}]))
+        self.write(f"{bd}/unrecordable.jsonl", "".join(json.dumps(r) + "\n" for r in [
+            {"run": ["x"], "ts": ago(hours=1)},
+            {"run": "aged-out", "review_ts": ago(hours=72), "reason": "project-gone"}]))
+        self.write(f"{bd}/defects.jsonl", "".join(json.dumps(r) + "\n" for r in [
+            {"run": ["x"], "lanes": ["codex", 7], "verdict": "real"},
+            {"run": "r2", "lanes": [7], "verdict": "real"}]))
+        p = self.run_bill("--status", "--by-lane")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("errors 24 h: 1;", p.stdout)
+        self.assertIn("API-price USD 24 h: 0.50; mean seconds: 3", p.stdout)
+        self.assertNotIn("unrecordable", p.stdout)
+        table = p.stdout.split("precision by lane:\n", 1)[1].splitlines()[1:]
+        self.assertEqual([r.split()[0] for r in table], ["codex"])
+
+    def test_status_says_an_unreadable_unrecordable_log_and_goes_on(self) -> None:
+        # bug: an OSError reading unrecordable.jsonl ended --status with a traceback
+        os.makedirs(os.path.join(self.zuvo, "bill-data", "unrecordable.jsonl"))
+        p = self.run_bill("--status")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("unrecordable runs: unreadable", p.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

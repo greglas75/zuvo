@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 from zuvo_review_ledger import ledger_path, zuvo_home
 
-API = 2
+API = 3
 CALL_TIMEOUT = 1800
 # The lock directory bill used before tick.flock. A tick of that older release may still be running
 # during an upgrade; one older than this is a dead tick's (that release took such a lock over too).

@@ -6,7 +6,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/bin" "$TMP/zh/adversarial-inputs" "$TMP/proj"
+mkdir -p "$TMP/bin" "$TMP/zh/adversarial-inputs" "$TMP/proj/.git"   # proj: a git checkout, as Bill records from one
 
 python3 - "$ROOT/scripts/zuvo-home/bill" "$TMP" <<'PY'
 import json, os, stat, sys
