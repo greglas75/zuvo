@@ -5244,3 +5244,11 @@ parent entry is not listed as EDITED.
 **Fix:** parse an entry as its head line plus the lines that belong to it (until the next top-level entry or
 heading), key the block by the head's ID, and compare whole blocks — a differing block is EDITED, a new one is
 appended intact.
+**Residual loss (zuvo:review of S-66, 2026-10-12):** the review made a NEW entry's body arrive whole and counts
+repeats of an ID-less line, but one loss path stays until blocks are compared: a body line ADDED under an entry
+main already holds, whose text main also holds elsewhere while the worktree lacks that other copy (forked before
+it arrived), or MOVED there from another entry, is matched against main's copy, dropped, and lost when the
+worktree copy is stubbed.
+
+- [ ] B-20261012-CONSOLIDATE-HOME-PREFIX scripts/zuvo-home/backlog-consolidate.py:276 — [SEC] `str(mr).startswith(str(Path.home()))` is a string-prefix containment test (`/home/greg2` passes for `/home/greg`); use `Path.is_relative_to` | evidence: CQ auditor CQ31 | severity: low | source: review/2026-10-12 | defer-reason: NIT (pre-existing, path comes from git) | 2026-10-12
+- [ ] B-20261012-CONSOLIDATE-MAIN-GUARD scripts/zuvo-home/backlog-consolidate.py:265 — [READ] the run is a module-level loop (nesting 5) with no main()/`__main__` guard, unlike the sibling backlog helpers, so it cannot be imported or unit-tested; no return annotations; the merge header is written by an f-string and matched by MERGED_HEADER separately | evidence: CQ auditor CQ2/CQ11/CQ12/CQ25 | severity: low | source: review/2026-10-12 | defer-reason: NIT | 2026-10-12
