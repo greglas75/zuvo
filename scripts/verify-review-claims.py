@@ -82,10 +82,11 @@ _OPERAND = r"""(?:\.?\d[\d.]*[smhd]?|"?\$\{?\w+\}?"?)"""  # 25m, .5s, $T, "${T}"
 ADVERSARIAL_RE = re.compile(
     r"(?:^|[|;&({]|\n)"                             # command position
     rf"(?:{_WS}*(?:if|then|do|else|elif|while|until|time|exec)\b|{_WS}*!"  # control-flow lead-ins,
-    rf"|{_WS}*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)"  # env assignments, quoted or not,
+    # env assignments; a quote opens a quoted value, so a quoted mention is never a command:
+    rf"|{_WS}*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s\"']\S*|)"
     rf"|{_WS}*timeout(?:{_WS}+-{{1,2}}[A-Za-z][\w=.-]*(?:{_WS}+[\w.$\"{{}}]+)?)*{_WS}+{_OPERAND}(?={_WS})"
     # other wrappers:
-    rf"|{_WS}*(?:nice|nohup|env|stdbuf)(?:{_WS}+-[\w=.-]+(?:{_WS}+-?{_OPERAND})?)*(?={_WS}))*"
+    rf"|{_WS}*(?:nice|nohup|env|stdbuf|command(?!{_WS}+-[vV]))(?:{_WS}+-[\w=.-]+(?:{_WS}+-?{_OPERAND})?)*(?={_WS}))*"
     rf"{_WS}*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
     r"(?P<args>(?:\\\n|[^|;&\n])*)"                 # this command's own arguments
 )
@@ -93,8 +94,8 @@ ADVERSARIAL_RE = re.compile(
 # position too, in any order with env assignments: zuvo:review runs every pass as
 # `timeout 1500 ~/.zuvo/adversarial-review --multi …`, and without them nine real --multi passes
 # scored --multi: 0 and an honest review was accused (2026-10-12). `echo`, `grep` and the like are
-# deliberately NOT wrappers — their argument is text, not a command; nor is `command`, whose
-# `command -v adversarial-review` is a lookup, not a run.
+# deliberately NOT wrappers — their argument is text, not a command; `command` is one only without
+# -v/-V (`command -v adversarial-review` is a lookup, not a run).
 # `args` deliberately consumes a backslash-newline continuation rather than stopping at it.
 # Stopping made `… | adversarial-review \<newline>  --multi --mode code` capture just `\`, so a
 # real `--multi` pass scored adversarial_multi=0 and the verifier ACCUSED an honest reviewer of
