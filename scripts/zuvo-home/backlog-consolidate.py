@@ -47,13 +47,6 @@ DEV = Path.home() / "DEV"
 # went straight to rewriting the file. Every "Merged from worktree … (TODAY)" header and every STUB
 # notice was stamped 2026-07-19 forever, too.
 TODAY = datetime.date.today().isoformat()
-ARGS = sys.argv[1:]
-if any(a != "--dry-run" for a in ARGS):  # a misspelt --dry-run must not run the writing mode
-    print(f"usage: {Path(sys.argv[0]).name} [--dry-run]", file=sys.stderr)
-    sys.exit(2)
-DRY = "--dry-run" in ARGS
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(errors="backslashreplace")  # an undecodable path must not crash the report
 # Whatever the locale, a stray non-UTF-8 byte survives into main unchanged instead of becoming U+FFFD
 # (or crashing the append under LC_ALL=C). The backup is a byte copy.
 ENC = {"encoding": "utf-8", "errors": "surrogateescape"}
@@ -111,6 +104,10 @@ LIST_ITEM = re.compile(r"(?:[-*+]|\d{1,3}[.)])\s+(?:\[[ xX]\]\s+)?")
 HEADING = re.compile(r"#{1,6}\s+")
 MERGED_HEADER = re.compile(r"## Merged from worktree .+ \(\d{4}-\d{2}-\d{2}\)")
 
+def merged_header(label: str) -> str:
+    """The section header merge_md writes; MERGED_HEADER is what recognises it again."""
+    return f"## Merged from worktree {label} ({TODAY})"
+
 def entry_id(line):
     """The ID an entry line starts with — the first cell of a table row, or the first word of a
     top-level list item or heading — or None. An indented line other than a table row is an entry's
@@ -136,7 +133,7 @@ def entry_key(line):
 def backup(path: Path):
     """A copy of path before this run first appends to it. The day's backup is kept as it is; a
     second append that day, onto a file that changed since, gets its own timestamped copy."""
-    if DRY or not path.exists():
+    if not path.exists():
         return
     data = path.read_bytes()
     bak = path.with_name(path.name + f".bak-{TODAY.replace('-','')}")
@@ -195,8 +192,8 @@ def merge_md(main_file: Path, wt_text: str, label: str, write=True):
             name = k[1] if k[0] == "id" else f"line '{ws(l)[:60]}'"
             if name not in differs:
                 differs.append(name)
-    if uniq and write and not DRY:
-        append(main_file, f"\n## Merged from worktree {label} ({TODAY})\n" + "\n".join(uniq) + "\n")
+    if uniq and write:
+        append(main_file, f"\n{merged_header(label)}\n" + "\n".join(uniq) + "\n")
     return len(uniq), differs
 
 def jsonl_key(line):
@@ -229,7 +226,7 @@ def merge_jsonl(main_file: Path, wt_text: str, write=True):
             bodies[k] = {body}
         elif body not in bodies[k] and k not in differs:
             differs.append(k)
-    if uniq and write and not DRY:
+    if uniq and write:
         append(main_file, "\n".join(uniq) + "\n")
     return len(uniq), differs
 
@@ -259,83 +256,105 @@ def drop_stub(text):
             i += 1
     return "\n".join(keep)
 
-merged_report, left_tracked, stubbed, edited, hand_merge, linked, failed = [], [], [], [], [], [], []
+REPORT = ("merged", "stubbed", "tracked", "edited", "hand_merge", "linked", "failed")
 
-repos = sorted({p for p in DEV.glob("*/") if (p / ".git").exists()})
-for repo in repos:
-    try:
-        mr = main_root(str(repo))
-    except OSError as e:
-        failed.append((repo.name, "git worktree list", str(e)))
-        continue
-    if not mr:
-        continue
-    mr = Path(mr)
-    if mr.resolve() == repo.resolve():
-        continue  # this IS the main checkout
-    if not str(mr).startswith(str(Path.home())):
-        continue
-    # this repo dir is a linked worktree of mr
-    candidates = [("memory/backlog.md", "md"), ("memory/ideas.md", "md")]
-    for kf in sorted((repo / "knowledge").glob("*.jsonl")) if (repo / "knowledge").exists() else []:
-        candidates.append((str(kf.relative_to(repo)), "jsonl"))
-    for rel, kind in candidates:
-        wt = repo / rel
+def consolidate_file(repo: Path, mr: Path, rel: str, kind: str, dry: bool, report: dict) -> None:
+    """Merge one worktree copy into main (or leave it, and say why) and stub it once main holds it."""
+    wt = repo / rel
+    if not wt.exists() and not wt.is_symlink():
+        return
+    main_file = mr / rel
+    if (wt.is_symlink() or wt.resolve() != repo.resolve() / rel
+            or (main_file.exists() and os.path.samefile(main_file, wt))):
+        # a link leads to a file this copy does not own (often the canonical one)
+        report["linked"].append((repo.name, rel))
+        return
+    text = drop_stub(wt.read_text(**ENC).lstrip("﻿"))
+    if not text.strip():
+        return  # empty, or a stub with nothing written below it
+    if is_tracked(str(repo), rel):
+        report["tracked"].append((repo.name, rel))
+        return
+    if is_tracked(str(mr), rel):
+        # Git will not carry an untracked worktree copy, and main must not be written.
+        n, differs = merge(kind, main_file, text, repo.name, write=False)
+        if n or differs:
+            report["hand_merge"].append((repo.name, rel, n, differs, mr.name))
+            return
+    else:
+        n, differs = merge(kind, main_file, text, repo.name, write=not dry)
+        report["merged"].append((repo.name, rel, n, mr.name))
+        if differs:
+            report["edited"].append((repo.name, rel, differs))
+            return
+    if not dry:
+        wt.write_text(STUB.format(main=mr, rel=rel), **ENC)
+    report["stubbed"].append((repo.name, rel))
+
+def consolidate(dry: bool) -> dict:
+    report = {k: [] for k in REPORT}
+    for repo in sorted({p for p in DEV.glob("*/") if (p / ".git").exists()}):
         try:
-            if not wt.exists() and not wt.is_symlink():
-                continue
-            main_file = mr / rel
-            if (wt.is_symlink() or wt.resolve() != repo.resolve() / rel
-                    or (main_file.exists() and os.path.samefile(main_file, wt))):
-                # a link leads to a file this copy does not own (often the canonical one)
-                linked.append((repo.name, rel))
-                continue
-            text = drop_stub(wt.read_text(**ENC).lstrip("\ufeff"))
-            if not text.strip():
-                continue  # empty, or a stub with nothing written below it
-            if is_tracked(str(repo), rel):
-                left_tracked.append((repo.name, rel))
-                continue
-            if is_tracked(str(mr), rel):
-                # Git will not carry an untracked worktree copy, and main must not be written.
-                n, differs = merge(kind, main_file, text, repo.name, write=False)
-                if n or differs:
-                    hand_merge.append((repo.name, rel, n, differs, mr.name))
-                    continue
-            else:
-                n, differs = merge(kind, main_file, text, repo.name)
-                merged_report.append((repo.name, rel, n, mr.name))
-                if differs:
-                    edited.append((repo.name, rel, differs))
-                    continue
-            if not DRY:
-                wt.write_text(STUB.format(main=mr, rel=rel), **ENC)
-            stubbed.append((repo.name, rel))
-        except Exception as e:  # reported FAILED below; one bad copy must not abort the others
-            failed.append((repo.name, rel, str(e)))
+            mr = main_root(str(repo))
+        except OSError as e:
+            report["failed"].append((repo.name, "git worktree list", str(e)))
+            continue
+        if not mr:
+            continue
+        mr = Path(mr)
+        if mr.resolve() == repo.resolve():
+            continue  # this IS the main checkout
+        if not mr.is_relative_to(Path.home()):  # a path prefix, not a string one: /home/greg2 ≠ /home/greg
+            continue
+        # this repo dir is a linked worktree of mr
+        candidates = [("memory/backlog.md", "md"), ("memory/ideas.md", "md")]
+        for kf in sorted((repo / "knowledge").glob("*.jsonl")) if (repo / "knowledge").exists() else []:
+            candidates.append((str(kf.relative_to(repo)), "jsonl"))
+        for rel, kind in candidates:
+            try:
+                consolidate_file(repo, mr, rel, kind, dry, report)
+            except Exception as e:  # reported FAILED below; one bad copy must not abort the others
+                report["failed"].append((repo.name, rel, str(e)))
+    return report
 
-print(f"{'DRY-RUN ' if DRY else ''}CONSOLIDATION REPORT ({TODAY})")
-print(f"worktree copies processed: {len(merged_report)}")
-for name, rel, n, main in merged_report:
-    print(f"  {name}/{rel}: +{n} unique -> {main}/{rel}")
-print(f"stubbed (main holds all of it): {len(stubbed)}")
-for name, rel in stubbed:
-    print(f"  STUBBED: {name}/{rel}")
-print(f"left in place (git-TRACKED in worktree — the branch merge carries it): {len(left_tracked)}")
-for name, rel in left_tracked:
-    print(f"  TRACKED: {name}/{rel}")
-print(f"left in place (entries edited in the worktree — reconcile by hand): {len(edited)}")
-for name, rel, ids in edited:
-    print(f"  EDITED: {name}/{rel}: {', '.join(ids)}")
-print(f"left in place (main copy git-TRACKED, worktree copy untracked — merge by hand): {len(hand_merge)}")
-for name, rel, n, ids, main in hand_merge:
-    extra = f"; edited: {', '.join(ids)}" if ids else ""
-    print(f"  HAND MERGE: {name}/{rel}: +{n} lines {main}/{rel} lacks{extra}")
-print(f"left in place (a symlink: it leads to a file this checkout does not own): {len(linked)}")
-for name, rel in linked:
-    print(f"  SYMLINK: {name}/{rel}")
-if failed:
-    print(f"FAILED: {len(failed)}")
-    for name, rel, err in failed:
-        print(f"  FAILED: {name}/{rel}: {err}")
-    sys.exit(1)
+def print_report(report: dict, dry: bool) -> None:
+    print(f"{'DRY-RUN ' if dry else ''}CONSOLIDATION REPORT ({TODAY})")
+    print(f"worktree copies processed: {len(report['merged'])}")
+    for name, rel, n, main in report["merged"]:
+        print(f"  {name}/{rel}: +{n} unique -> {main}/{rel}")
+    print(f"stubbed (main holds all of it): {len(report['stubbed'])}")
+    for name, rel in report["stubbed"]:
+        print(f"  STUBBED: {name}/{rel}")
+    print(f"left in place (git-TRACKED in worktree — the branch merge carries it): {len(report['tracked'])}")
+    for name, rel in report["tracked"]:
+        print(f"  TRACKED: {name}/{rel}")
+    print(f"left in place (entries edited in the worktree — reconcile by hand): {len(report['edited'])}")
+    for name, rel, ids in report["edited"]:
+        print(f"  EDITED: {name}/{rel}: {', '.join(ids)}")
+    print("left in place (main copy git-TRACKED, worktree copy untracked — merge by hand): "
+          f"{len(report['hand_merge'])}")
+    for name, rel, n, ids, main in report["hand_merge"]:
+        extra = f"; edited: {', '.join(ids)}" if ids else ""
+        print(f"  HAND MERGE: {name}/{rel}: +{n} lines {main}/{rel} lacks{extra}")
+    print("left in place (a symlink: it leads to a file this checkout does not own): "
+          f"{len(report['linked'])}")
+    for name, rel in report["linked"]:
+        print(f"  SYMLINK: {name}/{rel}")
+    if report["failed"]:
+        print(f"FAILED: {len(report['failed'])}")
+        for name, rel, err in report["failed"]:
+            print(f"  FAILED: {name}/{rel}: {err}")
+
+def main(argv: list) -> int:
+    if any(a != "--dry-run" for a in argv):  # a misspelt --dry-run must not run the writing mode
+        print(f"usage: {Path(sys.argv[0]).name} [--dry-run]", file=sys.stderr)
+        return 2
+    dry = "--dry-run" in argv
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")  # an undecodable path must not crash the report
+    report = consolidate(dry)
+    print_report(report, dry)
+    return 1 if report["failed"] else 0
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

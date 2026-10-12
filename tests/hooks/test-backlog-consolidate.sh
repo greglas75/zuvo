@@ -490,5 +490,21 @@ PATH="$T/nogit" run_rc
 check "no git: exit 1, each repo FAILED, pending copy untouched" \
   '[ "$rc" = 1 ] && [ "$(printf "%s\n" "$out" | grep -c "^  FAILED: .*/git worktree list: ")" = "$(find "$DEV" -mindepth 2 -maxdepth 2 -name .git | wc -l | tr -d " ")" ] && has_line "  FAILED: plain-wt6/git worktree list: git worktree list failed in $DEV/plain-wt6" && [ "$(sha "$DEV/plain-wt6/memory/backlog.md")" = "$wt6_before" ]'
 
+# ── a main checkout outside HOME is not consolidated, even one whose path starts with HOME's ───────
+echo "main outside HOME"
+# `$T/home2` starts with the string `$T/home` but is not inside it: a string-prefix test let a
+# worktree of a repo living there write into it.
+git init -q -b main "$T/home2/outside"
+printf 'memory/\n' > "$T/home2/outside/.gitignore"
+git -C "$T/home2/outside" add .gitignore && git -C "$T/home2/outside" commit -qm init
+git -C "$T/home2/outside" worktree add -q "$DEV/outside-wt" -b feat
+mkdir -p "$T/home2/outside/memory" "$DEV/outside-wt/memory"
+printf '| B-1 | one |\n' > "$T/home2/outside/memory/backlog.md"
+printf '| B-1 | one |\n| B-2 | two |\n' > "$DEV/outside-wt/memory/backlog.md"
+outside_before="$(sha "$T/home2/outside/memory/backlog.md")"
+run
+check "main checkout in a sibling of HOME left untouched" \
+  '[ "$(sha "$T/home2/outside/memory/backlog.md")" = "$outside_before" ] && ! printf "%s\n" "$out" | grep -q "outside-wt/"'
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
