@@ -534,6 +534,10 @@ class FoldTests(Hermetic):
          {SEG_A: [record(), fnd.patch_line(FID, status="kept", note="by design", ts=T1),
                   fnd.patch_line(FID, status="fixed", ts=T2)]},
          "by design"),
+        ("the first note kept over a later one",
+         {SEG_A: [record(), fnd.patch_line(FID, status="kept", note="by design", ts=T1),
+                  fnd.patch_line(FID, status="fixed", note="fixed in 1a2b3c4", ts=T2)]},
+         "fixed in 1a2b3c4"),
     ]
 
     def test_fold_carries_the_latest_patch_note(self) -> None:
