@@ -303,7 +303,7 @@ class ValidationTests(unittest.TestCase):
         ("JWT stored", f(evidence="Authorization: Bearer " + SECRET_JWT), "secret-like-value"),
         ("a DSN with its password in the evidence stored (userinfo was checked only in --target)",
          f(evidence="DSN postgres://app:" + "hunter2" + "@db.internal/app"), "secret-like-value"),
-        ("a DSN with no user name (`redis://:pw@`, the common Redis form) stored",
+        ("a DSN with no user name (the common Redis form) stored",
          f(evidence="REDIS_URL=redis://:" + "p4ssw0rd" + "@cache:6379/0"), "secret-like-value"),
         ("a DSN whose scheme is capitalised stored",
          f(evidence="Postgres://app:" + "hunter2" + "@db.internal/app"), "secret-like-value"),

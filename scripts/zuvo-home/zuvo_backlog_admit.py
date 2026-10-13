@@ -91,7 +91,7 @@ _SECRET_RES = tuple(re.compile(p) for p in (
     r"\bsk-(?:ant|proj|svcacct|admin)-[A-Za-z0-9_-]{20,}", r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.",
     r"-----BEGIN [A-Z ]*PRIVATE KEY", r"\bxox[aboprs]-", r"\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])",
     r"\b(?:sk|rk)_live_[0-9A-Za-z]{16,}", r"\bgithub_pat_[0-9A-Za-z_]{22,}", r"\bglpat-[0-9A-Za-z_-]{20,}",
-    r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:[^\s/@]+@"))     # the user may be empty: redis://:pw@
+    r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:[^\s/@]+@"))     # the user may be empty, as in a Redis URL
 # `user:pw@` in front of a URL's or a host's address: a credential in the target itself.
 _USERINFO_RE = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^\s/?#@]*@")
 # Every line break a renderer might honour, including NEL and the Unicode line/paragraph separators.
