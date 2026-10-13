@@ -121,7 +121,7 @@ def normalize_path(repo: str, p: str) -> Optional[str]:
     """`p` as a repo-relative POSIX path (`./a`, `a` and `<repo>/a` all give `a`), or None when it is
     empty, the repo itself, or outside the repo — lexically (`..`, an absolute path elsewhere) or
     through a symlink pointing out. The spelling is kept lexical, so an in-repo symlink keeps its name."""
-    if not p or not p.strip() or "\0" in p:
+    if not p or not p.strip() or "\0" in p or adm.UNENCODABLE_RE.search(p):
         return None
     root_real, root_abs = os.path.realpath(repo), os.path.abspath(repo)
     rel = os.path.normpath(p)
@@ -220,8 +220,18 @@ def _default_shas(repo: str, default: str) -> list[str]:
 
 
 def current_branch(repo: str) -> Optional[str]:
-    """The checked-out branch name, or None on a detached HEAD (or outside git)."""
-    return _git(repo, "symbolic-ref", "--short", "-q", "HEAD") or None
+    """The checked-out branch name, or None on a detached HEAD. Raises OSError when git gives no answer
+    (a timeout, a crash, no repository): read as "detached", a failure would silently drop the tag."""
+    rc, out = _run(["git", "symbolic-ref", "--short", "-q", "HEAD"], repo, GIT_TIMEOUT_S)
+    if rc not in (0, 1):                    # `-q` exits 1, and only 1, on a detached HEAD
+        raise OSError(f"git symbolic-ref HEAD gave no answer (rc={rc}) in {repo}")
+    return out.strip() or None
+
+
+def toplevel(repo: str) -> Optional[str]:
+    """The work tree `repo` is in, or None outside one. Through `_run`, so a `GIT_DIR` inherited from a
+    hook cannot make git answer with the cwd instead of the real top level."""
+    return _git(repo, "rev-parse", "--show-toplevel") or None
 
 
 def head_sha7(repo: str) -> Optional[str]:

@@ -93,6 +93,8 @@ _USERINFO_RE = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^\s/?#@]*@")
 # Every line break a renderer might honour, including NEL and the Unicode line/paragraph separators.
 _NEWLINE_RE = re.compile(r"\r\n?|[\n\u0085\u2028\u2029]")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+# A lone surrogate: argv bytes that are not UTF-8 arrive as these (surrogateescape) and cannot be written.
+UNENCODABLE_RE = re.compile("[\ud800-\udfff]")
 # A path or target that would break the rendered `<location>:<line>` or the `|` field layout. Refused
 # rather than escaped, so the location in the backlog is byte-for-byte what the skill reported.
 _BAD_LOCATION_RE = re.compile(r"[\x00-\x1f\x7f-\x9f|\u2028\u2029]")
@@ -216,8 +218,8 @@ def _check_types(f: Finding) -> Optional[str]:
     # First, so that no later check calls `.strip()` on a number or hashes a list.
     for name in _TEXT_FIELDS:
         value = getattr(f, name)
-        if value is not None and not isinstance(value, str):
-            return "bad-field:" + name
+        if value is not None and (not isinstance(value, str) or UNENCODABLE_RE.search(value)):
+            return "bad-field:" + name      # not text, or text no file can hold (only found AT the write)
     return None
 
 

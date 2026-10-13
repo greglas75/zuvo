@@ -397,6 +397,27 @@ class StateTests(AddCase):
         self.assertIn("| seen: 2 |", self.entries(r, b_id)[0])
         self.assertEqual((records[f_id].fields["backlog"], records[f_id].seen), (b_id, 1))
 
+    def test_unencodable_argv_is_refused_before_the_backlog_write(self) -> None:
+        # Defect: a non-UTF-8 byte in --missing-assertion (stored only in the ledger) passed validation; the
+        # promoted entry was written, the ledger append raised UnicodeEncodeError, and each retry bumped
+        # the orphan entry's seen.
+        r = self.repo()
+        with (r / "src" / "a.py").open("a", encoding="utf-8") as fh:
+            fh.write("total = 0\n")
+        before = snapshot(r)
+        p = self.add(r, "--class", "TEST-GAP", "--conf", "85", "--file", "src/a.py", "--line", "5",
+                     "--title", "no test for the reset", "--source", "write-tests",
+                     "--missing-assertion", "asserts \udcff the total")
+        self.assertEqual((p.returncode, p.stdout), (3, "REFUSED bad-field:missing_assertion\n"))
+        self.assertEqual(snapshot(r), before)
+
+    def test_inherited_git_dir_does_not_move_the_repo_root(self) -> None:
+        # Defect: run from a git hook (GIT_DIR exported) in a subdirectory, the top level read through an
+        # unscrubbed git is the cwd, so `--file src/a.py` is looked up as src/src/a.py and refused.
+        r = self.repo()
+        p = self.add(r, *CPLX, cwd=r / "src", GIT_DIR=str(r / ".git"))
+        self.assertEqual((p.returncode, self.verdict(p)[0]), (0, "LEDGER"))
+
     def test_dry_run_writes_nothing_and_lists_nothing(self) -> None:
         # Defect: --dry-run creates the segment or the lock, or its wrote= names paths a skill would then
         # stage although nothing was written.

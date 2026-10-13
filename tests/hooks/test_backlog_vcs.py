@@ -228,6 +228,8 @@ class SiteTests(unittest.TestCase):
             ("empty path read as the repo root", "", None),
             ("symlinked directory out of the repo accepted", "src/linkdir/x.py", None),
             ("a NUL in the path raises ValueError", "src/a\x00.py", None),
+            ("a non-UTF-8 byte (surrogateescape) accepted, then unwritable in the ledger", "src/a\udcff.py",
+             None),
         ]
         for name, given, want in rows:
             with self.subTest(name):
@@ -476,6 +478,20 @@ class TagTests(unittest.TestCase):
                 self.assertEqual(want, (tag.kind, tag.value))
                 self.assertEqual(calls, sb.gh_calls())
 
+
+    def test_git_that_cannot_name_the_branch_is_an_error_not_a_detached_head(self) -> None:
+        # a failing `git symbolic-ref` (a timeout, a locked or corrupt repo) read as a detached HEAD: the
+        # feature-branch entry is filed untagged and the intake tickets it at once
+        sb = Sandbox(self)
+        sb.init(BITBUCKET)
+        sb.git("checkout", "-q", "-b", "feat/y")
+        git = sb.bin / "git"
+        git.unlink()
+        git.write_text(f"#!/bin/sh\ncase \" $* \" in *\" symbolic-ref \"*HEAD*) exit 128 ;; esac\n"
+                       f"exec {shlex.quote(GIT)} \"$@\"\n", encoding="utf-8")
+        git.chmod(0o755)
+        with sb.env({}), self.assertRaisesRegex(OSError, r"symbolic-ref HEAD gave no answer \(rc=128\)"):
+            vcs.resolve_tag(str(sb.repo), None)
 
     def test_detached_at_remote_default_without_local_ref(self) -> None:
         # a worktree with only origin/main: detached on its tip must read as the default, not untaggable

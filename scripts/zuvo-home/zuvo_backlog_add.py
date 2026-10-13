@@ -26,7 +26,8 @@ after which stderr names the backlog path already written.
 
 `seen` COUNTS EVENTS (`fold`: full records plus sightings), so the FIRST call writes exactly one full
 record and no sighting; every later call writes one sighting. A status patch is written only when the
-record's backlog link or status changes. The two counts are independent after a crash heal: the entry's
+record's backlog link or status changes, or when ZUVO_BACKLOG_ADMIT forced the route (every forced
+sighting is recorded, see below). The two counts are independent after a crash heal: the entry's
 `seen:` keeps counting bumps, the healed ledger restarts at 1. The ledger's sites (`files[]`) are those
 of the FIRST sighting; `--also` on a later one is reported on stderr as not recorded (a sighting line
 has no sites). A line-level ledger defect (a torn tail, bad JSON) is reported and the fold goes on: the
@@ -171,7 +172,7 @@ def _finding(a: argparse.Namespace) -> adm.Finding:
 def _toplevel(repo: str) -> Optional[str]:
     """The checkout `repo` is in, so `--file` is read repo-relative from any subdirectory; None outside
     a git work tree (no branch, no tag, no work-tree anchor: nothing here can hold)."""
-    return zio.sh(["git", "rev-parse", "--show-toplevel"], cwd=repo) or None
+    return vcs.toplevel(repo)
 
 
 # ── before the lock ──────────────────────────────────────────────────────────────────────────────

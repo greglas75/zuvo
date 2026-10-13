@@ -5,6 +5,7 @@ never the number of segment files.
 """
 
 import contextlib
+import io
 import json
 import os
 import shutil
@@ -240,11 +241,14 @@ class VisibilityTests(Hermetic):
                     got = list(pool.map(visibility, [repo] * 4))
                 self.assertEqual(([fnd.REFUSED_TRACKED] * 4, before), (got, tree(repo)))
 
-    def test_git_that_cannot_answer_is_refused(self) -> None:
-        # CQ8: a git error or a hang read as "not ignored" publishes an ignored backlog's findings
+    def test_git_that_cannot_answer_is_refused_with_its_reason(self) -> None:
+        # CQ8: a git error or a hang read as "not ignored" publishes an ignored backlog's findings; and a
+        # refusal whose cause is dropped leaves the caller nothing to act on (the protocol says stderr has it)
         delegate = f'exec "{REAL_GIT}" "$@"'
         rows = [("git error other than not-a-repository", "echo 'fatal: index file corrupt' >&2; exit 128",
                  fnd.GIT_TIMEOUT_S),
+                ("a multi-line git error with an escape: printed raw, it forges lines on the terminal",
+                 "printf 'fatal: one\\n\\033[2Kbacklog-add: ACCEPTED\\n' >&2; exit 128", fnd.GIT_TIMEOUT_S),
                 ("git hanging past the timeout", "exec sleep 5", 0.3),
                 ("rev-parse answers but check-ignore fails (rc 128): read as 'not ignored'",
                  f'[ "$3" = check-ignore ] && {{ echo "fatal: bad pathspec" >&2; exit 128; }}\n{delegate}',
@@ -256,8 +260,12 @@ class VisibilityTests(Hermetic):
             with self.subTest(name), \
                     mock.patch.dict(os.environ, {"PATH": fake_git(self.base, body) + os.pathsep
                                                  + os.environ["PATH"]}), \
-                    mock.patch.object(fnd, "GIT_TIMEOUT_S", timeout):
+                    mock.patch.object(fnd, "GIT_TIMEOUT_S", timeout), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
                 self.assertEqual(fnd.REFUSED_UNKNOWN, visibility(repo))
+                self.assertRegex(err.getvalue(), r"\Abacklog-add: git could not say whether the ledger "
+                                                 r"would be tracked: (git )?(rev-parse|check-ignore)\b"
+                                                 r"[^\n\x1b]*\n\Z")
 
     def test_inherited_git_dir_does_not_answer_for_another_repo(self) -> None:
         # a hook's GIT_DIR outranks `git -C`: the check would read the other repo's (absent) ignore
@@ -460,6 +468,10 @@ class FoldTests(Hermetic):
         ("status outside the closed set in a raw line: applied instead of named",
          {SEG_A: [record(), dict(fnd.patch_line(FID, status="fixed", ts=T1), status="merged")]},
          ("found", None, 1, ["bad-status"])),
+        ("unhashable status (a list or an object): `in STATUSES` raises TypeError and wedges every fold",
+         {SEG_A: [record(), dict(fnd.patch_line(FID, status="fixed", ts=T1), status=["fixed"]),
+                  dict(record(fid=FID2), status={"x": 1})]},
+         ("found", None, 1, ["bad-record", "bad-record"])),
         ("equal ts in two segments: resolved by arrival order instead of segment name",
          {SEG_B: [fnd.patch_line(FID, status="fixed", ts=T1)],
           SEG_A: [record(), fnd.patch_line(FID, status="refuted", ts=T1)]},

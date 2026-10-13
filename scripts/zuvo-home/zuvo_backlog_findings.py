@@ -61,6 +61,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,7 +105,7 @@ VISIBILITY_RECIPE = (
     f"    /memory/{zio.LOCK_NAME}/\na segment already committed stays tracked whatever .gitignore says: "
     f"untrack it with\ngit rm -r --cached memory/{FINDINGS_DIRNAME}")
 
-_FID_RE = re.compile(r"F-[0-9a-f]{12}")
+_FID_RE = re.compile(r"F-[0-9a-f]{%d}" % adm.FP_HEX)
 _SHA_RE = re.compile(r"[0-9a-f]{7,40}")
 _UNSAFE_RE = re.compile(r"[^A-Za-z0-9.-]+")    # `_` included: it separates the segment-name fields
 _SLUG_CAP = 60
@@ -115,8 +116,9 @@ _NONE = type(None)
 # Field types the fold and its consumers rely on; a wrong type is a `bad-record`, never applied.
 _FIELD_TYPES: Dict[str, Dict[str, Tuple[type, ...]]] = {
     "record": {"class": (str,), "files": (list,), "backlog": (str, _NONE), "forced": (bool,),
-               "confidence": (int, _NONE), "title": (str, _NONE), "source": (str, _NONE)},
-    "sighting": {"sighting": (dict,)}, "patch": {"backlog": (str, _NONE), "note": (str,)}}
+               "status": (str,), "confidence": (int, _NONE), "title": (str, _NONE), "source": (str, _NONE)},
+    "sighting": {"sighting": (dict,)},
+    "patch": {"backlog": (str, _NONE), "note": (str,), "status": (str, _NONE)}}
 _SIGHTING_TYPES: Dict[str, Tuple[type, ...]] = {
     "source": (str,), "sha": (str, _NONE), "branch": (str, _NONE), "pr": (int, _NONE)}
 
@@ -168,10 +170,7 @@ def _git(cwd: Path, deadline: float, *args: str) -> "subprocess.CompletedProcess
 
 
 def _nearest_dir(path: Path) -> Path:
-    here = path.parent
-    while not here.is_dir():            # terminates: the filesystem root is a directory
-        here = here.parent
-    return here
+    return next((p for p in path.parents if p.is_dir()), path.parent)    # `/` and `.` are directories
 
 
 def would_be_ignored(path: Path, deadline: Optional[float] = None) -> Optional[bool]:
@@ -215,7 +214,9 @@ def check_visibility(directory: Path, real_backlog: str, segment_name: str) -> O
     try:
         tracked = zl.tracked_beside_ignored(would_be_ignored(Path(real_backlog), deadline),
                                             lambda: would_be_ignored(directory / segment_name, deadline))
-    except _GitUnanswered:
+    except _GitUnanswered as exc:           # the protocol tells the caller "stderr has it"; one clean line
+        print("backlog-add: git could not say whether the ledger would be tracked: "
+              + adm.clean_text(str(exc), adm.TITLE_CAP), file=sys.stderr)
         return REFUSED_UNKNOWN
     return REFUSED_TRACKED if tracked else None
 
