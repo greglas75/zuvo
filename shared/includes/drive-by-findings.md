@@ -82,13 +82,15 @@ count all of them too. `SEC` and `BUG` are uncapped: they are defects, the rest 
 3. **Never copy a secret into a finding or the summary.** For a hardcoded credential or PII in a
    log, cite `file:line` and the KIND (`AWS secret key`, `customer e-mail`) — never the value. The
    backlog and the ledger are tracked in some repos and the summary lands in a transcript.
-   `backlog-add` refuses credential shapes (`secret-like-value`) but does not scan for PII.
+   `backlog-add` refuses credential shapes (`secret-like-value`) but does not scan for PII. The
+   `--anchor` of a hardcoded credential is the part of the line that names it, never the value.
 4. **Sub-agents do not call `backlog-add`.** A dispatched agent that notices one puts it in its
    report's `BACKLOG ITEMS` section in the form `agent-preamble.md` gives (class, conf, site or
    target, anchor, evidence), every item and uncapped. The orchestrator makes one call per item and
    only then applies the report cap, once per run, so the cap never keeps an item out of the ledger.
 5. **A non-zero exit is handled as the protocol says:** exit 3 on an input mistake, correct it and
-   resubmit once; exit 1, retry once after 2 s. A finding still not persisted goes in the summary
+   resubmit once; exit 1, retry once after 2 s, unless stderr says `failed after writing` (the entry
+   is already filed; a retry would count a second sighting). A finding still not persisted goes in the summary
    under `NOT PERSISTED (…)`. Some refusals are not input mistakes: `anchor-not-at-line` or
    `file-not-in-worktree` confirmed by a re-read means the code changed and nothing is filed, and
    `tracked-findings-beside-ignored-backlog` is reported once with its `.gitignore` recipe for the

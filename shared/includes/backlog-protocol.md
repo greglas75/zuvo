@@ -77,7 +77,7 @@ map are built from what has accumulated instead of from a fresh scan.
 | `--source` | yes | exactly `^(drive-by:)?[a-z0-9-]+$`: the skill's name (`review`, not `zuvo:review`), `drive-by:<skill>`, or `user` |
 | `--title` | yes | the defect in one sentence (cut at 200 characters) |
 | `--file`, `--line` | these, or `--target` | the cited site, repo-relative; the file must exist in the work tree |
-| `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive |
+| `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part that names it (`AWS_SECRET_KEY =`), never the value |
 | `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL or a hostname (SEC, BUG, DATA only), or `subject:<slug>` (PROCESS, SEC only) |
 | `--evidence` | with a URL or host target | what proves it (cut at 600) |
 | `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
@@ -180,7 +180,7 @@ A dry run writes nothing, so every verdict that carries `wrote=` shows `wrote=-`
 | Exit | Means | What you do |
 |------|-------|-------------|
 | 0 | one of the six verdicts above `REFUSED` | Stage what `wrote=` lists. |
-| 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | Retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
+| 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | If stderr says `failed after writing: wrote=<paths>`, the backlog entry exists and only its ledger record is missing: do not retry (a retry counts a second sighting); report it as filed, stage the listed paths, and the next sighting writes the record. Otherwise retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
 | 2 | usage error: the call itself is malformed, or `--repo` is not a directory inside a git work tree | Fix the call. If you cannot, `NOT PERSISTED (backlog-add exit 2)`. |
 | 3 | `REFUSED <reason>`: the input does not conform, and resubmitting it unchanged cannot help | An input mistake: correct it and resubmit once, otherwise list it under `NOT PERSISTED (REFUSED <reason>)`. Some refusals are not input mistakes, and the refusal table says what to do instead: `anchor-not-at-line` and `file-not-in-worktree` after a re-read, and the repository's visibility refusals. |
 
@@ -208,7 +208,7 @@ the dedupe and the lock it files exactly the entries the intake has to retire.
 | `line-out-of-range` | `--line` is not a positive integer, or is past the end of the file (an `--also` line too). |
 | `anchor-not-at-line` | Re-read the code before deciding. If the defect is gone, it was fixed: nothing is filed or reported as not persisted. If it moved, resubmit with the new line. |
 | `secret-like-value` | A field holds a credential shape (cloud or API key, token, private key). Cite its kind and location, never the value. |
-| `tracked-findings-beside-ignored-backlog` | A property of the repository, not of the call: every call gets it until the backlog is ignored and `memory/findings/` is too. The remedy is the `.gitignore` recipe on stderr, and applying it is the user's decision, not the skill's. Do not resubmit; report the recipe once and every finding of the run under `NOT PERSISTED (REFUSED tracked-findings-beside-ignored-backlog)`. |
+| `tracked-findings-beside-ignored-backlog` | A property of the repository, not of the call: every call gets it until `memory/findings/` is ignored as the backlog already is. The remedy is the `.gitignore` recipe on stderr, and applying it is the user's decision, not the skill's. Do not resubmit; report the recipe once and every finding of the run under `NOT PERSISTED (REFUSED tracked-findings-beside-ignored-backlog)`. |
 | `findings-visibility-unknown` | git could not say whether the ledger would be tracked (a git error or timeout; stderr has it). A repository state too: resubmit once at most, then report as above. |
 
 ### The findings ledger
