@@ -77,7 +77,7 @@ map are built from what has accumulated instead of from a fresh scan.
 | `--source` | yes | exactly `^(drive-by:)?[a-z0-9-]+$`: the skill's name (`review`, not `zuvo:review`), `drive-by:<skill>`, or `user` |
 | `--title` | yes | the defect in one sentence (cut at 200 characters) |
 | `--file`, `--line` | these, or `--target` | the cited site, repo-relative; the file must exist in the work tree |
-| `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part before the value — the name and what precedes it (`AWS_SECRET_KEY =`, `const db_pw =`), still 8 non-space characters — never any character of the value |
+| `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part before the value — the name and what precedes it (`AWS_SECRET_KEY =`, `const db_pw =`), still 8 non-space characters — never any character of the value; when the line has fewer than 8 before the value, copy a line within ±3 that holds no secret |
 | `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL or a hostname (SEC, BUG, DATA only), or `subject:<slug>` (PROCESS, SEC only) |
 | `--evidence` | with a URL or host target | what proves it (cut at 600) |
 | `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
