@@ -182,6 +182,11 @@ SECRET_GH_PAT = "github_pat_" + "Ab1_" * 6
 SECRET_GITLAB = "glpat-" + "Ab1_-" * 4
 SECRET_SLACK_APP = "xoxa-" + "2"
 SECRET_SK_LOWER = "sk-" + "ab12" * 6
+# A `-` after the vendor tag stops `sk-[A-Za-z0-9]{20,}` after 3-4 characters
+SECRET_SK_ANT = "sk-ant-api03-" + "Ab1_-" * 6
+SECRET_SK_PROJ = "sk-proj-" + "Ab12" * 6
+SECRET_GHO = "gho_" + "a1b2c3d4e5" * 4
+SECRET_JWT = "eyJ" + "hbGciOiJIUzI1" + ".eyJ" + "zdWIiOiIxMjM0" + ".c2ln"
 
 
 class ValidationTests(unittest.TestCase):
@@ -292,6 +297,12 @@ class ValidationTests(unittest.TestCase):
         ("GitHub token in the severity stored", f(severity="high " + SECRET_GHP), "secret-like-value"),
         ("lowercase sk- key passes the source shape and is stored", f(source=SECRET_SK_LOWER),
          "secret-like-value"),
+        ("Anthropic key (vendor-tagged sk-) stored", f(evidence="key=" + SECRET_SK_ANT), "secret-like-value"),
+        ("OpenAI project key stored", f(fix="rotate " + SECRET_SK_PROJ), "secret-like-value"),
+        ("GitHub OAuth token (gho_) stored", f(evidence="token " + SECRET_GHO), "secret-like-value"),
+        ("JWT stored", f(evidence="Authorization: Bearer " + SECRET_JWT), "secret-like-value"),
+        ("`sk-learn-compatible-estimator-wrapper` read as a vendor key",
+         f(title="sk-learn-compatible-estimator-wrapper drops weights"), None),
         ("`risk_live_` read as a Stripe key", f(title="risk_live_dashboard_settings_v2 is stale"), None),
         ("`risk-based` read as an sk- key", f(title="risk-based retry is wrong"), None),
         ("`task-runner` read as an sk- key", f(evidence="task-runner exits 0"), None),
