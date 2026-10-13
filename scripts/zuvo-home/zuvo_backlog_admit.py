@@ -84,12 +84,14 @@ _SUBJECT_RE = re.compile(r"subject:[a-z0-9][a-z0-9._-]{0,79}")
 # --live-url audits), `subject:` for process items and SEC.
 _TARGET_CLASSES = {"url": BACKLOG_CLASSES, "host": BACKLOG_CLASSES,
                    "subject": frozenset({"PROCESS", "SEC"})}
-# Prefixed provider keys (`sk-ant-…`, `sk-proj-…`), every GitHub token kind, and a JWT's two `eyJ` parts.
+# Prefixed provider keys (`sk-ant-…`, `sk-proj-…`), every GitHub token kind, a JWT's two `eyJ` parts, and
+# a URL carrying `user:password@` (a DSN) in any field, not only in `--target`.
 _SECRET_RES = tuple(re.compile(p) for p in (
     r"\bAKIA[0-9A-Z]{16}\b", r"\bgh[pousr]_[A-Za-z0-9]{30,}", r"\bsk-[A-Za-z0-9]{20,}",
     r"\bsk-(?:ant|proj|svcacct|admin)-[A-Za-z0-9_-]{20,}", r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.",
     r"-----BEGIN [A-Z ]*PRIVATE KEY", r"\bxox[aboprs]-", r"\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])",
-    r"\b(?:sk|rk)_live_[0-9A-Za-z]{16,}", r"\bgithub_pat_[0-9A-Za-z_]{22,}", r"\bglpat-[0-9A-Za-z_-]{20,}"))
+    r"\b(?:sk|rk)_live_[0-9A-Za-z]{16,}", r"\bgithub_pat_[0-9A-Za-z_]{22,}", r"\bglpat-[0-9A-Za-z_-]{20,}",
+    r"\b[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@"))
 # `user:pw@` in front of a URL's or a host's address: a credential in the target itself.
 _USERINFO_RE = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^\s/?#@]*@")
 # Every line break a renderer might honour, including NEL and the Unicode line/paragraph separators.

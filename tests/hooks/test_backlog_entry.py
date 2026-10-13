@@ -343,19 +343,24 @@ class BumpTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "^no line defines B-cart-BUG-01234567$"):
             ent.bump(["# Backlog\n"], "B-cart-BUG-01234567", 85, "review", TODAY)
 
-    # On a line the bump WOULD rewrite, so a bump that skipped the date check writes the bad date into
-    # the entry instead of raising (and the exact message rules out the no-such-line error).
-    BAD_TODAY = [
-        ("an impossible date is written into the bumped line", "2026-02-31", "not a date: '2026-02-31'"),
-        ("a day in another notation is written into the bumped line", "14.10.2026",
+    # On a line the bump WOULD rewrite, so a bump that skipped a check writes the bad value into the
+    # entry instead of raising (and the exact message rules out the no-such-line error).
+    BAD_BUMP = [
+        ("an impossible date is written into the bumped line", "2026-02-31", "code-audit", 90,
+         "not a date: '2026-02-31'"),
+        ("a day in another notation is written into the bumped line", "14.10.2026", "code-audit", 90,
          "not a date: '14.10.2026'"),
+        ("a source parse_own cannot read is written, so the entry is never bumped again", TODAY,
+         "Review run", 90, "not a source token: 'Review run'"),
+        ("a four-digit confidence is written, so parse_own stops reading the line", TODAY, "code-audit",
+         1000, "not a confidence: 1000"),
     ]
 
-    def test_bump_refuses_a_today_that_is_not_a_date(self) -> None:
+    def test_bump_refuses_input_its_line_could_not_be_read_back_with(self) -> None:
         line, bid = line_for(finding())
-        for name, today, message in self.BAD_TODAY:
+        for name, today, source, conf, message in self.BAD_BUMP:
             with self.subTest(name), self.assertRaisesRegex(ValueError, f"^{re.escape(message)}$"):
-                ent.bump([line + "\n"], bid, 90, "code-audit", today)
+                ent.bump([line + "\n"], bid, conf, source, today)
 
 
 class ParseOwnTests(unittest.TestCase):

@@ -233,8 +233,12 @@ def bump(lines: list[str], b_id: str, conf: int, source: str, today: str) -> Opt
     """A copy of `lines` with the FIRST line defining `b_id` re-sighted: seen + 1, conf = max,
     date = today, `source` added once. None when that line is in another format (link, never edit):
     the first definition is the one the archiver's lookup answers with, so a later duplicate is not it.
-    Raises ValueError when no line defines `b_id` or `today` is not a date."""
+    Raises ValueError when no line defines `b_id`, or on a `today`, `source` or `conf` the rewritten line
+    could not be read back with — the same bars `render` applies to a new line."""
     _check_date(today)
+    _check_source(source)
+    if adm.parse_conf(conf) is None:
+        raise ValueError(f"not a confidence: {conf!r}")
     first = next((i for i, ln in enumerate(lines) if zb.definition_id(ln).lower() == b_id.lower()), None)
     if first is None:
         raise ValueError(f"no line defines {b_id}")
