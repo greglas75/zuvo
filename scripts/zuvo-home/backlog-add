@@ -1,0 +1,31 @@
+#!/bin/sh
+# Polyglot sh/python header — same reason as backlog-collect.py: `#!/usr/bin/env python3` dies on
+# Windows/Git Bash. Keep it on ONE line and do not "tidy" the quoting.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""backlog-add: the one write path for a finding (zuvo_backlog_add; `--help` for the arguments)."""
+import os
+import sys
+
+# Set before any import: zuvo_backlog_io reads it once at import. 30 s, not 5: an orchestrator fans out
+# one call per finding, and they all queue on one lock.
+# A value io cannot read would be a traceback at import, so it is a usage error here instead; 0, a
+# negative or a non-finite wait would make every queued writer give up at once or never.
+if not os.environ.get("ZUVO_LOCK_WAIT"):
+    os.environ["ZUVO_LOCK_WAIT"] = "30"
+try:
+    _wait = float(os.environ["ZUVO_LOCK_WAIT"])
+except ValueError:
+    _wait = -1.0
+if not 0 < _wait <= 3600:
+    sys.stderr.write("backlog-add: ZUVO_LOCK_WAIT must be a number of seconds in (0, 3600], got %r\n"
+                     % os.environ["ZUVO_LOCK_WAIT"])
+    sys.exit(2)
+# The realpath's directory: ~/.zuvo/backlog-add may be a symlink, and its modules sit beside the target.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+try:
+    import zuvo_backlog_add
+except ImportError as exc:
+    sys.exit(f"backlog-add: install incomplete ({exc.name or exc})")
+
+if __name__ == "__main__":
+    sys.exit(zuvo_backlog_add.main(sys.argv[1:]))
