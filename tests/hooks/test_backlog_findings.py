@@ -557,6 +557,18 @@ class FoldTests(Hermetic):
         os.makedirs(os.path.join(d, SEG_B))
         self.assertEqual(("found", None, 1, ["unreadable"]), folded(d))
 
+    def test_a_fifo_with_a_segments_name_does_not_hang_the_fold(self) -> None:
+        # opening a FIFO blocks until a writer appears, so one stray FIFO in findings/ would hang every
+        # backlog-add in the repo while it holds the lock; run in a child so a hang is a timeout
+        d = os.path.join(self.base, "fifo")
+        segments(d, {SEG_A: [record()]})
+        os.mkfifo(os.path.join(d, SEG_B))
+        prog = ("import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+                "import zuvo_backlog_findings as f; print(len(f.fold(Path(sys.argv[2]))[0]))")
+        out = subprocess.run([sys.executable, "-c", prog, os.path.join(ROOT, "scripts", "zuvo-home"), d],
+                             capture_output=True, text=True, timeout=20, check=True)
+        self.assertEqual("1", out.stdout.strip())
+
     def test_every_defect_kind_is_declared_and_reachable(self) -> None:
         # a defect named outside DEFECT_KINDS is invisible to any consumer filtering on it, and a
         # declared kind nothing emits is a vocabulary that lies

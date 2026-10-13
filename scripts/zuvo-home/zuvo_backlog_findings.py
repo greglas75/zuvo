@@ -470,17 +470,18 @@ def _read_lines(fh: IO[str], name: str, events: List[_Event], defects: List[Defe
 
 def _read_segment(path: Path, events: List[_Event], defects: List[Defect]) -> None:
     try:
-        with open(path, encoding="utf-8", errors="replace", newline="\n") as fh:
+        # O_NONBLOCK: a FIFO with a segment's name reads as empty instead of blocking under the lock.
+        with open(os.open(path, os.O_RDONLY | os.O_NONBLOCK), encoding="utf-8", errors="replace",
+                  newline="\n") as fh:
             _read_lines(fh, path.name, events, defects)
     except OSError as exc:
         defects.append(Defect(path.name, D_UNREADABLE, str(exc)[:_DETAIL_CAP]))
 
 
 def _apply(rec: Record, patch: Dict[str, Any]) -> None:
-    if patch["status"] is not None:
-        rec.fields["status"] = patch["status"]
-    if patch["backlog"] is not None:
-        rec.fields["backlog"] = patch["backlog"]
+    for key in ("status", "backlog"):
+        if patch[key] is not None:
+            rec.fields[key] = patch[key]
     if patch["note"]:
         rec.note = str(patch["note"])
 
