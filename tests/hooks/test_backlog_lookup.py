@@ -133,6 +133,8 @@ class RealArchiverContractTests(unittest.TestCase):
          lk.Verdict("archived", "id:b-old-bug-89abcdef", "B-old-BUG-89abcdef", 2, SECTION, None)),
         ("ABSENT", "B-none-BUG-00000000",
          lk.Verdict("absent", "id:b-none-bug-00000000", None, None, None, None)),
+        ("OPEN with the ALSO ARCHIVED suffix", "B-both-BUG-11111111",
+         lk.Verdict("open", "id:b-both-bug-11111111", "B-both-BUG-11111111", 4, None, 3)),
     ]
 
     def test_real_archiver_output_matches_the_verdict_grammar(self) -> None:
@@ -142,9 +144,11 @@ class RealArchiverContractTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         (tmp / "memory").mkdir()
         (tmp / "memory" / "backlog.md").write_text(
-            "# Backlog\n\n- [ ] B-cart-BUG-0123abcd src/cart.ts:42 — [BUG] total is NaN\n", encoding="utf-8")
+            "# Backlog\n\n- [ ] B-cart-BUG-0123abcd src/cart.ts:42 — [BUG] total is NaN\n"
+            "- [ ] B-both-BUG-11111111 src/both.ts:1 — [BUG] open and archived\n", encoding="utf-8")
         (tmp / "memory" / "backlog-done.md").write_text(
-            f"## {SECTION}\n- [x] B-old-BUG-89abcdef src/old.ts:1 — [BUG] stale cache DONE 2026-10-13\n",
+            f"## {SECTION}\n- [x] B-old-BUG-89abcdef src/old.ts:1 — [BUG] stale cache DONE 2026-10-13\n"
+            "- [x] B-both-BUG-11111111 src/both.ts:1 — [BUG] open and archived DONE 2026-10-13\n",
             encoding="utf-8")
         with mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": str(tmp.parent)}):
             for name, query, want in self.CASES:
