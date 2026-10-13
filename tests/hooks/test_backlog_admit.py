@@ -95,6 +95,24 @@ class TargetRoutingTests(unittest.TestCase):
                 self.assertEqual(want, route(finding))
 
 
+class TargetKindTests(unittest.TestCase):
+    ROWS = [
+        ("None crashes `.strip()` instead of naming no shape", None, None),
+        ("empty text read as a bare host", "", None),
+        ("padding around a host refused (the shape is read after stripping)", " db.internal:5432 ", "host"),
+        ("pipe in a URL (it matches the URL shape) accepted: opens a backlog column", URL + "/a|b", None),
+        ("control character in a URL (it matches the URL shape) accepted", URL + "/a\x01b", None),
+        ("URL whose host urlsplit cannot read named a url", "https://[::1/x", None),
+        ("URL not recognised", URL, "url"),
+        ("subject not recognised", "subject:review-incomplete", "subject"),
+    ]
+
+    def test_target_kind_names_the_one_shape_or_none(self):
+        for name, target, want in self.ROWS:
+            with self.subTest(name):
+                self.assertEqual(want, adm.target_kind(target))
+
+
 class PromotionAndPrecedenceTests(unittest.TestCase):
     ROWS = [
         ("forced BUG at 20 written: the env override lifted the floor", f(conf=20), True,
@@ -147,7 +165,7 @@ class PromotionAndPrecedenceTests(unittest.TestCase):
         bid = adm.b_id(promoted, decision, adm.fingerprint(promoted))
         as_bug = adm.fingerprint(dataclasses.replace(promoted, cls="BUG"))
         self.assertEqual(("ledger", "BUG"), (adm.decide(parked, CHANGED, False).route, decision.cls))
-        self.assertEqual("B-cart-BUG-" + adm.fingerprint(parked)[2:10], bid)
+        self.assertEqual(("F-998de96b35b3", "B-cart-BUG-998de96b"), (adm.fingerprint(parked), bid))
         self.assertNotEqual(as_bug, adm.fingerprint(parked))
 
 
@@ -393,35 +411,36 @@ class FingerprintTests(unittest.TestCase):
 
 
 class BIdTests(unittest.TestCase):
+    # Literal ids: the hash tail is the first 8 hex of the finding's F-id, pinned so a changed key or
+    # a b_id hashing anything but `fp` (the ledger link) fails here rather than being re-derived.
     ROWS = [
-        ("dotted file name cut at the first dot", f(file="src/index.test.ts"), "B-index.test-BUG-"),
-        ("dotfile stem emptied", f(file=".env"), "B-.env-BUG-"),
-        ("extensionless file name dropped", f(file="Makefile"), "B-Makefile-BUG-"),
-        ("non-ASCII stem kept or emptied", f(file="src/ü.ts"), "B-file-BUG-"),
+        ("dotted file name cut at the first dot", f(file="src/index.test.ts"), "B-index.test-BUG-bdbb90e7"),
+        ("dotfile stem emptied", f(file=".env"), "B-.env-BUG-82e6652b"),
+        ("extensionless file name dropped", f(file="Makefile"), "B-Makefile-BUG-168dd26e"),
+        ("non-ASCII stem kept or emptied", f(file="src/ü.ts"), "B-file-BUG-b41941d6"),
         ("URL target stemmed on its path instead of its host",
-         tgt("https://Api.Example.com/x", evidence="e"), "B-api.example.com-BUG-"),
+         tgt("https://Api.Example.com/x", evidence="e"), "B-api.example.com-BUG-19e1c4e6"),
         ("bare-host target stemmed with its port", tgt("db.internal:5432", cls="SEC", evidence="port open"),
-         "B-db.internal-SEC-"),
+         "B-db.internal-SEC-eb01df2f"),
         ("IPv6 URL target crashes the stem instead of reducing `::1` to `1`",
-         tgt("https://[::1]/x", evidence="e"), "B-1-BUG-"),
+         tgt("https://[::1]/x", evidence="e"), "B-1-BUG-80957004"),
         ("subject target stemmed with its `subject:` prefix",
-         tgt("subject:review-incomplete", cls="PROCESS"), "B-review-incomplete-PROCESS-"),
+         tgt("subject:review-incomplete", cls="PROCESS"), "B-review-incomplete-PROCESS-0e8ef327"),
     ]
 
     def test_b_id_is_a_descriptive_definition_id(self):
         # an id the parser reads as ordinal or minted would key on content and duplicate forever
-        for name, finding, prefix in self.ROWS:
+        for name, finding, want in self.ROWS:
             with self.subTest(name):
-                fp = adm.fingerprint(finding)
-                bid = adm.b_id(finding, adm.decide(finding, CHANGED, False), fp)
-                self.assertEqual(prefix + fp[2:10], bid)
+                bid = adm.b_id(finding, adm.decide(finding, CHANGED, False), adm.fingerprint(finding))
+                self.assertEqual(want, bid)
                 self.assertEqual(bid, zb.DEF_ID_RE.match("- [ ] " + bid + " src/x.ts:1").group(1))
                 self.assertIsNone(zb.ORDINAL_ID_RE.match(bid))
                 self.assertIsNone(zb.MINTED_ID_RE.match(bid + " x"))
 
     def test_b_id_refuses_a_value_that_is_not_an_f_id(self):
         # passing the B-id or a raw hash would mint an id the ledger cannot link back
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, r"^b_id: 'B-cart-BUG-1234' is not an F-id \(F- \+ 12 hex\)$"):
             adm.b_id(BASE, adm.decide(BASE, CHANGED, False), "B-cart-BUG-1234")
 
 

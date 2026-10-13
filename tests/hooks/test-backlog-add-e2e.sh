@@ -22,8 +22,9 @@
 #
 # Each step asserts the verdict line by exact prefix AND the exit code, plus the state it should leave
 # on disk; a failure prints the step, the exit code and the full stdout/stderr. Every helper failure is
-# a FAIL, and every guard on an earlier step's output records a FAIL rather than skipping. No `SKIP:`
-# path: run-all counts a leading SKIP as green.
+# a FAIL. No check is guarded by an earlier one: a value an earlier step did not produce (a B-id, an
+# F-id, a segment name) becomes a `<none: …>` sentinel no verdict, file or record can match, so every
+# check that needs it runs and FAILs on its own. No `SKIP:` path: run-all counts a leading SKIP as green.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -187,57 +188,45 @@ new_repo "$A" && mkdir -p "$A/memory" && template > "$AB" &&
 echo "A1 CPLX conf 90 -> findings ledger only"
 q A1 sha "$AB" && before="$Q" || before=""
 add A1 "$A" --class CPLX --conf 90 --source code-audit --file src/a.py --line 3 --title 'too complex'
-SEG_A1=""
-if verdict A1 0 "LEDGER F-"; then
-  case " $OUT " in *" reason=class-report-only "*) ok "A1: reason=class-report-only" ;;
-                   *) no "A1: verdict lacks reason=class-report-only"; show ;; esac
-  wrote="$(field wrote)"
-  case "$wrote" in
-    memory/findings/*.jsonl) SEG_A1="$(basename "$wrote")"
-                             [ -f "$A/$wrote" ] && ok "A1: wrote names the segment ($SEG_A1)" \
-                               || no "A1: wrote=$wrote does not exist" ;;
-    *) no "A1: wrote= is not one findings segment: '$wrote'"; show ;;
-  esac
-fi
+verdict A1 0 "LEDGER F-"
+case " $OUT " in *" reason=class-report-only "*) ok "A1: reason=class-report-only" ;;
+                 *) no "A1: verdict lacks reason=class-report-only"; show ;; esac
+wrote="$(field wrote)"; wrote="${wrote:-<none: no wrote= from A1>}"
+SEG_A1="$(basename "$wrote")"
+case "$wrote" in memory/findings/*.jsonl) ok "A1: wrote= is one findings segment ($SEG_A1)" ;;
+                 *) no "A1: wrote= is not one findings segment: '$wrote'"; show ;; esac
+[ -f "$A/$wrote" ] && ok "A1: the segment wrote= names exists" || no "A1: wrote=$wrote does not exist"
 unchanged A1 "backlog.md sha256 unchanged" "$before" sha "$AB"
 q A1 count-class "$A/memory/findings" CPLX && { [ "$Q" = "1" ] && ok "A1: one CPLX record folds from memory/findings/" \
   || no "A1: CPLX records folded: '$Q', expected 1"; }
 
 echo "A2 BUG conf 85 with an anchor -> backlog entry tagged [branch:feat/x]"
 add A2 "$A" "${BUG_ARGS[@]}" --line 3 --title 'off-by-one at the limit'
-BID=""; FID=""
-if verdict A2 0 "ACCEPTED backlog B-a-BUG-"; then
-  BID="$(printf '%s\n' "$OUT" | cut -d' ' -f3)"; FID="$(field ledger)"
-  line="$(entry "$AB" "$BID")"
-  case "$line" in *"| ledger: $FID |"*) ok "A2: the entry carries ledger: $FID" ;;
-                  *) no "A2: entry lacks 'ledger: $FID': $line" ;; esac
-  case "$line" in *" [branch:feat/x]") ok "A2: the entry ends with [branch:feat/x]" ;;
-                  *) no "A2: entry does not end with [branch:feat/x]: $line" ;; esac
-  q A2 field "$A/memory/findings" "$FID" backlog && { [ "$Q" = "\"$BID\"" ] && ok "A2: record $FID links backlog $BID" \
-    || no "A2: record $FID backlog field is $Q, expected \"$BID\""; }
-fi
+verdict A2 0 "ACCEPTED backlog B-a-BUG-"
+BID="$(printf '%s\n' "$OUT" | cut -d' ' -f3)"; BID="${BID:-<none: no B-id from A2>}"
+FID="$(field ledger)"; FID="${FID:-<none: no F-id from A2>}"
+line="$(entry "$AB" "$BID")"
+case "$line" in *"| ledger: $FID |"*) ok "A2: the entry carries ledger: $FID" ;;
+                *) no "A2: entry lacks 'ledger: $FID': $line" ;; esac
+case "$line" in *" [branch:feat/x]") ok "A2: the entry ends with [branch:feat/x]" ;;
+                *) no "A2: entry does not end with [branch:feat/x]: $line" ;; esac
+q A2 field "$A/memory/findings" "$FID" backlog && { [ "$Q" = "\"$BID\"" ] && ok "A2: record $FID links backlog $BID" \
+  || no "A2: record $FID backlog field is $Q, expected \"$BID\""; }
 
 echo "A3 the same BUG paraphrased -> BUMPED, not a second entry"
 add A3 "$A" "${BUG_ARGS[@]}" --line 3 --title 'boundary check excludes equality'
-if [ -z "$BID" ]; then
-  no "A3: no B-id from A2 to dedupe against"
-elif verdict A3 0 "BUMPED backlog $BID seen=2 "; then
-  one_open A3 "$AB" "$BID"
-fi
+verdict A3 0 "BUMPED backlog $BID seen=2 "
+one_open A3 "$AB" "$BID"
 
 echo "A3b the cited line moved down 2 (committed) -> the anchor still dedupes: BUMPED at --line 5"
 printf "$DRIFTED_A" > "$A/src/a.py" && g -C "$A" commit -qam 'two lines above the finding' \
   || { no "(pre) A3b could not commit the drift"; finish; }
 add A3b "$A" "${BUG_ARGS[@]}" --line 5 --title 'limit equality is rejected'
-if [ -z "$BID" ]; then
-  no "A3b: no B-id from A2 to dedupe against"
-elif verdict A3b 0 "BUMPED backlog $BID seen=3 "; then
-  one_open A3b "$AB" "$BID"
-fi
+verdict A3b 0 "BUMPED backlog $BID seen=3 "
+one_open A3b "$AB" "$BID"
 
 echo "A4 tick + archive, then see it again -> REOPENED regression; verify passes"
-if [ -n "$BID" ]; then
-  ticked="$(python3 - "$AB" "$BID" <<'PY'
+ticked="$(python3 - "$AB" "$BID" <<'PY'
 import sys
 path, bid = sys.argv[1], sys.argv[2]
 lines = open(path, encoding="utf-8").read().splitlines()
@@ -248,39 +237,35 @@ open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 print(len(hit))
 PY
 )"; tick_rc=$?
-  [ "$tick_rc" -eq 0 ] && [ "$ticked" = "1" ] && ok "A4: ticked exactly one line for $BID" \
-    || no "A4: the tick edit exited $tick_rc and changed '$ticked' line(s), expected 1"
-  arc="$(python3 "$ARCHIVER" archive --repo "$A" 2>&1)"; arc_rc=$?
-  [ "$arc_rc" -eq 0 ] && ok "A4: archive exit 0" || { no "A4: archive exit $arc_rc"; echo "      $arc"; }
-  n="$(grep -cF -- "$BID " "$AB")"
-  [ "$n" = "0" ] && ok "A4: after archive, $BID is gone from backlog.md (open or ticked)" \
-    || no "A4: after archive, backlog.md still has $n line(s) with $BID"
-  n="$(grep -cF -- "- [x] $BID " "$AD" 2>/dev/null)"
-  [ "$n" = "1" ] && ok "A4: after archive, backlog-done.md holds the ticked $BID once" \
-    || no "A4: after archive, backlog-done.md has '$n' ticked line(s) for $BID, expected 1"
-  add A4 "$A" "${BUG_ARGS[@]}" --line 5 --title 'off-by-one at the limit'
-  verdict A4 0 "REOPENED backlog $BID regression "
-  one_open A4 "$AB" "$BID"
-  n="$(count_open "$AD" "$BID")"
-  [ "$n" = "0" ] && ok "A4: backlog-done.md holds no open copy of $BID" || no "A4: backlog-done.md has $n open line(s) for $BID"
-  ver="$(python3 "$ARCHIVER" verify --repo "$A" 2>&1)"; ver_rc=$?
-  [ "$ver_rc" -eq 0 ] && ok "A4: verify exit 0" || { no "A4: verify exit $ver_rc"; echo "      $ver"; }
-  case "$ver" in *"1 declared regression"*) ok "A4: verify counts the re-open as 1 declared regression ($ver)" ;;
-                 *) no "A4: verify does not report the declared regression: $ver" ;; esac
-else
-  no "A4: no B-id from A2 to re-open"
-fi
+[ "$tick_rc" -eq 0 ] && [ "$ticked" = "1" ] && ok "A4: ticked exactly one line for $BID" \
+  || no "A4: the tick edit exited $tick_rc and changed '$ticked' line(s), expected 1"
+arc="$(python3 "$ARCHIVER" archive --repo "$A" 2>&1)"; arc_rc=$?
+[ "$arc_rc" -eq 0 ] && ok "A4: archive exit 0" || { no "A4: archive exit $arc_rc"; echo "      $arc"; }
+n="$(grep -cF -- "$BID " "$AB")"
+[ "$n" = "0" ] && ok "A4: after archive, $BID is gone from backlog.md (open or ticked)" \
+  || no "A4: after archive, backlog.md still has $n line(s) with $BID"
+n="$(grep -cF -- "- [x] $BID " "$AD" 2>/dev/null)"
+[ "$n" = "1" ] && ok "A4: after archive, backlog-done.md holds the ticked $BID once" \
+  || no "A4: after archive, backlog-done.md has '$n' ticked line(s) for $BID, expected 1"
+add A4 "$A" "${BUG_ARGS[@]}" --line 5 --title 'off-by-one at the limit'
+verdict A4 0 "REOPENED backlog $BID regression "
+one_open A4 "$AB" "$BID"
+n="$(count_open "$AD" "$BID")"
+[ "$n" = "0" ] && ok "A4: backlog-done.md holds no open copy of $BID" || no "A4: backlog-done.md has $n open line(s) for $BID"
+ver="$(python3 "$ARCHIVER" verify --repo "$A" 2>&1)"; ver_rc=$?
+[ "$ver_rc" -eq 0 ] && ok "A4: verify exit 0" || { no "A4: verify exit $ver_rc"; echo "      $ver"; }
+case "$ver" in *"1 declared regression"*) ok "A4: verify counts the re-open as 1 declared regression ($ver)" ;;
+               *) no "A4: verify does not report the declared regression: $ver" ;; esac
 
 echo "A5 SEC conf 30 -> backlog, title prefixed '$LOW'"
 add A5 "$A" --class SEC --conf 30 --source review --file src/a.py --line 5 --anchor "$ANCHOR" \
   --title 'limit check can be bypassed'
-if verdict A5 0 "ACCEPTED backlog B-a-SEC-"; then
-  sid="$(printf '%s\n' "$OUT" | cut -d' ' -f3)"
-  one_open A5 "$AB" "$sid"
-  line="$(entry "$AB" "$sid")"
-  case "$line" in *"— [SEC] $LOW limit check can be bypassed |"*) ok "A5: the title starts with '$LOW'" ;;
-                  *) no "A5: title not prefixed: $line" ;; esac
-fi
+verdict A5 0 "ACCEPTED backlog B-a-SEC-"
+sid="$(printf '%s\n' "$OUT" | cut -d' ' -f3)"; sid="${sid:-<none: no B-id from A5>}"
+one_open A5 "$AB" "$sid"
+line="$(entry "$AB" "$sid")"
+case "$line" in *"— [SEC] $LOW limit check can be bypassed |"*) ok "A5: the title starts with '$LOW'" ;;
+                *) no "A5: title not prefixed: $line" ;; esac
 
 echo "A6 anchor not in the file -> REFUSED, nothing written"
 q A6 tree "$A/memory" && before="$Q" || before=""
@@ -300,50 +285,34 @@ new_repo "$B" && printf 'memory/\n' > "$B/.gitignore" && mkdir -p "$B/memory" &&
 
 echo "B1 BUG from the worktree -> ACCEPTED, wrote=- (memory/ is ignored)"
 add B1 "$BWT" "${BUG_ARGS[@]}" --line 3 --title 'off-by-one at the limit'
-BIDB=""; FIDB=""
-if verdict B1 0 "ACCEPTED backlog B-a-BUG-"; then
-  BIDB="$(printf '%s\n' "$OUT" | cut -d' ' -f3)"; FIDB="$(field ledger)"
-  case "$OUT" in *" wrote=-") ok "B1: the verdict ends with wrote=-" ;;
-                 *) no "B1: the verdict does not end with wrote=-"; show ;; esac
-fi
+verdict B1 0 "ACCEPTED backlog B-a-BUG-"
+BIDB="$(printf '%s\n' "$OUT" | cut -d' ' -f3)"; BIDB="${BIDB:-<none: no B-id from B1>}"
+FIDB="$(field ledger)"; FIDB="${FIDB:-<none: no F-id from B1>}"
+case "$OUT" in *" wrote=-") ok "B1: the verdict ends with wrote=-" ;;
+               *) no "B1: the verdict does not end with wrote=-"; show ;; esac
 
 echo "B2 the entry and the segment are under the MAIN checkout, not the worktree"
-if [ -n "$BIDB" ]; then
-  one_open B2 "$B/memory/backlog.md" "$BIDB"
-else
-  no "B2: no B-id from B1 to look for"
-fi
+one_open B2 "$B/memory/backlog.md" "$BIDB"
 test ! -e "$BWT/memory/backlog.md" && ok "B2: no memory/backlog.md was created in the worktree" \
   || no "B2: $BWT/memory/backlog.md exists"
 test ! -e "$BWT/memory/findings" && ok "B2: no memory/findings in the worktree" || no "B2: $BWT/memory/findings exists"
-if [ -n "$FIDB" ]; then
-  q B2 field "$B/memory/findings" "$FIDB" id && { [ "$Q" = "\"$FIDB\"" ] \
-    && ok "B2: the main checkout's ledger folds record $FIDB (B1's ledger=)" || no "B2: record $FIDB folds as $Q"; }
-  q B2 field "$B/memory/findings" "$FIDB" backlog && { [ "$Q" = "\"$BIDB\"" ] \
-    && ok "B2: record $FIDB links backlog $BIDB" || no "B2: record $FIDB backlog field is $Q, expected \"$BIDB\""; }
-else
-  no "B2: no ledger id from B1 to fold"
-fi
+q B2 field "$B/memory/findings" "$FIDB" id && { [ "$Q" = "\"$FIDB\"" ] \
+  && ok "B2: the main checkout's ledger folds record $FIDB (B1's ledger=)" || no "B2: record $FIDB folds as $Q"; }
+q B2 field "$B/memory/findings" "$FIDB" backlog && { [ "$Q" = "\"$BIDB\"" ] \
+  && ok "B2: record $FIDB links backlog $BIDB" || no "B2: record $FIDB backlog field is $Q, expected \"$BIDB\""; }
 
-# ── the pipeline-entry gate ────────────────────────────────────────────────────────────────────────
-# Its arms: tests/, docs/, *.md, *.json|*.yaml|*.yml|*.toml (not .jsonl), …, memory/findings/*.jsonl, and
-# `*)` production. The controls keep the segment's name and extension and change only the directory, so
-# only the memory/findings/ arm can tell them apart.
+# The controls change only the directory, so only the gate's memory/findings/ arm can tell them apart.
 echo "PG ledger segments are not production files"
-if [ ! -f "$GATE_LIB" ]; then
-  no "PG: $GATE_LIB is missing"
-elif [ -z "$SEG_A1" ]; then
-  no "PG: no segment name from A1 to classify"
-else
-  pg(){ ( cd "$A" && . "$GATE_LIB" && pg_is_production "$1" ); }
-  pg "memory/findings/$SEG_A1"; rc=$?
-  [ "$rc" -eq 1 ] && ok "PG: pg_is_production memory/findings/$SEG_A1 returns 1" \
-    || no "PG: pg_is_production memory/findings/$SEG_A1 returned $rc, expected 1"
-  for control in "data/$SEG_A1" "memory/$SEG_A1"; do
-    pg "$control"; rc=$?
-    [ "$rc" -eq 0 ] && ok "PG: control $control is production (returns 0)" \
-      || no "PG: control $control returned $rc, expected 0 — the exclusion is not the memory/findings/ arm"
-  done
-fi
+[ -f "$GATE_LIB" ] && ok "PG: $GATE_LIB exists" || no "PG: $GATE_LIB is missing"
+# 99 when the library cannot be sourced, so a missing library is never read as pg_is_production's 1.
+pg(){ ( cd "$A" && . "$GATE_LIB" || exit 99; pg_is_production "$1" ); }
+pg "memory/findings/$SEG_A1"; rc=$?
+[ "$rc" -eq 1 ] && ok "PG: pg_is_production memory/findings/$SEG_A1 returns 1" \
+  || no "PG: pg_is_production memory/findings/$SEG_A1 returned $rc, expected 1"
+for control in "data/$SEG_A1" "memory/$SEG_A1"; do
+  pg "$control"; rc=$?
+  [ "$rc" -eq 0 ] && ok "PG: control $control is production (returns 0)" \
+    || no "PG: control $control returned $rc, expected 0 — the exclusion is not the memory/findings/ arm"
+done
 
 finish

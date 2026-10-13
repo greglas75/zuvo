@@ -50,6 +50,12 @@ VERDICT_RE = re.compile(r"(?P<verdict>[A-Z-]+) (?:backlog (?P<b>\S+) (?:seen=\d+
                         r"(?:ledger=)?(?P<f>F-[0-9a-f]{12}) (?:reason=\S+ |seen=\d+ )?(?:legacy )?wrote=\S+")
 
 
+def bug_line(b_id: str, f_id: str, tag: str) -> str:
+    """The whole backlog line BUG files at NOW; callers run with TZ=UTC so the entry's local day is NOW's."""
+    return (f"- [ ] {b_id} src/a.py:3 — [BUG] off-by-one at the limit | evidence: - | fix: - | severity: - | "
+            f"source: review | conf: 85 | seen: 1 | ledger: {f_id} | 2026-10-13 {tag}")
+
+
 def scrubbed_env() -> Dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in SCRUB}
     env.update(HERMETIC_GIT)
@@ -181,14 +187,12 @@ class VerdictTests(AddCase):
         # Defect: the entry and its ledger record do not name each other, so neither can find the other;
         # or the success path leaves the lock behind and every later call times out.
         r = self.repo()
-        p = self.add(r, *BUG)
+        p = self.add(r, *BUG, TZ="UTC")
         kind, b_id, f_id = self.verdict(p)
         records, _ = self.folded(r)
         self.assertEqual((p.returncode, kind), (0, "ACCEPTED"))
         self.assertRegex(b_id, r"^B-a-BUG-[0-9a-f]{8}$")
-        self.assertEqual(len(self.entries(r, b_id)), 1)
-        self.assertIn(f"| ledger: {f_id} |", self.entries(r, b_id)[0])
-        self.assertTrue(self.entries(r, b_id)[0].endswith(" [branch:feat/x]"))
+        self.assertEqual(self.entries(r, b_id), [bug_line(b_id, f_id, "[branch:feat/x]")])
         self.assertEqual((records[f_id].fields["backlog"], records[f_id].seen), (b_id, 1))
         self.assertFalse((r / LOCK_REL).exists())
 
@@ -203,8 +207,8 @@ class VerdictTests(AddCase):
         # Defect: --pr is validated but the entry is still tagged by branch, which the intake retires
         # when the branch is deleted after the merge.
         r = self.repo()
-        _, b_id, _ = self.verdict(self.add(r, *BUG, "--pr", "7"))
-        self.assertTrue(self.entries(r, b_id)[0].endswith(" [pr:7]"))
+        _, b_id, f_id = self.verdict(self.add(r, *BUG, "--pr", "7", TZ="UTC"))
+        self.assertEqual(self.entries(r, b_id), [bug_line(b_id, f_id, "[pr:7]")])
 
     def test_bumped_paraphrase_counts_seen_two_on_both_sides(self) -> None:
         # Defect: a reworded title of the same defect files a second entry, or one side undercounts.
@@ -304,6 +308,9 @@ class VerdictTests(AddCase):
         ("an --also site that does not exist is kept", ("--also", "src/missing.py:1"),
          "file-not-in-worktree"),
         ("a lowercase class is guessed at", ("--class", "bug"), "unknown-class"),
+        ("an --also with no `:LINE` is kept as a site with no line", ("--also", "src/a.py"), "bad-path"),
+        ("an --also with a non-integer line is kept or crashes", ("--also", "src/a.py:x"),
+         "line-out-of-range"),
     ]
 
     def test_refusals_exit_three_and_write_nothing(self) -> None:
@@ -315,13 +322,29 @@ class VerdictTests(AddCase):
                 self.assertEqual((p.returncode, p.stdout), (3, f"REFUSED {reason}\n"))
                 self.assertEqual(snapshot(r), before)
 
-    USAGE: List[Tuple[str, Tuple[str, ...], Dict[str, str]]] = [
-        ("an unknown flag is ignored", ("--bogus",), {}),
-        ("a flag abbreviation is guessed", ("--con", "85"), {}),
-        ("a --repo that is not a directory falls back to cwd", ("--repo", "/nonexistent/x"), {}),
-        ("a --repo outside any git work tree dies as a detached-HEAD ValueError", ("--repo", "../nogit"), {}),
-        ("an unreadable ZUVO_LOCK_WAIT is an import-time traceback", (), {"ZUVO_LOCK_WAIT": "abc"}),
-        ("a zero ZUVO_LOCK_WAIT makes every queued writer give up at once", (), {"ZUVO_LOCK_WAIT": "0"}),
+    LOCK_WAIT_MSG = "backlog-add: ZUVO_LOCK_WAIT must be a number of seconds in (0, 3600], got %r"
+    # The last stderr line, exactly: an exit 2 for ANOTHER reason (or argparse's generic one) fails.
+    USAGE: List[Tuple[str, Tuple[str, ...], Dict[str, str], str]] = [
+        ("an unknown flag is ignored", ("--bogus",), {},
+         "backlog-add: error: unrecognized arguments: --bogus"),
+        ("a flag abbreviation is guessed", ("--con", "85"), {},
+         "backlog-add: error: unrecognized arguments: --con 85"),
+        ("a --repo that is not a directory falls back to cwd", ("--repo", "/nonexistent/x"), {},
+         "backlog-add: error: --repo '/nonexistent/x' is not a directory"),
+        ("a --repo outside any git work tree dies as a detached-HEAD ValueError", ("--repo", "../nogit"), {},
+         "backlog-add: error: '../nogit' is not inside a git work tree"),
+        ("an unreadable ZUVO_LOCK_WAIT is an import-time traceback", (), {"ZUVO_LOCK_WAIT": "abc"},
+         LOCK_WAIT_MSG % "abc"),
+        ("a zero ZUVO_LOCK_WAIT makes every queued writer give up at once", (), {"ZUVO_LOCK_WAIT": "0"},
+         LOCK_WAIT_MSG % "0"),
+        ("a negative ZUVO_LOCK_WAIT makes every queued writer give up at once", (), {"ZUVO_LOCK_WAIT": "-1"},
+         LOCK_WAIT_MSG % "-1"),
+        ("a ZUVO_LOCK_WAIT above the 3600 s cap is accepted", (), {"ZUVO_LOCK_WAIT": "3601"},
+         LOCK_WAIT_MSG % "3601"),
+        ("an infinite ZUVO_LOCK_WAIT makes a queued writer wait for ever", (), {"ZUVO_LOCK_WAIT": "inf"},
+         LOCK_WAIT_MSG % "inf"),
+        ("a NaN ZUVO_LOCK_WAIT slips past a range check written as two `<`/`>` tests", (),
+         {"ZUVO_LOCK_WAIT": "nan"}, LOCK_WAIT_MSG % "nan"),
     ]
 
     def test_usage_errors_exit_two_and_touch_nothing(self) -> None:
@@ -334,13 +357,14 @@ class VerdictTests(AddCase):
                                env=self.env(**ceiling), capture_output=True, text=True)
         self.assertNotEqual(probe.returncode, 0, f"nogit is inside a work tree: {probe.stdout}")
         before = snapshot(r)
-        for name, args, env in self.USAGE:
+        for name, args, env, message in self.USAGE:
             with self.subTest(name):
                 p = subprocess.run([sys.executable, LAUNCHER, *BUG, *args], cwd=r,
                                    env=self.env(**ceiling, **env), capture_output=True, text=True,
                                    timeout=120)
                 self.assertEqual((p.returncode, p.stdout), (2, ""))
                 self.assertNotIn("Traceback", p.stderr)
+                self.assertEqual(p.stderr.splitlines()[-1:], [message])
                 self.assertEqual(snapshot(r), before)
 
     def test_lock_timeout_exits_one_and_leaves_the_holders_lock(self) -> None:
@@ -415,8 +439,8 @@ class StateTests(AddCase):
         # Defect: an ignored backlog's path is listed, and a committing skill force-adds it.
         r = self.repo(ignore="memory/\n")
         p = self.add(r, *BUG)
-        self.assertEqual(self.verdict(p)[0], "ACCEPTED")
-        self.assertTrue(p.stdout.rstrip().endswith(" wrote=-"), p.stdout)
+        kind, b_id, f_id = self.verdict(p)
+        self.assertEqual(p.stdout, f"ACCEPTED backlog {b_id} ledger={f_id} wrote=-\n")
 
     def test_first_call_in_a_repo_without_memory_succeeds(self) -> None:
         # Defect: the lock on a missing memory/ directory fails for ever, or the absent backlog is read.
@@ -435,6 +459,19 @@ class StateTests(AddCase):
         self.assertEqual([(x["path"], x["line"]) for x in records[f_id].fields["files"]],
                          [("src/a.py", 3), ("src/b.py", 3)])
 
+    def test_also_on_a_later_sighting_is_reported_as_not_recorded(self) -> None:
+        # Defect: a later sighting's --also is dropped in silence, so the caller reports a site the
+        # ledger never kept (a sighting line has no files[]).
+        r = self.repo()
+        (r / "src" / "b.py").write_text(SOURCE, encoding="utf-8")
+        self.add(r, *BUG)
+        p = self.add(r, *BUG, "--also", "src/b.py:3")
+        _, _, f_id = self.verdict(p)
+        records, _ = self.folded(r)
+        self.assertEqual(p.stderr, "backlog-add: --also not recorded: the ledger keeps the sites of the "
+                                   "first sighting\n")
+        self.assertEqual([(x["path"], x["line"]) for x in records[f_id].fields["files"]], [("src/a.py", 3)])
+
 
 class RoutingTests(AddCase):
     def test_subject_target_process_goes_to_the_ledger(self) -> None:
@@ -449,7 +486,7 @@ class RoutingTests(AddCase):
         ("a SEC entry on an unresolvable branch is held back from the backlog", "SEC", "ACCEPTED"),
     ]
 
-    def test_branch_the_intake_cannot_resolve(self) -> None:
+    def test_unresolvable_branch_keeps_non_sec_in_the_ledger_and_files_sec_untagged(self) -> None:
         r = self.repo(branch="feat/a+b")
         for name, cls, want in self.UNTAGGABLE:
             with self.subTest(name):
@@ -461,7 +498,7 @@ class RoutingTests(AddCase):
                 self.assertNotIn("[branch:", self.backlog(r))
 
     PROMOTION = [
-        ("a gap on a line the branch changed is never promoted", "5", "ACCEPTED", "B-a-BUG-"),
+        ("a gap on a line the branch changed is never promoted", "5", "ACCEPTED", r"B-a-BUG-[0-9a-f]{8}"),
         ("a gap on an old line is promoted", "3", "LEDGER", ""),
     ]
 
@@ -476,7 +513,7 @@ class RoutingTests(AddCase):
                              "--missing-assertion", "asserts the total")
                 kind, b_id, _ = self.verdict(p)
                 self.assertEqual(kind, want)
-                self.assertTrue(b_id.startswith(prefix))
+                self.assertRegex(b_id, f"^{prefix}$")
 
     def test_admit_env_forces_report_only_class_and_marks_the_record(self) -> None:
         # Defect: the user's explicit request is ignored, or a forced entry is indistinguishable.
@@ -534,10 +571,11 @@ class InstallTests(AddCase):
         r = self.repo()
         launcher = self.flat(fake_archiver="import time\ntime.sleep(60)\n")
         started = time.monotonic()
-        p = self.add(r, *BUG, launcher=launcher, ZUVO_LOCK_WAIT="12")
+        p = self.add(r, *BUG, launcher=launcher, ZUVO_LOCK_WAIT="16")
         self.assertEqual((p.returncode, p.stdout), (1, ""))
-        # expected ~3 s (a 2 s lookup share plus start-up); the old 30 s share fails it; 20 s is 6x slack
-        self.assertLess(time.monotonic() - started, 20)
+        self.assertIn("LookupFailed: lookup timed out after 2.0s", p.stderr)
+        # Real clock on purpose: a stubbed TimeoutExpired passes with the timeout share computed wrongly.
+        self.assertLess(time.monotonic() - started, 16)
 
     def test_lookup_naming_the_wrong_archive_line_fails_closed(self) -> None:
         # Defect: a lookup line number that no longer points at the entry (the archive was rewritten in
@@ -666,6 +704,21 @@ class LockTests(AddCase):
         (r / "memory" / "findings").write_text("a plain FILE in the ledger dir's place\n")
         p = self.add(r, *BUG, "--dry-run")
         self.assertEqual((p.returncode, p.stdout), (1, ""))
+
+    def test_path_git_cannot_answer_for_is_left_out_of_wrote(self) -> None:
+        # Defect: a path git gave no ignore answer for is listed in wrote=, so a committing skill stages a
+        # file that may be ignored. In-process: no fixture makes `git check-ignore` fail after the write.
+        r = self.repo()
+        out = io.StringIO()
+        unanswered = fnd._GitUnanswered("git: no answer")
+        with mock.patch.object(fnd, "check_visibility", return_value=None), \
+                mock.patch.object(fnd, "would_be_ignored", side_effect=unanswered), \
+                mock.patch.dict(os.environ, self.env(), clear=True), contextlib.redirect_stdout(out):
+            code = add.main(["--repo", str(r), *BUG])
+        self.assertEqual(code, 0)
+        self.assertRegex(out.getvalue(),
+                         r"^ACCEPTED backlog B-a-BUG-[0-9a-f]{8} ledger=F-[0-9a-f]{12} wrote=-\n$")
+        self.assertEqual(len(self.entries(r, out.getvalue().split()[2])), 1)
 
     def test_failure_after_the_backlog_write_names_what_was_written(self) -> None:
         # Defect: a ValueError in the ledger append, after backlog.md changed, exits 1 with no wrote=,

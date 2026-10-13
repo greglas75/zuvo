@@ -11,10 +11,16 @@
 # `VERDICTS` and `EXIT_CODES` from zuvo_backlog_add.py; the class sets, the three confidence bars,
 # `REASONS` and `REFUSALS` from zuvo_backlog_admit.py; the refusals decided outside the bars (every
 # `REFUSED_*` constant of zuvo_backlog_add.py and zuvo_backlog_findings.py). Five tables are compared:
-# Verdict, Exit, Class, Refusal and Argument (its flags against the CLI's own argparse parser). The
-# section's prose is not. Every comparison is then re-run against mutated
-# copies of the section (a row dropped, a row invented, a bar moved), and each mutant must be caught,
-# so a parser that silently reads nothing cannot pass.
+# Verdict, Exit, Class, Refusal and Argument (its flags against the CLI's own argparse parser). Every
+# comparison is then re-run against mutated copies of the section (a row dropped, a row invented, a bar
+# moved), and each mutant must be caught, so a parser that silently reads nothing cannot pass (C2).
+# C3 then runs the installed-layout launcher in a temp git repo, once per documented refusal a CLI call
+# can reach, and requires exactly `REFUSED <reason>` and exit 3: a reason the protocol names and the
+# code declares, but a different check answers first for that input, is a reason no caller ever sees.
+#
+# Out of scope: the section's prose rules (lookup, ledger visibility, locking, confidence routing). They
+# are sentences, not tables; parsing them would test the parser, and each rule's behaviour is owned by a
+# unit spec (test_backlog_lookup.py, test_backlog_findings.py, test_backlog_add.py).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
@@ -23,9 +29,13 @@ MODULES="$ROOT/scripts/zuvo-home"
 
 echo "== backlog-add contract: protocol vs CLI =="
 python3 - "$PROTOCOL" "$MODULES" <<'PY'
+import os
 import re
+import shutil
+import subprocess
 import sys
-from typing import Callable, Dict, List, Set, Tuple
+import tempfile
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 protocol_path, modules = sys.argv[1], sys.argv[2]
 sys.path.insert(0, modules)
@@ -40,6 +50,9 @@ SECTION = "Persisting a finding: backlog-add"
 CLI_REFUSALS = set(adm.REFUSALS) | {v for m in (add, fnd) for k, v in vars(m).items()
                                     if k.startswith("REFUSED_") and isinstance(v, str)}
 # Every long option argparse accepts, from the parser the CLI itself builds; `--help` is argparse's own.
+# `_parser()._actions` is private, and it is still the only exact source: the module exports no flag list,
+# and `--help` is formatted prose (wrapped, metavars merged) that would need a parser of its own. It is the
+# very parser `main` parses with, so it cannot drift from what the CLI accepts.
 CLI_FLAGS = {s for a in add._parser()._actions for s in a.option_strings
              if s.startswith("--") and s != "--help"}
 TICK = re.compile(r"`([^`\n]+)`")
@@ -80,6 +93,11 @@ def ticks(cell: str) -> List[str]:
     return TICK.findall(cell)
 
 
+def refusal_names(sec: str) -> Set[str]:
+    """The documented refusal reasons; `missing-field:<f>` documents the reason `missing-field`."""
+    return {t.split(":")[0] for row in table(sec, "Refusal") for t in ticks(row[0])}
+
+
 def compare(doc: str) -> List[str]:
     """Every disagreement between the documented contract and the CLI, as one message each."""
     out: List[str] = []
@@ -88,7 +106,7 @@ def compare(doc: str) -> List[str]:
         verdict_rows = table(sec, "Verdict")
         exit_rows = table(sec, "Exit")
         bar_rows = table(sec, "Class")
-        refusal_rows = table(sec, "Refusal")
+        refusals = refusal_names(sec)
         argument_rows = table(sec, "Argument")
     except Unparseable as exc:
         return [f"unparseable: {exc}"]
@@ -157,8 +175,7 @@ def compare(doc: str) -> List[str]:
     out += [f"flag documented but the CLI has no such flag: {f}" for f in sorted(documented_flags - CLI_FLAGS)]
     out += [f"flag the CLI accepts but the argument table omits: {f}" for f in sorted(CLI_FLAGS - documented_flags)]
 
-    # Refusals (exit 3), both directions; `missing-field:<f>` documents the reason `missing-field`.
-    refusals = {t.split(":")[0] for row in refusal_rows for t in ticks(row[0])}
+    # Refusals (exit 3), both directions.
     out += [f"refusal documented but never given by the CLI: {r}" for r in sorted(refusals - CLI_REFUSALS)]
     out += [f"refusal the CLI gives but the protocol omits: {r}" for r in sorted(CLI_REFUSALS - refusals)]
     return out
@@ -238,6 +255,102 @@ for name, mutate, expect in MUTANTS:
         ok(f"(C2) mutant caught: {name}")
     else:
         no(f"(C2) mutant NOT caught: {name} (expected a message containing {expect!r})")
+
+# C3: each documented refusal a CLI call reaches, asked of the real launcher. One row per reason; the
+# input is the BUG baseline with the named flags replaced (None drops one).
+LAUNCHER = os.path.join(modules, "backlog-add")
+ANCHOR = "if total > limit:"
+BUG_BASE = {"--class": "BUG", "--conf": "85", "--source": "review", "--title": "off-by-one at the limit",
+            "--file": "src/a.py", "--line": "3", "--anchor": ANCHOR}
+CPLX = ["--class", "CPLX", "--conf", "90", "--source", "code-audit", "--file", "src/a.py", "--line", "3",
+        "--title", "too complex"]
+
+
+def bug(over: Dict[str, Optional[str]]) -> List[str]:
+    args = {**BUG_BASE, **over}
+    return [x for k, v in args.items() if v is not None for x in (k, v)]
+
+
+NO_SITE: Dict[str, Optional[str]] = {"--file": None, "--line": None, "--anchor": None}
+# (documented reason, repo, arguments, the exact reason printed)
+CLI_ROWS: List[Tuple[str, str, List[str], str]] = [
+    ("missing-field", "plain", bug({"--title": None}), "missing-field:title"),
+    ("unknown-class", "plain", bug({"--class": "bug"}), "unknown-class"),
+    ("bad-conf", "plain", bug({"--conf": "abc"}), "bad-conf"),
+    ("bad-source", "plain", bug({"--source": "Bad Source"}), "bad-source"),
+    ("bad-target", "plain", bug({**NO_SITE, "--target": "not a target!", "--evidence": "x"}), "bad-target"),
+    ("bad-path", "plain", bug({"--also": "src/a.py"}), "bad-path"),
+    ("bad-pr", "plain", bug({"--pr": "abc"}), "bad-pr"),
+    ("bad-combination", "plain", bug({"--target": "https://api.example.com/x", "--evidence": "x"}),
+     "bad-combination"),
+    ("path-outside-repo", "plain", bug({"--file": "../x.py"}), "path-outside-repo"),
+    ("file-not-in-worktree", "plain", bug({"--file": "src/missing.py"}), "file-not-in-worktree"),
+    ("line-out-of-range", "plain", bug({"--line": "99"}), "line-out-of-range"),
+    ("anchor-not-at-line", "plain", bug({"--anchor": "not in the file at all"}), "anchor-not-at-line"),
+    ("secret-like-value", "plain", bug({"--evidence": "key AKIA" + "Z" * 16}), "secret-like-value"),
+    ("tracked-findings-beside-ignored-backlog", "ignored-backlog", CPLX,
+     "tracked-findings-beside-ignored-backlog"),
+]
+# Documented refusals no CLI call reaches, and where each one is tested instead.
+NOT_BY_CLI = {
+    "bad-field": "a non-text value: the CLI passes every flag as text (test_backlog_admit.py)",
+    "findings-visibility-unknown": "git failing under the lock, which no repo fixture provokes "
+                                   "(test_backlog_add.py, in-process)",
+}
+
+try:
+    documented = refusal_names(section(doc))
+except Unparseable as exc:
+    documented = set()
+    no(f"(C3) the refusal table is unreadable: {exc}")
+uncovered = sorted(documented - {r for r, *_ in CLI_ROWS} - set(NOT_BY_CLI))
+stale = sorted(({r for r, *_ in CLI_ROWS} | set(NOT_BY_CLI)) - documented)
+if uncovered or stale:
+    no(f"(C3) documented refusals with no CLI row and no reason why: {uncovered}; rows for reasons the "
+       f"protocol does not document: {stale}")
+else:
+    ok(f"(C3) every documented refusal has a CLI row ({len(CLI_ROWS)}) or a stated reason "
+       f"({len(NOT_BY_CLI)})")
+
+tmp = tempfile.mkdtemp(prefix="backlog-add-contract-")
+env = {k: v for k, v in os.environ.items() if not k.startswith(("ZUVO_", "GIT_"))}
+env.update(HOME=os.path.join(tmp, "home"), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+           ZUVO_PR_LOOKUP="0")
+os.makedirs(env["HOME"])
+
+
+def make_repo(name: str, ignore: str) -> str:
+    r = os.path.join(tmp, name)
+    os.makedirs(os.path.join(r, "src"))
+    os.makedirs(os.path.join(r, "memory"))
+    for rel, text in (("src/a.py", "a = 1\nb = 2\n%s\n" % ANCHOR), (".gitignore", ignore),
+                      ("memory/backlog.md", "# Backlog\n")):
+        with open(os.path.join(r, rel), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    g = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+         "-c", "init.defaultBranch=main"]
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "init"], ["checkout", "-qb", "feat/x"]):
+        subprocess.run(g + args, cwd=r, env=env, check=True, capture_output=True)
+    return r
+
+
+try:
+    repos = {"plain": make_repo("plain", ""), "ignored-backlog": make_repo("ignored", "/memory/backlog.md\n")}
+except (OSError, subprocess.CalledProcessError) as exc:
+    repos = {}
+    no(f"(C3) the temp repos could not be built: {exc}")
+for reason, repo, args, want in CLI_ROWS:
+    if repo not in repos:
+        no(f"(C3) {reason}: no temp repo '{repo}'")
+        continue
+    p = subprocess.run([sys.executable, LAUNCHER, *args], cwd=repos[repo], env=env, capture_output=True,
+                       text=True, timeout=120)
+    if (p.returncode, p.stdout) == (3, f"REFUSED {want}\n"):
+        ok(f"(C3) the CLI prints 'REFUSED {want}' (exit 3) for its documented case")
+    else:
+        no(f"(C3) {reason}: expected exit 3 and 'REFUSED {want}', got exit {p.returncode}, stdout "
+           f"{p.stdout!r}, stderr {p.stderr[-300:]!r}")
+shutil.rmtree(tmp, ignore_errors=True)
 
 print(f"RESULT: PASS={PASS} FAIL={FAIL}")
 sys.exit(1 if FAIL else 0)

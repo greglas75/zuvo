@@ -8,6 +8,7 @@ lookup wrapper has its own spec, test_backlog_lookup.py.
 import dataclasses
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -113,7 +114,7 @@ class RenderTests(unittest.TestCase):
         for tag in ("[pr:123]", "[branch:feat/x]"):
             with self.subTest(f"{tag} enters the key and splits one entry in two"):
                 line, bid = line_for(finding(), tag=tag)
-                self.assertTrue(line.endswith(f"{TODAY} {tag}"))
+                self.assertEqual(line, line_for(finding())[0] + " " + tag)
                 self.assertEqual(entries_of(line), [("id:" + bid.lower(), "open")])
 
     def test_target_line_passes_the_self_check(self) -> None:
@@ -121,7 +122,10 @@ class RenderTests(unittest.TestCase):
         f = finding(cls="SEC", file=None, line=None, anchor=None, target="https://api.example.com/v1/orders",
                     evidence="IDOR on /orders/{id}")
         line, bid = line_for(f)
-        self.assertTrue(line.startswith(f"- [ ] {bid} https://api.example.com/v1/orders — [SEC] "))
+        self.assertEqual(line, f"- [ ] {bid} https://api.example.com/v1/orders — [SEC] total is NaN when the "
+                               "cart is empty | evidence: IDOR on /orders/{id} | fix: default to 0 | "
+                               f"severity: high | source: review | conf: 85 | seen: 1 | ledger: {FID} | "
+                               f"{TODAY}")
         self.assertTrue(ent.self_check(line, bid))
 
     def test_unescapable_id_is_refused_as_render_invisible(self) -> None:
@@ -153,20 +157,24 @@ class RenderTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertFalse(ent.self_check(line, "B-a-BUG-12345678"))
 
-    BAD_ARGS: list[tuple[str, dict[str, Any]]] = [
-        ("a non-F-id ledger link breaks the own-format bump", {"f_id": "F-xyz"}),
-        ("seen 0 is written", {"seen": 0}),
-        ("a tag outside the intake charset is written", {"tag": "[branch:feat/a+b]"}),
-        ("an impossible date is written", {"today": "2026-02-31"}),
+    # The exact message per row: a row raising for ANOTHER row's reason (or a later bar's) still fails.
+    BAD_ARGS: list[tuple[str, dict[str, Any], str]] = [
+        ("a non-F-id ledger link breaks the own-format bump", {"f_id": "F-xyz"}, "not an F-id: 'F-xyz'"),
+        ("seen 0 is written", {"seen": 0}, "seen must be >= 1, got 0"),
+        ("a tag outside the intake charset is written", {"tag": "[branch:feat/a+b]"},
+         "not a [pr:N] / [branch:name] tag: '[branch:feat/a+b]'"),
+        ("an impossible date is written", {"today": "2026-02-31"}, "not a date: '2026-02-31'"),
+        ("a malformed confidence renders `conf: None`, refused only as render-invisible",
+         {"f": finding(conf="abc")}, "not a confidence: 'abc'"),
     ]
 
-    def test_bad_arguments_raise_instead_of_writing(self) -> None:
+    def test_render_refuses_bad_arguments_with_their_own_reason(self) -> None:
         d = adm.decide(BASE, frozenset({42}), False)
         bid = adm.b_id(BASE, d, adm.fingerprint(BASE))
-        for name, over in self.BAD_ARGS:
-            args: dict[str, Any] = {"f_id": FID, "seen": 1, "tag": "", "today": TODAY, **over}
-            with self.subTest(name), self.assertRaises(ValueError):
-                ent.render(BASE, d, bid, args["f_id"], args["seen"], args["tag"], args["today"])
+        for name, over, message in self.BAD_ARGS:
+            args: dict[str, Any] = {"f": BASE, "f_id": FID, "seen": 1, "tag": "", "today": TODAY, **over}
+            with self.subTest(name), self.assertRaisesRegex(ValueError, f"^{re.escape(message)}$"):
+                ent.render(args["f"], d, bid, args["f_id"], args["seen"], args["tag"], args["today"])
 
 
 ARCHIVED_SECTION = "Archived from backlog.md on 2026-10-13 (1 completed item moved out)"
@@ -179,16 +187,21 @@ def archived_line(sev: str = "high", tail: str = " DONE 2026-10-13",
     return own.replace("- [ ] ", "- [x] ", 1) + tail, bid
 
 
+def regression_line(bid: str, tail: str) -> str:
+    """The whole re-open line for `archived_line()`'s entry: its severity one band up, its `[pr:7]` gone."""
+    return (f"- [ ] {bid} [REGRESSION {TODAY} — closed DONE 2026-10-13, archived in backlog-done.md "
+            f'"{ARCHIVED_SECTION}"] src/cart.ts:42 — [BUG] total is NaN when the cart is empty | evidence: '
+            "sum([]) returns undefined | fix: default to 0 | severity: critical | source: review | "
+            f"conf: 85 | seen: 1 | ledger: {FID} | {TODAY} {tail}")
+
+
 class RegressionTests(unittest.TestCase):
 
     def test_regression_has_the_protocol_form(self) -> None:
         # Defect: a re-open line in a shape the protocol (and `verify`'s exemption) does not know.
         archived, bid = archived_line()
         line = ent.render_regression(bid, archived, ARCHIVED_SECTION, "code-audit", 90, "", TODAY)
-        self.assertTrue(line.startswith(
-            f"- [ ] {bid} [REGRESSION {TODAY} — closed DONE 2026-10-13, archived in backlog-done.md "
-            f'"{ARCHIVED_SECTION}"] src/cart.ts:42 — [BUG] total is NaN'))
-        self.assertTrue(line.endswith("| re-observed by code-audit | conf: 90"))
+        self.assertEqual(line, regression_line(bid, "| re-observed by code-audit | conf: 90"))
         self.assertIsNotNone(zb.REOPEN_RE.search(line))
         self.assertTrue(ent.self_check(line, bid))
 
@@ -217,19 +230,20 @@ class RegressionTests(unittest.TestCase):
         self.assertIn("badge reads \\| severity: low | evidence:", line)
         self.assertIn("| severity: critical |", line)
 
-    BAD_ARGS: list[tuple[str, dict[str, Any]]] = [
+    BAD_ARGS: list[tuple[str, dict[str, Any], str]] = [
         ("a source carrying ` | conf: 99` forges the re-open line's confidence",
-         {"source": "review | conf: 99"}),
-        ("a confidence above 100 is written", {"conf": 101}),
-        ("a tag outside the intake charset is written", {"tag": "[branch:feat/a+b]"}),
-        ("an impossible date is written", {"today": "2026-02-31"}),
+         {"source": "review | conf: 99"}, "not a source token: 'review | conf: 99'"),
+        ("a confidence above 100 is written", {"conf": 101}, "not a confidence: 101"),
+        ("a tag outside the intake charset is written", {"tag": "[branch:feat/a+b]"},
+         "not a [pr:N] / [branch:name] tag: '[branch:feat/a+b]'"),
+        ("an impossible date is written", {"today": "2026-02-31"}, "not a date: '2026-02-31'"),
     ]
 
-    def test_bad_arguments_raise_instead_of_writing(self) -> None:
+    def test_render_regression_refuses_bad_arguments_with_their_own_reason(self) -> None:
         archived, bid = archived_line()
-        for name, over in self.BAD_ARGS:
+        for name, over, message in self.BAD_ARGS:
             args: dict[str, Any] = {"source": "review", "conf": 85, "tag": "", "today": TODAY, **over}
-            with self.subTest(name), self.assertRaises(ValueError):
+            with self.subTest(name), self.assertRaisesRegex(ValueError, f"^{re.escape(message)}$"):
                 ent.render_regression(bid, archived, ARCHIVED_SECTION, args["source"], args["conf"],
                                       args["tag"], args["today"])
 
@@ -237,8 +251,7 @@ class RegressionTests(unittest.TestCase):
         # Defect: the merged PR's tag survives and the intake tickets a regression still on a branch.
         archived, bid = archived_line()
         line = ent.render_regression(bid, archived, ARCHIVED_SECTION, "review", 85, "[branch:feat/x]", TODAY)
-        self.assertNotIn("[pr:7]", line)
-        self.assertTrue(line.endswith("| conf: 85 [branch:feat/x]"))
+        self.assertEqual(line, regression_line(bid, "| re-observed by review | conf: 85 [branch:feat/x]"))
 
     def test_bare_tick_is_recorded_as_such(self) -> None:
         # Defect: with no marker, the prose is split at an arbitrary word and half lands in "closed …".
@@ -313,9 +326,9 @@ class BumpTests(unittest.TestCase):
         lines = [f"- [ ] {bid} src/cart.ts:42 NaN total | conf: 70\n", line + "\n"]
         self.assertIsNone(ent.bump(lines, bid, 99, "code-audit", TODAY))
 
-    def test_absent_id_raises(self) -> None:
+    def test_bump_of_an_id_no_line_defines_raises(self) -> None:
         # Defect: bumping an id no line defines reads as "legacy" and links to nothing.
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "^no line defines B-cart-BUG-01234567$"):
             ent.bump(["# Backlog\n"], "B-cart-BUG-01234567", 85, "review", TODAY)
 
 

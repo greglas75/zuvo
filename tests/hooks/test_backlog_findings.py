@@ -5,7 +5,6 @@ never the number of segment files.
 """
 
 import contextlib
-import hashlib
 import json
 import os
 import shutil
@@ -42,11 +41,6 @@ FOLD_BYTES = int(os.environ.get("ZUVO_FOLD_BENCH_BYTES", str(10 * 1024 * 1024)))
 FOLD_BUDGET_S = 5.0
 HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 REAL_GIT = shutil.which("git") or "git"
-
-
-def h6(raw: str) -> str:
-    """The 6-hex suffix a lossy slug carries (the spec: `-<sha1(raw)[:6]>`)."""
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:6]
 
 
 @contextlib.contextmanager
@@ -291,12 +285,13 @@ class VisibilityTests(Hermetic):
 
 class SegmentTests(Hermetic):
     SHA = "abcdef0123456789abcdef0123456789abcdef01"
-    # (name, ZUVO_BACKLOG_NOW, branch, ZUVO_BACKLOG_HOST, expected segment)
+    # (name, ZUVO_BACKLOG_NOW, branch, ZUVO_BACKLOG_HOST, expected segment). A lossy slug ends in
+    # `-<sha1(raw)[:6]>`, pinned as literals: sha1("feat/x") d6e256, ("my host/x") 9039b7, ("feat_x") a7c4b0.
     ROWS: List[Tuple[str, str, Any, str, str]] = [
         ("plain branch: injected clock or host ignored", "2026-10-13T09:30:00+00:00", "main", "mac",
          "2026-10-13_main_mac.jsonl"),
         ("slash in the branch: a nested directory instead of one segment", "2026-10-13T09:30:00+00:00",
-         "feat/x", "mac", f"2026-10-13_feat-x-{h6('feat/x')}_mac.jsonl"),
+         "feat/x", "mac", "2026-10-13_feat-x-d6e256_mac.jsonl"),
         ("safe branch: a hash added to a name that lost nothing", "2026-10-13T09:30:00+00:00",
          "feat-x", "mac", "2026-10-13_feat-x_mac.jsonl"),
         ("detached HEAD: every detached run shares one anonymous segment", "2026-10-13T09:30:00+00:00",
@@ -304,9 +299,9 @@ class SegmentTests(Hermetic):
         ("local offset: the segment dated by local time, not UTC", "2026-10-14T01:00:00+02:00", "main",
          "mac", "2026-10-13_main_mac.jsonl"),
         ("unsafe host name: a space or slash in the file name", "2026-10-13T09:30:00+00:00", "main",
-         "my host/x", f"2026-10-13_main_my-host-x-{h6('my host/x')}.jsonl"),
+         "my host/x", "2026-10-13_main_my-host-x-9039b7.jsonl"),
         ("underscore in the branch: the date_branch_host fields no longer split", "2026-10-13T09:30:00Z",
-         "feat_x", "mac", f"2026-10-13_feat-x-{h6('feat_x')}_mac.jsonl"),
+         "feat_x", "mac", "2026-10-13_feat-x-a7c4b0_mac.jsonl"),
     ]
 
     def test_segment_name_is_date_branch_host(self) -> None:
@@ -388,24 +383,31 @@ class SchemaTests(Hermetic):
         self.assertEqual((1, "found", T0), (rec["v"], rec["status"], rec["ts"]))
 
     def test_builders_refuse_out_of_schema_values(self) -> None:
-        rows: List[Tuple[str, Callable[[], object]]] = [
+        # each row names its own refusal: one shared assertRaises lets a row pass on another row's check
+        rows: List[Tuple[str, Callable[[], object], str]] = [
             ("status outside the closed set written by the builder",
-             lambda: fnd.patch_line(FID, status="merged", ts=T1)),
-            ("unknown record key smuggled into schema v1", lambda: record(extra=1)),
-            ("record id that is not an F-id", lambda: record(fid="B-x-BUG-12345678")),
-            ("empty patch that changes nothing", lambda: fnd.patch_line(FID, ts=T1)),
+             lambda: fnd.patch_line(FID, status="merged", ts=T1), r"^status 'merged' is outside \["),
+            ("unknown record key smuggled into schema v1", lambda: record(extra=1),
+             r"^keys outside schema v1: \['extra'\]$"),
+            ("record without a class written: it folds as a patch or an unknown kind",
+             lambda: record(**{"class": ""}), r"^a full record needs its class$"),
+            ("record id that is not an F-id", lambda: record(fid="B-x-BUG-12345678"),
+             r"^not an F-id \(F- \+ 12 hex\): 'B-x-BUG-12345678'$"),
+            ("empty patch that changes nothing", lambda: fnd.patch_line(FID, ts=T1),
+             r"^a status patch must set a status or a backlog id$"),
             ("a ts that is not a time sorts as a string ahead of every real one",
-             lambda: record(ts="z")),
+             lambda: record(ts="z"), r"^not an ISO-8601 time: 'z'$"),
             ("meta overwriting a core field (the status) through record_for", lambda: fnd.record_for(
                 adm.Finding(cls="DUP", conf=60, source="review", title="t", file="a.py", line=1),
                 adm.Decision("ledger", "class-report-only", "DUP", "t", False), FID, ts=T0,
-                meta={"status": "fixed"})),
+                meta={"status": "fixed"}), r"^meta keys outside \[.*\]: \['status'\]$"),
             ("a sighting whose pr is not a number", lambda: fnd.append_line(
                 Path(self.base, SEG_A), fnd.sighting_line(FID, source="review", sha=None, branch=None,
-                                                          pr="12", ts=T1))),  # type: ignore[arg-type]
+                                                          pr="12", ts=T1)),  # type: ignore[arg-type]
+             r"^refusing to append an out-of-schema line \(bad-record: .*\['sighting\.pr'\]\)$"),
         ]
-        for name, build in rows:
-            with self.subTest(name), self.assertRaises(ValueError):
+        for name, build, message in rows:
+            with self.subTest(name), self.assertRaisesRegex(ValueError, message):
                 build()
 
     def test_record_for_maps_a_finding_onto_dup_map_names(self) -> None:
@@ -478,6 +480,8 @@ class FoldTests(Hermetic):
         ("deeply nested JSON line: RecursionError aborts the whole fold",
          {SEG_A: [record(), "[" * 100000 + "]" * 100000]},
          ("found", None, 1, ["bad-json"])),
+        ("valid JSON that is not an object (`[1]`): `.get` on a list aborts the whole fold",
+         {SEG_A: [record(), "[1]"]}, ("found", None, 1, ["bad-json"])),
         ("bool v: `True == 1` reads a foreign line as schema v1",
          {SEG_A: [record(), dict(record(fid=FID2), v=True)]},
          ("found", None, 1, ["unknown-v"])),
@@ -591,7 +595,9 @@ class FoldTests(Hermetic):
         self.assertEqual(("found", None, 2, []), folded(str(seg.parent)))
 
     def test_fold_of_ten_megabytes_stays_inside_the_lock_budget(self) -> None:
-        # CQ6: a fold slower than the 5 s lock wait makes every concurrent backlog-add time out
+        # CQ6: a fold slower than the 5 s lock wait makes every concurrent backlog-add time out.
+        # A real clock on purpose: the defect IS wall time, and fold takes no clock to inject. Slack is
+        # >= 3x: 0.32 s on the Mac, 0.37 s on waw-tf (13x); the 5 s budget is the lock wait, not a guess.
         d = os.path.join(self.base, "big")
         n = bulk_ledger(d, FOLD_BYTES)
         start = time.monotonic()

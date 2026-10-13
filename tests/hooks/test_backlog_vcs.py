@@ -7,6 +7,7 @@ with tests/lib/hermetic-tools.sh, and HOME pointed at a temp dir so the real ~/.
 """
 from __future__ import annotations
 
+import errno
 import io
 import os
 import shlex
@@ -36,6 +37,23 @@ ANCHOR = "if total > limit:"
 A_PY = "".join(f"x{n} = {n}\n" if n != 10 else "    if total  >  limit:\n" for n in range(1, 21))
 SIX = "a\nb\nc\nd\ne\nf\n"
 CACHE_REL = (".zuvo", "cache", "backlog-add-pr.tsv")
+SHA256_ACME_APP = "5f89da0438fa1b1767532b58bd38cda2396f39889ab9e492e7f8f20d22fc9e9f"  # sha256("acme/app")
+
+
+class _EIO(io.RawIOBase):
+    """A readable stream whose every read fails as a disk or NFS read error does."""
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b: object) -> int:
+        raise OSError(errno.EIO, "Input/output error")
+
+
+def eio_open(fd: int, *_args: object, **_kw: object) -> io.TextIOWrapper:
+    """Stands in for the module's `open(fd, ...)`: the real fd is closed, reads raise EIO."""
+    os.close(fd)
+    return io.TextIOWrapper(io.BufferedReader(_EIO()), encoding="utf-8")
 
 
 def gh_prs(*prs: tuple[int, bool]) -> str:
@@ -219,6 +237,12 @@ class SiteTests(unittest.TestCase):
                                       side_effect=lambda p, m=swapped: m.get(p) or real(p)):
                 self.assertEqual("path-outside-repo", vcs.check_site(repo, "src/out.py", 1, ANCHOR))
 
+    def test_read_error_mid_file_is_refused_not_raised(self) -> None:
+        # an EIO while reading the cited file escaping check_site as a traceback instead of a refusal
+        with self.sb.env({}), mock.patch.object(vcs, "open", eio_open, create=True):
+            got = vcs.check_site(str(self.sb.repo), "src/a.py", 10, ANCHOR)
+        self.assertEqual("file-not-in-worktree", got)
+
     def test_check_target_reuses_the_admission_shapes(self) -> None:
         rows = [("URL target refused", "https://shop.example.com/cart", None),
                 ("host target refused", "api.example.com", None),
@@ -232,7 +256,7 @@ class SiteTests(unittest.TestCase):
 class DefaultBranchTests(unittest.TestCase):
     """ZUVO_DEFAULT_BRANCH > origin/HEAD > main: on TGM origin/HEAD says master, the work goes to develop."""
 
-    def test_precedence(self) -> None:
+    def test_env_beats_origin_head_beats_main(self) -> None:
         head_to_master = ("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")
         no_head = ("update-ref", "refs/remotes/origin/other", "HEAD")
         rows = [
@@ -345,16 +369,16 @@ class TagTests(unittest.TestCase):
                 self.assertIn(want, sb.gh_argv()[0].split())
 
     def test_hung_gh_is_abandoned_at_its_timeout(self) -> None:
-        # a hung gh blocking backlog-add (and the lock its caller may hold) past ZUVO_GH_TIMEOUT
+        # a hung gh blocking backlog-add (and the lock its caller may hold) past ZUVO_GH_TIMEOUT. No
+        # wall clock: gh answers PR 17 only after 3 s, so `[pr:17]` means the 1 s timeout (or the 5 s
+        # default instead of it) was not applied; 3x slack between the timeout and the answer.
         sb = Sandbox(self)
         sb.init(GITHUB)
         sb.git("checkout", "-q", "-b", "feat/x")
-        sb.stub_gh(f"{shlex.quote(SLEEP)} 30")
-        t0 = time.monotonic()
+        sb.stub_gh(f"{shlex.quote(SLEEP)} 3; {PR17}")
         with sb.env({"ZUVO_GH_TIMEOUT": "1"}):
             tag = vcs.resolve_tag(str(sb.repo), None).render()
         self.assertEqual(("[branch:feat/x]", 1), (tag, sb.gh_calls()))
-        self.assertLess(time.monotonic() - t0, 10)
 
     def test_hung_gh_leaves_no_orphan(self) -> None:
         # killing only gh's own pid on timeout orphans its children; each backlog-add would leak one
@@ -377,7 +401,7 @@ class TagTests(unittest.TestCase):
             with self.subTest(name), mock.patch.dict(os.environ, {"ZUVO_GH_TIMEOUT": raw}):
                 self.assertEqual(want, vcs._gh_timeout())
 
-    def test_head_sha7(self) -> None:
+    def test_head_sha7_is_seven_chars_and_none_before_the_first_commit(self) -> None:
         # a wrong-length or unborn-HEAD crash in the sha the ledger record carries
         sb = Sandbox(self)
         sb.init()
@@ -412,12 +436,14 @@ class TagTests(unittest.TestCase):
         sb = Sandbox(self)
         sb.init()
         sb.git("checkout", "-q", "-b", "feat/x")
-        rows = [("--pr abc", "abc", {}), ("ZUVO_BACKLOG_PR=1.5", None, {"ZUVO_BACKLOG_PR": "1.5"})]
-        for name, pr, env in rows:
-            with self.subTest(name), sb.env(env), self.assertRaises(ValueError):
+        rows = [("--pr abc", "abc", {}, r"^--pr: 'abc' is not a PR number$"),
+                ("ZUVO_BACKLOG_PR=1.5", None, {"ZUVO_BACKLOG_PR": "1.5"},
+                 r"^ZUVO_BACKLOG_PR: '1\.5' is not a PR number$")]
+        for name, pr, env, message in rows:
+            with self.subTest(name), sb.env(env), self.assertRaisesRegex(ValueError, message):
                 vcs.resolve_tag(str(sb.repo), pr)
 
-    def test_detached_head(self) -> None:
+    def test_detached_head_is_tagged_by_default_sha_explicit_pr_or_nothing(self) -> None:
         rows = [
             ("detached on the default branch's sha tagged", "main", None, PR17, ("none", ""), 0),
             ("detached off the default tagged by a branch it is not on", "feat/x", None, PR17,
@@ -465,7 +491,7 @@ class PrCacheTests(unittest.TestCase):
         with self.sb.env({}), mock.patch.object(vcs.time, "time", return_value=self.now + offset):
             return vcs.resolve_tag(str(self.sb.repo), None).render()
 
-    def test_ttl_boundary(self) -> None:
+    def test_gh_answer_is_reused_only_inside_the_15_minute_ttl(self) -> None:
         rows = [("answer not reused inside the TTL", 899, 1), ("answer reused after the TTL", 901, 2)]
         for name, offset, calls in rows:
             with self.subTest(name):
@@ -479,7 +505,8 @@ class PrCacheTests(unittest.TestCase):
         self.tag_at(0)
         cache = self.sb.home.joinpath(*CACHE_REL)
         self.assertEqual([cache.name], sorted(os.listdir(cache.parent)))
-        self.assertIn("\tfeat/x\t17", cache.read_text(encoding="utf-8"))
+        self.assertEqual(f"{self.now:.0f}\t{SHA256_ACME_APP}\tfeat/x\t17\n",
+                         cache.read_text(encoding="utf-8"))
 
     def test_another_repo_does_not_reuse_the_answer(self) -> None:
         # a cache keyed by branch alone tags feat/x of other/app with acme/app's PR
@@ -603,7 +630,7 @@ class ChangedLinesTests(unittest.TestCase):
         sb.write("lib/real/x.py", "a\nb\nC\nd\ne\nf\n")             # tracked, line 3 changed
         (sb.repo / "lib" / "link").symlink_to("real")            # untracked symlinked directory
 
-    def test_branch_diff_lines(self) -> None:
+    def test_changed_lines_are_the_branch_edits_in_the_work_tree(self) -> None:
         rows = [
             ("committed or uncommitted change missed (merge-base..HEAD only, or HEAD..worktree only)",
              "src/c.py", "main", {3, 6}),
@@ -625,6 +652,11 @@ class ChangedLinesTests(unittest.TestCase):
         for name, path, default, want in rows:
             with self.subTest(name), self.sb.env({}):
                 self.assertEqual(want, vcs.changed_lines(str(self.sb.repo), path, default))
+
+    def test_read_error_on_an_untracked_file_is_no_lines_not_a_crash(self) -> None:
+        # an EIO while counting an untracked file's lines escaping changed_lines as a traceback
+        with self.sb.env({}), mock.patch.object(vcs, "open", eio_open, create=True):
+            self.assertEqual(set(), vcs.changed_lines(str(self.sb.repo), "src/new.py", "main"))
 
     def test_inherited_index_file_cannot_hide_tracking(self) -> None:
         # GIT_INDEX_FILE from a hook: an empty foreign index makes a tracked file look new, all lines changed

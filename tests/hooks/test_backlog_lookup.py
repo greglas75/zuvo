@@ -7,6 +7,7 @@ the contract row, which runs the REAL archiver so its output and `_VERDICT_RES` 
 """
 
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -75,7 +76,9 @@ class LookupTests(unittest.TestCase):
 
     def test_failures_raise_lookup_failed_never_absent(self) -> None:
         for name, out, rc in self.FAIL_CLOSED:
-            with self.subTest(name), self.assertRaises(lk.LookupFailed):
+            # The rc in the message: a refusal that names another exit code misleads whoever triages it.
+            want = f"^lookup gave rc={rc} and an unparseable answer: "
+            with self.subTest(name), self.assertRaisesRegex(lk.LookupFailed, want):
                 lk.lookup(str(self.tmp), "B-x-BUG-12345678", archiver=self.fake(out, rc))
 
     def test_failure_message_keeps_the_archivers_traceback(self) -> None:
@@ -88,21 +91,25 @@ class LookupTests(unittest.TestCase):
 
     def test_timeout_raises_lookup_failed(self) -> None:
         # Defect: a hung archiver holds the backlog lock for ever, or its silence reads as ABSENT.
+        # A REAL hang, not a stubbed TimeoutExpired: a stub would pass with `timeout=` dropped from the
+        # subprocess call. No upper bound on the elapsed time is asserted; the sleep is 60x the timeout.
         path = self.tmp / "backlog-archive.py"
         path.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
-        with self.assertRaises(lk.LookupFailed):
+        with self.assertRaisesRegex(lk.LookupFailed, r"^lookup timed out after 0\.5s$"):
             lk.lookup(str(self.tmp), "B-x", archiver=str(path), timeout=0.5)
 
     def test_interpreter_that_cannot_start_raises_lookup_failed(self) -> None:
         # Defect: an OSError from exec escapes as a traceback instead of the CLI's exit-1 refusal.
         with mock.patch.object(sys, "executable", str(self.tmp / "no-python")), \
-                self.assertRaises(lk.LookupFailed):
+                self.assertRaisesRegex(lk.LookupFailed, "^lookup could not start: "):
             lk.lookup(str(self.tmp), "B-x", archiver=self.fake("ABSENT fp:0123456789ab\n", 0))
 
     def test_missing_archiver_raises_lookup_failed(self) -> None:
         # Defect: an incomplete install answers ABSENT and every finding is filed again.
-        with self.assertRaises(lk.LookupFailed):
-            lk.lookup(str(self.tmp), "B-x", archiver=str(self.tmp / "absent.py"))
+        absent = str(self.tmp / "absent.py")
+        want = f"backlog-archive.py not found (install incomplete): {absent}"
+        with self.assertRaisesRegex(lk.LookupFailed, f"^{re.escape(want)}$"):
+            lk.lookup(str(self.tmp), "B-x", archiver=absent)
 
     def test_query_is_passed_after_double_dash(self) -> None:
         # Defect: a text query starting with `-` is parsed by the archiver as an option (rc 2).
