@@ -80,7 +80,7 @@ class RenderTests(unittest.TestCase):
         ("`severity: [` as the severity value reads as a TEMPLATE line", {"severity": "[x]"}),
         ("`fingerprint | source-task` in evidence reads as a TEMPLATE line",
          {"evidence": "the fingerprint | source-task header leaked"}),
-        ("a U+2028 in the title splits the line in two", {"title": "first second"}),
+        ("a U+2028 in the title splits the line in two", {"title": "first\u2028second"}),
         ("a title opening with DONE reads as resolved inline", {"title": "DONE flag never cleared"}),
     ]
 
