@@ -5066,7 +5066,7 @@ symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone
 embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
 agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
 
-- [ ] B-20261009-DEDUP-EMPTY-QUERY-OPEN [P2][correctness][conf 95]
+- [x] B-20261009-DEDUP-EMPTY-QUERY-OPEN [FIXED 4505da07] [P2][correctness][conf 95]
 **Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
 **Source:** probing the dedup path for the question above, 2026-10-09.
 **What:** an empty or whitespace-only query returns a false positive pointing at an unrelated, already-DONE section:
@@ -5079,6 +5079,19 @@ overwrite a closed, unrelated entry. Any candidate that is only a path, only pun
 `strip_resolution_markers` lands here.
 **Fix:** `lookup` refuses an empty normalized signature with its own exit code (not 0/10) and a message naming what was
 stripped; a test seeds "", "   ", a path-only query and a markers-only query and asserts none of them returns OPEN.
+**Resolution 4505da07:** both halves, because the filed symptom was one key rather than one command. `normalize_signature`
+returns `"|"` for anything that strips to nothing, so EVERY such line hashed to `fp:3eb416223e9e` — measured across
+`~/DEV` 2026-10-13: 11 of 58043 entries, 8 of them in ONE archive (tgm-survey-platform). A fixture of two unrelated
+resolution lines, one per file, also makes `verify` report a namespace VIOLATION, and `append-runlog` runs `verify` as a
+BLOCKING gate, so the collision cost more than the reported lookup did. `entry_key` now keys a no-content signature off
+the raw line (same line = same entry, so archiving stays idempotent; two different lines stop being one), and `lookup`
+refuses such a candidate before reading the files: verdict `NO-SIGNATURE`, exit **13** (12 is `status`'s OVERDUE), naming
+what was stripped. Documented in `backlog-protocol.md`, `skills/backlog/SKILL.md` and `drive-by-findings.md`, with a test
+that fails if the code answers something the contract does not carry. Tests written first and seen red (12 FAIL).
+H10 blocked the key rotation, as designed: rather than refreshing the frozen snapshot, its oracle gained a PREDICATE for
+exactly this case (identical in every other field, frozen side keyed on nothing, new keys distinct), proven narrow
+against a mutant that rotates every key — real module `OK 878 (1 no-signature key(s) rotated)`, mutant still FAILS.
+Also removed `[--json]` from the usage header: argparse rejects it (`unrecognized arguments: --json`).
 
 - [ ] B-20261009-DEDUP-ADD-MODE-ONLY [P3][process][conf 85]
 **Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
