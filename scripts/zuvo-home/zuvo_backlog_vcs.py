@@ -383,15 +383,21 @@ def _cache_put(key: str, pr: str) -> None:
 
 # ── changed lines ────────────────────────────────────────────────────────────────────────────────
 def _merge_base(repo: str, default: str) -> Optional[str]:
-    bases = (_git(repo, "merge-base", "HEAD", sha) for sha in _default_shas(repo, default))
-    return next((b for b in bases if b), None)
+    """The NEWEST merge-base of HEAD with the default's local and remote refs. The first one found would
+    let a never-pulled local default count upstream's edits as the branch's; refs that diverged prove
+    nothing, so they give None."""
+    bases = [b for b in (_git(repo, "merge-base", "HEAD", sha) for sha in _default_shas(repo, default)) if b]
+    def is_newest(b: str) -> bool:
+        return all(_git(repo, "merge-base", "--is-ancestor", o, b) is not None for o in bases)
+    newest = [b for b in bases if is_newest(b)]
+    return newest[0] if newest else None
 
 
 def changed_lines(repo: str, path: str, default: Optional[str] = None) -> Set[int]:
     """Line numbers of `path` (repo-relative) that the branch changed: `git diff -U0` from
-    merge-base(HEAD, default) — the local default ref, else `origin/<default>` — to the WORK TREE, so
-    committed and uncommitted edits both count. A file git lists as untracked and not ignored is changed
-    in full. Anything unproven is the empty set: no merge-base, a path outside the repo or not one
+    merge-base(HEAD, default) — the newer of the local default ref and `origin/<default>` — to the WORK
+    TREE, so committed and uncommitted edits both count. A file git lists as untracked and not ignored
+    is changed in full. Anything unproven is the empty set: no merge-base, a path outside the repo or not one
     regular file (git would expand a directory to every file under it), an ignored file, or a tracked
     file spelled through a symlinked directory (git does not list it either way)."""
     rel = normalize_path(repo, path)

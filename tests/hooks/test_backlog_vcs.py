@@ -734,6 +734,23 @@ class ChangedLinesTests(unittest.TestCase):
         with self.sb.env({"GIT_INDEX_FILE": str(self.sb.tmp / "no-index")}):
             self.assertEqual({3, 6}, vcs.changed_lines(str(self.sb.repo), "src/c.py", "main"))
 
+    def test_a_stale_local_default_does_not_count_upstream_edits(self) -> None:
+        # a local main never pulled while origin/main moved on, the branch cut from origin/main: the
+        # merge-base with the stale local ref counts upstream's line-1 edit as ours and promotes a gap there
+        sb = Sandbox(self)
+        sb.init()
+        sb.write("src/c.py", SIX)
+        sb.commit("six")
+        sb.git("checkout", "-q", "-b", "upstream")
+        sb.write("src/c.py", "A\nb\nc\nd\ne\nf\n")
+        sb.commit("upstream edits line 1")
+        sb.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        sb.git("checkout", "-q", "-b", "feat/s")
+        sb.git("branch", "-q", "-D", "upstream")
+        sb.write("src/c.py", "A\nb\nc\nD\ne\nf\n")
+        with sb.env({}):
+            self.assertEqual({4}, vcs.changed_lines(str(sb.repo), "src/c.py", "main"))
+
     def test_worktree_with_only_the_remote_default(self) -> None:
         # a linked worktree with origin/develop and no local develop: an empty set would never promote
         sb = Sandbox(self)
