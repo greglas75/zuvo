@@ -58,7 +58,7 @@ The new modules import `zuvo_backlog_parse as zb` in the `import` form and never
    - `zio.Lock(dirname(real backlog))` is held once. Under it the helper folds the ledger, runs at most 2 `lookup` subprocesses (about 0.07 s each, measured), writes `backlog.md` and appends to the ledger. This closes the append race `B-backlog-flock` for every caller of `backlog-add`.
    - `mkdir -p` the memory directory before taking the lock. Today `Lock` on a missing `memory/` exits 1, forever.
 2. **Ledger.**
-   - Location: `dirname(real backlog)/findings/<YYYY-MM-DD>_<branch-slug>_<host>.jsonl`. The ledger sits beside the backlog (same location rule) and is segmented by day, branch and host. Segments mean no merge conflicts in tracked repos (GitHub applies no merge drivers), no Mac/ryzen clobbering through ccsync, and a bounded file size.
+   - Location: `dirname(real backlog)/findings/<YYYY-MM-DD>_<branch-slug>_<host>.jsonl`. *(Amended during execute: a slug that lost characters or was truncated gets `-<sha1(raw)[:6]>`, so `feat/x` and `feat_x` never share a segment; segments inherit the backlog's mode.)* The ledger sits beside the backlog (same location rule) and is segmented by day, branch and host. Segments mean no merge conflicts in tracked repos (GitHub applies no merge drivers), no Mac/ryzen clobbering through ccsync, and a bounded file size.
    - Append-only. Every write is one of three line kinds:
      - a **full record** (has `class`);
      - a **sighting line** (`{"v":1,"id":…,"ts":…,"sighting":{…source, sha, branch, pr}}`);
