@@ -117,6 +117,18 @@ class RenderTests(unittest.TestCase):
                 self.assertEqual(line, line_for(finding())[0] + " " + tag)
                 self.assertEqual(entries_of(line), [("id:" + bid.lower(), "open")])
 
+    DOT_PATHS = [
+        ("a leading `./` is kept, so the entry names a site the same finding without it does not",
+         "./src/cart.ts"),
+        ("only the first of repeated `./` prefixes is stripped (an `if` where the loop must be a `while`)",
+         "././src/cart.ts"),
+    ]
+
+    def test_leading_dot_slash_is_stripped_from_the_location(self) -> None:
+        for name, path in self.DOT_PATHS:
+            with self.subTest(name):
+                self.assertEqual(line_for(finding(file=path)), line_for(finding()))
+
     def test_target_line_passes_the_self_check(self) -> None:
         # Defect: a pentest/infra finding (no file) renders an entry the parser cannot see.
         f = finding(cls="SEC", file=None, line=None, anchor=None, target="https://api.example.com/v1/orders",
@@ -331,6 +343,36 @@ class BumpTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "^no line defines B-cart-BUG-01234567$"):
             ent.bump(["# Backlog\n"], "B-cart-BUG-01234567", 85, "review", TODAY)
 
+    # On a line the bump WOULD rewrite, so a bump that skipped the date check writes the bad date into
+    # the entry instead of raising (and the exact message rules out the no-such-line error).
+    BAD_TODAY = [
+        ("an impossible date is written into the bumped line", "2026-02-31", "not a date: '2026-02-31'"),
+        ("a day in another notation is written into the bumped line", "14.10.2026",
+         "not a date: '14.10.2026'"),
+    ]
+
+    def test_bump_refuses_a_today_that_is_not_a_date(self) -> None:
+        line, bid = line_for(finding())
+        for name, today, message in self.BAD_TODAY:
+            with self.subTest(name), self.assertRaisesRegex(ValueError, f"^{re.escape(message)}$"):
+                ent.bump([line + "\n"], bid, 90, "code-audit", today)
+
+
+class ParseOwnTests(unittest.TestCase):
+    OWN = line_for(finding())[0]
+    # Each line is NOT in `render`'s open format; reading it as one lets the bump rewrite it.
+    NOT_OWN = [
+        ("a hand-written legacy line is read as own-format and rewritten",
+         "- [ ] B-cart-BUG-01234567 src/cart.ts:42 NaN total | conf: 70"),
+        ("a ticked own-format line is read as an open one", OWN.replace("- [ ] ", "- [x] ", 1)),
+        ("a line whose ledger link is not an F-id is read", OWN.replace(FID, "F-xyz", 1)),
+        ("a line with text after the date is read, losing that text on the bump", OWN + " trailing note"),
+    ]
+
+    def test_lines_not_in_render_format_parse_as_none(self) -> None:
+        for name, line in self.NOT_OWN:
+            with self.subTest(name):
+                self.assertIsNone(ent.parse_own(line))
 
 if __name__ == "__main__":
     unittest.main()

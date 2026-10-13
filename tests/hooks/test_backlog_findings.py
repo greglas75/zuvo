@@ -357,6 +357,9 @@ class SegmentTests(Hermetic):
              "bare file name"),
             ("detached HEAD without a sha", lambda: fnd.segment_path(Path(self.base), T0, None, "mac"),
              "detached HEAD needs the commit sha"),
+            ("stamp that is not a time names a segment `yesterday_main_mac.jsonl` the fold sorts first",
+             lambda: fnd.segment_path(Path(self.base), "yesterday", "main", "mac"),
+             r"^Invalid isoformat string: 'yesterday'$"),
         ]
         for name, call, message in rows:
             with self.subTest(name), self.assertRaisesRegex(ValueError, message):
@@ -387,6 +390,12 @@ class SchemaTests(Hermetic):
         rows: List[Tuple[str, Callable[[], object], str]] = [
             ("status outside the closed set written by the builder",
              lambda: fnd.patch_line(FID, status="merged", ts=T1), r"^status 'merged' is outside \["),
+            ("full record with a status outside the closed set written, then folded as unknown",
+             lambda: record(status="merged"),
+             r"^status 'merged' is outside \['fixed', 'found', 'kept', 'refuted', 'ticketed'\]$"),
+            ("full record with a null status written: `optional` leaked from the patch builder",
+             lambda: record(status=None),
+             r"^status None is outside \['fixed', 'found', 'kept', 'refuted', 'ticketed'\]$"),
             ("unknown record key smuggled into schema v1", lambda: record(extra=1),
              r"^keys outside schema v1: \['extra'\]$"),
             ("record without a class written: it folds as a patch or an unknown kind",
@@ -500,6 +509,24 @@ class FoldTests(Hermetic):
                 d = os.path.join(self.base, f"f{i}")
                 segments(d, segs)
                 self.assertEqual(want, folded(d))
+
+    # (name, segments, expected note on the folded record)
+    NOTES: List[Tuple[str, Dict[str, List[Any]], str]] = [
+        ("a patch's note dropped on fold: the reason a finding was refuted or kept is lost",
+         {SEG_A: [record(), fnd.patch_line(FID, status="refuted", note="dup of F-bbbbbbbbbbbb", ts=T1)]},
+         "dup of F-bbbbbbbbbbbb"),
+        ("a later patch without a note blanks the earlier note",
+         {SEG_A: [record(), fnd.patch_line(FID, status="kept", note="by design", ts=T1),
+                  fnd.patch_line(FID, status="fixed", ts=T2)]},
+         "by design"),
+    ]
+
+    def test_fold_carries_the_latest_patch_note(self) -> None:
+        for i, (name, segs, want) in enumerate(self.NOTES):
+            with self.subTest(name):
+                d = os.path.join(self.base, f"n{i}")
+                segments(d, segs)
+                self.assertEqual(want, fnd.fold(Path(d))[0][FID].note)
 
     def test_absent_directory_folds_to_nothing(self) -> None:
         # the first call in a repo crashing on a missing findings/ directory

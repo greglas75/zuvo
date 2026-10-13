@@ -28,6 +28,7 @@ LAUNCHER = os.path.join(HOME_DIR, "backlog-add")
 ARCHIVER = os.path.join(HOME_DIR, "backlog-archive.py")
 sys.path.insert(0, HOME_DIR)
 import zuvo_backlog_add as add  # noqa: E402
+import zuvo_backlog_entry as ent  # noqa: E402
 import zuvo_backlog_findings as fnd  # noqa: E402
 import zuvo_backlog_io as zio  # noqa: E402
 
@@ -731,6 +732,24 @@ class LockTests(AddCase):
             code = add.main(["--repo", str(r), *BUG])
         self.assertEqual(code, 1)
         self.assertIn("failed after writing: wrote=memory/backlog.md", err.getvalue())
+
+    def test_render_invisible_line_exits_one_writes_nothing_and_releases_the_lock(self) -> None:
+        # Defect: a line the parser would not see (RenderInvisible) escapes `_FAILURES` as a traceback, or
+        # is written anyway, or leaves the lock held so every later writer times out. In-process with
+        # `ent.render` raising: no CLI input reaches it, because `validate` already refuses every value
+        # `render` cannot make visible (a fuzz of ~60k rendered findings and ~18k re-opened archive lines
+        # found none).
+        r = self.repo()
+        before = snapshot(r)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(ent, "render", side_effect=ent.RenderInvisible()), \
+                mock.patch.dict(os.environ, self.env(), clear=True), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = add.main(["--repo", str(r), *BUG])
+        self.assertEqual((code, out.getvalue(), err.getvalue()),
+                         (1, "", "backlog-add: RenderInvisible: render-invisible\n"))
+        self.assertEqual(snapshot(r), before)
+        self.assertFalse((r / LOCK_REL).exists())
 
 
 if __name__ == "__main__":

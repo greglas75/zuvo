@@ -7,6 +7,7 @@ with tests/lib/hermetic-tools.sh, and HOME pointed at a temp dir so the real ~/.
 """
 from __future__ import annotations
 
+import contextlib
 import errno
 import io
 import os
@@ -18,7 +19,9 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -54,6 +57,15 @@ def eio_open(fd: int, *_args: object, **_kw: object) -> io.TextIOWrapper:
     """Stands in for the module's `open(fd, ...)`: the real fd is closed, reads raise EIO."""
     os.close(fd)
     return io.TextIOWrapper(io.BufferedReader(_EIO()), encoding="utf-8")
+
+
+REAL_FSTAT = os.fstat
+
+
+def foreign_fstat(fd: int) -> SimpleNamespace:
+    """The fd's real stat, reported as owned by another user: a chown needs root, so this is the fault."""
+    st = REAL_FSTAT(fd)
+    return SimpleNamespace(st_mode=st.st_mode, st_uid=st.st_uid + 1)
 
 
 def gh_prs(*prs: tuple[int, bool]) -> str:
@@ -492,7 +504,8 @@ class PrCacheTests(unittest.TestCase):
             return vcs.resolve_tag(str(self.sb.repo), None).render()
 
     def test_gh_answer_is_reused_only_inside_the_15_minute_ttl(self) -> None:
-        rows = [("answer not reused inside the TTL", 899, 1), ("answer reused after the TTL", 901, 2)]
+        rows = [("answer not reused inside the TTL", 899, 1), ("answer reused after the TTL", 901, 2),
+                ("a row dated in the future (clock stepped back) reused instead of asking gh", -1, 2)]
         for name, offset, calls in rows:
             with self.subTest(name):
                 self.sb.counter.unlink(missing_ok=True)
@@ -534,6 +547,37 @@ class PrCacheTests(unittest.TestCase):
         with mock.patch.object(vcs.os, "geteuid", return_value=os.geteuid() + 1):
             self.assertEqual(("[pr:17]", "[pr:17]"), (self.tag_at(0), self.tag_at(1)))
         self.assertEqual(2, self.sb.gh_calls())
+
+    def plant_fifo(self, cache: Path) -> contextlib.AbstractContextManager[None]:
+        """Replace the cache with a FIFO whose pipe already holds its rows (a writer keeps it open)."""
+        rows = cache.read_bytes()
+        cache.unlink()
+        os.mkfifo(cache, 0o600)
+        fd = os.open(cache, os.O_RDWR)
+        self.addCleanup(os.close, fd)
+        os.write(fd, rows)
+        return contextlib.nullcontext()
+
+    def foreign_owner(self, cache: Path) -> contextlib.AbstractContextManager[object]:
+        return mock.patch.object(vcs.os, "fstat", foreign_fstat)
+
+    def test_cache_file_that_is_not_our_plain_file_is_a_miss(self) -> None:
+        rows: list[tuple[str, Callable[[Path], contextlib.AbstractContextManager[object]]]] = [
+            ("a FIFO planted at the cache path: the rows a writer feeds it rendered as `[pr:N]`",
+             self.plant_fifo),
+            ("a cache file owned by another user (in our private dir) returned without asking gh",
+             self.foreign_owner),
+        ]
+        cache = self.sb.home.joinpath(*CACHE_REL)
+        for name, plant in rows:
+            with self.subTest(name):
+                self.sb.counter.unlink(missing_ok=True)
+                shutil.rmtree(self.sb.home / ".zuvo", ignore_errors=True)
+                self.sb.stub_gh(PR17)
+                self.tag_at(0)
+                with plant(cache):
+                    self.sb.stub_gh(PR21)
+                    self.assertEqual(("[pr:21]", 2), (self.tag_at(1), self.sb.gh_calls()))
 
     def test_symlinked_cache_file_is_not_read(self) -> None:
         # a cache path re-pointed at a planted file whose rows are then rendered as `[pr:N]`
@@ -657,6 +701,17 @@ class ChangedLinesTests(unittest.TestCase):
         # an EIO while counting an untracked file's lines escaping changed_lines as a traceback
         with self.sb.env({}), mock.patch.object(vcs, "open", eio_open, create=True):
             self.assertEqual(set(), vcs.changed_lines(str(self.sb.repo), "src/new.py", "main"))
+
+    def test_failing_ls_files_is_no_lines(self) -> None:
+        # `git ls-files` failing (a corrupt or locked index) read as tracked: the diff then counts lines
+        # whose tracking was never proved, and a TEST-GAP on them is promoted to a BUG
+        git = self.sb.bin / "git"
+        git.unlink()
+        git.write_text(f"#!/bin/sh\ncase \" $* \" in *\" ls-files \"*) exit 128 ;; esac\n"
+                       f"exec {shlex.quote(GIT)} \"$@\"\n", encoding="utf-8")
+        git.chmod(0o755)
+        with self.sb.env({}):
+            self.assertEqual(set(), vcs.changed_lines(str(self.sb.repo), "src/c.py", "main"))
 
     def test_inherited_index_file_cannot_hide_tracking(self) -> None:
         # GIT_INDEX_FILE from a hook: an empty foreign index makes a tracked file look new, all lines changed
