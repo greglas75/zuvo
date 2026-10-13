@@ -192,6 +192,13 @@ class VerdictTests(AddCase):
         self.assertEqual((records[f_id].fields["backlog"], records[f_id].seen), (b_id, 1))
         self.assertFalse((r / LOCK_REL).exists())
 
+    def test_entry_is_dated_by_the_local_day_like_the_archive(self) -> None:
+        # Defect: the entry carried the UTC day while backlog-archive.py names its sections by the local
+        # day, so an evening finding east of UTC read as filed the day before it was archived.
+        r = self.repo()
+        _, b_id, _ = self.verdict(self.add(r, *BUG, now="2026-10-13T20:00:00+00:00", TZ="UTC-07"))
+        self.assertIn("| 2026-10-14 [branch:feat/x]", self.entries(r, b_id)[0])
+
     def test_explicit_pr_tags_the_entry(self) -> None:
         # Defect: --pr is validated but the entry is still tagged by branch, which the intake retires
         # when the branch is deleted after the merge.

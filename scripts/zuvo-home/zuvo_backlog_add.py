@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import datetime as dt
 import json
 import os
 import sys
@@ -135,7 +136,8 @@ class _Call:
 
     @property
     def today(self) -> str:
-        return self.now[:10]
+        """The LOCAL day, as backlog-archive.py dates its sections; the ledger stamp itself stays UTC."""
+        return dt.datetime.fromisoformat(self.now).astimezone().date().isoformat()
 
 
 class _Refused(Exception):
