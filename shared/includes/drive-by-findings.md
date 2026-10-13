@@ -66,7 +66,7 @@ count all of them too. `SEC` and `BUG` are uncapped: they are defects, the rest 
    second call only counts a second sighting.
 
    ```bash
-   ~/.zuvo/backlog-add --repo "$PWD" --class DUP --conf 85 --source drive-by:<skill> \
+   ~/.zuvo/backlog-add --repo "$PWD" --class DUP --conf 85 --source 'drive-by:<skill>' \
      --file src/orders/totals.ts --line 40 --also src/cart/sum.ts:12 \
      --title '<the defect, one sentence>' --evidence '<what proves it>' --severity medium
    ```
@@ -83,7 +83,8 @@ count all of them too. `SEC` and `BUG` are uncapped: they are defects, the rest 
    log, cite `file:line` and the KIND (`AWS secret key`, `customer e-mail`) — never the value. The
    backlog and the ledger are tracked in some repos and the summary lands in a transcript.
    `backlog-add` refuses credential shapes (`secret-like-value`) but does not scan for PII. The
-   `--anchor` of a hardcoded credential is the part of the line that names it, never the value.
+   `--anchor` of a hardcoded credential is the part of the line before the value — the name and what
+   precedes it, still 8 non-space characters — never any character of the value.
 4. **Sub-agents do not call `backlog-add`.** A dispatched agent that notices one puts it in its
    report's `BACKLOG ITEMS` section in the form `agent-preamble.md` gives (class, conf, site or
    target, anchor, evidence), every item and uncapped. The orchestrator makes one call per item and
