@@ -282,7 +282,9 @@ class RegressionTests(unittest.TestCase):
         (tmp / "memory" / "backlog.md").write_text("# Backlog\n\n" + line + "\n", encoding="utf-8")
         (tmp / "memory" / "backlog-done.md").write_text(f"## {ARCHIVED_SECTION}\n{archived}\n",
                                                          encoding="utf-8")
-        env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(tmp.parent)}
+        # No GIT_*: run from a git hook (GIT_DIR exported), the archiver would resolve the hook's repo.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["GIT_CEILING_DIRECTORIES"] = str(tmp.parent)
         r = subprocess.run([sys.executable, ARCHIVER, "verify", "--repo", str(tmp)], env=env,
                            capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

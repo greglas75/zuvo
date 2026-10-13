@@ -150,7 +150,10 @@ class RealArchiverContractTests(unittest.TestCase):
             f"## {SECTION}\n- [x] B-old-BUG-89abcdef src/old.ts:1 — [BUG] stale cache DONE 2026-10-13\n"
             "- [x] B-both-BUG-11111111 src/both.ts:1 — [BUG] open and archived DONE 2026-10-13\n",
             encoding="utf-8")
-        with mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": str(tmp.parent)}):
+        # No GIT_*: run from a git hook (GIT_DIR exported), the archiver would resolve the hook's repo.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["GIT_CEILING_DIRECTORIES"] = str(tmp.parent)
+        with mock.patch.dict(os.environ, env, clear=True):
             for name, query, want in self.CASES:
                 with self.subTest(f"{name} from the real archiver is not parsed as {name}"):
                     self.assertEqual(lk.lookup(str(tmp), query, archiver=ARCHIVER), want)
