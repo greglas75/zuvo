@@ -366,7 +366,22 @@ def entry_key(body: str, ident: str = "") -> str:
         ident = m.group(1) if m else ""
     if ident and not ORDINAL_ID_RE.match(ident):
         return "id:" + ident.lower()
-    return "fp:" + hashlib.sha1(normalize_signature(body).encode()).hexdigest()[:12]
+    sig = normalize_signature(body)
+    # A SIGNATURE WITH NO CONTENT IS NOT AN IDENTITY. `normalize_signature` returns "|" for anything
+    # that strips to nothing — a `**Closed:** 2026-08-18.` or `2026-10-04: PR #1692 (fb7720078b).`
+    # continuation line, which the tolerant read dialect parses as a bullet entry — so EVERY such
+    # line hashed to one key, `fp:3eb416223e9e`, and the archiver called them the same entry. Two
+    # measured consequences: `lookup ""` answered `OPEN … backlog.md:186`, pointing an agent at an
+    # unrelated closed entry it was told to overwrite; and `verify` reported a namespace VIOLATION
+    # between a no-signature line in backlog.md and a different one in backlog-done.md, which blocks
+    # `append-runlog` for the whole repo. Across ~/DEV on 2026-10-13 this is 11 of 58043 entries,
+    # 8 of them in ONE archive — rare, and all eight indistinguishable.
+    # Keying off the raw line instead keeps identity CONTENT-derived (the same line is still the same
+    # entry, so archiving stays idempotent) while two different lines stop being one. The `raw:`
+    # prefix cannot collide with a real signature, which always carries the `|` separator.
+    if not sig.replace("|", "").strip():
+        sig = "raw:" + " ".join(body.split())
+    return "fp:" + hashlib.sha1(sig.encode()).hexdigest()[:12]
 
 
 # An id this archiver MINTED. Stripping it is what keeps identity stable across archiving: minting

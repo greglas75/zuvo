@@ -6,7 +6,7 @@
 over BOTH files at a cost that does not grow with the backlog.
 
     backlog-archive.py path    [--repo R]
-    backlog-archive.py lookup  [--repo R] [--json] <text-or-B-id>   # exit 10 OPEN / 11 ARCHIVED / 0 ABSENT
+    backlog-archive.py lookup  [--repo R] <text-or-B-id>  # 10 OPEN / 11 ARCHIVED / 0 ABSENT / 13 NO-SIGNATURE
     backlog-archive.py index   [--repo R] [--rebuild: accepted, ignored — always a full rebuild]
     backlog-archive.py archive [--repo R] [--dry-run] [--min-resolved N]
     backlog-archive.py verify  [--repo R]                           # exit 1 when a key is in BOTH
@@ -179,8 +179,33 @@ def cmd_path(a: argparse.Namespace) -> int:
     return 0
 
 
+# `lookup`'s verdicts are exit codes, and the caller ACTS on them: 10 OPEN means "update that entry
+# in place", 11 ARCHIVED means "re-open under the same id", 0 ABSENT means "file a new entry". A
+# candidate with no content belongs to none of those, so it gets its own code rather than the least
+# wrong of the three. 13 because 12 is `status`'s OVERDUE.
+LOOKUP_NO_SIGNATURE = 13
+
+
 def cmd_lookup(a: argparse.Namespace) -> int:
     _, real, archive = resolve(a.repo)
+    s = a.query.strip()
+    # REFUSE A CANDIDATE THAT KEYS ON NOTHING, before asking the files anything. Measured on the live
+    # backlog 2026-10-09: `lookup ""` and `lookup "   "` answered `rc=10 OPEN fp:3eb416223e9e -
+    # backlog.md:186`, and line 186 is a `**Closed:** 2026-08-18.` continuation line — a different,
+    # already-closed entry. The skill's contract for OPEN is "update that entry in place", so the
+    # agent was told to overwrite it. `entry_key` no longer collapses such lines onto one key, which
+    # turns this into an ABSENT; ABSENT is still the wrong answer, because "file it as new" invites
+    # an entry whose own text carries no signature — the next caller to look it up gets nothing back.
+    # Only the content path is refused: a bare B-id keys as an id and needs no signature.
+    if not zb.ID_RE.fullmatch(s):
+        sig = zb.normalize_signature(s)
+        if not sig.replace("|", "").strip():
+            left = zb.strip_resolution_markers(s).strip()
+            print("NO-SIGNATURE %r keys on nothing: %s. A candidate with no words cannot be matched "
+                  "against any entry — fix the candidate text (or pass the B-id) and look up again."
+                  % (s[:120], ("everything was stripped as resolution markers, leaving %r" % left)
+                     if s else "the query is empty"))
+            return LOOKUP_NO_SIGNATURE
     key = query_key(a.query)
     op, dn = find(real, key), find(archive, key)
     if op is not None:

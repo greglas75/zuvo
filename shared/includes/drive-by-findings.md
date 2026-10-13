@@ -49,8 +49,9 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
 ## How to record
 
 1. **Dedup first.** Run `backlog-archive.py lookup` per `backlog-protocol.md`: `OPEN` → bump that entry
-   (`Seen`, date, add the source); `ARCHIVED` → re-open it as a REGRESSION; `ABSENT` → append.
-   Never a second entry for a known problem.
+   (`Seen`, date, add the source); `ARCHIVED` → re-open it as a REGRESSION; `ABSENT` → append;
+   `NO-SIGNATURE` (13) → nothing was looked up, your candidate text has no words to key on —
+   rewrite it and run the lookup again. Never a second entry for a known problem.
 2. **Append to `memory/backlog.md` resolved per `backlog-protocol.md` "Where the Backlog Lives"**
    (a tracked backlog is the current checkout's copy; an untracked one is the MAIN checkout's),
    in the format that file already uses — `backlog-protocol.md`'s table by default. Two fields are

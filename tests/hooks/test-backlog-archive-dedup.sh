@@ -825,5 +825,97 @@ out="$(H drop-stale --repo "$FIX/a32b" --id B-5 2>&1)" \
 cmp -s "$FIX/a32b/before" "$FIX/a32b/memory/backlog.md" \
   && ok "(A32) the refusal changed nothing" || no "(A32) the refusal still rewrote backlog.md"
 
+# --- A33 a candidate that normalizes to NOTHING is refused, never matched -----------------------
+# Measured on the live backlog 2026-10-09 (B-20261009-DEDUP-EMPTY-QUERY-OPEN): `lookup ""` and
+# `lookup "   "` both answered `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`, and line 186 is a
+# `**Closed:** 2026-08-18.` continuation line — a DIFFERENT, already-closed entry. The SKILL's
+# contract for OPEN is "update that entry in place", so an agent whose candidate text carried no
+# signature words was instructed to overwrite an unrelated closed entry.
+#
+# The cause is one key, not two bugs: `normalize_signature` returns "|" for anything that strips to
+# nothing, so every such line hashes to the SAME fp. That is why the second half below exists — the
+# collision is not confined to a hand-typed empty query. Across ~/DEV on 2026-10-13, 11 of 58043
+# entries normalize to nothing, 8 of them in ONE archive (tgm-survey-platform), and the fixture here
+# shows what that costs: `verify` calls two unrelated resolution lines the same entry and reports a
+# namespace VIOLATION. `append-runlog` runs `verify` as a blocking gate, so that false violation
+# stops run-log appends for the whole repo.
+mkdir -p "$FIX/a33/memory"
+cat > "$FIX/a33/memory/backlog.md" <<'A33OPEN'
+# Backlog
+
+- [ ] B-REAL-ONE src/alpha.ts the quota target is not clamped to the sample size | conf: 80
+- [ ] **Closed:** 2026-08-18.
+A33OPEN
+cat > "$FIX/a33/memory/backlog-done.md" <<'A33DONE'
+# Done
+
+## Archived from backlog.md on 2026-09-01
+
+- [x] 2026-10-04: PR #1692 (fb7720078b).
+A33DONE
+a33sum(){ cat "$FIX/a33/memory/backlog.md" "$FIX/a33/memory/backlog-done.md" | sha256sum | cut -d' ' -f1; }
+A33_BEFORE="$(a33sum)"
+
+# Every candidate that carries no signature: empty, whitespace-only, and the markers-only shape that
+# produced the original report. Each must refuse with its OWN exit code — 0 would read as "file it as
+# new" and 10 as "update that entry", and both are wrong answers to "this candidate has no content".
+for q in "" "   " "**Closed:** 2026-08-18."; do
+  out="$(H lookup --repo "$FIX/a33" "$q" 2>&1)"; rc=$?
+  lbl="$(printf '%s' "$q" | sed 's/[^ -~]/?/g')"; [ -n "$lbl" ] || lbl="<empty>"
+  case "$out" in OPEN*|ARCHIVED*) no "(A33) '$lbl' matched an entry: $out" ;;
+                 *) ok "(A33) '$lbl' is not matched against any entry" ;; esac
+  [ "$rc" -eq 13 ] && ok "(A33) '$lbl' exits 13" || no "(A33) '$lbl' exit was $rc, want 13 (0=ABSENT and 10=OPEN are both answers it must not give)"
+  # The verdict TOKEN, not prose: `OPEN`/`ARCHIVED`/`ABSENT` are what a caller greps for, so the
+  # refusal needs one of its own or it reads as a crash.
+  case "$out" in NO-SIGNATURE*) ok "(A33) '$lbl' answers with the NO-SIGNATURE verdict" ;;
+                 *) no "(A33) '$lbl' refuses without a verdict token: $out" ;; esac
+done
+# The refusal must name WHAT WAS STRIPPED, or the caller cannot tell a markers-only candidate from a
+# genuinely empty one — the two need different fixes on the caller's side.
+out="$(H lookup --repo "$FIX/a33" "**Closed:** 2026-08-18." 2>&1)"
+case "$out" in *Closed*) ok "(A33) the markers-only refusal quotes the text it stripped" ;;
+               *) no "(A33) the refusal does not show what was stripped: $out" ;; esac
+
+# NARROW: the refusal must not swallow candidates that do carry a signature. A path with no words
+# after it is the shape most likely to be caught by a sloppy guard, and it has a real key.
+out="$(H lookup --repo "$FIX/a33" "src/alpha.ts" 2>&1)"; rc=$?
+case "$rc" in 0|10|11) ok "(A33) a path-only candidate still gets a verdict (rc=$rc)" ;;
+              *) no "(A33) a path-only candidate was refused too (rc=$rc): $out" ;; esac
+out="$(H lookup --repo "$FIX/a33" B-REAL-ONE 2>&1)"; rc=$?
+case "$out$rc" in OPEN*10) ok "(A33) a real open entry still reports OPEN, exit 10" ;;
+                  *) no "(A33) the normal path regressed: $out rc=$rc" ;; esac
+
+[ "$(a33sum)" = "$A33_BEFORE" ] && ok "(A33) the refusals wrote nothing" \
+  || no "(A33) a refusing lookup rewrote the backlog files"
+
+# The key itself, at the source: two DIFFERENT lines that both strip to nothing must not share an
+# identity. Asserting this through `entry_key` rather than through `lookup` is deliberate — `verify`,
+# `archive` and `index` all key the same way, and a fix confined to the lookup path would leave them
+# agreeing that these two lines are one entry.
+k1="$(python3 -c "
+import sys; sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_parse as z; print(z.entry_key('**Closed:** 2026-08-18.'))")"
+k2="$(python3 -c "
+import sys; sys.path.insert(0, '$ROOT/scripts/zuvo-home')
+import zuvo_backlog_parse as z; print(z.entry_key('2026-10-04: PR #1692 (fb7720078b).'))")"
+[ -n "$k1" ] && [ "$k1" != "$k2" ] && ok "(A33) two different no-signature lines get different keys" \
+  || no "(A33) both no-signature lines still key as '$k1' — the collision is unchanged"
+
+# The verdict is a CONTRACT, so it lives in both copies of the contract — the include every skill
+# loads and the skill that carries its own paraphrase. A code-only change here would leave agents
+# reading "exit 10 / 11 / 0" and treating 13 as a crash. Same shape as A1 above.
+for f in "$INCLUDE" "$SKILL"; do
+  b="$(basename "$f")"
+  grep -q "NO-SIGNATURE" "$f" && ok "(A33) $b documents the NO-SIGNATURE verdict" \
+    || no "(A33) $b never mentions NO-SIGNATURE — the code answers something the contract does not"
+  grep -q "13" "$f" && ok "(A33) $b names exit 13" || no "(A33) $b does not name exit 13"
+done
+
+# And the consequence that costs the most: `verify` is a blocking gate in append-runlog.
+vout="$(H verify --repo "$FIX/a33" 2>&1)"; vrc=$?
+[ "$vrc" -eq 0 ] && ok "(A33) verify is clean — two unrelated resolution lines are not one entry" \
+  || no "(A33) verify still reports a violation between unrelated no-signature lines (rc=$vrc): ${vout%%$'\n'*}"
+
+
 echo "RESULT: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
