@@ -40,7 +40,9 @@ T0, T1, T2, T3 = ("2026-10-13T08:00:00+00:00", "2026-10-13T09:00:00+00:00",
 SEG_A, SEG_B = "2026-10-13_a_host.jsonl", "2026-10-13_b_host.jsonl"
 FOLD_BYTES = int(os.environ.get("ZUVO_FOLD_BENCH_BYTES", str(10 * 1024 * 1024)))
 FOLD_BUDGET_S = 5.0
-HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+# XDG_CONFIG_HOME too: GIT_CONFIG_GLOBAL stops ~/.gitconfig, not the default excludes file
+# ~/.config/git/ignore, so a developer's global `memory/` or `*.jsonl` changed what these specs saw.
+HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "XDG_CONFIG_HOME": os.devnull}
 REAL_GIT = shutil.which("git") or "git"
 
 
@@ -177,7 +179,8 @@ def bulk_ledger(directory: str, size: int) -> int:
 
 class Hermetic(unittest.TestCase):
     """A temp base dir (realpath, so /var vs /private/var never splits a path) and a git that reads
-    no user or system config — a global excludesFile would otherwise change what is ignored."""
+    no user or system config and no default global excludes file, either of which would change what is
+    ignored."""
 
     def setUp(self) -> None:
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="zuvo-findings-"))

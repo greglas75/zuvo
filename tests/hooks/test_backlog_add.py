@@ -40,7 +40,9 @@ NOW = "2026-10-13T10:00:00+00:00"
 SCRUB = ("ZUVO_BACKLOG_PR", "ZUVO_BACKLOG_ADMIT", "ZUVO_DEFAULT_BRANCH", "ZUVO_LOCK_WAIT",
          "ZUVO_BACKLOG_READY_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
          "GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES")
-HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+# XDG_CONFIG_HOME too: GIT_CONFIG_GLOBAL stops ~/.gitconfig, not the default excludes file
+# ~/.config/git/ignore, so a developer's global `memory/` or `*.jsonl` changed what these specs saw.
+HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "XDG_CONFIG_HOME": os.devnull}
 BUG = ("--class", "BUG", "--conf", "85", "--file", "src/a.py", "--line", "3", "--anchor", ANCHOR,
        "--title", "off-by-one at the limit", "--source", "review")
 CPLX = ("--class", "CPLX", "--conf", "90", "--file", "src/a.py", "--line", "3", "--title", "too complex",
