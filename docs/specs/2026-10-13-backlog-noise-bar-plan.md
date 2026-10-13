@@ -104,6 +104,7 @@ The new modules import `zuvo_backlog_parse as zb` in the `import` form and never
    Exported constants: `FLOOR=26`, `SEC_LOW=51`, `BACKLOG_MIN=80`, `REASONS` (a closed set) and `CLASSES`. They contain no `RC_`-prefixed names, because `test-backlog-grooming.sh` L4766-4790 scans `RC_*` ints across `zuvo_backlog_*.py` for collisions.
 5. **Validation (exit 3 `REFUSED <reason>`).**
    - Field-level refusals:
+     - `bad-pr` (a non-integer `--pr` / `ZUVO_BACKLOG_PR`; `resolve_tag` raises and T5 maps the error to this refusal), `bad-target`, `bad-path` (control characters or `|` in `--file`) *(amended during execute)*;
      - `unknown-class`, `missing-field:<f>`, `bad-source` (must match `^(drive-by:)?[a-z0-9-]+$` or be `user`), `bad-conf` (must be an integer 0–100);
      - `path-outside-repo` (`..`, an absolute path outside the repo, or a symlink pointing out);
      - `file-not-in-worktree`, `line-out-of-range`, `anchor-not-at-line` (the anchor must appear within ±3 lines, whitespace-insensitive; at least 8 non-space characters; required for BUG, SEC and DATA findings that cite a file);
@@ -284,7 +285,7 @@ The new modules import `zuvo_backlog_parse as zb` in the `import` form and never
 
   Use `import zuvo_backlog_parse as zb` for `strip_resolution_markers` and the id regexes. No `iter_entries`. No I/O.
 - [ ] Verify: `rt --light bash tests/hooks/test-backlog-add.sh && rt --light bash tests/hooks/test-backlog-headings.sh && rt --light bash tests/hooks/test-backlog-grooming.sh`
-  Expected: exit 0, and every admit row named in the output as `ok`. Also `ruff check scripts/zuvo-home/zuvo_backlog_admit.py && mypy scripts/zuvo-home/zuvo_backlog_admit.py`, exit 0.
+  Expected: exit 0, and every admit test method `ok`. Rows are `subTest` cases of a named case table, the Python form of `it.each`; a failing row prints its name. *(Amended during execute: unittest does not print passing subTests.)* Also `ruff check scripts/zuvo-home/zuvo_backlog_admit.py && mypy scripts/zuvo-home/zuvo_backlog_admit.py`, exit 0.
 - [ ] Acceptance Proof:
   - G1, G2, G7:
     - Surface: backend-logic
