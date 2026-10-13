@@ -644,6 +644,9 @@ class FoldTests(Hermetic):
         fnd.append_line(seg, fnd.sighting_line(FID, source="review", sha="abc1234", branch="main",
                                                pr=None, ts=T1))
         self.assertEqual(("found", None, 2, []), folded(str(seg.parent)))
+        # each line ends in "\n" itself: the next append's torn-tail repair would hide a missing one
+        self.assertEqual(2, seg.read_bytes().count(b"\n"))
+        self.assertTrue(seg.read_bytes().endswith(b"\n"))
 
     def test_fold_of_ten_megabytes_stays_inside_the_lock_budget(self) -> None:
         # CQ6: a fold slower than the 5 s lock wait makes every concurrent backlog-add time out.

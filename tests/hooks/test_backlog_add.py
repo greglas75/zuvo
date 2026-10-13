@@ -164,13 +164,14 @@ class AddCase(unittest.TestCase):
                               capture_output=True, text=True)
 
     def reopened(self, repo: Path) -> str:
-        """File BUG, tick and archive it, see it again: the B-id now open as a REGRESSION re-open."""
-        _, b_id, _ = self.verdict(self.add(repo, *BUG))
+        """File BUG, tick and archive it, see it again: the B-id now open as a REGRESSION re-open. TZ=UTC,
+        so the re-open's `[REGRESSION <local day>]` is NOW's day on a runner in any time zone."""
+        _, b_id, _ = self.verdict(self.add(repo, *BUG, TZ="UTC"))
         path = repo / "memory" / "backlog.md"
         path.write_text(self.backlog(repo).replace(f"- [ ] {b_id} ", f"- [x] {b_id} ").rstrip("\n")
                         + " DONE 2026-10-13\n", encoding="utf-8")
         self.assertEqual(self.archive(repo, "archive").returncode, 0)
-        self.assertEqual(self.verdict(self.add(repo, *BUG))[:2], ("REOPENED", b_id))
+        self.assertEqual(self.verdict(self.add(repo, *BUG, TZ="UTC"))[:2], ("REOPENED", b_id))
         return b_id
 
     def flat(self, drop: str = "", fake_archiver: str = "") -> str:
@@ -256,6 +257,8 @@ class VerdictTests(AddCase):
         self.assertEqual((p.returncode, self.verdict(p)[:2]), (0, ("BUMPED", b_id)))
         self.assertIn(" legacy wrote=", p.stdout)
         self.assertEqual(self.backlog(r), before)
+        # and the sighting is not lost: the ledger record links the heading's id
+        self.assertEqual(self.folded(r)[0][self.verdict(p)[2]].fields["backlog"], b_id)
 
     def test_idless_legacy_entry_is_linked_by_the_text_lookup(self) -> None:
         # Defect: a hand-written entry for the same site and title is not found, so a duplicate is filed.
