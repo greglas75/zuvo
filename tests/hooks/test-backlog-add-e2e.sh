@@ -48,15 +48,12 @@ tmp="$(mktemp -d)" || { tmp=""; no "(pre) mktemp -d failed"; finish; }
 tmp="$(cd "$tmp" && pwd -P)" || { no "(pre) temp dir unreadable"; finish; }   # git reports resolved paths
 
 # Hermetic: nothing from the caller's shell, an outer git or a git hook may steer the launcher or the
-# fixtures' git. GIT_CONFIG_GLOBAL=/dev/null does not stop config injected through the environment
-# (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT + KEY_n/VALUE_n), so those go too.
-unset ZUVO_BACKLOG_PR ZUVO_BACKLOG_ADMIT ZUVO_DEFAULT_BRANCH ZUVO_LOCK_WAIT ZUVO_BACKLOG_READY_FILE \
-      ZUVO_BACKLOG_NOW ZUVO_BACKLOG_HOST ZUVO_OUTPUT_DIR ZUVO_HOME \
-      GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_PREFIX \
-      GIT_CEILING_DIRECTORIES GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_PAGER GIT_EDITOR \
-      PYTHONPATH PYTHONHOME BASH_ENV 2>/dev/null || true
+# fixtures' git. Every exported ZUVO_* and GIT_* goes, not a list of known ones: GIT_CONFIG_GLOBAL=/dev/null
+# does not stop config injected through the environment (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT +
+# KEY_n/VALUE_n), and a list misses the next variable either tool learns to read.
+unset PYTHONPATH PYTHONHOME BASH_ENV 2>/dev/null || true
 for v in $(compgen -e); do
-  case "$v" in GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*|GIT_AUTHOR_*|GIT_COMMITTER_*) unset "$v" ;; esac
+  case "$v" in ZUVO_*|GIT_*) unset "$v" ;; esac
 done
 export HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" ZUVO_PR_LOOKUP=0 \
        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
