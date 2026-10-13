@@ -185,7 +185,10 @@ class Hermetic(unittest.TestCase):
     def setUp(self) -> None:
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="zuvo-findings-"))
         self.addCleanup(shutil.rmtree, self.base, True)
-        env = mock.patch.dict(os.environ, HERMETIC_GIT)
+        # No inherited GIT_* either: under a git hook GIT_DIR/GIT_WORK_TREE would point every fixture
+        # `git` at the hook's repo (14 errors, farm). Rows that test an inherited GIT_DIR set their own.
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env = mock.patch.dict(os.environ, {**clean, **HERMETIC_GIT}, clear=True)
         env.start()
         self.addCleanup(env.stop)
 
