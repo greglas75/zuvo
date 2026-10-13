@@ -254,7 +254,7 @@ n="$(count_open "$AD" "$BID")"
 [ "$n" = "0" ] && ok "A4: backlog-done.md holds no open copy of $BID" || no "A4: backlog-done.md has $n open line(s) for $BID"
 ver="$(python3 "$ARCHIVER" verify --repo "$A" 2>&1)"; ver_rc=$?
 [ "$ver_rc" -eq 0 ] && ok "A4: verify exit 0" || { no "A4: verify exit $ver_rc"; echo "      $ver"; }
-case "$ver" in *"1 declared regression"*) ok "A4: verify counts the re-open as 1 declared regression ($ver)" ;;
+case "$ver" in *", 1 declared regression(s)"*) ok "A4: verify counts the re-open as 1 declared regression ($ver)" ;;
                *) no "A4: verify does not report the declared regression: $ver" ;; esac
 
 echo "A5 SEC conf 30 -> backlog, title prefixed '$LOW'"

@@ -580,7 +580,9 @@ class FoldTests(Hermetic):
 
     def test_a_new_segment_is_as_private_as_the_backlog(self) -> None:
         # a 0640 backlog quoted into a umask-default (0644 / 0755) segment and directory: content the
-        # owner kept private becomes readable to every account on a shared host
+        # owner kept private becomes readable to every account on a shared host. The umask is pinned
+        # open: under a 027 umask the default modes ARE 0640/0750 and the check passes with no inheriting.
+        self.addCleanup(os.umask, os.umask(0o022))
         memory = Path(self.base, "memory")
         backlog = memory / "backlog.md"
         write(str(backlog), "# Backlog\n")
