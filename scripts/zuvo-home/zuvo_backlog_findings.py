@@ -371,9 +371,10 @@ def append_line(path: Path, obj: Mapping[str, Any], backlog: Optional[str] = Non
 
     `backlog` is the REAL backlog path: a NEW segment takes its mode and a new `findings/` its
     directory's (`zuvo_backlog_ledger.inherited_mode`, as the verdict ledger does), so a 0600 backlog
-    is never quoted into a world-readable file. The file is created 0600 and widened, never narrowed
-    after the fact. A failed write RAISES (buffered `write` writes all or raises) — never silent — and
-    whatever partial line it left is terminated by the next append."""
+    is never quoted into a world-readable file. Such a file is created 0600 and widened, never narrowed
+    after the fact; with no `backlog` it is created 0666 less the umask. A failed write RAISES
+    (buffered `write` writes all or raises) — never silent — and whatever partial line it left is
+    terminated by the next append."""
     kind, detail = _classify(dict(obj))
     if kind not in LINE_KINDS:
         raise ValueError(f"refusing to append an out-of-schema line ({kind}: {detail})")

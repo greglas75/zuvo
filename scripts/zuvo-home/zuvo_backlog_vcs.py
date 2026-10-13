@@ -276,7 +276,7 @@ def _gh_timeout() -> float:
         value = float(os.environ.get("ZUVO_GH_TIMEOUT", GH_TIMEOUT_DEFAULT_S))
     except ValueError:
         return GH_TIMEOUT_DEFAULT_S
-    return value if value > 0 else GH_TIMEOUT_DEFAULT_S
+    return value if 0 < value < float("inf") else GH_TIMEOUT_DEFAULT_S     # inf would be no bound
 
 
 def _looked_up_pr(repo: str, branch: str) -> Optional[str]:

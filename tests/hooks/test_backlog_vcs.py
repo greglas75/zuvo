@@ -410,6 +410,7 @@ class TagTests(unittest.TestCase):
         rows = [("non-numeric timeout crashes or disables the bound", "abc", 5.0),
                 ("zero timeout makes every gh call time out at once", "0", 5.0),
                 ("negative timeout passed to the subprocess", "-1", 5.0),
+                ("an infinite timeout lets a hung gh block the lock for ever", "inf", 5.0),
                 ("a valid timeout ignored", "2.5", 2.5)]
         for name, raw, want in rows:
             with self.subTest(name), mock.patch.dict(os.environ, {"ZUVO_GH_TIMEOUT": raw}):

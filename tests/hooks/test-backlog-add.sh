@@ -3,8 +3,8 @@
 # (run-all globs test-*.sh only). The spec set is an explicit REQUIRED list, not "whatever exists": a
 # renamed or deleted spec would otherwise drop out silently and the remaining ones would still read as
 # a green suite. A missing one is a FAIL that names it. Any further `test_backlog_add*.py` (a later
-# split of the CLI spec) runs too, so the list cannot silently leave a new spec out either. Exit
-# status is unittest's otherwise.
+# split of the CLI spec) runs too; a spec under any other name must be added to REQUIRED by hand.
+# Exit status is unittest's otherwise.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
