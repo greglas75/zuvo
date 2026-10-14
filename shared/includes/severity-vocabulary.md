@@ -48,10 +48,10 @@ Two confidence models exist across skills. Use this mapping when cross-referenci
 | Numeric (0-100) | Categorical | Used by | Action |
 |-----------------|-------------|---------|--------|
 | 0-25 | LOW | — | Discard (below signal threshold) |
-| 26-50 | MEDIUM | security-audit, architecture | Backlog only (not reported to user) |
+| 26-50 | MEDIUM | security-audit, architecture | Findings ledger, not reported to the user (sub-agents still pass it to the orchestrator); a SEC finding also lands in the backlog, marked low confidence |
 | 51-100 | HIGH | security-audit, architecture | Report and action |
 
-`/review` uses the numeric scale. `/security-audit` and `/architecture` use the categorical scale. The mapping above aligns them. When persisting findings to backlog, record both the numeric value (if available) and the categorical level.
+`/review` uses the numeric scale. `/security-audit` and `/architecture` use the categorical scale. The mapping above aligns them. When persisting a finding, `backlog-add` stores only the numeric value, `--conf` (an integer 0-100): a skill that rates categorically passes a number inside its level's band above. The band alone does not place a finding: a BUG or DATA finding reaches the backlog only at `--conf` 80 or more, so a HIGH one passed as anything between 51 and 79 lands in the findings ledger only. `--severity` carries impact (critical, high, medium, low), never confidence.
 
 ---
 

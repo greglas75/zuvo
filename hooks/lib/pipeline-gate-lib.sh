@@ -168,6 +168,7 @@ pg_is_production() {
     # recenzje adwersaryjna tresci, ktorej nikt nie pisze recznie — kilkanascie plikow na
     # fale i godziny czekania przy pushu. Recenzujemy generator, nie jego wynik.
     .zuvo/*|*/.zuvo/*)                 return 1 ;;
+    memory/findings/*.jsonl|*/memory/findings/*.jsonl) return 1 ;;
     # Extensionless repo-metadata files. Without these the `*)` catch-all below
     # classifies them as production, so a pure release/metadata commit (which
     # bumps VERSION and nothing else — every other file in it is already excluded

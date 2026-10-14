@@ -7,7 +7,8 @@ substitutes its own skill name for `<skill>` below.
 **Why.** A run reads far more code than it changes. Until this step existed, a security hole, a
 1,400-line service or a copy-pasted function the agent read on its way to the task was seen once
 and lost: the skill's rules covered only its own fence, and the audits that would catch it run
-rarely. The backlog is the place those observations go, so the next person who opens that file
+rarely. `backlog-add` keeps those observations: a defect reaches the backlog, debt reaches the
+findings ledger, so the next person who opens that file, or the next report built from the ledger,
 starts with them.
 
 ## What is in scope
@@ -21,11 +22,13 @@ starts with them.
   problem is fixed in-run. Outside it you **record, never fix** — a fix there widens the diff past
   what was planned and reviewed.
 
-## Categories and their bars
+## Categories and what qualifies
 
-A finding goes in only when it clears its bar. "This looks messy" clears none of them.
+An observation is a drive-by finding only when it meets its tag's condition. "This looks messy" meets
+none of them. These conditions say what to report; `backlog-add` does not check them, it applies its
+own admission bars afterwards.
 
-| Tag | Records | Bar (all of it) |
+| Tag | Records | Qualifies when (all of it) |
 |-----|---------|-----------------|
 | `SEC` | Missing auth or tenant scoping (CQ4), secrets/PII in logs, errors or responses (CQ5), injection, XSS, SSRF, path traversal, unsafe deserialization, weak crypto or randomness (`rules/security.md`), a hardcoded credential | A named missing control or source→sink path at `file:line`. "Might be insecure" is not a finding. |
 | `BUG` | Wrong behaviour you can state | Input or state → wrong result, at `file:line` |
@@ -36,60 +39,70 @@ A finding goes in only when it clears its bar. "This looks messy" clears none of
 | `DEAD` | Dead code | CQ13: an unreachable branch, or an export `find_references` shows with zero users |
 | `READ` | Readability **with a nameable defect** | A name or comment that contradicts what the code does, or a magic value carrying business meaning (CQ12). Style preference never qualifies |
 
-**Confidence.** At least 51% for every tag. `SEC` alone is also recorded at 26-50%, marked
-`(low confidence — verify manually)`: a missed vulnerability costs more than a wrong lead.
+**Confidence.** Record a finding from 26%, whatever the tag. Where it lands is
+`backlog-add`'s decision, by `backlog-protocol.md`'s bar table: `SEC` reaches the backlog from 26%
+(below 51% its title is prefixed `(low confidence — verify manually)`, because a missed vulnerability
+costs more than a wrong lead), `BUG` from 80% with its anchor, and every other tag stays in the
+findings ledger.
 
-**Below the bar is dropped on purpose.** `backlog-protocol.md`'s "Zero Silent Discards" governs the
-findings a skill was asked to produce. Drive-by observations are a different class: the bars above
-ARE the filter, and an observation that clears none of them is not recorded.
+**An observation that qualifies for no tag is not a finding.** The conditions above define what a
+drive-by finding IS; they are not a filter on findings. An observation that meets none of them is not
+recorded at any confidence. Every drive-by finding at 26% or more goes to `backlog-add`, which keeps
+it in the findings ledger or files it in the backlog; only a finding below 26% is dropped. So
+`backlog-protocol.md`'s "Zero Silent Discards" holds for drive-by findings like any other.
 
-**Cap.** At most **5** entries per run across `SIZE`, `DUP`, `CPLX`, `PERF`, `DEAD` and `READ`,
-highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest is debt.
+**Cap.** The summary LISTS by name at most **5** findings per run across `SIZE`, `DUP`, `CPLX`,
+`PERF`, `DEAD` and `READ`, highest severity first. That is the cap's only effect: every finding still
+goes through `backlog-add`, the ledger keeps all of them, and the summary's counts and the receipt
+count all of them too. `SEC` and `BUG` are uncapped: they are defects, the rest is debt.
 
 ## How to record
 
-1. **Dedup first.** Run `backlog-archive.py lookup` per `backlog-protocol.md`: `OPEN` → bump that entry
-   (`Seen`, date, add the source); `ARCHIVED` → re-open it as a REGRESSION; `ABSENT` → append.
-   Never a second entry for a known problem.
-2. **Append to `memory/backlog.md` resolved per `backlog-protocol.md` "Where the Backlog Lives"**
-   (a tracked backlog is the current checkout's copy; an untracked one is the MAIN checkout's),
-   in the format that file already uses — `backlog-protocol.md`'s table by default. Two fields are
-   fixed whatever the format: the source is the only way to tell a drive-by entry from the task's
-   own follow-ups, and the tag is what those entries are counted by.
-   - **The source carries the token `drive-by:<skill>`.** A new entry's source IS that token,
-     optionally followed by a space and a ticket or run id (`drive-by:build RD-2981`). A bump of an
-     existing entry (step 1) adds it as one more comma-separated source (`zuvo:review,
-     drive-by:build`). Anything that merely mentions a ticket — `build RD-2981 / final review` —
-     is NOT a drive-by source: on 2026-10-12, 80 counted drive-by findings left only ~17 entries
-     anyone could find, because the rest were filed under sources like that.
-   - **The tag is the Category** (table) or the `[<TAG>]` prefix of the problem text (list line).
+1. **The skill running this step makes one `backlog-add` call per finding** (the orchestrator, when
+   it dispatched agents), as `backlog-protocol.md` "Persisting a finding: backlog-add" describes. The
+   tag is `--class`. For `SEC` and `BUG`, `--anchor` is text copied from
+   the cited line. The helper dedupes against both backlog files and the ledger, decides the route and
+   writes. Never append to `memory/backlog.md` by hand, and never call twice "to make sure": the
+   second call only counts a second sighting.
 
-   Table row (`backlog-protocol.md` columns; a `|` inside a cell is written `\|`, as in the
-   fingerprint; `<severity>` is one of critical, high, medium, low). The id is descriptive, like the
-   list line's, so concurrent runs cannot both take the next `B-<N>`; the evidence and confidence
-   ride in the Problem cell, which is the table's only free-text column:
-
-   ```
-   | B-<file-stem>-<TAG>-<short-slug> | OPEN | <file>\|<TAG>\|<short-slug> | <path>:<line> | <the defect, one sentence> — evidence: <what proves it> (conf NN) | <severity> | <TAG> | drive-by:<skill> | 1 | <YYYY-MM-DD> |
+   ```bash
+   ~/.zuvo/backlog-add --repo "$PWD" --class DUP --conf 85 --source 'drive-by:<skill>' \
+     --file src/orders/totals.ts --line 40 --also src/cart/sum.ts:12 \
+     --title '<the defect, one sentence>' --evidence '<what proves it>' --severity medium
    ```
 
-   List line (a backlog kept as a checklist):
-
-   ```
-   - [ ] B-<file-stem>-<tag>-<short-slug> <path>:<line> — [<TAG>] <the defect, one sentence> | evidence: <what proves it> | severity: <severity> | source: drive-by:<skill> | conf: NN | <YYYY-MM-DD>
-   ```
-
-3. **Never copy a secret into the backlog or the summary.** For a hardcoded credential or PII in a
-   log, cite `file:line` and the KIND (`AWS secret key`, `customer e-mail`) — never the value.
-   The backlog is tracked in some repos and the summary lands in a transcript.
-4. **Sub-agents do not write the backlog.** A dispatched agent that notices one puts it in its
-   report's `BACKLOG ITEMS` section with the `[<TAG>]` prefix (`agent-preamble.md`). The
-   orchestrator dedups, applies the cap once per run and persists.
+2. **`--source drive-by:<skill>`, exactly.** The source is the only way to tell a drive-by finding
+   from the task's own follow-ups, and the helper refuses any other shape (`bad-source`), so a ticket
+   or run id goes in `--evidence`, never in the source. The token has to be exact because a near
+   miss is not countable: on 2026-10-12, 80 counted drive-by findings left only ~17 entries anyone
+   could find, because the rest were filed under sources like `build RD-2981 / final review`. When an
+   existing entry in `backlog-add`'s own format is bumped, the source is added to that entry's list;
+   a hand-written (legacy) entry is linked in the ledger and its text, sources included, is never
+   edited.
+3. **Never copy a secret into a finding or the summary.** For a hardcoded credential or PII in a
+   log, cite `file:line` and the KIND (`AWS secret key`, `customer e-mail`) — never the value. The
+   backlog and the ledger are tracked in some repos and the summary lands in a transcript.
+   `backlog-add` refuses credential shapes (`secret-like-value`) but does not scan for PII. The
+   `--anchor` of a hardcoded credential is the part of the line before the value — the name and what
+   precedes it, still 8 non-space characters — never any character of the value. When the line has
+   fewer than 8 before the value, copy a line within ±3 of it that holds no secret.
+4. **Sub-agents do not call `backlog-add`.** A dispatched agent that notices one puts it in its
+   report's `BACKLOG ITEMS` section in the form `agent-preamble.md` gives (class, conf, site or
+   target, anchor, evidence), every item and uncapped. The orchestrator makes one call per item and
+   only then applies the report cap, once per run, so the cap never keeps an item out of the ledger.
+5. **A non-zero exit is handled as the protocol says:** exit 3 on an input mistake, correct it and
+   resubmit once; exit 1, retry once after 2 s, unless stderr says `failed after writing` (the entry
+   is already filed; a retry would count a second sighting). A finding still not persisted goes in the summary
+   under `NOT PERSISTED (…)`. Some refusals are not input mistakes: `anchor-not-at-line` or
+   `file-not-in-worktree` confirmed by a re-read means the code changed and nothing is filed, and
+   `tracked-findings-beside-ignored-backlog` is reported once with its `.gitignore` recipe for the
+   user to apply, never fixed by the skill.
 
 ## Surface it, then leave a receipt
 
 - **The skill's final summary gets one line:** `Drive-by: N recorded (SEC:a BUG:b SIZE:c DUP:d
-  CPLX:e PERF:f DEAD:g READ:h)`, or `Drive-by: 0 recorded`.
+  CPLX:e PERF:f DEAD:g READ:h)`, or `Drive-by: 0 recorded`. The counts cover every finding kept,
+  including debt findings beyond the 5 the cap lets the summary list by name.
 - **Every `SEC` finding is also listed by name** under that line: `⚠ SECURITY (drive-by)
   <path>:<line> — <defect> [<severity>]`. A critical or high one goes at the TOP of the final
   summary, not only in the backlog. Two or more `SEC` findings in one module → add
@@ -102,9 +115,11 @@ highest severity first. `SEC` and `BUG` are uncapped: they are defects, the rest
 
   Omitted counts are 0. All zeros is a normal, honest outcome — do not hunt for findings to make it
   non-zero. The receipt lands in `~/.zuvo/drive-by.log`, so a run that skipped the step can be
-  told apart from a run that looked and found nothing. The counts are the ones you recorded in
-  the backlog, sub-agents' tagged `BACKLOG ITEMS` included — the receipt proves the step was
-  reached; the backlog rows are the evidence of what it found.
+  told apart from a run that looked and found nothing. The counts are the same as the summary line's:
+  every finding `backlog-add` kept (any verdict but `REFUSED` and `DISCARDED`), uncapped, sub-agents'
+  tagged `BACKLOG ITEMS` included —
+  the receipt proves the step was reached; the backlog entries and ledger records are the evidence
+  of what it found.
 - **If the helper prints `receipt NOT written` or is missing** (an install older than this step),
   say so in the final summary and carry on — the receipt never blocks a run.
 

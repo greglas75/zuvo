@@ -46,7 +46,201 @@ If `$BACKLOG` does not exist, create it with the template below. If the backlog 
 
 The main-checkout anchor is also the rule for the rest of the durable project-state family, `memory/ideas.md` and `knowledge/*.jsonl`, tracked or not (the tracked exception above is the backlog's and its `backlog-done.md`'s only). Per-run pipeline state (`zuvo/plans`, `zuvo/contracts`, `zuvo/context`) stays worktree-local by design.
 
+## Persisting a finding: backlog-add
+
+`~/.zuvo/backlog-add` is the one way a skill persists a finding: one call per finding, made by the
+skill itself (the orchestrator, when it dispatched agents; a sub-agent reports its findings and never
+calls it). Under one lock
+it checks the cited code, decides the route, dedupes against both backlog files and the findings
+ledger, and writes. Never append a finding to `memory/backlog.md` by hand: a hand append skips the
+bars, the dedupe and the lock.
+
+**Why.** A downstream intake files every open entry in `memory/backlog.md` as a ticket, so the file
+must hold only work that becomes one. Measured on 2026-10-12: of 2,951 open zuvo-written entries the
+intake retired, 1,345 were noise, 866 were already fixed and 740 cited files absent from the default
+branch. So only BUG, SEC and DATA findings that clear their bar reach the backlog. Every other finding
+at conf ≥ 26 is still kept, as data, in the findings ledger, where reports such as a duplicate-code
+map are built from what has accumulated instead of from a fresh scan.
+
+```bash
+~/.zuvo/backlog-add --repo "$PWD" --class BUG --conf 85 --source review \
+  --file src/cart.ts --line 42 --anchor 'if (total > limit) {' \
+  --title 'checkout accepts a total equal to the limit' \
+  --evidence 'limit=100, total=100 passes; the order rules say strictly below' \
+  --fix 'compare with >=' --severity high
+```
+
+| Argument | Required | What it carries |
+|----------|----------|-----------------|
+| `--class` | yes | one class from the bar table below |
+| `--conf` | yes | an integer 0-100 |
+| `--source` | yes | exactly `^(drive-by:)?[a-z0-9-]+$`: the skill's name (`review`, not `zuvo:review`), `drive-by:<skill>`, or `user` |
+| `--title` | yes | the defect in one sentence (cut at 200 characters) |
+| `--file`, `--line` | these, or `--target` | the cited site, repo-relative; the file must exist in the work tree |
+| `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part before the value — the name and what precedes it (`AWS_SECRET_KEY =`, `const db_pw =`), still 8 non-space characters — never any character of the value; when the line has fewer than 8 before the value, copy a line within ±3 that holds no secret |
+| `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL or a hostname (SEC, BUG, DATA only), or `subject:<slug>` (PROCESS, SEC only) |
+| `--evidence` | with a URL or host target | what proves it (cut at 600) |
+| `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
+| `--missing-assertion` | TEST-GAP, MUTATION only | the assertion the tests lack |
+| `--also PATH:LINE` | no, repeatable | another site of the same finding (DUP) |
+| `--pr N` | no | the PR to tag with; `ZUVO_BACKLOG_PR` does the same |
+| `--dry-run`, `--json` | no | write nothing and print the verdict it would give, with ` dry-run` appended (and `wrote=-` on the verdicts that carry `wrote=`); print the verdict as one JSON object |
+| `--repo` | no | the checkout to file in (default: the current directory); it must be inside a git work tree |
+
+**The cited code must hold now.** "Holds" means the file exists in the work tree and the anchor is at
+the line. Files the run created count, because skills write before they commit. A deleted file is
+refused, and so is an anchor that is gone, which is how a finding fixed earlier in the same run is
+kept out of the backlog. Such a refusal is not an input mistake: once a re-read confirms the code
+changed, the finding is resolved and is neither filed nor reported as not persisted.
+
+### Where a finding goes
+
+Precedence, in this order:
+
+1. Validation: a refusal is final.
+2. The floor: below conf 26 a finding is discarded (`below-floor`; nothing is written), forced or not.
+3. `ZUVO_BACKLOG_ADMIT=1` in the environment sends any class at conf ≥ 26 to the backlog. It is set
+   only on the user's explicit request for a specific finding: the user sets it, or an agent sets it
+   on the one call for the finding the user's own message asked to have filed. An agent never sets it
+   on its own judgement, and no skill instructs it. Nothing in the shell can tell who typed it, so
+   what keeps it honest is that every use stays visible. A first sighting it forces records
+   `forced: true` and reason `forced`. A forced re-sighting of a finding already in the ledger records
+   a status patch whose `note` is `forced (natural: <the reason the bars gave>)`, which the fold keeps
+   as the record's note; the record's own `forced` and `reason` stay those of its first sighting. The
+   `--json` verdict carries `forced: true` either way.
+4. The bar table:
+
+| Class | Backlog bar | Below the bar: ledger reason |
+|-------|-------------|------------------------------|
+| `SEC` | conf ≥ 26; below 51 the title is prefixed `(low confidence — verify manually)` | none, the floor discards |
+| `BUG`, `DATA` | conf ≥ 80, and the anchor holds at the line | `conf-below-80` |
+| `TEST-GAP`, `MUTATION` with `--missing-assertion` | conf ≥ 80, and the cited production line is in the branch diff (merge-base with the default branch to the work tree; an untracked file counts as changed). It lands as class BUG | `conf-below-80`, `mutation-not-on-changed-line` |
+| `DUP`, `CPLX`, `SIZE`, `PERF`, `DEAD`, `READ`, `CQ`, `PROCESS`, and `TEST-GAP`, `MUTATION` without `--missing-assertion` | never: report-only | `class-report-only` |
+| `ADVISORY` | never | `advisory` |
+
+The ledger record's `reason` says which way it went: `admitted` (cleared its bar), `promoted` (a gap
+that landed as BUG), `forced` (the env override), `branch-untaggable` (see the tag below), or the
+ledger reason in the table. A promoted gap keeps the identity it had in the ledger, because the
+identity is computed with its original class.
+
+**CQ and Q gate findings are class `CQ`**, which stays in the ledger. File one as `BUG` only when you
+can state the concrete input or state that produces the wrong output:
+
+- `CQ`: "processOrder has no try/catch around the payment call" (CQ8). A rule is broken; no wrong
+  output is named.
+- `BUG`: "a declined card leaves the order in PAID: the payment error escapes before the status
+  rollback at order.service.ts:91". Input, then the wrong state.
+
+**The tag.** On a branch other than the default, the entry ends with `[pr:N]` (from `--pr`,
+`ZUVO_BACKLOG_PR`, or the open PR `gh` finds on a github.com remote) or `[branch:<name>]`. The intake
+holds a tagged entry until that PR or branch merges and retires it when the PR is declined, so a
+finding about unmerged code is never ticketed early. A branch name with a character outside
+`[A-Za-z0-9._/-]` and no PR cannot be tagged: a non-SEC finding then stays in the ledger
+(`branch-untaggable`), and a SEC finding lands untagged so it is ticketed at once. The name is never
+rewritten, because a rewritten name resolves to no branch. A detached HEAD that is not on the default
+branch has no name to tag with: it takes `--pr`, else it is untaggable too. The PR lookup asks `gh`
+only on a github.com remote; with no `gh`, `gh` not authenticated, any other remote or
+`ZUVO_PR_LOOKUP=0`, the tag is `[branch:<name>]`. On the default branch there is no tag. The default
+branch is `ZUVO_DEFAULT_BRANCH`, else `origin/HEAD`, else `main`; set the variable where the
+integration branch is `develop`, or entries filed there carry `[branch:develop]` and wait.
+
+**The dedupe is done for you.** A finding's identity is `F-` plus 12 hex characters. For BUG, SEC and
+DATA with an anchor it covers the class, the path and the normalised anchor, so two skills that
+paraphrase one defect on the same code file one entry. For every other finding it covers the class,
+the path and the first 8 words of the title. A `--target` finding uses the target, lowercased and
+without a trailing `/`, where the path would be. The line number is never part of it.
+
+Under the lock, `backlog-add` runs the `lookup` described in "How to Persist Findings" at most twice.
+First on the entry's B-id: an open entry is bumped in place (`seen`, `conf`, date, sources); an
+archived one is re-opened in the REGRESSION form. Only when that answers ABSENT, a second time on the
+text a hand-written entry would start with, `<path>:<line> — <title>`: an open match is linked in the
+ledger and its text is left alone (`BUMPED … legacy`); anything else appends a new entry. The line it
+writes (a `--target` finding puts the target where `<path>:<line>` is):
+
+```
+- [ ] B-<stem>-<CLASS>-<fp8> <path>:<line> — [<CLASS>] <title> | evidence: <how> | fix: <fix> | severity: <sev> | source: <src> | conf: NN | seen: N | ledger: F-<12> | <YYYY-MM-DD> [pr:N]
+```
+
+### Verdicts and exit codes
+
+One line on stdout; `--json` prints the same fields as one object, and `--dry-run` appends ` dry-run`.
+A dry run writes nothing, so every verdict that carries `wrote=` shows `wrote=-`; `DISCARDED` and
+`REFUSED` carry no `wrote=` at all.
+
+| Verdict | Exit | What you do |
+|---------|------|-------------|
+| `ACCEPTED backlog <B> ledger=<F> wrote=<paths>` | 0 | Report it as filed under `<B>`. |
+| `BUMPED backlog <B> seen=<n> ledger=<F> [legacy] wrote=<paths>` | 0 | A re-sighting of `<B>`. `legacy`: a hand-written entry was linked, not edited. A legacy entry with no id is named by its lookup key, `fp:<hex>`, in the line and in the `--json` `backlog` field, and the ledger record keeps no link to it; never treat `<B>` as a B-id without checking. |
+| `REOPENED backlog <B> regression ledger=<F> wrote=<paths>` | 0 | Say REGRESSION in the report, not only in the backlog. |
+| `LEDGER <F> reason=<r> wrote=<paths>` | 0 | Kept as data, not in the backlog. It is in the report when the report's own rules put it there. |
+| `LEDGER-BUMPED <F> seen=<n> wrote=<paths>` | 0 | A re-sighting of a ledger record. |
+| `DISCARDED below-floor` | 0 | Nothing written: under 26 is not a finding. |
+| `REFUSED <reason>` | 3 | Correct the input (the refusal table below). |
+
+| Exit | Means | What you do |
+|------|-------|-------------|
+| 0 | one of the six verdicts above `REFUSED` | Stage what `wrote=` lists. |
+| 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | If stderr says `failed after writing: wrote=<paths>`, the backlog entry exists and only its ledger record is missing: do not retry (a retry counts a second sighting); report it as filed, stage the listed paths, and the next sighting writes the record. Otherwise retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
+| 2 | usage error: the call itself is malformed, or `--repo` is not a directory inside a git work tree | Fix the call. If you cannot, `NOT PERSISTED (backlog-add exit 2)`. |
+| 3 | `REFUSED <reason>`: the input does not conform, and resubmitting it unchanged cannot help | An input mistake: correct it and resubmit once, otherwise list it under `NOT PERSISTED (REFUSED <reason>)`. Some refusals are not input mistakes, and the refusal table says what to do instead: `anchor-not-at-line` and `file-not-in-worktree` after a re-read, and the repository's visibility refusals. |
+
+**`wrote=`** lists the repo-relative paths written that git does not ignore. A skill that commits
+stages exactly those (`git add -- <paths>`); `wrote=-` means nothing to stage, as in a repo that
+ignores `memory/`. Staging a path the verdict does not list is how an ignored file gets committed.
+
+**The helper is missing** (only the Claude Code install ships `~/.zuvo/`): list every finding in the
+report under `NOT PERSISTED (backlog-add missing)`. Never fall back to a hand append: without the bars,
+the dedupe and the lock it files exactly the entries the intake has to retire.
+
+| Refusal | What to correct |
+|---------|-----------------|
+| `missing-field:<f>` | Supply `<f>`: `class`, `conf`, `source`, `title`, `line`, `anchor`, `evidence`, or `file-or-target` (exactly one of `--file` and `--target`). |
+| `bad-field:<f>` | A programmatic caller passed a non-text value. |
+| `unknown-class` | Use a class from the bar table. |
+| `bad-conf` | An integer 0-100. |
+| `bad-source` | A lowercase skill name, `drive-by:<skill>`, or `user`. |
+| `bad-target` | An `http(s)://` URL, a hostname, or `subject:<slug>`. |
+| `bad-path` | `--file` with a control character, a `\|` or surrounding spaces; an `--also` without `:LINE`. |
+| `bad-pr` | `--pr` or `ZUVO_BACKLOG_PR` must be a PR number. |
+| `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION; a target the class may not use (a URL or host: SEC, BUG, DATA; `subject:`: PROCESS, SEC). |
+| `path-outside-repo` | The path leaves the repository (`..`, an absolute path elsewhere, a symlink out). |
+| `file-not-in-worktree` | The file does not exist in the work tree. If the path is right, the code is gone: nothing is filed or reported as not persisted. If the path was mistyped, correct it. |
+| `line-out-of-range` | `--line` is not a positive integer, or is past the end of the file (an `--also` line too). |
+| `anchor-not-at-line` | Re-read the code before deciding. If the defect is gone, it was fixed: nothing is filed or reported as not persisted. If it moved, resubmit with the new line. |
+| `secret-like-value` | A field holds a credential shape (cloud or API key, token, private key). Cite its kind and location, never the value. |
+| `tracked-findings-beside-ignored-backlog` | A property of the repository, not of the call: every call gets it until `memory/findings/` is ignored as the backlog already is. The remedy is the `.gitignore` recipe on stderr, and applying it is the user's decision, not the skill's. Do not resubmit; report the recipe once and every finding of the run under `NOT PERSISTED (REFUSED tracked-findings-beside-ignored-backlog)`. |
+| `findings-visibility-unknown` | git could not say whether the ledger would be tracked (a git error or timeout; stderr has it). A repository state too: resubmit once at most, then report as above. |
+
+### The findings ledger
+
+`memory/findings/` sits beside the REAL backlog, by the same location rule, and holds one JSONL
+segment per day, branch and host. Separate segments mean parallel branches and machines never write
+one file, so a tracked ledger merges without conflicts. It is append-only: a finding's first sighting
+is a full record, each later one a sighting line, and a change of status or backlog link a patch;
+readers fold them. Field names follow the duplicate-code map's where the two overlap. The intake never
+reads the ledger; reports do.
+
+A repo that ignores its backlog file by file must ignore the ledger too: add `/memory/findings/` to
+`.gitignore`. The ledger quotes every finding it keeps, so a tracked one would publish what the
+ignored backlog keeps private; `backlog-add` refuses to write it.
+
+**Known limits.**
+
+- The text lookup computes a key from the candidate text and compares it with each entry's key. An
+  entry the archive gave a minted id is keyed by that id, so the text never matches it, and an
+  archived hand-written entry is only ever found by its id. The first `backlog-add` sighting of an
+  issue filed by hand before can therefore file one new entry beside the old one.
+- The tag says which branch saw a finding, not which branch introduced it. A defect in code the
+  branch never changed, seen from that branch and filed with its tag, is held with the branch's PR
+  and retired with it if that PR is declined, until a later sighting files it again.
+- Only credential shapes are refused. PII such as an e-mail address is not scanned: keep it out of
+  titles and evidence yourself.
+
 ## Backlog Table Format
+
+The template a new backlog file starts from. `backlog-add` writes its own checkbox line (above)
+whatever format the file already uses, so `archive`, `verify` and `drop-stale` work on every entry it
+files.
 
 ```markdown
 # Tech Debt Backlog
@@ -74,14 +268,14 @@ Column definitions:
 
 For each finding that should be tracked:
 
-1. **Compute the fingerprint**: `file_name|rule_id|short_signature`
-   - `file_name`: Just the filename, not full path (e.g., `order.service.ts`)
-   - `rule_id`: The gate or rule that was violated (e.g., `CQ8`, `Q11`, `S3`)
-   - `short_signature`: 2-4 word description of the specific issue (e.g., `no-try-catch`, `missing-orgid-filter`)
+1. **Call `backlog-add`** ("Persisting a finding: backlog-add" above). It computes the finding's
+   identity, runs the duplicate check below under its lock, and writes the entry or the ledger record.
+   Do not compute a fingerprint or append an entry yourself.
 
-2. **Check for duplicates in BOTH files.** The backlog namespace is two files: `$BACKLOG` (open)
-   and `$ARCHIVE` (closed or deliberately withdrawn). An entry is defined in exactly one of them,
-   never both.
+2. **The duplicate check covers BOTH files.** `backlog-add` runs it for every finding; grooming,
+   `zuvo:backlog` and anyone asking "is this already known?" run the same lookup by hand. The backlog
+   namespace is two files: `$BACKLOG` (open) and `$ARCHIVE` (closed or deliberately withdrawn). An
+   entry is defined in exactly one of them, never both.
 
    **The key.** The table above is the shape for a NEW file; every backlog in the fleet is `- [ ]`
    bullets with free-form `B-<slug>` ids, and 65% of open entries carry no id at all (measured:
@@ -102,22 +296,26 @@ For each finding that should be tracked:
    binding: archiving assigns an id to any entry that lacks one, and a resolution is **appended**
    to the original problem text, never written over it.
 
-   **Do the lookup:**
+   **The lookup:**
 
    ```bash
    ~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<candidate text or B-id>"
    ```
 
-   One verdict line, one exit code:
+   One verdict line, one exit code, and what follows from it. `backlog-add` acts on the same verdicts
+   with two differences: a bump never raises the severity, and an OPEN entry not in its own format (a
+   hand-written one) is linked in the ledger and never edited at all.
 
-   | Verdict | exit | What you do |
-   |---------|------|-------------|
+   | Verdict | exit | What follows |
+   |---------|------|--------------|
    | `OPEN <key> <id> backlog.md:<line>` | 10 | Update THAT entry in place — bump `Seen`/`conf:`, update the date, raise the severity if the new evidence is worse, add the new source. Never a second entry. |
    | `ARCHIVED <key> <id> backlog-done.md:<line> section="<heading>"` | 11 | **REGRESSION, not a new finding.** Re-open under the SAME id with the back-link (form below). Never mint a new id. |
    | `ABSENT <key>` | 0 | Genuinely new. Append one entry with a fresh id. |
 
-   If `~/.zuvo/` is absent (only the Claude Code install ships it) the check is still MANDATORY —
-   do it with two greps, and grep the id or a distinctive PATH token, never a common word:
+   If `~/.zuvo/` is absent (only the Claude Code install ships it), there is no `backlog-add` either,
+   so a finding is reported as not persisted rather than appended. The question "is this already
+   known?" is still answered in BOTH files — with two greps, on the id or a distinctive PATH token,
+   never a common word:
 
    ```bash
    grep -n "<id-or-distinctive-token>" "$BACKLOG"
@@ -132,7 +330,8 @@ For each finding that should be tracked:
    ABSENT to a one-file check and comes back as new work under a new id — which is exactly how a
    closed 300-item archive turns itself back into an open backlog.
 
-   **Re-opening an archived entry** — append to `$BACKLOG`, same id, one-way back-link:
+   **Re-opening an archived entry** — append to `$BACKLOG`, same id, one-way back-link. This is the
+   form `backlog-add` writes on `ARCHIVED`:
 
    ```
    - [ ] B-<SAME-ID> [REGRESSION <date> — closed <prev-marker>, archived in backlog-done.md
@@ -257,9 +456,9 @@ checkbox namespace only.
   the archive must be ignored too, and it inherits the source's file mode. Otherwise archiving
   publishes into git content that was deliberately untracked and 0600.
 
-**Every sibling beside the backlog inherits that visibility, and there are now four of them.** The
-refusal is per FILE, so a user who follows a message naming only three ends up with the fourth
-tracked — and the fourth is the one that quotes entry text:
+**Every sibling beside the backlog inherits that visibility, and there are five of them.** The
+refusal is per FILE, so a user who follows a message naming only some of them ends up with the rest
+tracked — and the two ledgers are the ones that quote entry text:
 
 | beside the real `backlog.md` | what it holds | `.gitignore` line, when the backlog is ignored |
 |---|---|---|
@@ -267,14 +466,18 @@ tracked — and the fourth is the one that quotes entry text:
 | `backlog-verdicts.jsonl` | the **verdict ledger** — one judgement per line, with the evidence and the entry's `text_sha`; see `backlog-grooming.md` | `/memory/backlog-verdicts.jsonl` |
 | `.backlog-archive.lock.d/` | the cross-process lock | `/memory/.backlog-archive.lock.d/` |
 | `.backlog-index.tsv` | the lookup index | `/memory/.backlog-index.tsv` |
+| `findings/` | the **findings ledger** — one JSONL segment per day, branch and host, holding every finding `backlog-add` kept; see "Persisting a finding: backlog-add" | `/memory/findings/` |
 
 `backlog-archive.py archive` refuses to create a git-TRACKED archive beside a git-IGNORED backlog, and
-`zuvo_backlog_ledger.py` refuses the same way for the ledger, **naming the ledger** in its message.
-Neither refusal is advice: both exit non-zero having written nothing. `is_ignored()` answers `None`
+`zuvo_backlog_ledger.py` refuses the same way for the verdict ledger, **naming the verdict ledger** in
+its message.
+`backlog-add` refuses a tracked `findings/` beside an ignored backlog, exit 3
+`REFUSED tracked-findings-beside-ignored-backlog`, and prints the `.gitignore` lines to add.
+None of these refusals is advice: each exits non-zero having written nothing. `is_ignored()` answers `None`
 outside a git repository — the canonical backlog lives there — and "unknown" must never read as
 "tracked", which is why both tests are `is False` and not a bare falsy check.
 
-The ledger is undated and is not `.md`, deliberately: it is structurally unable to be mistaken for one
+The verdict ledger is undated and is not `.md`, deliberately: it is structurally unable to be mistaken for one
 of the banned whole-file snapshots above (`backlog-verified-stale-<date>.md` is literally one of them).
 A snapshot is a copy of a file; the ledger is a list of judgements ABOUT one.
 
@@ -369,24 +572,34 @@ appended. A lost update here loses hundreds of entries, not one line. The helper
 mkdir-atomic lock dir (`.backlog-archive.lock.d`, `ZUVO_LOCK_WAIT`, pid file, never steals a live
 holder — the same primitive as `e2e-preflight` and `append-runlog`, because macOS ships no
 `flock(1)`), writes a temp file beside the real backlog, verifies that every moved line is present
-in the archive before either rename, and only then replaces the realpath. Serializing the many
-*appending* writers is a separate, tracked problem (`B-backlog-flock`).
+in the archive before either rename, and only then replaces the realpath.
+
+`backlog-add` holds the same lock across its lookups, its backlog write and its ledger append, so two
+runs filing one finding at the same moment produce one entry and a sighting, never two entries. That
+closes `B-backlog-flock` for every finding filed through it. A writer that still appends by hand is
+not serialized, which is one more reason the protocol forbids it.
 
 ## Confidence-Based Routing
 
-Every finding has a confidence level. Route based on confidence:
+Every finding has a confidence level. It decides whether the finding is in the skill's report to the
+user; the class bars in "Persisting a finding: backlog-add" decide whether it reaches the backlog or
+only the findings ledger. The skill passes every finding at 26% or more to `backlog-add`, including
+the 26-50% ones its sub-agents reported to it: a sub-agent's report goes to the orchestrator, and this
+table is about what the orchestrator then shows the user.
 
-| Confidence | Action | Rationale |
-|-----------|--------|-----------|
-| 0-25% | Discard | Likely hallucination or insufficient evidence. Do not persist. |
-| 26-50% | Persist to backlog only | Real enough to track but not confident enough to report. Mark as low-confidence in the Problem column. |
-| 51-100% | Report AND persist to backlog | Actionable finding. Include in the skill's output report and record in the backlog. |
+| Confidence | In the report to the user | Where `backlog-add` keeps it | Rationale |
+|-----------|---------------------------|------------------------------|-----------|
+| 0-25% | no | nowhere (`DISCARDED below-floor`) | Likely hallucination or insufficient evidence. |
+| 26-50% | no (a drive-by SEC finding is still listed by name, per `drive-by-findings.md`) | the findings ledger; a SEC finding also lands in the backlog, prefixed `(low confidence — verify manually)` | Real enough to keep as data, not confident enough to report. |
+| 51-100% | yes | the backlog when its class clears its bar, the findings ledger otherwise | Actionable: reported, and ticketed when it is a defect. |
 
 ## Zero Silent Discards
 
-This rule is absolute: no finding with confidence above 25% may be silently dropped. Every such finding must appear either in the report, in the backlog, or both.
+This rule is absolute: no finding with confidence above 25% may be silently dropped. Every such finding reaches the findings ledger or the report, usually both.
 
-If a finding is borderline (26-30%), annotate it: `(low confidence — verify manually)`. But it must still be recorded.
+A finding `backlog-add` did not persist (`NOT PERSISTED (…)`: refused and not correctable, a failed retry, or the helper missing) must be in the report, with that reason. That is the one case where the report is the only record, so leaving it out loses the finding.
+
+A finding the code no longer supports is not dropped, it is resolved: when `backlog-add` refuses it with `anchor-not-at-line` or `file-not-in-worktree` and a re-read confirms the code changed, it is neither filed nor reported as not persisted.
 
 ## When to Run This Protocol
 
@@ -397,7 +610,12 @@ If a finding is borderline (26-30%), annotate it: `(low confidence — verify ma
 
 ## What Does NOT Go to Backlog
 
-- Findings with 0-25% confidence (discard as likely false)
+- Findings with 0-25% confidence (discarded as likely false)
+- Findings whose class does not clear its bar: the report-only classes, ADVISORY, and BUG or DATA
+  below 80%. They go to the findings ledger; `backlog-add` routes them there. Only the user's explicit
+  request for that specific finding overrides it (`ZUVO_BACKLOG_ADMIT=1`, see "Where a finding goes"),
+  never an agent's own judgement
 - Style preferences without rule backing ("I'd prefer this naming")
 - Suggestions for future enhancements without current violations
-- Issues already fixed during the current session (no need to track what's already resolved)
+- Issues already fixed during the current session (no need to track what's already resolved;
+  `backlog-add` refuses one whose anchor is gone with `anchor-not-at-line`)

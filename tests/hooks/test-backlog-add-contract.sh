@@ -1,0 +1,509 @@
+#!/usr/bin/env bash
+# backlog-add contract: backlog-protocol.md § "Persisting a finding: backlog-add" against the CLI.
+#
+# The defect this catches: the protocol documents a verdict, an exit code, a class, a bar, a refusal
+# reason or a flag that `backlog-add` does not produce or accept, or misses one that it does. Skills are
+# written from the protocol, not from the code, so a verdict the protocol omits is a verdict no caller
+# handles, a refusal reason it omits is one no caller knows how to correct, and a renamed flag sends
+# every caller to exit 2. None of these shows up as a failing run.
+#
+# The section's tables are parsed and compared, in BOTH directions, with what the code exports:
+# `VERDICTS` and `EXIT_CODES` from zuvo_backlog_add.py; the class sets, the three confidence bars,
+# `REASONS` and `REFUSALS` from zuvo_backlog_admit.py; the refusals decided outside the bars (every
+# `REFUSED_*` constant of zuvo_backlog_add.py and zuvo_backlog_findings.py). Five tables are compared:
+# Verdict, Exit, Class, Refusal and Argument (its flags against the CLI's own argparse parser). Every
+# comparison is then re-run against mutated copies of the section (a row dropped, a row invented, a bar
+# moved), and each mutant must be caught, so a parser that silently reads nothing cannot pass (C2).
+# C3 then runs the installed-layout launcher in a temp git repo, once per documented refusal a CLI call
+# can reach, and requires exactly `REFUSED <reason>` and exit 3: a reason the protocol names and the
+# code declares, but a different check answers first for that input, is a reason no caller ever sees.
+# Each refusal must also leave the repo byte-identical: a refusal printed after a write is still a write.
+# C4 compares a sixth table, outside that section: the "Confidence-Based Routing" bands against
+# `zuvo_backlog_admit.decide`, both ways (every band edge routes every class as the row says; every
+# confidence where `decide` changes a route is a documented band edge or class bar), with its own
+# mutants. Skills route their findings by that table, so a moved floor silently drops or keeps findings.
+#
+# Out of scope: the section's prose rules (lookup, ledger visibility, locking). They are sentences, not
+# tables; parsing them would test the parser, and each rule's behaviour is owned by a unit spec
+# (test_backlog_lookup.py, test_backlog_findings.py, test_backlog_add.py).
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+PROTOCOL="$ROOT/shared/includes/backlog-protocol.md"
+MODULES="$ROOT/scripts/zuvo-home"
+
+echo "== backlog-add contract: protocol vs CLI =="
+python3 - "$PROTOCOL" "$MODULES" <<'PY'
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Callable, Dict, List, Optional, Set, Tuple
+
+protocol_path, modules = sys.argv[1], sys.argv[2]
+sys.path.insert(0, modules)
+import zuvo_backlog_add as add          # noqa: E402
+import zuvo_backlog_admit as adm        # noqa: E402
+import zuvo_backlog_findings as fnd     # noqa: E402
+
+SECTION = "Persisting a finding: backlog-add"
+# The refusals no bar decides (`--pr` that is not a PR number, the ledger visibility check, ...): every
+# module-level `REFUSED_*` string in the CLI and the ledger module, derived rather than listed, so a
+# refusal added there joins the both-directions check without anyone editing this file.
+CLI_REFUSALS = set(adm.REFUSALS) | {v for m in (add, fnd) for k, v in vars(m).items()
+                                    if k.startswith("REFUSED_") and isinstance(v, str)}
+# Every long option argparse accepts, from the parser the CLI itself builds; `--help` is argparse's own.
+# `_parser()._actions` is private, and it is still the only exact source: the module exports no flag list,
+# and `--help` is formatted prose (wrapped, metavars merged) that would need a parser of its own. It is the
+# very parser `main` parses with, so it cannot drift from what the CLI accepts.
+CLI_FLAGS = {s for a in add._parser()._actions for s in a.option_strings
+             if s.startswith("--") and s != "--help"}
+TICK = re.compile(r"`([^`\n]+)`")
+FENCE = re.compile(r"^```.*?^```[^\n]*$", re.S | re.M)
+CLASS_TOKEN = re.compile(r"^[A-Z][A-Z-]*$")
+REASON_TOKEN = re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+class Unparseable(Exception):
+    """The section or one of its tables is not where the contract says: a FAIL, never a skip."""
+
+
+def section(doc: str, name: str = SECTION) -> str:
+    m = re.search(r"^## +%s\s*$(.*?)(?=^## |\Z)" % re.escape(name), doc, re.S | re.M)
+    if not m:
+        raise Unparseable(f"no '## {name}' section")
+    return m.group(1)
+
+
+def table(text: str, first_header: str) -> List[List[str]]:
+    """The body rows of the table whose first header cell is `first_header`."""
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if ln.lstrip().startswith("|") and cells[0] == first_header:
+            rows = []
+            for body in lines[i + 2:]:
+                if not body.lstrip().startswith("|"):
+                    break
+                rows.append([c.strip() for c in re.split(r"(?<!\\)\|", body.strip().strip("|"))])
+            if not rows:
+                raise Unparseable(f"the '{first_header}' table has no rows")
+            return rows
+    raise Unparseable(f"no table headed '| {first_header} |' in the section")
+
+
+def ticks(cell: str) -> List[str]:
+    return TICK.findall(cell)
+
+
+def refusal_names(sec: str) -> Set[str]:
+    """The documented refusal reasons; `missing-field:<f>` documents the reason `missing-field`."""
+    return {t.split(":")[0] for row in table(sec, "Refusal") for t in ticks(row[0])}
+
+
+def compare(doc: str) -> List[str]:
+    """Every disagreement between the documented contract and the CLI, as one message each."""
+    out: List[str] = []
+    try:
+        sec = section(doc)
+        verdict_rows = table(sec, "Verdict")
+        exit_rows = table(sec, "Exit")
+        bar_rows = table(sec, "Class")
+        refusals = refusal_names(sec)
+        argument_rows = table(sec, "Argument")
+    except Unparseable as exc:
+        return [f"unparseable: {exc}"]
+
+    # Verdicts: the keyword is the first word of the row's code span; the order is the CLI's.
+    documented: List[Tuple[str, int]] = []
+    for row in verdict_rows:
+        spans = ticks(row[0])
+        if not spans or len(row) < 2 or not row[1].isdigit():
+            out.append(f"verdict row not in '`<KEYWORD> …` | <exit>' form: {row}")
+            continue
+        documented.append((spans[0].split()[0], int(row[1])))
+    words = tuple(w for w, _ in documented)
+    out += [f"verdict documented but never printed by the CLI: {w}" for w in words if w not in add.VERDICTS]
+    out += [f"verdict the CLI prints but the protocol omits: {w}" for w in add.VERDICTS if w not in words]
+    if set(words) == set(add.VERDICTS) and words != add.VERDICTS:
+        out.append(f"verdicts out of the CLI's order: {words} vs {add.VERDICTS}")
+    for word, code in documented:
+        meaning = add.EXIT_CODES.get(code, "")
+        if not re.search(r"(?<![A-Z-])%s(?![A-Z-])" % re.escape(word), meaning):
+            out.append(f"{word} is documented with exit {code}, but the CLI's exit {code} is: {meaning!r}")
+
+    # Exit codes, both directions.
+    codes: Set[int] = set()
+    for row in exit_rows:
+        if not row[0].isdigit():
+            out.append(f"exit row does not start with a number: {row}")
+            continue
+        codes.add(int(row[0]))
+    out += [f"exit code documented but not in EXIT_CODES: {c}" for c in sorted(codes - set(add.EXIT_CODES))]
+    out += [f"exit code in EXIT_CODES but not documented: {c}" for c in sorted(set(add.EXIT_CODES) - codes)]
+
+    # Bars: a row whose bar is "never" is ledger-only; any other row can reach the backlog.
+    ledger_only: Set[str] = set()
+    can_land: Set[str] = set()
+    numbers: Set[int] = set()
+    reasons: Set[str] = set()
+    for row in bar_rows:
+        if len(row) < 3:
+            out.append(f"bar row needs three cells: {row}")
+            continue
+        classes = {t for t in ticks(row[0]) if CLASS_TOKEN.match(t)}
+        (ledger_only if row[1].lower().startswith("never") else can_land).update(classes)
+        numbers.update(int(n) for n in re.findall(r"\b\d{2}\b", row[1] + " " + row[2]))
+        reasons.update(t for t in ticks(row[2]) if REASON_TOKEN.match(t))
+    want_land = set(adm.BACKLOG_CLASSES) | set(adm.PROMOTABLE_CLASSES)
+    want_ledger = set(adm.REPORT_ONLY_CLASSES) | {"ADVISORY"}
+    out += [f"documented as able to reach the backlog, but the bars never route it there: {c}"
+            for c in sorted(can_land - want_land)]
+    out += [f"the bars can route it to the backlog, but no row says how: {c}" for c in sorted(want_land - can_land)]
+    out += [f"documented as ledger-only, but not report-only in the CLI: {c}" for c in sorted(ledger_only - want_ledger)]
+    out += [f"report-only in the CLI, but no 'never' row lists it: {c}" for c in sorted(want_ledger - ledger_only)]
+    out += [f"class in the bar table that the CLI refuses as unknown-class: {c}"
+            for c in sorted((can_land | ledger_only) - set(adm.CLASSES))]
+    bars = {adm.FLOOR, adm.SEC_LOW, adm.BACKLOG_MIN}
+    out += [f"bar table names confidence {n}, which is none of FLOOR/SEC_LOW/BACKLOG_MIN {sorted(bars)}"
+            for n in sorted(numbers - bars)]
+    out += [f"bar table never states the CLI's confidence bar {n}" for n in sorted(bars - numbers)]
+    out += [f"ledger reason documented but not in REASONS: {r}" for r in sorted(reasons - set(adm.REASONS))]
+    section_ticks = set(ticks(FENCE.sub("", sec)))   # a fence's ``` would pair with prose ticks
+    out += [f"route reason the CLI records but the section never names: {r}"
+            for r in sorted(set(adm.REASONS) - section_ticks)]
+
+    # Flags, both directions: a flag the docs name but argparse lacks sends every caller to exit 2.
+    documented_flags = {t.split()[0] for row in argument_rows for t in ticks(row[0]) if t.startswith("--")}
+    out += [f"flag documented but the CLI has no such flag: {f}" for f in sorted(documented_flags - CLI_FLAGS)]
+    out += [f"flag the CLI accepts but the argument table omits: {f}" for f in sorted(CLI_FLAGS - documented_flags)]
+
+    # Refusals (exit 3), both directions.
+    out += [f"refusal documented but never given by the CLI: {r}" for r in sorted(refusals - CLI_REFUSALS)]
+    out += [f"refusal the CLI gives but the protocol omits: {r}" for r in sorted(CLI_REFUSALS - refusals)]
+    return out
+
+
+def drop_row(start: str) -> Callable[[str], str]:
+    return lambda doc: re.sub(r"^\| `%s[^\n]*\n" % re.escape(start), "", doc, count=1, flags=re.M)
+
+
+def insert_after_row(start: str, row: str) -> Callable[[str], str]:
+    return lambda doc: re.sub(r"(^\| `%s[^\n]*\n)" % re.escape(start), lambda m: m.group(1) + row + "\n",
+                              doc, count=1, flags=re.M)
+
+
+PASS = FAIL = 0
+
+
+def ok(msg: str) -> None:
+    global PASS
+    PASS += 1
+    print(f"  PASS {msg}")
+
+
+def no(msg: str) -> None:
+    global FAIL
+    FAIL += 1
+    print(f"  FAIL {msg}")
+
+
+doc = open(protocol_path, encoding="utf-8").read()
+problems = compare(doc)
+for p in problems:
+    no(f"(C1) {p}")
+if not problems:
+    ok(f"(C1) the protocol documents exactly the CLI's {len(add.VERDICTS)} verdicts, {len(add.EXIT_CODES)} exit "
+       f"codes, {len(adm.CLASSES)} classes, bars {adm.FLOOR}/{adm.SEC_LOW}/{adm.BACKLOG_MIN} and "
+       f"{len(CLI_REFUSALS)} refusals and {len(CLI_FLAGS)} flags")
+
+# C2: each mutant reverts one documented fact and must be caught by the message that names it. A
+# comparator that parsed nothing would report the real document clean AND miss every one of these.
+MUTANTS: List[Tuple[str, Callable[[str], str], str]] = [
+    ("a verdict the CLI prints is dropped from the docs", drop_row("LEDGER-BUMPED"),
+     "protocol omits: LEDGER-BUMPED"),
+    ("the docs invent a verdict", insert_after_row("DISCARDED", "| `ESCALATED backlog <B>` | 0 | invented |"),
+     "never printed by the CLI: ESCALATED"),
+    ("a verdict is documented with the wrong exit", lambda d: re.sub(
+        r"^(\| `DISCARDED[^|]*\| )0( \|)", r"\g<1>3\2", d, count=1, flags=re.M),
+     "DISCARDED is documented with exit 3"),
+    ("an exit code is dropped", lambda d: re.sub(r"^\| 2 \|[^\n]*\n", "", d, count=1, flags=re.M),
+     "not documented: 2"),
+    ("the docs invent an exit code", lambda d: re.sub(r"^(\| 2 \|[^\n]*\n)", r"\1| 4 | invented |\n", d,
+                                                     count=1, flags=re.M),
+     "not in EXIT_CODES: 4"),
+    ("a report-only class is dropped from the bar table", lambda d: d.replace("`DUP`, ", "", 1),
+     "no 'never' row lists it: DUP"),
+    ("the BUG bar is documented as 75", lambda d: d.replace("conf ≥ 80", "conf ≥ 75", 1),
+     "names confidence 75"),
+    ("a refusal reason is dropped", drop_row("anchor-not-at-line"), "protocol omits: anchor-not-at-line"),
+    ("a flag is renamed in the docs", lambda d: d.replace("| `--evidence` |", "| `--evidance` |", 1),
+     "the CLI has no such flag: --evidance"),
+    ("a flag the CLI accepts is dropped from the docs", drop_row("--missing-assertion"),
+     "argument table omits: --missing-assertion"),
+    ("the docs invent a refusal reason", insert_after_row("anchor-not-at-line", "| `stale-anchor` | invented |"),
+     "never given by the CLI: stale-anchor"),
+]
+# Mutated inside the section only, so the same words elsewhere in the protocol cannot absorb a mutant.
+try:
+    sec = section(doc)
+except Unparseable:
+    sec = ""
+for name, mutate, expect in MUTANTS:
+    mutated = doc.replace(sec, mutate(sec), 1) if sec else doc
+    caught = [p for p in compare(mutated) if expect in p]
+    if mutated == doc:
+        no(f"(C2) mutant '{name}' changed nothing: the section no longer has the text it targets")
+    elif caught:
+        ok(f"(C2) mutant caught: {name}")
+    else:
+        no(f"(C2) mutant NOT caught: {name} (expected a message containing {expect!r})")
+
+# C4: the Confidence-Based Routing table against `decide`. A boundary finding per class (file, line and
+# an anchor, so every class validates) is routed at both edges of every band; the row's "where it is
+# kept" cell is read as one of three documented forms, and "clears its bar" takes the class's bar from
+# the bar table of the backlog-add section (a finding with no `--missing-assertion`).
+ROUTING_SECTION = "Confidence-Based Routing"
+BAND = re.compile(r"^(\d{1,3})-(\d{1,3})%$")
+ALSO_LANDS = re.compile(r"\ba ([A-Z][A-Z-]*) finding also lands in the backlog, prefixed `([^`]+)`")
+CLEARS_BAR = "the backlog when its class clears its bar"
+BOUNDARY_TITLE = "boundary finding"
+Route = Tuple[str, str]     # (route, the text `decide` put in front of the title, "" for none)
+
+
+def class_bars(sec: str) -> Dict[str, Optional[int]]:
+    """Each class's documented backlog bar (None: never) for a finding with no `--missing-assertion`."""
+    bars: Dict[str, Optional[int]] = {}
+    for row in table(sec, "Class"):
+        if "with `--missing-assertion`" in row[0]:
+            continue
+        m = re.search(r"≥\s*(\d+)", row[1])
+        bar = None if row[1].lower().startswith("never") or not m else int(m.group(1))
+        bars.update({c: bar for c in ticks(row[0]) if CLASS_TOKEN.match(c)})
+    return bars
+
+
+def documented_route(cell: str, bars: Dict[str, Optional[int]], cls: str, conf: int) -> Route:
+    if "`DISCARDED below-floor`" in cell:
+        return adm.ROUTE_DISCARDED, ""
+    if cell.startswith("the findings ledger"):
+        also = ALSO_LANDS.search(cell)
+        return (adm.ROUTE_BACKLOG, also.group(2)) if also and also.group(1) == cls else (adm.ROUTE_LEDGER, "")
+    if cell.startswith(CLEARS_BAR):
+        bar = bars.get(cls)
+        return (adm.ROUTE_BACKLOG if bar is not None and conf >= bar else adm.ROUTE_LEDGER), ""
+    raise Unparseable(f"routing cell in none of the three documented forms: {cell!r}")
+
+
+def coded_route(cls: str, conf: int) -> Route:
+    f = adm.Finding(cls=cls, conf=conf, source="review", title=BOUNDARY_TITLE, file="src/a.py", line=3,
+                    anchor="if total > limit:")
+    d = adm.decide(f, frozenset(), False)
+    return d.route, d.title[:len(d.title) - len(BOUNDARY_TITLE)].rstrip() if d.title else ""
+
+
+def compare_routing(doc: str) -> List[str]:
+    out: List[str] = []
+    try:
+        rows = table(section(doc, ROUTING_SECTION), "Confidence")
+        bars = class_bars(section(doc))
+    except Unparseable as exc:
+        return [f"unparseable: {exc}"]
+    bands: List[Tuple[int, int, str]] = []
+    for row in rows:
+        m = BAND.match(row[0])
+        if not m or len(row) < 3:
+            out.append(f"routing row not in '<lo>-<hi>% | … | <where kept>' form: {row}")
+            continue
+        bands.append((int(m.group(1)), int(m.group(2)), row[2]))
+    covered = [c for lo, hi, _ in bands for c in range(lo, hi + 1)]
+    out += [f"conf {c} is in no routing band" for c in range(101) if c not in covered]
+    out += [f"conf {c} is in more than one routing band"
+            for c in sorted({c for c in covered if covered.count(c) > 1})]
+    # Documented -> code: both edges of every band, every class.
+    for lo, hi, cell in bands:
+        for conf in (lo, hi):
+            for cls in sorted(adm.CLASSES):
+                try:
+                    want = documented_route(cell, bars, cls, conf)
+                except Unparseable as exc:
+                    out.append(f"unparseable: {exc}")
+                    break
+                got = coded_route(cls, conf)
+                if got != want:
+                    out.append(f"{cls} at conf {conf}: the routing table says {want}, decide gives {got}")
+    # Code -> documented: every confidence where `decide` changes a route is a band edge or a class bar,
+    # and every band edge is a confidence where `decide` changes something.
+    edges = {lo for lo, _, _ in bands} | {b for b in bars.values() if b is not None}
+    for conf in range(1, 101):
+        moved = [c for c in sorted(adm.CLASSES) if coded_route(c, conf) != coded_route(c, conf - 1)]
+        if moved and conf not in edges:
+            out.append(f"decide changes the route of {', '.join(moved)} at conf {conf}, which no "
+                       f"routing band or class bar documents")
+    for lo in sorted({lo for lo, _, _ in bands} - {0}):
+        if all(coded_route(c, lo) == coded_route(c, lo - 1) for c in adm.CLASSES):
+            out.append(f"a routing band starts at conf {lo}, but decide routes every class at {lo} as at "
+                       f"{lo - 1}")
+    return out
+
+
+routing_problems = compare_routing(doc)
+for p in routing_problems:
+    no(f"(C4) {p}")
+if not routing_problems:
+    ok(f"(C4) the Confidence-Based Routing bands route every one of the CLI's {len(adm.CLASSES)} classes as "
+       f"decide does at each band edge, and decide changes routes only at documented edges")
+
+
+def band_edge(old: str, new: str) -> Callable[[str], str]:
+    return lambda s: re.sub(r"^\| %s \|" % re.escape(old), f"| {new} |", s, count=1, flags=re.M)
+
+
+ROUTING_MUTANTS: List[Tuple[str, Callable[[str], str], str]] = [
+    ("the SEC prefix edge is moved from 51 to 56",
+     lambda s: band_edge("51-100%", "56-100%")(band_edge("26-50%", "26-55%")(s)),
+     "at conf 51, which no routing band"),
+    ("the discard floor is documented as 20",
+     lambda s: band_edge("26-50%", "21-50%")(band_edge("0-25%", "0-20%")(s)), "BUG at conf 21"),
+    ("the 51-100% row is dropped", lambda s: re.sub(r"^\| 51-100% \|[^\n]*\n", "", s, count=1, flags=re.M),
+     "conf 51 is in no routing band"),
+    ("the low-confidence SEC clause is dropped",
+     lambda s: re.sub(r"; a SEC finding also lands in the backlog, prefixed `[^`]+`", "", s, count=1),
+     "SEC at conf 26"),
+    ("the SEC prefix is reworded",
+     lambda s: s.replace("`(low confidence — verify manually)`", "`(unverified)`", 1), "SEC at conf 26"),
+]
+try:
+    rsec = section(doc, ROUTING_SECTION)
+except Unparseable:
+    rsec = ""
+for name, mutate, expect in ROUTING_MUTANTS:
+    mutated = doc.replace(rsec, mutate(rsec), 1) if rsec else doc
+    caught = [p for p in compare_routing(mutated) if expect in p]
+    if mutated == doc:
+        no(f"(C4) mutant '{name}' changed nothing: the routing table no longer has the text it targets")
+    elif caught:
+        ok(f"(C4) mutant caught: {name}")
+    else:
+        no(f"(C4) mutant NOT caught: {name} (expected a message containing {expect!r})")
+
+# C3: each documented refusal a CLI call reaches, asked of the real launcher. One row per reason; the
+# input is the BUG baseline with the named flags replaced (None drops one).
+LAUNCHER = os.path.join(modules, "backlog-add")
+ANCHOR = "if total > limit:"
+BUG_BASE = {"--class": "BUG", "--conf": "85", "--source": "review", "--title": "off-by-one at the limit",
+            "--file": "src/a.py", "--line": "3", "--anchor": ANCHOR}
+CPLX = ["--class", "CPLX", "--conf", "90", "--source", "code-audit", "--file", "src/a.py", "--line", "3",
+        "--title", "too complex"]
+
+
+def bug(over: Dict[str, Optional[str]]) -> List[str]:
+    args = {**BUG_BASE, **over}
+    return [x for k, v in args.items() if v is not None for x in (k, v)]
+
+
+NO_SITE: Dict[str, Optional[str]] = {"--file": None, "--line": None, "--anchor": None}
+# (documented reason, repo, arguments, the exact reason printed)
+CLI_ROWS: List[Tuple[str, str, List[str], str]] = [
+    ("missing-field", "plain", bug({"--title": None}), "missing-field:title"),
+    ("unknown-class", "plain", bug({"--class": "bug"}), "unknown-class"),
+    ("bad-conf", "plain", bug({"--conf": "abc"}), "bad-conf"),
+    ("bad-source", "plain", bug({"--source": "Bad Source"}), "bad-source"),
+    ("bad-target", "plain", bug({**NO_SITE, "--target": "not a target!", "--evidence": "x"}), "bad-target"),
+    ("bad-path", "plain", bug({"--also": "src/a.py"}), "bad-path"),
+    ("bad-pr", "plain", bug({"--pr": "abc"}), "bad-pr"),
+    ("bad-combination", "plain", bug({"--target": "https://api.example.com/x", "--evidence": "x"}),
+     "bad-combination"),
+    ("path-outside-repo", "plain", bug({"--file": "../x.py"}), "path-outside-repo"),
+    ("file-not-in-worktree", "plain", bug({"--file": "src/missing.py"}), "file-not-in-worktree"),
+    ("line-out-of-range", "plain", bug({"--line": "99"}), "line-out-of-range"),
+    ("anchor-not-at-line", "plain", bug({"--anchor": "not in the file at all"}), "anchor-not-at-line"),
+    ("secret-like-value", "plain", bug({"--evidence": "key AKIA" + "Z" * 16}), "secret-like-value"),
+    ("tracked-findings-beside-ignored-backlog", "ignored-backlog", CPLX,
+     "tracked-findings-beside-ignored-backlog"),
+]
+# Documented refusals no CLI call reaches, and where each one is tested instead.
+NOT_BY_CLI = {
+    "bad-field": "a non-text value: the CLI passes every flag as text (test_backlog_admit.py)",
+    "findings-visibility-unknown": "git failing under the lock, which no repo fixture provokes "
+                                   "(test_backlog_add.py, in-process)",
+}
+
+try:
+    documented = refusal_names(section(doc))
+except Unparseable as exc:
+    documented = set()
+    no(f"(C3) the refusal table is unreadable: {exc}")
+uncovered = sorted(documented - {r for r, *_ in CLI_ROWS} - set(NOT_BY_CLI))
+stale = sorted(({r for r, *_ in CLI_ROWS} | set(NOT_BY_CLI)) - documented)
+if uncovered or stale:
+    no(f"(C3) documented refusals with no CLI row and no reason why: {uncovered}; rows for reasons the "
+       f"protocol does not document: {stale}")
+else:
+    ok(f"(C3) every documented refusal has a CLI row ({len(CLI_ROWS)}) or a stated reason "
+       f"({len(NOT_BY_CLI)})")
+
+tmp = tempfile.mkdtemp(prefix="backlog-add-contract-")
+env = {k: v for k, v in os.environ.items() if not k.startswith(("ZUVO_", "GIT_"))}
+env.update(HOME=os.path.join(tmp, "home"), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+           ZUVO_PR_LOOKUP="0")
+os.makedirs(env["HOME"])
+
+
+def tree(root: str) -> Dict[str, str]:
+    """Every path under `root` outside .git: a file by its sha256, a directory as `dir`."""
+    out: Dict[str, str] = {}
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if x != ".git"]
+        out.update({os.path.relpath(os.path.join(d, x), root): "dir" for x in dirs})
+        for x in files:
+            with open(os.path.join(d, x), "rb") as fh:
+                out[os.path.relpath(os.path.join(d, x), root)] = hashlib.sha256(fh.read()).hexdigest()
+    return out
+
+
+def make_repo(name: str, ignore: str) -> str:
+    r = os.path.join(tmp, name)
+    os.makedirs(os.path.join(r, "src"))
+    os.makedirs(os.path.join(r, "memory"))
+    for rel, text in (("src/a.py", "a = 1\nb = 2\n%s\n" % ANCHOR), (".gitignore", ignore),
+                      ("memory/backlog.md", "# Backlog\n")):
+        with open(os.path.join(r, rel), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    g = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+         "-c", "init.defaultBranch=main"]
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "init"], ["checkout", "-qb", "feat/x"]):
+        subprocess.run(g + args, cwd=r, env=env, check=True, capture_output=True)
+    return r
+
+
+try:
+    repos = {"plain": make_repo("plain", ""), "ignored-backlog": make_repo("ignored", "/memory/backlog.md\n")}
+except (OSError, subprocess.CalledProcessError) as exc:
+    repos = {}
+    no(f"(C3) the temp repos could not be built: {exc}")
+for reason, repo, args, want in CLI_ROWS:
+    if repo not in repos:
+        no(f"(C3) {reason}: no temp repo '{repo}'")
+        continue
+    before = tree(repos[repo])
+    p = subprocess.run([sys.executable, LAUNCHER, *args], cwd=repos[repo], env=env, capture_output=True,
+                       text=True, timeout=120)
+    after = tree(repos[repo])
+    changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    if (p.returncode, p.stdout) != (3, f"REFUSED {want}\n"):
+        no(f"(C3) {reason}: expected exit 3 and 'REFUSED {want}', got exit {p.returncode}, stdout "
+           f"{p.stdout!r}, stderr {p.stderr[-300:]!r}")
+    elif changed:
+        no(f"(C3) {reason}: the refusal changed the repo (a refusal after a write): {changed}")
+    else:
+        ok(f"(C3) the CLI prints 'REFUSED {want}' (exit 3) for its documented case and leaves the repo "
+           f"unchanged")
+shutil.rmtree(tmp, ignore_errors=True)
+
+print(f"RESULT: PASS={PASS} FAIL={FAIL}")
+sys.exit(1 if FAIL else 0)
+PY
