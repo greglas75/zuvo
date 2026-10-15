@@ -128,6 +128,35 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
         self.assertEqual(self.row(report, "src/order-service.ts")["availability"], "BUSY")
         self.assertEqual(self.row(report, "src/unrelated.ts")["availability"], "UNKNOWN")
 
+    def test_squash_merged_worktree_change_is_not_busy(self) -> None:
+        # Bug: a branch squash-merged into the target keeps its old merge-base, so
+        # merge-base..HEAD listed files whose content the target already has (11k false BUSY paths).
+        wt = self.home / "squashed"
+        self.git("worktree", "add", "-q", "-b", "task/squashed", str(wt), "HEAD")
+        self.write("src/order-service.ts", SIMPLE + "// landed\n", repo=wt)
+        self.write("src/unrelated.ts", SIMPLE + "// still pending\n", repo=wt)
+        self.commit("fix: two edits on a branch", repo=wt)
+        self.write("src/order-service.ts", SIMPLE + "// landed\n")
+        self.commit("fix: squash of the first edit")
+        report = self.scan()
+        self.assertNotIn("src/order-service.ts", report["meta"]["busy"]["paths"])
+        self.assertEqual(self.row(report, "src/unrelated.ts")["availability"], "BUSY")
+
+    def test_landed_change_later_edited_on_the_target_is_not_busy(self) -> None:
+        # The branch's version reached the target and the target moved on: the content differs
+        # from the target, but there is nothing left to land.
+        wt = self.home / "squashed-then-edited"
+        self.git("worktree", "add", "-q", "-b", "task/squashed", str(wt), "HEAD")
+        self.write("src/order-service.ts", SIMPLE + "// landed\n", repo=wt)
+        self.commit("fix: edit on a branch", repo=wt)
+        self.write("src/order-service.ts", SIMPLE + "// landed\n")
+        self.commit("fix: squash of the edit")
+        self.write("src/order-service.ts", SIMPLE + "// landed\n// later\n")
+        self.commit("feat: target moves on")
+        report = self.scan()
+        self.assertNotIn("src/order-service.ts", report["meta"]["busy"]["paths"])
+        self.assertNotIn("task/squashed", report["meta"]["busy"]["hints"])
+
     def test_worktree_staged_unstaged_and_untracked_paths_are_collected(self) -> None:
         wt = self.home / "editing with spaces"
         self.git("worktree", "add", "-q", "-b", "task/anything", str(wt), "HEAD")

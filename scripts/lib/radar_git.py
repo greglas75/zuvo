@@ -159,12 +159,44 @@ def path_records(raw: bytes) -> list[str]:
     return [radar_remote.safe_path(p.decode("utf-8")) for p in raw.split(b"\0") if p]
 
 
+def landed_blobs(root: Path, sha: str, bases: set[str]) -> dict[str, set[str]]:
+    """Every (path -> blob) the target's history wrote since the oldest worktree base.
+
+    A squash-merged branch never becomes an ancestor of the target, so only content can show that
+    its change landed: its blob for a path appears among the blobs the target wrote to that path."""
+    oldest = min(bases, key=lambda b: int(text(root, "show", "-s", "--format=%ct", b) or 0))
+    raw = git(root, "log", "--raw", "--no-renames", "--no-abbrev", "--format=", "-z", sha, f"^{oldest}")
+    seen: dict[str, set[str]] = {}
+    fields = iter(raw.split(b"\0"))
+    for field in fields:
+        # Raw records are ":<modes> <old> <new> <status>" followed by the path; anything else is a
+        # commit separator.
+        parts = field.lstrip(b"\n").decode("utf-8", "replace").split()
+        if len(parts) >= 5 and parts[0].startswith(":"):
+            path = next(fields, b"").decode("utf-8", "replace")
+            seen.setdefault(path, set()).add(parts[3])
+    return seen
+
+
+def blobs_at(root: Path, commit: str, paths: set[str]) -> dict[str, str]:
+    found = {}
+    ordered = sorted(paths)
+    for start in range(0, len(ordered), 500):  # bounded argv
+        raw = git(root, "ls-tree", "-r", "-z", commit, "--", *ordered[start:start + 500])
+        for record in raw.split(b"\0"):
+            if record:
+                header, _, path = record.partition(b"\t")
+                found[path.decode("utf-8", "replace")] = header.split()[2].decode()
+    return found
+
+
 def local_busy(root: Path, sha: str) -> dict:
     evidence: dict = {"complete": True, "paths": [], "hints": [], "errors": []}
     try:
         entries = worktrees(root)
     except ValueError as err:
         return dict(evidence, complete=False, errors=[str(err)])
+    committed: list[tuple[str, str, set[str], str]] = []  # (branch, head, candidate paths, base)
     for wt in entries:
         checkout = Path(wt["worktree"])
         if not checkout.exists() or "bare" in wt:
@@ -179,18 +211,42 @@ def local_busy(root: Path, sha: str) -> dict:
                 path_records(git(checkout, "ls-files", "--others", "--exclude-standard", "-z"))
             )
             head = wt.get("HEAD", "")
-            base = text(root, "merge-base", sha, head)
-            if head != sha:
-                evidence["paths"].extend(
-                    path_records(git(root, "diff", "--name-only", "--no-renames", "-z", base, head, "--"))
-                )
             # Names are ephemeral hints, not product/candidate identity or reservations.
             branch = wt.get("branch", "").removeprefix("refs/heads/")
-            if branch and (head != base or head == sha):
-                evidence["hints"].append(branch)
+            if head == sha:
+                if branch:
+                    evidence["hints"].append(branch)
+                continue
+            base = text(root, "merge-base", sha, head)
+            # Pending = changed by the branch AND still different from the target. A squash-merged
+            # branch keeps its old merge-base, so merge-base..HEAD alone lists every landed file.
+            changed = path_records(git(root, "diff", "--name-only", "--no-renames", "-z", base, head, "--"))
+            if changed:
+                differs = path_records(git(root, "diff", "--name-only", "--no-renames", "-z", sha, head, "--"))
+                candidates = set(changed) & set(differs)
+                if candidates:
+                    committed.append((branch, head, candidates, base))
         except (ValueError, OSError) as err:
             evidence["complete"] = False
             evidence["errors"].append(str(err))
+    if committed:
+        try:
+            # ...and whose branch version never reached the target (it may have moved on since).
+            landed = landed_blobs(root, sha, {base for *_, base in committed})
+            for branch, head, candidates, _ in committed:
+                at_head = blobs_at(root, head, candidates)
+                pending = {p for p in candidates if at_head.get(p) not in landed.get(p, set())}
+                evidence["paths"].extend(pending)
+                if branch and pending:
+                    evidence["hints"].append(branch)
+        except (ValueError, OSError) as err:
+            # Without the landed check every candidate stays BUSY: conservative, never FREE.
+            evidence["complete"] = False
+            evidence["errors"].append(str(err))
+            for branch, _, candidates, _ in committed:
+                evidence["paths"].extend(candidates)
+                if branch:
+                    evidence["hints"].append(branch)
     evidence["paths"] = sorted(set(evidence["paths"]))
     evidence["hints"] = sorted(set(evidence["hints"]))
     return evidence
