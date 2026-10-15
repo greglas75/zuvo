@@ -117,7 +117,7 @@ idempotency, timeout, and response validation. Add every file those answers touc
 client caller that the original fence did not list. Front-loading this is the whole point: skipping
 it is what turns one activation into four adversarial passes chasing the same class of finding.
 
-For DELETE_DEAD targets, consumer proof additionally requires a repo-wide search for concrete route-path/string literals (a string caller in clients, tests, or proxies is a live contract consumer even when the unit has zero imports) and a scan of docs/specs/runbooks for the symbol. A docs-only reference is not runtime use, but it must be dispositioned before scope freeze — update the doc in-fence or backlog it — never ignored.
+For DELETE_DEAD targets, consumer proof additionally requires a repo-wide search for concrete route-path/string literals (a string caller in clients, tests, or proxies is a live contract consumer even when the unit has zero imports) and a scan of docs/specs/runbooks for the symbol. A docs-only reference is not runtime use, but it must be dispositioned before scope freeze — update the doc in-fence or record it in Phase 4 through `backlog-add` with `--source refactor` at the doc's file and line (`backlog-protocol.md` "Filing from a skill", **Generic write**) — never ignored.
 
 **CodeSift:** `find_references(repo, symbol_name)` for each export, `trace_call_chain(repo, symbol_name, direction="callers", depth=2)` for critical functions. **Fallback:** grep for imports.
 
@@ -143,9 +143,15 @@ Produce the refactoring plan incorporating sub-agent results (when available):
    Scoping *down* is the user's call, not the run's. If the risky unit genuinely cannot be completed
    — no fixtures can be built, or the work exceeds the remaining window — the run ends **PARTIAL,
    loudly**: name the unit, state why in one paragraph, give the concrete follow-up, record it in
-   the commit body and the backlog, and print the partial verdict in the completion block. What is
-   forbidden is the quiet version — reporting COMPLETE for a subset, or discovering the deferral
-   only in the backlog. "A verified partial beats an unverifiable full restructure" is true; "a
+   the commit body and as a finding at the unit itself,
+   `~/.zuvo/backlog-add --repo "$PWD" --class CQ --conf <N> --source refactor --file "$F" --line <n> --title "$T" --evidence "$E"`
+   (`backlog-protocol.md` "Filing from a skill", **Generic write**; `F` is the unit's file and `<n>` the
+   line where the unit begins; `T` is the fixed title "Refactor stopped before this unit: <unit name>",
+   and `E` holds the reason and the follow-up; a unit with no start line is the whole file: `--line 1`
+   and a title starting "Whole file: …" (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**); assign `"$F"`, `"$T"` and `"$E"`
+   before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)), print the partial verdict in the completion block, and name the
+   F-id in the Post-Completion Summary. What is forbidden is the quiet version — reporting COMPLETE
+   for a subset, or a deferral the summary does not name. "A verified partial beats an unverifiable full restructure" is true; "a
    partial reported as done" is the failure it turns into when it is not said out loud.
 2. **Extraction list** -- For each function or block to extract: source location, destination, new signature.
 3. **Dependency impact** -- From the Dependency Mapper: which files need import updates, which tests need adjustment.

@@ -164,12 +164,22 @@ PROVENANCE: provider=[dispatched | inline-single-agent-lock] coverage=[full | pa
      to prevent. -->
 
 
+### DEFERRED
+
+[DEFER-classified discrepancies, one per line in the agent preamble's line format, the same fields in the same order; CLASS is CQ, or BUG only when the line names the input and the wrong output it gives:]
+- [CLASS] conf: NN | file_path:line | anchor: `<text copied from that line>` | evidence: <what proves it> | severity: <critical|high|medium|low> | <the defect, one sentence>
+[anchor: a substring of the cited line, at least 8 non-space characters, holding no ` | ` and no backtick, so the line splits cleanly; when the obvious span holds one, pick a longer or shorter span of the same line that does not. When the line has no such span, a CQ line omits `anchor`, and a BUG line writes `anchor: -`: the orchestrator then reads the anchor from the file at that line itself]
+[a CQ discrepancy about the whole file cites line 1, omits `anchor`, and starts its defect with "Whole file:"; a whole-file BUG cites the line that shows the defect, with its anchor]
+- [CQ] conf: 80 | src/billing/org.ts:12 | anchor: `export function extractOrgId(req` | evidence: CQ14 auditor=0, orchestrator=1; the same body in 3 files, 2 outside the scope fence | severity: low | extractOrgId is duplicated in 3 files
+- [BUG] conf: 85 | src/billing/org.ts:30 | anchor: `return header.split(':')[0]` | evidence: a header with no ':' returns the whole header; the fix belongs in the gateway, outside the scope fence | severity: medium | extractOrgId returns "acme" for the header "acme" instead of rejecting it
+[Or "None" if no DEFER items]
+
 ### BACKLOG ITEMS
 
-[DEFER-classified discrepancies, formatted as:]
-- [severity] file_path:line — description (confidence: N%)
-[Or "None" if no DEFER items]
+[Issues outside the scope fence only, in the agent preamble's format and drive-by tags, or "None"]
 ```
+
+You never call `backlog-add`: the orchestrator records each `DEFERRED` line with `--source refactor` and each `BACKLOG ITEMS` line with `--source drive-by:refactor` (`completion.md` "Backlog Persistence").
 
 ---
 
@@ -181,7 +191,7 @@ Classify each discrepancy:
 |----------|---------|--------|
 | FIX-NOW | Introduced/worsened failure or explicitly required remediation | Must be addressed before completion |
 | BASELINE-DEBT | Independently proven existing, non-worsened failure outside remediation targets | Preserve severity/evidence; delta WARN, absolute score unchanged |
-| DEFER | Non-critical issue, safe to commit | Goes into BACKLOG ITEMS section |
+| DEFER | Its fix needs files outside the scope fence, or it needs a behavior/product decision rather than a fix. A finding inside the fence with one clear fix is never DEFER: it is FIX-NOW, and Phase 3.5 fixes it | Goes into the DEFERRED section; the orchestrator records through `backlog-add` only the lines the run did not fix |
 | FALSE-POSITIVE | Auditor was wrong after review | Document why |
 
 **Two verdicts:**

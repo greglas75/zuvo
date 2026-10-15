@@ -74,16 +74,26 @@ ALLOWLIST: List[Allow] = [
      "a prohibition: parking findings instead of fixing them is BLOCKED; the negation sits outside the window"),
 ]
 
-# {path: [quote, ...]}: sentences a batch retired. A quote back in its file is a FAIL, permanently.
+# {path: [quote, ...]}: sentences a batch retired. A quote back in its file is a FAIL, permanently. Matched
+# with whitespace collapsed and dashes folded, so neither a reflow nor a swapped dash lets one back in.
 RETIRED_QUOTES: Dict[str, List[str]] = {
+    # a "**Backlog:**" step label: the batch loop's deferred items now go through backlog-add
+    "shared/includes/refactor-reference.md": ["**Backlog:** Persist ONLY"],
     # POLICY with no write verb, so the patterns never flagged it: the path wraps onto the next line
     "shared/includes/test-bugfix-protocol.md": ["user-declined items remain in"],
+    # the auditor's own deferred-item line, which drifted from the preamble's format
+    "skills/refactor/agents/cq-auditor.md": ["description (confidence: N%)"],
+    # staging policy with no write verb: the `wrote=` paths backlog-add prints are staged now; the old
+    # source is the whole span, since the agent's name may still appear in `--evidence`
+    "skills/refactor/references/completion.md": ["is LOCAL telemetry — never stage it",
+                                                 "--source zuvo:refactor/cq-auditor"],
+    # a hand-written per-file entry for surviving mutants
+    "skills/refactor/references/remediation.md": ["per-file backlog entry naming each"],
 }
 
 # {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
 # batches and then deleted with its code.
 PENDING: Dict[str, int] = {
-    "shared/includes/refactor-reference.md": 2,
     "skills/a11y-audit/SKILL.md": 3,
     "skills/api-audit/SKILL.md": 4,
     "skills/architecture/SKILL.md": 1,
@@ -102,12 +112,6 @@ PENDING: Dict[str, int] = {
     "skills/pentest/SKILL.md": 1,
     "skills/performance-audit/SKILL.md": 1,
     "skills/receive-review/SKILL.md": 3,
-    "skills/refactor/agents/cq-auditor.md": 1,
-    "skills/refactor/references/completion.md": 2,
-    "skills/refactor/references/planning.md": 2,
-    "skills/refactor/references/remediation.md": 7,
-    "skills/refactor/references/review.md": 1,
-    "skills/refactor/references/transformation.md": 1,
     "skills/review/SKILL.md": 22,
     "skills/review/agents/confidence-rescorer.md": 2,
     "skills/security-audit/SKILL.md": 3,
@@ -234,6 +238,7 @@ class Cfg:
     allow_unit_wide: bool = False
     fence_prefix: bool = False
     retired_norm: bool = True
+    retired_dash: bool = True
 
 
 @dataclass(frozen=True)
@@ -824,6 +829,7 @@ STRUCTURAL: List[Tuple[str, Cfg]] = [
     ("g6-reads-quote-stripped-text", replace(REAL, g6_raw=False)),
     ("fence-closes-on-any-prefix", replace(REAL, fence_prefix=True)),
     ("retired-quote-wrap-sensitive", replace(REAL, retired_norm=False)),
+    ("retired-quote-dash-sensitive", replace(REAL, retired_dash=False)),
 ]
 
 # (the defect it catches, text, retired quote, back in the text?): a reflow must not let a retired sentence in.
@@ -831,12 +837,18 @@ RETIRED_FIXTURES: List[Tuple[str, str, str, bool]] = [
     ("a retired quote wrapped across a line break is still back", "user-declined items remain\n  in `x`",
      "user-declined items remain in", True),
     ("a retired quote reworded is gone", "user-declined items are recorded", "user-declined items remain in", False),
+    ("a retired quote whose em dash an editor swapped for a hyphen is still back",
+     "is LOCAL telemetry - never stage it", "is LOCAL telemetry \u2014 never stage it", True),
 ]
+# Every dash an editor or a formatter may put in place of another: em, en, hyphen, non-breaking hyphen.
+DASHES = str.maketrans({"\u2014": "-", "\u2013": "-", "\u2010": "-", "\u2011": "-"})
 
 
 def retired_present(text: str, quote: str, cfg: Cfg) -> bool:
     if cfg.retired_norm:
         text, quote = " ".join(text.split()), " ".join(quote.split())
+    if cfg.retired_dash:
+        text, quote = text.translate(DASHES), quote.translate(DASHES)
     return quote in text
 
 

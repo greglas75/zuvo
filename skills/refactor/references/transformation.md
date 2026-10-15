@@ -166,4 +166,4 @@ reviewing a codex author is the same model. Run the auditor role INLINE, do not 
 
 **Input:** Full source of each file, CQ checklist, CQ patterns, tech stack, `machine_checks` from CodeSift (if available).
 
-The **orchestrator** applies FIX-NOW items in Phase 3.5 (as the separate fix commit). Only items whose fix needs files OUTSIDE the scope fence, or that require a behavior/product decision the user declined, go to the backlog — deferral is a fix-SCOPE decision, never a severity or size one.
+The **orchestrator** applies FIX-NOW items in Phase 3.5 (as the separate fix commit). Only items whose fix needs files OUTSIDE the scope fence, or that require a behavior/product decision the user declined, are deferred: Phase 4 records each through `backlog-add` with `--source refactor` (`backlog-protocol.md` "Filing from a skill", **Generic write** for a finding, **Process item** for a declined decision) — deferral is a fix-SCOPE decision, never a severity or size one.
