@@ -103,6 +103,22 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                                  "--source zuvo:refactor/cq-auditor"],
     # a hand-written per-file entry for surviving mutants
     "skills/refactor/references/remediation.md": ["per-file backlog entry naming each"],
+    # review's retired confidence tags (0-25 is not passed to backlog-add; the column is `Disposition`)
+    "skills/review/agents/confidence-rescorer.md": ["[low-confidence]", "[below-threshold]"],
+    # review read and edited the backlog as a commit queue (D6), tagged findings by confidence (D3), keyed
+    # the drift gate on B-ids only (D2), and named its backlog writes and IDs outside backlog-add
+    "skills/review/SKILL.md": ["clean `memory/backlog.md`",
+                               "-> clean backlog",
+                               "unchecked entries -> oldest entry's parent hash",
+                               "Remove reviewed commits from backlog",
+                               "[low-confidence]",
+                               "[below-threshold]",
+                               "If yes, remove the line",
+                               "All backlog writes happen AFTER Phase 4",
+                               "<B-id> NO_VALID_DEFER_REASON",
+                               "Record applied vs deferred (backlog IDs)"],
+    # ship let a NIT be dropped silently (D7), and its report line counted hand-backlogged findings
+    "skills/ship/SKILL.md": ["silently is fine", "<n> backlogged"],
 }
 
 # {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
@@ -122,13 +138,9 @@ PENDING: Dict[str, int] = {
     "skills/infra-audit/SKILL.md": 1,
     "skills/pentest/SKILL.md": 1,
     "skills/performance-audit/SKILL.md": 1,
-    "skills/receive-review/SKILL.md": 3,
-    "skills/review/SKILL.md": 22,
-    "skills/review/agents/confidence-rescorer.md": 2,
     "skills/security-audit/SKILL.md": 3,
     "skills/seo-audit/SKILL.md": 2,
     "skills/seo-fix/SKILL.md": 7,
-    "skills/ship/SKILL.md": 3,
     "skills/structure-audit/SKILL.md": 2,
     "skills/test-audit/SKILL.md": 5,
     "skills/write-e2e/SKILL.md": 2,

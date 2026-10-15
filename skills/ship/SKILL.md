@@ -295,7 +295,9 @@ WORK_FILES = <files being touched>
      after review — invalidates the review scope and, past ~100 commits of distance, GitHub stops
      computing mergeability at all (see the four failure modes in Phase 4 Step 4).
 
-5. **Dry-run gate:** If `--dry-run` was passed, walk through each subsequent phase printing what would happen at each step (branch, flow, diff LOC, review depth, bump type, files staged, tag name, push target). Then exit without executing anything.
+5. **Backlog snapshot.** Once, at the run's original start, before any `backlog-add` call (this run's or the review's it dispatches): `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout being shipped, assigned in the same shell call. Ship keeps its run state in the transcript: print the output under a `[SHIP] backlog-snapshot:` line (`(empty)` when it printed nothing). A resumed run (Phase 0 step 3's resume at Phase 4 included) reuses the printed one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+
+6. **Dry-run gate:** If `--dry-run` was passed, walk through each subsequent phase printing what would happen at each step (branch, flow, diff LOC, review depth, bump type, files staged, tag name, push target). Then exit without executing anything.
 
 ---
 
@@ -424,8 +426,21 @@ WORK_FILES = <files being touched>
         attribution: inspect the snapshot diff and name the benign cause in the commit body;
         a snapshot diff implicating shipped code is class (b), never a blind `--update`.
       - **Not in-scope fixable** → do NOT hold the ship hostage to debt the base already has:
-        print `[SHIP] pre-existing failures carried: <list>`, write them to `memory/backlog.md`,
-        continue — and cap the run-line verdict at WARN.
+        print `[SHIP] pre-existing failures carried: <list>`, record them through `backlog-add`,
+        continue — and cap the run-line verdict at WARN. A failure whose output names the input, the
+        wrong result and the failing test's line is a BUG filed at that line of the TEST file, one call
+        each (**Generic write**):
+        `~/.zuvo/backlog-add --repo "$R" --class BUG --conf <N> --source ship --file "$F" --line <n> --anchor "$A" --title "$T"`,
+        `F` the test file and `A` copied from that test source line ("The location rule"), never from
+        the crash output. The others (a crash, a timeout, a missing fixture, an output that names no
+        test line) make one process item for the run: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source ship --target subject:ship-carried-failures --title "$T" --evidence "$E"`
+        (**Process item**; `T` is the fixed title "pre-existing test failures carried by the ship", the
+        same words on every run, and `E` lists the failing tests). Both per `backlog-protocol.md`
+        "Filing from a skill"; assign `"$R"`, `"$F"`, `"$A"`, `"$T"` and `"$E"` (whichever the call
+        passes) before it, as "Free text goes through a variable" in that section says; an empty value
+        you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
+        Report each B- or F-id it prints; a failure still not persisted is listed under
+        `NOT PERSISTED (<reason>)`, never appended by hand.
    c2. **ENVIRONMENT failure — the suite did not produce a verdict at all.** Two shapes, both
       reported repeatedly on this fleet, and neither is a code failure:
       - **Killed by the OS** (exit 137/OOM, a runner reaped mid-run) with ZERO failing tests. There
@@ -830,13 +845,20 @@ LIST
    - **MUST-FIX** → fix it in this run, as a separate commit ahead of the release commit, then
      re-run the adversarial pass (step 4) so the proof covers the fixed blobs. Content-keyed
      coverage is per-blob: a fix after the pass leaves the pushed content unreviewed.
-   - **RECOMMENDED** → fix if it is inside this release's fence; otherwise record it in
-     `memory/backlog.md` with the finding text, and say which you did.
-   - **NIT** → backlog or ignore, silently is fine.
+   - **RECOMMENDED** → fix if it is inside this release's fence; otherwise record it with
+     `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source ship --file "$F" --line <n> [--anchor "$A"] --title "$T"`
+     (`backlog-protocol.md` "Filing from a skill", **Generic write**; `<C>` is `CQ`, or `BUG` only when
+     it names the input and the wrong output; pass `--anchor "$A"` only for a BUG, copied from the cited
+     line ("The location rule"), and assign `"$A"` only when you pass `--anchor`), and say which you did.
+   - **NIT** → every NIT above confidence 25 is recorded, never ignored silently: `~/.zuvo/backlog-add --repo "$R" --class CQ --conf <N> --source ship --file "$F" --line <n> --title "$T"`
+     (the protocol table's NIT row; the findings ledger keeps it). A NIT at 0-25 is discarded, as
+     review's Phase 2 disposition says.
+   For both, the variables, the B- or F-id and `NOT PERSISTED` as for the carried failures in Phase 1
+   (step 3, class c).
    - **Cross-chunk artifacts** (a finding about a symbol whose definition sat in another chunk of a
      split diff) → discount by construction, and say so; do not "fix" a diff to satisfy a reviewer
      that saw half of it.
-   Print `[SHIP] findings dispositioned: <n> MUST-FIX fixed, <n> RECOMMENDED fixed, <n> backlogged`.
+   Print `[SHIP] findings dispositioned: <n> MUST-FIX fixed, <n> RECOMMENDED fixed, <n> recorded`.
    Zero findings is a legitimate line — an ABSENT line is not.
 
    **Re-measure `DIFF_LOC` after fixing.** The fixes are new commits in the same range, so a run
@@ -1210,6 +1232,16 @@ git add CHANGELOG.md
 
 **NEVER** use `git add -A` or `git add .`.
 
+**Before staging the release files: the closing commit for `backlog-add`'s writes.** The run's last
+`backlog-add` call is behind it (Phase 1 triage, the Phase 2 dispositions and the review ship
+dispatched), so make the one closing commit `chore(backlog): record findings of ship run` now, as
+`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says, against the
+snapshot from Phase 0 step 5 ("Backlog snapshot"). Its paths are the `wrote=` paths this run printed
+PLUS every path on the dispatched review's `Backlog writes:` line (a review invoked by ship stages
+nothing itself). It comes before the release commit, so the release tag names the release commit and
+the push carries both. On PR flow, where there is no release commit or tag, it lands on the branch the
+same way, before Step 4 pushes the branch for the PR.
+
 ### Step 2: Commit
 
 ```bash
@@ -1537,7 +1569,9 @@ COMPLETION GATE CHECK
 [ ] Version bumped with CHANGELOG section added — after the tag-collision preflight (no reuse of a
     published version, no `git tag -f`)
 [ ] PR flow only: no version bump, no CHANGELOG edit, no tag created
-[ ] Only version files staged (never git add -A)
+[ ] Only version files staged (never git add -A); the closing commit for backlog-add's writes, if
+    any, holds the run's wrote= paths plus the review's Backlog writes: line, and lands before the
+    release commit (on PR flow, before the branch push)
 [ ] memory/last-ship.json written
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
@@ -1624,6 +1658,7 @@ SHIP COMPLETE
   Cross-model: <providers (N findings) | single_provider_only | NOT RUN (rc=<N>)> proof: <zuvo/proofs/... | none>
   Review:      <depth> (<details>) via <Skill tool|env-compat dispatch> [escalated-from <table-depth> due to attestation: <reason>]
   Changelog:   CHANGELOG.md updated / skipped
+  Recorded:    <N (backlog: a, ledger: b) | none> [plus each NOT PERSISTED (<reason>) by name]; backlog commit <hash | none> [paths left out: <path> (<reason>)]
   Push:        pushed to <remote>/<branch> / BLOCKED (<gate + cause>)
   PR:          #<N> created + merged / #<N> updated + merged / #<N> open — PR_OPEN_BY_POLICY (<quoted blocker: reviewDecision=REVIEW_REQUIRED | mergeStateStatus=BLOCKED over green checks>) / #<N> open (SHIP INCOMPLETE — <failing check|CONFLICTING|CHANGES_REQUESTED>) / — (direct flow) / not created (SHIP INCOMPLETE — <no gh|non-GitHub forge>)
   Artifact:    memory/last-ship.json written locally

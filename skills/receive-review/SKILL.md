@@ -66,9 +66,8 @@ CORE FILES LOADED:
 `codesift-setup.md` is first because the frontmatter declares 14 CodeSift tools and Step 3 (VERIFY)
 depends on them — without the setup they are never preloaded, and the step that exists to catch a
 reviewer citing stale code falls back to reading from memory, which is the failure it guards against.
-`backlog-protocol.md` is loaded because the adversarial handling below routes non-localized WARNINGs
-to backlog; instructing a backlog write without the protocol that defines its format and location
-produces an entry nothing can read back.
+`backlog-protocol.md` is loaded because the adversarial handling below records non-localized
+WARNINGs through `backlog-add`; the protocol defines that call, its variables and its exit table.
 
 ---
 
@@ -232,14 +231,16 @@ If the review output reports truncation (diff exceeds the reviewer input cap), s
 
 Wait for complete output. Handle findings by severity:
 - **CRITICAL** — confirm it first: two or more lanes in its `.agreement` group, or your own check (a failing test, a reproduced input, the cited code read and the defect traced). Confirmed → fix immediately. A single-lane CRITICAL you cannot confirm is triaged as a WARNING and reported as `[CRITICAL→WARNING single-lane]` (`adversarial-loop.md` Step 4).
-- **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
+- **WARNING** — fix if localized (< 10 lines). Otherwise, in a file this run edits, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source receive-review --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`backlog-protocol.md` "Filing from a skill", **Adversarial review**; `R` is the absolute path of the repository root; a WARNING about the whole file, with no single line, cites `--line 1` with a "Whole file: …" title ("The location rule"); pass `--anchor "$A"` only when the class requires one, BUG, SEC or DATA, or the finding carries one, never an invented one; assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Report the B- or F-id it prints; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 - **INFO** — known concerns (max 3, one line each).
 
 Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
 
 If a finding contradicts an explicit user instruction or stated invariant, do not silently apply either side: verify the finding's premise, then disposition it as a Step 5 pushback (citing the invariant) or a fix, and record the decision in the summary.
 
-"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
+"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:receive-review --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`drive-by-findings.md`; `backlog-protocol.md` "Filing from a skill", **Adversarial review**; the anchor, the whole-file rule and the variables as for the WARNING command above, the source being `drive-by:receive-review`, not `receive-review`). The file decides the source, not the severity: a pre-existing WARNING too large to fix, in a file this run does not edit, takes this drive-by command only, never the WARNING one. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
+
+receive-review neither stages nor commits. It lists the `wrote=` paths every `backlog-add` call printed in the completion summary (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ---
 
@@ -316,6 +317,8 @@ Fixed:
 Pushed back:
   3. [file:line] <reason>
 
+Recorded: [N (backlog: a, ledger: b): each B- or F-id, or NOT PERSISTED (<reason>) by name | "none"]
+Backlog files written: [wrote= paths | "none"]
 Tests: N passing, 0 failing.
 Run: <ISO-8601-Z>	receive-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```

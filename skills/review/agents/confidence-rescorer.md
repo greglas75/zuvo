@@ -58,7 +58,7 @@ Minimal CodeSift usage. If CODESIFT_AVAILABLE=true, use `find_references` to ver
 3. Use PRECOMPUTED_DATA reference counts: high reference count = high blast radius = confidence boost
 4. Use hotspot rank: file in top-10 hotspots = confidence boost (+10)
 5. Apply disposition rules per confidence score
-6. Tag all dispositions — the orchestrator writes to backlog after Phase 4, not you
+6. Mark every disposition — for a `RECORD` finding the orchestrator records it through `backlog-add` after Phase 4, not you
 
 ## Scoring Factors
 
@@ -77,11 +77,13 @@ Minimal CodeSift usage. If CODESIFT_AVAILABLE=true, use `find_references` to ver
 
 ## Disposition Rules
 
-| Confidence | Action | Backlog Tag |
+| Confidence | Action | Disposition |
 |-----------|--------|-------------|
-| 0-25 | EXCLUDE from report | `[low-confidence]` |
-| 26-50 | EXCLUDE from report | `[below-threshold]` |
-| 51-100 | KEEP in report | — |
+| 0-25 | EXCLUDE from report; not recorded | `DISCARD` |
+| 26-50 | EXCLUDE from report; the orchestrator records it | `RECORD` |
+| 51-100 | KEEP in report | `REPORT` |
+
+A NIT and every other finding above 25 is recorded: a `RECORD` one by the orchestrator after Phase 4, a `REPORT` one when the run leaves it unfixed. A finding at 0-25 is `DISCARD` and not recorded, whatever its severity, a NIT included.
 
 ## Output Format
 
@@ -92,20 +94,20 @@ Minimal CodeSift usage. If CODESIFT_AVAILABLE=true, use `find_references` to ver
 
 | ID | Original Severity | Confidence | Disposition | Rationale |
 |----|------------------|------------|-------------|-----------|
-| R-1 | MUST-FIX | 92 | KEEP | CQ6 violation + 47 callers |
-| R-2 | RECOMMENDED | 28 | BACKLOG [below-threshold] | Theoretical, covered by tests |
-| ADV-1 | MUST-FIX [CROSS:gemini] | 100 | KEEP (CRITICAL bypass) | Adversarial CRITICAL |
-| R-5 | NIT | 18 | BACKLOG [low-confidence] | Style preference, no impact |
+| R-1 | MUST-FIX | 92 | REPORT | CQ6 violation + 47 callers |
+| R-2 | RECOMMENDED | 28 | RECORD | Theoretical, covered by tests |
+| ADV-1 | MUST-FIX [CROSS:gemini] | 100 | REPORT (CRITICAL bypass) | Adversarial CRITICAL |
+| R-5 | NIT | 18 | DISCARD | Style preference, no impact |
 
 ### Summary
 
-Kept: N | Backlogged: M | Total: N+M
+Reported: N | Recorded: M | Discarded: D | Total: N+M+D
 ```
 
 ## Calibration Examples
 
 - `Confidence: 92` — R-1 MUST-FIX: findMany without limit. CQ6 critical gate (+25), 47 callers (+10), GET endpoint for all users (+15), hotspot file (+10). Clear OOM risk.
-- `Confidence: 28` — R-4 RECOMMENDED: sequential await in loop. Theoretical (-20), 3-element config array (-10). Below threshold -> backlog.
+- `Confidence: 28` — R-4 RECOMMENDED: sequential await in loop. Theoretical (-20), 3-element config array (-10). Below the report threshold -> RECORD.
 - `Confidence: 100` — ADV-1 CRITICAL from Gemini: race condition in auth token refresh. Adversarial CRITICAL override. Bypasses scoring entirely.
 
 ## Degraded Mode (CodeSift Unavailable)
@@ -114,7 +116,7 @@ Skip reference count and hotspot rank factors (score them as 0 impact). All othe
 
 ## What You Must NOT Do
 
-- Do not discard any finding — all go to either report or backlog
+- Do not discard any finding above 25 — each is `REPORT` or `RECORD`, and for a `RECORD` one the orchestrator records it
 - Do not override adversarial CRITICAL bypass (confidence = 100 is mandatory)
 - Do not assign confidence without stating the contributing factors
 - Do not use the scoring factors as a strict formula — they are guidelines, not arithmetic
