@@ -1,0 +1,6 @@
+{"id":"gotcha-timezone-midnight","type":"gotcha","fact":"Truncating a timestamp to the date in local time moves late-evening events to the next day.","recommendation":"Truncate in UTC and convert for display only.","tags":["date","timezone"],"affectedFiles":["src/report/**"],"confidence":"high","updatedAt":"2026-09-01","timesSurfaced":4}
+{"id":"gotcha-locale-sort","type":"gotcha","fact":"A byte-order sort puts accented names after every unaccented one.","recommendation":"Sort with a locale-aware collator.","tags":["sort","locale","unicode"],"affectedFiles":[],"confidence":"medium","updatedAt":"2026-09-10","timesSurfaced":0}
+{"id":"gotcha-legacy-errexit","type":"gotcha","content":"A bare assignment from a failing command aborts the script under errexit.","implication":"Capture the status at the call site.","tags":["bash"],"confidence":"medium","createdAt":"2025-11-01"}
+{"id": "broken", "type": "gotcha", "fact":
+this line is not json at all
+{"id":"gotcha-pool-exhaust","type":"gotcha","fact":"A connection leaked on an error path exhausts the pool after a few hundred failures.","recommendation":"Release connections in a finally block.","tags":["database","pool"],"affectedFiles":["src/db/*.ts"],"confidence":"low","updatedAt":"2026-04-01","timesSurfaced":0}

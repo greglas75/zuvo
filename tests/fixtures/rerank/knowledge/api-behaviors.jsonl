@@ -1,0 +1,1 @@
+{"id":"api-rate-limit-429","type":"api-behavior","fact":"The upstream API answers 429 with a Retry-After header in seconds.","recommendation":"Honour Retry-After before the next attempt.","tags":["api","retry"],"affectedFiles":["src/client/*.ts"],"confidence":"medium","updatedAt":"2026-07-15","timesSurfaced":1}

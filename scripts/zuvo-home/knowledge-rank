@@ -1,0 +1,38 @@
+#!/bin/sh
+# Polyglot sh/python header — same reason as backlog-archive.py: `#!/usr/bin/env python3` dies on
+# Windows/Git Bash. Keep it on ONE line and do not "tidy" the quoting.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""knowledge-rank --root <MAIN_ROOT> --keywords <csv> [--files <lines>] [--k N] --json
+-> [{"id", "type", "section", "score"}]. Exit 0 on every fail-open path (no key, failed rerank,
+malformed lines, no knowledge/); any other exit tells knowledge-prime to fall back to its Step 3 table.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import zuvo_knowledge_rank as kr
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="knowledge-rank")
+    p.add_argument("--root", required=True, type=Path, help="MAIN checkout root holding knowledge/")
+    p.add_argument("--keywords", default="", help="comma-separated WORK_KEYWORDS")
+    p.add_argument("--files", default="", help="newline-separated WORK_FILES")
+    p.add_argument("--k", type=int, default=kr.TOTAL_CAP, help="total entries (at most 10)")
+    p.add_argument("--json", action="store_true")
+    a = p.parse_args(argv)
+    keywords = [w.strip().casefold() for w in a.keywords.split(",") if w.strip()]
+    files = [f.strip() for f in a.files.splitlines() if f.strip()]
+    rows = kr.rank(a.root, keywords, files, a.k)
+    if a.json:
+        print(json.dumps(rows))
+    else:
+        for r in rows:
+            print(f"{r['section']}\t{json.dumps(r['id'])}\t{r['score']}")  # a raw id may hold \t or \n
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

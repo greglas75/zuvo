@@ -1,0 +1,2 @@
+{"id":"pattern-cache-tenant-prefix","type":"pattern","fact":"Cache helpers take the tenant id as their first argument.","recommendation":"Use the helper instead of building keys by hand.","tags":["cache","tenant"],"affectedFiles":["src/cache/**"],"confidence":"high","updatedAt":"2026-08-05","timesSurfaced":1}
+{"id":"pattern-retry-backoff","type":"pattern","fact":"Retries use exponential backoff with jitter.","recommendation":"Call the shared backoff helper.","tags":["retry"],"affectedFiles":[],"confidence":"medium","updatedAt":"2026-06-15","timesSurfaced":0}
