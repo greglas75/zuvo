@@ -327,6 +327,16 @@ class ClientTest(Base):
         self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
         self.assertEqual((stub.requests, self.last_outcome()), (0, "disabled"))
 
+    def test_available_names_the_refusal_rerank_would_log(self) -> None:
+        # Groom skips on available(); drift from rerank()'s own checks would send or skip wrongly.
+        cases = [("key present", {}, None),
+                 ("no key", {"OPENROUTER_API_KEY": ""}, "no-key"),
+                 ("kill switch beats a key", {"ZUVO_RERANK": "0"}, "disabled"),
+                 ("kill switch without a key", {"ZUVO_RERANK": "0", "OPENROUTER_API_KEY": ""}, "disabled")]
+        for name, env, expected in cases:
+            with self.subTest(name), mock.patch.dict(os.environ, env):
+                self.assertEqual(rr.available(), expected)
+
     def test_spent_budget_stops_further_calls(self) -> None:
         # Without the budget a runaway groom pass bills every entry pair.
         stub = self.stub(cost=0.001)

@@ -68,7 +68,7 @@ WORK_FILES='<path1>
 ~/.zuvo/knowledge-rank --root "$MAIN_ROOT" --keywords "$WORK_KEYWORDS" --files "$WORK_FILES" --json
 ```
 
-With an OpenRouter key present (the key is machine-global, so this holds for every repo on this machine), the helper sends knowledge facts to OpenRouter (Voyage) to rank them; `ZUVO_RERANK=0` opts out and keeps a local ranking. If the helper is missing, exits non-zero, or prints nothing or non-JSON, apply the table below.
+With an OpenRouter key present (the key is machine-global, so this holds for every repo on this machine), the helper sends knowledge facts to OpenRouter (Voyage) to rank them; `ZUVO_RERANK=0` opts out and keeps a local ranking. Given keywords or files, the helper keeps only entries that match a word or an `affectedFiles` glob — so a MUST AVOID entry unrelated to this task is not primed; one that shares a word or a file with it is. If the helper is missing, exits non-zero, or prints nothing or non-JSON, apply the table below.
 
 For each entry, compute a relevance score:
 

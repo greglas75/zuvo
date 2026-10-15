@@ -61,6 +61,13 @@ def reset_budget() -> None:
     _METER = _Meter()
 
 
+def available() -> str | None:
+    """Why rerank() would send nothing before reaching the cache: "disabled", "no-key" or None."""
+    if os.environ.get("ZUVO_RERANK") == "0":
+        return "disabled"
+    return "no-key" if rio.key() is None else None
+
+
 def _reserve() -> bool:
     budget = rio.env_num("ZUVO_RERANK_BUDGET_USD", DEFAULT_BUDGET_USD)
     cap = rio.env_num("ZUVO_RERANK_MAX_CALLS", DEFAULT_MAX_CALLS)

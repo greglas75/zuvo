@@ -73,12 +73,12 @@ def _client(max_calls: int) -> tuple[ModuleType, ModuleType]:
     try:
         import zuvo_bm25 as bm25
         import zuvo_rerank as rr
-        import zuvo_rerank_io as rio
     except Exception as exc:   # absent or half-copied: a SyntaxError is not an ImportError
         sys.stderr.write("backlog-groom: semantic pass has no client: %s\n" % type(exc).__name__)
         raise Skipped("no-client") from exc
-    if rio.key() is None:
-        raise Skipped("no-key")
+    refused = rr.available()
+    if refused is not None:
+        raise Skipped(refused)
     return bm25, rr
 
 
