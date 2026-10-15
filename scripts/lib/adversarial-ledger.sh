@@ -663,3 +663,91 @@ count_findings() {
     ' "$result_file"
   fi
 }
+
+# ─── Pass cap ───────────────────────────────────────────────────
+# PASS_CAP — the most passes ONE change gets (adversarial-loop.md Step 5), with no override: later passes
+# mostly re-derive the false positives of the earlier ones.
+PASS_CAP=3
+# PASS_WINDOW_S — an earlier pass counts when it ran here, on this branch, within this window, over files that
+# include every file under review now (same scope, or a fix delta). A WIDER review is a new scope.
+PASS_WINDOW_S=10800
+# PASS_CAP_EXIT — the exit status of a refused pass: nothing was reviewed, so it is not 0 and not a finding.
+PASS_CAP_EXIT=7
+
+# _ar_pass_files — the files under review, one per line, sorted and unique: `diff --git` headers for a patch,
+# `=== FILE: <name> ===` sections for --files input. Empty when the input names no file (a plan, free text).
+_ar_pass_files() {
+  # From the ---/+++ lines, not `diff --git a/X b/Y`: a path holding " b/" makes that header ambiguous. A git-quoted
+  # path ("b/x y") is unquoted; /dev/null (an added or deleted file's other side) is no path.
+  # A section with no ---/+++ lines (a mode change, a pure rename, a binary) falls back to its header.
+  printf '%s\n' "$INPUT" | awk '
+    /^diff --git a\/.* b\// { if (hdr != "" && !seen) print hdr
+                               hdr = $0; sub(/^diff --git a\/.* b\//, "", hdr); seen = 0; next }
+    /^(\+\+\+|---) "?[ab]\// { p = substr($0, 5); sub(/^"/, "", p); sub(/"$/, "", p); print substr(p, 3); seen = 1; next }
+    /^=== FILE: .* ===$/   { sub(/^=== FILE: /, ""); sub(/ ===$/, ""); print }
+    END { if (hdr != "" && !seen) print hdr }' | LC_ALL=C sort -u
+}
+
+# ar_check_pass_cap — refuse a fourth pass over the same change (exit PASS_CAP_EXIT) and set up the record
+# _ar_record_pass writes once this pass has reviewed something. Runs before the input is chunked, so a chunked
+# pass counts ONCE: the parent checks, and every part records under the parent's ZUVO_ADV_PASS_ID.
+ar_check_pass_cap() {
+PASS_RECORD=""
+[[ "$DRY_RUN" != true && "$DOCTOR" != true && "$LIST_PROVIDERS" != true ]] || return 0
+[[ "$REVIEW_MODE" =~ ^(code|test|security|migrate)$ ]] || return 0
+# A test-harness run (mock providers, fake lane binaries) re-reviews the same fixture files on purpose, so it
+# neither counts nor is capped — unless the suite is testing the cap itself (ZUVO_ADV_PASS_CAP_TEST=1).
+# ZUVO_ADVERSARIAL_TEST_HARNESS is the suites' switch; a real review never sets it.
+if [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-}" == 1 && "${ZUVO_ADV_PASS_CAP_TEST:-0}" != 1 ]]; then
+  return 0
+fi
+local files root branch ledger now n
+files="$(_ar_pass_files)"
+[[ -n "$files" ]] || return 0
+root="$(ar_repo_root)"
+branch="$(git -C "$root" symbolic-ref -q --short HEAD 2>/dev/null)" || branch=""
+[[ -n "$branch" ]] || branch="detached"
+ledger="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-passes.tsv"
+now="$(date +%s)"
+if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
+  export ZUVO_ADV_PASS_ID="${ZUVO_ADV_PASS_ID:-$now-$$}"
+  # One row per process that reviewed something; a pass is every row sharing a pass id, its files their union.
+  n=0
+  if [[ -s "$ledger" ]]; then
+    # Through the environment, not -v: BSD awk (macOS) refuses a -v value holding a newline, and a refusal
+    # here would read as "no earlier passes" — the cap silently off.
+    n="$(ZUVO_ADV_PASS_FILES="$files" ZUVO_ADV_PASS_ROOT="$root" ZUVO_ADV_PASS_BRANCH="$branch" \
+      awk -F'\t' -v since=$(( now - PASS_WINDOW_S )) '
+      BEGIN { nc = split(ENVIRON["ZUVO_ADV_PASS_FILES"], want, "\n")
+              root = ENVIRON["ZUVO_ADV_PASS_ROOT"]; branch = ENVIRON["ZUVO_ADV_PASS_BRANCH"] }
+      $1 >= since && $3 == root && $4 == branch && $2 != ENVIRON["ZUVO_ADV_PASS_ID"] {
+        m = split($5, f, "\037"); for (i = 1; i <= m; i++) seen[$2 SUBSEP f[i]] = 1; pass[$2] = 1 }
+      END { c = 0
+        for (p in pass) { all = 1; for (i = 1; i <= nc; i++) if (!((p SUBSEP want[i]) in seen)) { all = 0; break }
+                          c += all }
+        print c }' "$ledger" 2>/dev/null)" || n=0
+  fi
+  if [[ "${n:-0}" -ge "$PASS_CAP" ]]; then
+    echo "PASS CAP: ${n} adversarial passes already reviewed these files on ${branch} in the last $(( PASS_WINDOW_S / 3600 ))h — the cap is ${PASS_CAP}, with no override." >&2
+    echo "  Nothing was reviewed. Do not run another pass: record what is still open as known concerns" >&2
+    echo "  (shared/includes/adversarial-loop.md, Step 5). A verified CRITICAL left open still means 'not complete'." >&2
+    exit "$PASS_CAP_EXIT"
+  fi
+  [[ "$n" -lt $(( PASS_CAP - 1 )) ]] || echo "  NOTE: this is adversarial pass ${PASS_CAP} of ${PASS_CAP} for these files — the last one." >&2
+fi
+PASS_RECORD="$(printf '%s\t%s\t%s\t%s' "${ZUVO_ADV_PASS_ID:-$now-$$}" "$root" "$branch" "$(printf '%s' "$files" | tr '\n' '\037')")"
+}
+
+# _ar_record_pass — append this process's row to the pass ledger once it has reviewed something. Best effort: a
+# ledger that cannot be written loses one count, never the review.
+_ar_record_pass() {
+  [[ -n "${PASS_RECORD:-}" ]] || return 0
+  local led="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-passes.tsv" now
+  now="$(date +%s)"
+  printf '%s\t%s\n' "$now" "$PASS_RECORD" >> "$led" 2>/dev/null || true
+  # Rows older than the window can never count again: past 1 MB, keep only the window.
+  if [[ "$(wc -c < "$led" 2>/dev/null || echo 0)" -gt 1048576 ]]; then
+    awk -F'\t' -v since=$(( now - PASS_WINDOW_S )) '$1 >= since' "$led" > "$led.$$" 2>/dev/null \
+      && mv -f "$led.$$" "$led" 2>/dev/null || true
+  fi
+}

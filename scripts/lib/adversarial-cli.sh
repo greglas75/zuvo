@@ -180,6 +180,8 @@ Exit codes:
   5    no reviewable material (nothing was sent to any provider — this is NOT a completed review)
   6    blind-audit: input too large (prompt over ZUVO_BLIND_AUDIT_MAX_BYTES; nothing was sent)
        (blind-audit: 0 = strict, >= 2 valid answers; 1 = no lane left after its exclusions)
+  7    pass cap — these files already had 3 adversarial passes on this branch in the last 3h
+       (code/test/security/migrate modes; nothing was reviewed; no override)
   124  timeout — every ATTEMPTED lane timed out with none answering at all, even invalidly (all
        providers timed out, or the whole-run deadline fired)
   125  suspended (the HOST slept mid-run; providers never had a chance — safe to retry)
@@ -274,7 +276,8 @@ Environment variables:
                            "does review catch something" vs "does review catch everything".
                            5 is the point where the marginal model still adds ~20 defects.
                            Ignored with --provider.
-  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 500, flat across modes)
+  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 300, flat across modes)
+  ZUVO_ADV_CHUNK_PARALLEL  Parts of a chunked input reviewed at once (default: 3)
   ZUVO_TIMEOUT_GRACE       Seconds between SIGTERM and SIGKILL for a provider (default: 15).
                            Without the hard kill a TERM-ignoring CLI runs unbounded.
   ZUVO_RUN_DEADLINE        Whole-run wall-clock ceiling in seconds (default: derived from the
@@ -325,12 +328,12 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter-alt`, `-3`, `-4` (ZUVO_ADV_OPENROUTER_LANES overrides the
-                           list, e.g. "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
+                           Adds `openrouter-alt` and `openrouter-3` (ZUVO_ADV_OPENROUTER_LANES overrides the list, e.g.
+                           "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, qwen/qwen3.8-flash)
   ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: xiaomi/mimo-v2.6-flash)
-  ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inception/mercury-2.5-preview)
+  ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: deepseek/deepseek-v4.1-flash)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):

@@ -691,8 +691,8 @@ Cross-model adversarial review using external providers. Runs **sequentially** v
 | Tier | Diff | Adversarial shape |
 |------|------|-------------------|
 | **TIER 0 (NANO)** | <15 prod-logic lines, 1 file, no risk signal | **ONE `--single` pass, `ZUVO_REVIEW_TIMEOUT=60`.** No rotate, no second pass. `git diff … \| ZUVO_REVIEW_TIMEOUT=60 ~/.zuvo/adversarial-review --single --mode code`. ~60s ceiling. |
-| **TIER 1 (LIGHT)** | 15–100 lines | Up to **2** `--multi` passes, default timeout; stop early on a clean pass. |
-| **TIER 2–3** | larger / risk signals | Full sequential `--multi` (2–3 passes) as below. |
+| **TIER 1 (LIGHT)** | 15–100 lines | ONE `--multi` pass; a second only on the fix delta, per `adversarial-loop.md` Step 5. |
+| **TIER 2–3** | larger / risk signals | ONE full `--multi` pass, then fix-delta passes only as Step 5 allows — 3 passes in all, never more. |
 
 - **Self-review overrides tier-down for correctness, but keep the timeout tight on tiny diffs:** SELF-REVIEW still forces `--multi` (section 1.1) — but on a TIER 0 diff run it as ONE `--multi` pass with `ZUVO_REVIEW_TIMEOUT=60`, not multi-pass. One cross-model look, bounded to ~60s.
 - **A hung/timed-out provider is NEVER retried in a manual loop on a tiny diff.** If a provider times out at TIER 0/1, record `Adversarial: partial (<provider> only, others timed out)` and finalize — do NOT hand-retry the remaining providers (that hand-retry loop is exactly what turned 3 lines into 20 minutes). Chunking/retry is a TIER 2–3 concern for genuinely large diffs.
@@ -771,15 +771,11 @@ ADV_PROOF="zuvo/proofs/${SLUG:+${SLUG}-}${RANGE_KEY}-adversarial.txt"   # range 
 git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF"
 # → Read output, extract ADV-1, ADV-2
 
-# Pass 2:
-(echo "PRIOR FINDINGS: ADV-1 [desc], ADV-2 [desc] — find NEW issues only";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
-# → Read output, extract ADV-3
-
-# Pass 3 (if provider available):
-(echo "PRIOR FINDINGS: ADV-1..3 — final pass, find what everyone missed";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
-# → ADV-4 or clean → early exit
+# No pass 2 over the SAME diff. Re-reviewing an unchanged range "for new issues only" was the
+# default until 2026-10-15 and it was the single largest cost in the fleet: every pass of a big
+# branch is several chunks of 4-5 lanes, and the repeat passes mostly re-derived the false
+# positives of the first (a lane-reported CRITICAL was real 21-22% of the time). Passes 2 and 3
+# exist only for FIXES — FIX mode below, `adversarial-loop.md` Step 5. Report-only: one pass.
 ```
 
 **Check the exit code of every pass.** `0` = reviewed, `3` = single_provider_only (honest degraded),
@@ -788,8 +784,8 @@ no `REVIEW BY:` line, so an artifact citing this proof will fail `pg_artifact_pr
 with the failure surfacing one phase later, in a place that says nothing about the pass that
 actually died.
 
-**Exit 5 is this block's own foot-gun.** Passes 2 and 3 above pipe `echo "PRIOR FINDINGS: …"`
-followed by the SAME `git diff`. If that diff resolves to nothing — the range already merged, the
+**Exit 5 is the fix-delta passes' foot-gun.** Passes 2 and 3 in FIX mode pipe `echo "PRIOR FINDINGS: …"`
+followed by a `git diff`. If that diff resolves to nothing — the range already merged, the
 refs wrong, or the fixes applied in between — the payload is still a non-empty sentence of
 metadata. Before 2026-09-18 the reviewer took it, answered "0 findings", and wrote `REVIEW BY:`
 into the proof: a clean pass, a valid artifact, and not one line of code seen by any model. It now
@@ -803,20 +799,28 @@ pass again. An empty stdout is not a clean review.
 
 #### FIX mode — sequential fix + validation
 
-Same `--multi` pattern but each pass sees the IMPROVED diff after prior fixes.
+Same `--multi` pattern; pass 1 reviews the whole range, passes 2 and 3 review ONLY the fixes
+(`adversarial-loop.md` Step 5 — the triggers and the hard cap of 3 live there, and the driver refuses
+a fourth pass with exit 7).
 
 ```bash
 # Pass 1: review post-primary-fix code (creates the proof — no --append-artifact)
 git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF"
-# → ADV-1 → apply fix → commit
+git rev-parse HEAD   # BASE1 — print it and paste the literal below: the next Bash call is a fresh shell
+# → ADV-1 → fix only CONFIRMED CRITICALs and behaviour-changing WARNINGs → commit the fixes
 
-# Pass 2: validate fix + find new
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
-# → validates ADV-1 fix + finds ADV-2 → apply → commit
+# Pass 2 — only if pass 1 led to such a fix: everything since BASE1 — the fix commits, anything still
+# uncommitted and NEW files (a fix's regression test). build-review-patch, not `git diff`, which drops
+# untracked files. Exit 3 from the helper = the fixes changed nothing: do not spend the pass.
+git rev-parse HEAD   # BASE2 — print it now, BEFORE any pass-2 fix lands
+(echo "PRIOR FINDINGS: ADV-1 [desc] fixed in this delta — validate the fix, find what it broke";
+ ~/.zuvo/build-review-patch --base "<BASE1>") | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
+# → fix only a NEW CONFIRMED CRITICAL → commit
 
-# Pass 3: final validation
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
-# → clean or ADV-3
+# Pass 3 — only for that fix: everything since BASE2.
+(echo "PRIOR FINDINGS: ADV-n [desc] fixed in this delta — validate the fix only";
+ ~/.zuvo/build-review-patch --base "<BASE2>") | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
+# → there is no pass 4: everything still open is a known concern
 ```
 
 **Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
@@ -824,9 +828,12 @@ git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --multi --mode co
 In FIX mode the fixes land BETWEEN passes, so the last pass reviews content no earlier pass saw.
 The artifact you write in Phase 3 covers the FINAL blob of each file (the gate is content-keyed) —
 if you fix anything after the last adversarial pass, that pass no longer covers what you are
-pushing, and the honest move is one more append, not a re-labelled old one.
+pushing, and the honest move is one more append (a fix-delta pass), not a re-labelled old one —
+as long as the cap allows it. After pass 3 make no further edits except a CONFIRMED CRITICAL's fix,
+proven by a regression test that fails before it and passes after (`adversarial-loop.md` Step 5) —
+the one edit no pass covers, so name it in the review output.
 
-Max 2 fix attempts per provider finding. Max 3 passes total.
+Max 2 fix attempts per provider finding. Max 3 passes total — never more (driver exit 7).
 
 #### Common rules
 
@@ -1047,7 +1054,7 @@ COMPLETION GATE CHECK
 [ ] TIER 2-3: Behavior Auditor (if new prod files) + CQ Auditor + Confidence Re-Scorer DISPATCHED; TIER 3 additionally Structure Auditor as sub-agents — NOT done inline as "lead" (or explicit [DEGRADED: ...] line, forbidden on self-review)
 [ ] Every dispatched sub-agent RETURNED and its findings were read — count RETURNS, not dispatches. One still running bought no coverage: record `NO_RETURN(<elapsed>)`, which violates the tier exactly as `NOT_DISPATCHED` does. (2026-08-11: a TIER 3 self-review shipped a release on 2-of-3 auditors because nothing checked this; the third returned 12h later with a real finding.)
 [ ] TIER 2-3 Next.js: framework_audit called (nextjs_route_map alone does NOT satisfy it)
-[ ] Adversarial review ran — at least 2 sequential passes with findings printed; SELF-REVIEW used --multi (not --rotate)
+[ ] Adversarial review ran — pass 1 over the whole range with findings printed, passes 2-3 only on fix deltas (max 3, adversarial-loop.md Step 5); SELF-REVIEW used --multi (not --rotate)
 [ ] All findings confidence-scored
 [ ] FIX modes: [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source) from post-fix step 1b, AUTO-FIX included; every CHECK claim listed as CHECK settled:; re-run before step 3's git add after any later write; its comment_pass: line pasted into the retro Telemetry block
 [ ] FIX modes: zuvo:mutation-test chained on the tests covering the changed files (Phase 4 step 4), its gaps closed in-run, or the false trigger condition named

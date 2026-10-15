@@ -527,6 +527,8 @@ return 0
 ar_log_run() {
 # ─── Run log (per-provider) ────────────────────────────────────
 
+_ar_record_pass   # this pass reviewed something: it counts toward PASS_CAP
+
 END_TIME=$(date +%s)
 TOTAL_DURATION=$((END_TIME - START_TIME))
 SUSPENDED_S=$(suspended_seconds "$TOTAL_DURATION" "$SUSPEND_BUDGET")
