@@ -117,7 +117,7 @@ Helper absent (a Codex-only or Cursor-only install never ran `install_zuvo_home`
 
 Also detect the CodeSift index (else repository search), Playwright MCP (which gates live DOM inspection ONLY — a
 local `playwright test` run needs no MCP), the framework and the auth provider, then print `PREFLIGHT: <state>
-| CODESIFT: <..> | MCP: <..> | STACK: <..> | AUTH: <..>`. **Backlog snapshot.** Per `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** (read that section now, before the run's first finding): once, at the run's original start, before any `backlog-add` call, run `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout under test (a linked worktree's own root), assigned in the same shell call. Print the output under a `backlog-snapshot:` line (`backlog-snapshot: (empty)` when it printed nothing); a resumed run reuses the printed one and never takes it again, and if the snapshot command fails the run stages nothing at the end and lists its `wrote=` paths.
+| CODESIFT: <..> | MCP: <..> | STACK: <..> | AUTH: <..>`. **Backlog snapshot.** Per `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** (read that section now, before the run's first finding): once, at the run's original start, before any `backlog-add` call, run `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout under test (a linked worktree's own root), assigned in the same shell call. Print the output verbatim under a `backlog-snapshot:` heading as a fenced block (an empty snapshot is an empty block; never one line). This skill has no resume path of its own: a run that cannot find a printed snapshot takes no new one, and if the snapshot command fails the run stages nothing at the end and lists its `wrote=` paths.
 
 ## Phase 0.5: Origin gate — every run that executes anything
 
@@ -270,7 +270,7 @@ COMPLETION GATE CHECK
 [ ] Preflight state printed; effective baseURL resolved and its origin classified before anything executed
 [ ] Scored flow list printed with confidence and reasons; E2E-Q1..E2E-Q10 evidenced on every spec
 [ ] Adversarial review ran (--mode test); every flow carries exactly one verification state
-[ ] Test Quality Gate (Phase 4.5): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path from a dispatch that carried --include-e2e (inline E2E-Q rescoring is a substituted gate = INVALID); below-A specs fixed in-run + states re-earned, or WARN with each one recorded through backlog-add
+[ ] Test Quality Gate (Phase 4.5): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path from a dispatch that carried --include-e2e (inline E2E-Q rescoring is a substituted gate = INVALID); below-A specs fixed in-run + states re-earned, or WARN with each one recorded through backlog-add, and the closing commit made, or none: nothing to stage, or the `Backlog writes:` line printed (run by another skill)
 [ ] memory/e2e-coverage.md upserted via the helper, or hand-written in the row shape when it is absent
 [ ] Run: line printed and appended to log
 

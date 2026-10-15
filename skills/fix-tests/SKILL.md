@@ -189,7 +189,7 @@ WORK_FILES = <files being touched>
 
 ## Backlog Snapshot
 
-Once, at the run's original start, before any `backlog-add` call: `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout being fixed (a linked worktree's own root), assigned in the same shell call. Print the output under a `backlog-snapshot:` line (`backlog-snapshot: (empty)` when it printed nothing) and save the same line under the table in `memory/fix-tests-progress.md`, the resume state. A resumed run (or a Codex/Cursor restart per pattern) reads that line and never takes a new snapshot (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**); if the line is missing or the snapshot command fails, the run stages nothing at the end and lists its `wrote=` paths, as the protocol's failed-snapshot rule says.
+Once, at the run's original start, before any `backlog-add` call: `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout being fixed (a linked worktree's own root), assigned in the same shell call. Print the output under a `backlog-snapshot:` heading and save it the same way, verbatim, as a fenced block under that heading below the table in `memory/fix-tests-progress.md`, the resume state (an empty snapshot is an empty block; never collapse it onto one line or a table row). A resumed run (or a Codex/Cursor restart per pattern) reads that block and never takes a new snapshot (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**); if the block is missing or the snapshot command fails, the run stages nothing at the end and lists its `wrote=` paths, as the protocol's failed-snapshot rule says.
 
 ---
 

@@ -348,8 +348,9 @@ call first, as "The repository root" says: `R='/abs/path/of/repo'; git -C "$R" â
 - **The snapshot.** Once, at the run's ORIGINAL start, before its first `backlog-add` call:
   `R='/abs/path/of/repo'; git -C "$R" status --porcelain -uall -- memory/`. The run saves the output in
   its own state (execute: `execution-state.md`; refactor: its CONTRACT or batch queue file; build: its
-  plan block), and a resumed run reuses the saved snapshot and never takes it again, so its own earlier
-  writes are not mistaken for someone else's. Every path the snapshot LISTED, whatever its status
+  plan block), saved verbatim, as a fenced block in the run's state file or as a sidecar file, never
+  collapsed onto one line; an empty snapshot is an empty block. A resumed run reuses the saved snapshot and
+  never takes it again, so its own earlier writes are not mistaken for someone else's. Every path the snapshot LISTED, whatever its status
   (modified, added, untracked `??`), holds someone else's edits. If the snapshot command fails, the run
   stages nothing at the end and lists its `wrote=` paths instead.
 - **No per-step commit.** A per-task, per-file or per-step commit never stages a `wrote=` path. Every task
