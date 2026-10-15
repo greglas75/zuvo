@@ -512,6 +512,54 @@ class RoutingTests(AddCase):
                      "--title", "review incomplete", "--source", "review")
         self.assertEqual((p.returncode, self.verdict(p)[0]), (0, "LEDGER"))
 
+    LIVE_PAGE_CQ = ("--class", "CQ", "--conf", "70", "--target", "https://example.com/pricing",
+                    "--evidence", "no h1 on the page", "--title", "pricing page has no h1",
+                    "--source", "seo-audit")
+
+    def test_live_page_finding_of_a_report_only_class_goes_to_the_ledger(self) -> None:
+        # Defect: a live-URL finding of any class but BUG/SEC/DATA is refused, so an SEO/a11y audit of a
+        # live page keeps nothing; or it leaks into the backlog the intake tickets.
+        r = self.repo()
+        before = snapshot(r)["memory/backlog.md"]
+        p = self.add(r, *self.LIVE_PAGE_CQ)
+        kind, _, f_id = self.verdict(p)
+        records, _ = self.folded(r)
+        self.assertEqual((p.returncode, kind), (0, "LEDGER"))
+        self.assertIn(f"LEDGER {f_id} reason=class-report-only ", p.stdout)
+        self.assertEqual(snapshot(r)["memory/backlog.md"], before)
+        self.assertEqual(records[f_id].fields["class"], "CQ")
+
+    def test_forced_live_page_finding_is_filed_in_a_line_the_bump_parser_reads(self) -> None:
+        # Defect: a URL-target line of a report-only class renders in a shape `parse_own` cannot read
+        # back, so a re-sighting could never bump it.
+        r = self.repo()
+        p = self.add(r, *self.LIVE_PAGE_CQ, ZUVO_BACKLOG_ADMIT="1")
+        kind, b_id, _ = self.verdict(p)
+        (line,) = self.entries(r, b_id)
+        own = ent.parse_own(line)
+        self.assertEqual((p.returncode, kind), (0, "ACCEPTED"))
+        assert own is not None
+        self.assertEqual((own.b_id, own.sources, own.seen), (b_id, ("seo-audit",), 1))
+
+    def test_url_query_and_fragment_never_reach_the_ledger(self) -> None:
+        # Defect: a credential in a crawled URL's query or fragment is written to the shared ledger.
+        r = self.repo()
+        p = self.add(r, "--class", "CQ", "--conf", "70", "--target", "https://example.com/p?token=abc#frag",
+                     "--evidence", "e", "--title", "page has no h1", "--source", "seo-audit")
+        _, _, f_id = self.verdict(p)
+        records, _ = self.folded(r)
+        self.assertEqual(records[f_id].fields["target"], "https://example.com/p")
+        ledger = "".join(path.read_text(encoding="utf-8") for path in r.glob("memory/**/*.jsonl"))
+        self.assertIn("https://example.com/p", ledger)
+        self.assertNotIn("token", ledger)
+
+    def test_credentials_before_the_host_are_still_refused_when_a_query_follows(self) -> None:
+        # Defect: the query strip runs first and a `user:pw@` URL is stored without anyone refusing it.
+        r = self.repo()
+        p = self.add(r, "--class", "CQ", "--conf", "70", "--target", "https://u:pw@example.com/p?a=1",
+                     "--evidence", "e", "--title", "page has no h1", "--source", "seo-audit")
+        self.assertEqual((p.returncode, p.stdout), (3, "REFUSED secret-like-value\n"))
+
     UNTAGGABLE = [
         ("a non-SEC entry on an unresolvable branch lands untagged", "BUG", "LEDGER"),
         ("a SEC entry on an unresolvable branch is held back from the backlog", "SEC", "ACCEPTED"),

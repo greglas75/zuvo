@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import AbstractSet, Callable, FrozenSet, NamedTuple, Optional, Tuple, cast
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import zuvo_backlog_parse as zb
 
@@ -80,10 +80,9 @@ _HOSTNAME_RE = re.compile(_LABEL + r"(?:\." + _LABEL + r")*")
 _PORT_RE = re.compile(r"[0-9]{1,5}")
 _PORT_MAX = 65535
 _SUBJECT_RE = re.compile(r"subject:[a-z0-9][a-z0-9._-]{0,79}")
-# Which classes each target kind may carry: URL/host for live-system findings (pentest, infra-audit,
-# --live-url audits), `subject:` for process items and SEC.
-_TARGET_CLASSES = {"url": BACKLOG_CLASSES, "host": BACKLOG_CLASSES,
-                   "subject": frozenset({"PROCESS", "SEC"})}
+# Which classes each target kind may carry: URL/host for a live-system finding of any class (the bars
+# still route it), `subject:` for process items and SEC.
+_TARGET_CLASSES = {"url": CLASSES, "host": CLASSES, "subject": frozenset({"PROCESS", "SEC"})}
 # Prefixed provider keys (`sk-ant-…`, `sk-proj-…`), every GitHub token kind, a JWT's two `eyJ` parts, and
 # a URL carrying `user:password@` (a DSN) in any field, not only in `--target`.
 _SECRET_RES = tuple(re.compile(p) for p in (
@@ -200,6 +199,16 @@ def target_kind(target: Optional[str]) -> Optional[str]:
     return "host" if _bare_host_ok(t) else None
 
 
+def canonical_target(target: Optional[str]) -> Optional[str]:
+    """A URL target without its query, fragment and `;` path parameters (session ids no pattern screens
+    for). Anything else is returned as is, so the shape checks still refuse it: `urlsplit` drops line
+    breaks silently."""
+    if not isinstance(target, str) or target_kind(target) != "url":
+        return target
+    u = urlsplit(target.strip())
+    return urlunsplit((u.scheme, u.netloc, u.path.split(";", 1)[0], "", ""))
+
+
 def clean_text(s: Optional[str], cap: int) -> str:
     """One safe backlog field: line breaks and control characters become spaces, the text is cut at
     `cap` SOURCE characters (marked with `…`), and only then escaped — every `\\` becomes `\\\\`, then
@@ -290,7 +299,8 @@ def _check_location(f: Finding) -> Optional[str]:
 
 
 def _check_combination(f: Finding) -> Optional[str]:
-    if _present(f.missing_assertion) and f.cls not in PROMOTABLE_CLASSES:
+    # A missing assertion cites a changed line, which a target does not have.
+    if _present(f.missing_assertion) and (f.cls not in PROMOTABLE_CLASSES or _present(f.target)):
         return "bad-combination"
     return None
 
@@ -367,7 +377,7 @@ def _strip_dot(path: str) -> str:
 
 
 def _target_key(target: str) -> str:
-    return target.strip().lower().rstrip("/")
+    return (canonical_target(target) or "").strip().lower().rstrip("/")
 
 
 def _identity_text(f: Finding) -> str:

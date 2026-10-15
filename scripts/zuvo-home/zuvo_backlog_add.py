@@ -165,8 +165,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def _finding(a: argparse.Namespace) -> adm.Finding:
     return adm.Finding(cls=a.cls or "", conf=a.conf, source=a.source or "", title=a.title or "",
-                       file=a.file, line=a.line, anchor=a.anchor, target=a.target, evidence=a.evidence,
-                       fix=a.fix, severity=a.severity, missing_assertion=a.missing_assertion)
+                       file=a.file, line=a.line, anchor=a.anchor, target=adm.canonical_target(a.target),
+                       evidence=a.evidence, fix=a.fix, severity=a.severity,
+                       missing_assertion=a.missing_assertion)
 
 
 def _toplevel(repo: str) -> Optional[str]:

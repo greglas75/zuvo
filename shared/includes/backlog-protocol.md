@@ -78,7 +78,7 @@ map are built from what has accumulated instead of from a fresh scan.
 | `--title` | yes | the defect in one sentence (cut at 200 characters) |
 | `--file`, `--line` | these, or `--target` | the cited site, repo-relative; the file must exist in the work tree |
 | `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part before the value — the name and what precedes it (`AWS_SECRET_KEY =`, `const db_pw =`), still 8 non-space characters — never any character of the value; when the line has fewer than 8 before the value, copy a line within ±3 that holds no secret |
-| `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL or a hostname (SEC, BUG, DATA only), or `subject:<slug>` (PROCESS, SEC only) |
+| `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL (stored without its query and fragment) or a hostname (any class; the bars still route it), or `subject:<slug>` (PROCESS, SEC only) |
 | `--evidence` | with a URL or host target | what proves it (cut at 600) |
 | `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
 | `--missing-assertion` | TEST-GAP, MUTATION only | the assertion the tests lack |
@@ -204,7 +204,7 @@ the dedupe and the lock it files exactly the entries the intake has to retire.
 | `bad-target` | An `http(s)://` URL, a hostname, or `subject:<slug>`. |
 | `bad-path` | `--file` with a control character, a `\|` or surrounding spaces; an `--also` without `:LINE`. |
 | `bad-pr` | `--pr` or `ZUVO_BACKLOG_PR` must be a PR number of 1–6 digits, no leading zero. |
-| `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION; a target the class may not use (a URL or host: SEC, BUG, DATA; `subject:`: PROCESS, SEC). |
+| `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION, or together with `--target`; `subject:` on a class other than PROCESS or SEC (a URL or host takes any class). |
 | `path-outside-repo` | The path leaves the repository (`..`, an absolute path elsewhere, a symlink out). |
 | `file-not-in-worktree` | The file does not exist in the work tree. If the path is right, the code is gone: nothing is filed or reported as not persisted. If the path was mistyped, correct it. |
 | `line-out-of-range` | `--line` is not a positive integer, or is past the end of the file (an `--also` line too). |
