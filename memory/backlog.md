@@ -5118,7 +5118,7 @@ exactly this case (identical in every other field, frozen side keyed on nothing,
 against a mutant that rotates every key — real module `OK 878 (1 no-signature key(s) rotated)`, mutant still FAILS.
 Also removed `[--json]` from the usage header: argparse rejects it (`unrecognized arguments: --json`).
 
-- [ ] B-20261009-DEDUP-ADD-MODE-ONLY [P3][process][conf 85]
+- [x] B-20261009-DEDUP-ADD-MODE-ONLY [FIXED 55d4b354] [P3][process][conf 85]
 **Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
 **Source:** owner's question 2026-10-09, same probe.
 **What:** the dedup check lives only in the SKILL's `add` mode. The actual practice — every `docs(backlog):` commit in this
@@ -5129,6 +5129,17 @@ mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-c
 `memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
 a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
 B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
+**Resolution 55d4b354:** `hooks/backlog-hand-append-warn.sh`, chained from the global `git-dispatch/pre-commit`. Both
+stated dependencies were met first: the false OPEN is fixed (B-20261009-DEDUP-EMPTY-QUERY-OPEN), and the similarity tier
+turned out not to be needed, because `backlog-add` keys on `CLASS | file | anchor` (B-20261009-DEDUP-SIGNATURE-ONLY,
+OBSOLETE). WARNS, NEVER BLOCKS — the dispatcher discards its status with `|| true`, so a future non-zero cannot start
+failing commits over a backlog line. It does NOT re-run `lookup`: the signal is the `ledger: F-<hex>` link only
+`backlog-add` can write, which makes the check a substring test on the staged lines (no python, no repo read, no lock).
+Silent on the hand edits the protocol MANDATES — `- [x]` and `[REGRESSION`. Test 17/0: exit 0 on every path, the count
+and its three-line cap, and an unborn HEAD, where `git diff --cached HEAD` would otherwise print a fatal on a repo's
+first commit. Refreshing the pinned dispatcher identity in `install-refactor-gate.sh` is part of the same commit; the
+nine failures skipping it caused are in that commit's message. NOT measured: how often entries still arrive by hand now
+that `backlog-add` exists — since it landed (2026-10-14) no open entry has been added at all, historically 990 of 1000.
 
 
 
