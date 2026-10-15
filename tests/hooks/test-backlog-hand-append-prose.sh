@@ -75,7 +75,8 @@ ALLOWLIST: List[Allow] = [
 ]
 
 # {path: [quote, ...]}: sentences a batch retired. A quote back in its file is a FAIL, permanently. Matched
-# with whitespace collapsed and dashes folded, so neither a reflow nor a swapped dash lets one back in.
+# with whitespace collapsed and dashes folded (DASH_CHARS and `--` to `-`, spacing around a dash made one
+# ` - `), so neither a reflow nor a swapped dash lets one back in.
 RETIRED_QUOTES: Dict[str, List[str]] = {
     # a "**Backlog:**" step label: the batch loop's deferred items now go through backlog-add
     "shared/includes/refactor-reference.md": ["**Backlog:** Persist ONLY"],
@@ -186,6 +187,9 @@ HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})")
 FENCE_OPEN_PREFIX = re.compile(r"^(```|~~~)")  # the retired reading, kept for its mutant only
 TABLE_SEP = re.compile(r"^\s*\|[\s:|-]+\|?\s*$")
+# The dashes a retired-quote match folds to `-`: U+2010 to U+2015 (hyphen, non-breaking hyphen, figure
+# dash, en dash, em dash, horizontal bar) and U+2212 (minus sign).
+DASH_CHARS = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
 SENTENCE_END = re.compile(r"[.!?](?=\s)|\s\|\s")
 # An abbreviation's full stop ends no sentence: "Add the finding (e.g. src/x.py) to the backlog." is one.
 # `etc.` is not one: it usually ends the sentence ("... BUG, SEC, etc. Otherwise add it to backlog.").
@@ -239,6 +243,9 @@ class Cfg:
     fence_prefix: bool = False
     retired_norm: bool = True
     retired_dash: bool = True
+    retired_dashes: str = DASH_CHARS
+    retired_runs: bool = True
+    retired_dash_space: bool = True
 
 
 @dataclass(frozen=True)
@@ -830,25 +837,48 @@ STRUCTURAL: List[Tuple[str, Cfg]] = [
     ("fence-closes-on-any-prefix", replace(REAL, fence_prefix=True)),
     ("retired-quote-wrap-sensitive", replace(REAL, retired_norm=False)),
     ("retired-quote-dash-sensitive", replace(REAL, retired_dash=False)),
+    ("retired-quote-en-dash-not-folded", replace(REAL, retired_dashes=DASH_CHARS.replace("\u2013", ""))),
+    ("retired-quote-double-hyphen-not-folded", replace(REAL, retired_runs=False)),
+    ("retired-quote-dash-spacing-kept", replace(REAL, retired_dash_space=False)),
 ]
 
-# (the defect it catches, text, retired quote, back in the text?): a reflow must not let a retired sentence in.
+# (the defect it catches, text, retired quote, back in the text?): neither a reflow nor a dash swap may let a
+# retired sentence back in, and a real rewording must still count as gone.
 RETIRED_FIXTURES: List[Tuple[str, str, str, bool]] = [
     ("a retired quote wrapped across a line break is still back", "user-declined items remain\n  in `x`",
      "user-declined items remain in", True),
     ("a retired quote reworded is gone", "user-declined items are recorded", "user-declined items remain in", False),
     ("a retired quote whose em dash an editor swapped for a hyphen is still back",
      "is LOCAL telemetry - never stage it", "is LOCAL telemetry \u2014 never stage it", True),
+    ("a retired quote whose em dash an editor swapped for an en dash is still back",
+     "is LOCAL telemetry \u2013 never stage it", "is LOCAL telemetry \u2014 never stage it", True),
+    ("a retired quote written with a hyphen is back when the text has an em dash",
+     "per\u2014file backlog entry naming each", "per-file backlog entry naming each", True),
+    ("a retired quote whose em dash an editor typed as `--` is still back",
+     "is LOCAL telemetry -- never stage it", "is LOCAL telemetry \u2014 never stage it", True),
+    ("a retired quote whose dash lost its spaces is still back",
+     "is LOCAL telemetry\u2014never stage it", "is LOCAL telemetry \u2014 never stage it", True),
 ]
-# Every dash an editor or a formatter may put in place of another: em, en, hyphen, non-breaking hyphen.
-DASHES = str.maketrans({"\u2014": "-", "\u2013": "-", "\u2010": "-", "\u2011": "-"})
+DASH_RUN = re.compile(r"-{2,}")
+DASH_SPACING = re.compile(r"\s*-\s*")
+
+
+def dash_fold(s: str, cfg: Cfg) -> str:
+    """Every DASH_CHARS code point to `-`, a run of `-` (an ASCII `--`) to one, and the spacing around a dash
+    to one ` - `, so `a\u2014b`, `a \u2014 b`, `a -- b` and `a - b` read the same."""
+    s = s.translate({ord(c): "-" for c in cfg.retired_dashes})
+    if cfg.retired_runs:
+        s = DASH_RUN.sub("-", s)
+    if cfg.retired_dash_space:
+        s = DASH_SPACING.sub(" - ", s)
+    return s
 
 
 def retired_present(text: str, quote: str, cfg: Cfg) -> bool:
     if cfg.retired_norm:
         text, quote = " ".join(text.split()), " ".join(quote.split())
     if cfg.retired_dash:
-        text, quote = text.translate(DASHES), quote.translate(DASHES)
+        text, quote = dash_fold(text, cfg), dash_fold(quote, cfg)
     return quote in text
 
 

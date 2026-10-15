@@ -15,9 +15,10 @@ The backlog file is `memory/backlog.md`. Which copy is THE backlog depends on wh
   There is exactly ONE backlog per repository, under the **MAIN checkout root**, never inside a linked
   worktree.
 
-**Resolution (MANDATORY — worktree-safe).** `~/.zuvo/backlog-archive.py path --repo "$PWD"` applies this
+**Resolution (MANDATORY — worktree-safe).** `~/.zuvo/backlog-archive.py path --repo "$R"` applies this
 rule (`zuvo_backlog_io.backlog_root`) and prints the `declared`, `real` and `archive` paths; the helper
-calls below take `--repo "$PWD"` and resolve the same way. By hand:
+calls below take `--repo "$R"` and resolve the same way. `R` is the repository root, assigned in the same
+shell call as "The repository root" in "Filing from a skill" says; never `$PWD`, which the harness resets. By hand:
 
 ```bash
 BACKLOG_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -398,7 +399,7 @@ For each finding that should be tracked:
    **The lookup:**
 
    ```bash
-   ~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<candidate text or B-id>"
+   ~/.zuvo/backlog-archive.py lookup --repo "$R" "<candidate text or B-id>"
    ```
 
    One verdict line, one exit code, and what follows from it. `backlog-add` acts on the same verdicts
@@ -447,8 +448,8 @@ For each finding that should be tracked:
    it verbatim to `$ARCHIVE` under a dated section:
 
    ```bash
-   ~/.zuvo/backlog-archive.py archive --repo "$PWD" --dry-run   # always first
-   ~/.zuvo/backlog-archive.py archive --repo "$PWD"
+   ~/.zuvo/backlog-archive.py archive --repo "$R" --dry-run   # always first
+   ~/.zuvo/backlog-archive.py archive --repo "$R"
    ```
 
    By hand: tick the box (`- [x]`), append the resolution marker (`[FIXED <sha7>]`,

@@ -30,6 +30,10 @@
 #         narrowed by a list item's lead-in ("`BUG`, `SEC`, `DATA`:", "any other class ...:"), with a
 #         conf above every bar; no class left is a problem. Each run must exit 0, ACCEPTED or LEDGER.
 #       Counts are printed and held to floors (the counts of T4 round 3; later batches only add commands).
+#   W   every `--repo` a command in the prose passes, whatever the helper (backlog-archive.py, backlog-groom.py,
+#       backlog-add …): naming the working directory (`$PWD`, `${PWD}`, `$(pwd)`) is a problem outside
+#       CWD_REPO_OK, since the harness resets the cwd between calls. A span that opens with `--repo` names the
+#       flag and runs nothing. A fixture runs first, so a reader that finds nothing cannot pass.
 #   F   flow: three canonical sentences of backlog-protocol.md "Filing from a skill" run for real in a
 #       repo on feat/x: BUG -> ACCEPTED with [branch:feat/x], CQ -> LEDGER class-report-only with the
 #       backlog byte-identical, the process item twice -> LEDGER then LEDGER-BUMPED seen=2.
@@ -938,6 +942,49 @@ def tree_check() -> None:
         f"C CLI run count {rep.executed} >= floor {RUN_FLOOR} (a run check that stopped running)")
 
 
+# ── W: every `--repo` in the prose, any helper ─────────────────────────────────────────────────────
+REPO_ARG = re.compile(r"(?<![\w-])--repo(?:=|\s+)(\"[^\"\n]*\"|'[^'\n]*'|[^\s`|;)]+)")
+REPO_FIXTURE = "\n".join([
+    'Look it up: `~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<B-id>"`.',
+    "```bash",
+    "backlog-groom.py plan --repo \"$(pwd)\" --dry-run",
+    "```",
+    'Archive: `~/.zuvo/backlog-archive.py archive --repo "$R"`.',
+    'Every call carries `--repo "$R"`, never `--repo "$PWD"`.',
+])
+REPO_FIXTURE_HITS = [1, 3]      # the lookup and the fenced groom call; the "$R" one and the mention are not
+
+
+def cwd_repo_hits(path: str, text: str) -> List[int]:
+    """The lines where a printed command passes `--repo` naming the working directory."""
+    texts, _ = (sh_texts if path.endswith(".sh") else md_texts)(text)
+    hits: List[int] = []
+    for line, t, _lead in texts:
+        for m in REPO_ARG.finditer(t):
+            if t[:m.start()].strip() and CWD_REPO.search(m.group(1)):
+                hits.append(line)
+    return hits
+
+
+def repo_check() -> None:
+    got = cwd_repo_hits(FIXTURE_PATH, REPO_FIXTURE)
+    (ok if got == REPO_FIXTURE_HITS else no)(
+        f"W self-check: the cwd --repo of any helper is found, a \"$R\" one and a mention are not "
+        f"(lines {got}, expected {REPO_FIXTURE_HITS})")
+    files = sorted({os.path.relpath(f, ROOT) for g in SCOPE_GLOBS for f in glob.glob(os.path.join(ROOT, g))})
+    files += list(EXTRA_SOURCES)
+    bad = 0
+    for rel in files:
+        if rel in CWD_REPO_OK:
+            continue
+        for line in cwd_repo_hits(rel, open(os.path.join(ROOT, rel), encoding="utf-8").read()):
+            bad += 1
+            no(f"W {rel}:{line}: --repo names the working directory, which the harness resets between "
+               'calls; pass --repo "$R" (backlog-protocol.md "The repository root")')
+    if not bad:
+        ok(f"W no command in {len(files)} files passes --repo naming the working directory")
+
+
 # ── F: the canonical flow ─────────────────────────────────────────────────────────────────────────
 def is_generic(s: Span) -> bool:
     return value(s.args, "--class") == "<C>" and "--file" in s.flags
@@ -1010,7 +1057,8 @@ def flow_check() -> None:
 
 
 def main() -> None:
-    for name, step in (("S", self_check), ("T", scope_check), ("C", tree_check), ("F", flow_check)):
+    for name, step in (("S", self_check), ("T", scope_check), ("C", tree_check), ("W", repo_check),
+                       ("F", flow_check)):
         try:
             step()
         except Exception as exc:  # a crash in one step is a FAIL, never a silent pass of the rest

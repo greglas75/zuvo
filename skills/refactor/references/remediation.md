@@ -137,6 +137,8 @@ For each path in `modules_created`:
    `--anchor`; assign `"$R"`, `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 4. Record `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` — e.g. `"7/7:fixed-in-run"`,
    `"7/5:2-backlogged-out-of-fence"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
+   `backlogged` in that value means recorded (backlog-add prints whether it went to the backlog or the
+   ledger; a TEST-GAP like item 3's stays in the ledger), so the Post-Completion Summary names each F-id.
 
 **Both this field and `prove.test_quality` are read by the git hook at `git push`, not at commit** —
 they cannot exist earlier, since Phase 3.5 commits before this phase runs. Both are checked against
@@ -227,7 +229,10 @@ No candidate → the field cannot be filled: re-run Step 2 over the audited file
 Never from memory. `WARN` when gaps remain after the fix loop, each surviving mutant recorded with
 `~/.zuvo/backlog-add --repo "$R" --class MUTATION --conf <N> --source refactor --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`
 (`backlog-protocol.md` "Filing from a skill", **Generic write**): `F`, `<n>` and `A` the mutated
-production line, `M` the assertion the tests lack; assign `"$R"`, `"$F"`, `"$A"`, `"$M"` and `"$T"` before
+production line, `M` the assertion the tests lack. A survivor the artifact gives no line for is a
+whole-file record (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**): `--line 1`, a title starting "Whole file: …"
+that names the artifact's mutant id, and no `--anchor`, since MUTATION, like TEST-GAP, requires none.
+Assign `"$R"`, `"$F"`, `"$M"`, `"$T"` and, when passed, `"$A"` before
 the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
 `plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is

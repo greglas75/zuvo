@@ -15,7 +15,7 @@ category: Utility
 
 Add (through `~/.zuvo/backlog-add`), list, and manage backlog items. The backlog tracks technical debt discovered by audit skills, review agents, and manual entries.
 
-**Backlog location:** `memory/backlog.md`, resolved per `../../shared/includes/backlog-protocol.md` ("Where the Backlog Lives"): when git tracks it in the checkout you are in, that checkout's copy is the backlog for its branch; otherwise it lives at the **MAIN checkout root**. The helper applies the rule — `~/.zuvo/backlog-archive.py path --repo "$PWD"` prints the path — and every helper call below takes `--repo "$PWD"`. By hand, copy the protocol's whole resolution block (its fallback is mandatory: without it a non-git CWD yields an empty root and re-forks the backlog).
+**Backlog location:** `memory/backlog.md`, resolved per `../../shared/includes/backlog-protocol.md` ("Where the Backlog Lives"): when git tracks it in the checkout you are in, that checkout's copy is the backlog for its branch; otherwise it lives at the **MAIN checkout root**. The helper applies the rule — `~/.zuvo/backlog-archive.py path --repo "$R"` prints the path — and every helper call below takes `--repo "$R"`, `R` being the repository root assigned in the same shell call (`backlog-protocol.md` "The repository root"; never `$PWD`, which the harness resets). By hand, copy the protocol's whole resolution block (its fallback is mandatory: without it a non-git CWD yields an empty root and re-forks the backlog).
 
 For an UNTRACKED backlog, NEVER create or write a `memory/backlog.md` inside a linked worktree — one backlog per repository. If `memory/` does not exist at the resolved root, create it. If the file does not exist, create it from the template at the bottom of this skill. If a legacy untracked worktree-local copy exists, merge its unique entries (by the dedup key defined in `../../shared/includes/backlog-protocol.md`) into the main copy before proceeding.
 
@@ -311,7 +311,8 @@ re-filed as new work.
 
 Finding the entry a mode acts on, or answering "is this already known?" without filing anything, is
 the lookup across **both** files — run it, do not re-implement it:
-`~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<B-id or candidate text>"`. It answers `OPEN` (exit 10),
+`~/.zuvo/backlog-archive.py lookup --repo "$R" "<B-id or candidate text>"` (`R` is the repository root,
+assigned in the same shell call: `backlog-protocol.md` "The repository root"). It answers `OPEN` (exit 10),
 `ARCHIVED` (exit 11: the `regression` path), `ABSENT` (exit 0), or `NO-SIGNATURE` (exit 13: the query keys
 on nothing — empty, or stripped to nothing as resolution markers; nothing was looked up, so rewrite it to
 name the file and the defect, or pass the B-id). Checking only `backlog.md` is not a check: an entry that
@@ -322,7 +323,7 @@ exists solely in `backlog-done.md` reads as ABSENT.
   content key is computed from.
 - `wontfix B-<id> [reason]`: verify exists, tick the box and append `WONTFIX — <reason>`.
 - `archive [--dry-run]`: move every ticked, marker-carrying entry into `backlog-done.md` via
-  `~/.zuvo/backlog-archive.py archive --repo "$PWD"`. Entries holding a live `[ ]` sub-item are
+  `~/.zuvo/backlog-archive.py archive --repo "$R"`. Entries holding a live `[ ]` sub-item are
   refused, not moved — split them first.
 - `regression B-<id>`: the `ARCHIVED` path of the lookup. Re-open under the same id with the
   back-link, severity one band higher, and the word REGRESSION in the report.
