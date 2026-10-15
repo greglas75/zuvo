@@ -95,6 +95,14 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                 "or WARN + backlogged",
                                 "[ ] Backlog persistence ran for deferred findings",
                                 "every finding with confidence above 25% is persisted"],
+    # fix-tests: the policy line and the persist step wrote memory/backlog.md by hand, and the adversarial
+    # boilerplate told the agent to add to the backlog; the report line and checklist named the backlog
+    "skills/fix-tests/SKILL.md": ["`memory/backlog.md` receives only what is genuinely out-of-scope or user-declined.",
+                                  "or files that could not be fixed automatically, to `memory/backlog.md`",
+                                  "If fix is larger, add to backlog with specific file:line",
+                                  "add it to backlog with file:line",
+                                  "Backlog holds only genuinely out-of-scope or user-declined items",
+                                  "Bugs discovered: [N] (see backlog)"],
     # the auditor's own deferred-item line, which drifted from the preamble's format
     "skills/refactor/agents/cq-auditor.md": ["description (confidence: N%)"],
     # staging policy with no write verb: the `wrote=` paths backlog-add prints are staged now; the old
@@ -121,6 +129,35 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
     # line counted hand-backlogged findings
     "skills/ship/SKILL.md": ["<n> backlogged", "backlog or ignore", "record it in `memory/backlog.md`",
                              "silently is fine", "write them to `memory/backlog.md`"],
+    # test-audit wrote memory/backlog.md by hand (read, fingerprint, increment Seen, delete resolved items)
+    # under an invalid dated source, and its report and checklist counted those hand writes
+    "skills/test-audit/SKILL.md": ["test-audit/{date}",
+                                   "Delete resolved items",
+                                   "If missing, create with template",
+                                   "backlog.md updated: [N] entries ([N] new, [N] deduped)",
+                                   "[ ] Backlog updated for critical gate failures"],
+    # write-e2e: the adversarial boilerplate and the below-A WARN named a hand backlog row
+    "skills/write-e2e/SKILL.md": ["else backlog with file:line",
+                                  "WARN + per-file backlog",
+                                  "WARN + backlogged"],
+    # write-tests: environment blockers, skipped tiers and deferred findings said "backlog" with no helper;
+    # the resume column, the checklist and the completion step named the backlog as the place they went
+    "skills/write-tests/SKILL.md": ["backlog the environment issue",
+                                    "backlog one run-level environment issue",
+                                    "`FAILED`, backlog, no Step 4",
+                                    "run-level ENV blocker — backlog",
+                                    "backlog `duplicate-test-suite`",
+                                    "and backlog the extraction",
+                                    "printed as context and backlogged",
+                                    "skip after backlog",
+                                    "| Backlog with file:line |",
+                                    "rejection requires backlog entry",
+                                    "`FAILED` + backlog",
+                                    "unfixed out-of-scope issues → `memory/backlog.md`",
+                                    "loud WARN + backlog",
+                                    "backlog the problems noticed OUTSIDE the files under test",
+                                    "sub-A files fixed (or WARN + backlog)",
+                                    "Skip (already backlogged)"],
 }
 
 # {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
@@ -134,7 +171,6 @@ PENDING: Dict[str, int] = {
     "skills/content-audit/SKILL.md": 4,
     "skills/content-fix/SKILL.md": 3,
     "skills/db-audit/SKILL.md": 4,
-    "skills/fix-tests/SKILL.md": 2,
     "skills/geo-audit/SKILL.md": 3,
     "skills/geo-fix/SKILL.md": 7,
     "skills/infra-audit/SKILL.md": 1,
@@ -144,9 +180,6 @@ PENDING: Dict[str, int] = {
     "skills/seo-audit/SKILL.md": 2,
     "skills/seo-fix/SKILL.md": 7,
     "skills/structure-audit/SKILL.md": 2,
-    "skills/test-audit/SKILL.md": 5,
-    "skills/write-e2e/SKILL.md": 2,
-    "skills/write-tests/SKILL.md": 12,
 }
 
 VERB_PATH = r"(?:persist|add|writ|wrote|record|append|push|emit|clean|remov|drop|delet)"

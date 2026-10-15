@@ -174,6 +174,10 @@ All steps fall back to `find`/`Read`/`Grep`/`Glob`. File discovery is slower and
 
 ## Phase 0: Discovery and Pairing
 
+### 0.0 Backlog snapshot
+
+Skipped under `--read-only`, which records nothing. Once, at the run's original start, before any `backlog-add` call: `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout under audit (a linked worktree's own root), assigned in the same shell call. Print the output under a `backlog-snapshot:` line (`backlog-snapshot: (empty)` when it printed nothing); a resumed run reuses the printed one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+
 ### 0.1 Locate Test Files
 
 When CodeSift is available: `get_file_tree(repo, name_pattern="*.test.*")` with path filters excluding `node_modules`, `.next`, `e2e` (unless `--include-e2e`).
@@ -620,18 +624,16 @@ Output: `COVERAGE UPDATE: [N] rows updated ([N] downgraded, [N] confirmed, [N] n
 
 ## Phase 5: Backlog Persistence
 
-Persist findings to `memory/backlog.md`:
+Every finding this audit records goes through `backlog-add`, one call per finding (`backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here). Under `--read-only` this phase does not run: the calling skill records the findings (`test-quality-gate.md`).
 
-1. Read `memory/backlog.md`. If missing, create with template.
-2. Fingerprint each finding: `file|Q/AP-id|signature`. Dedup: existing = increment `Seen`.
-3. Delete resolved items.
+**What to record:**
+- **Tier C/D files:** every finding, a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested public method, a missing error-path test), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding), and `BUG` only when it names the input and the wrong output (BUG, SEC and DATA need `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
+- **Tier B critical gate failures** (Q7/Q11/Q13/Q15/Q17=0): one call per gate, the gate named in the title.
+- **Auto Tier-D red flags** (AP13/AP14/AP16): always recorded, the same call with `--severity high`.
 
-Full protocol: `../../shared/includes/backlog-protocol.md`.
+Assign `"$R"`, `"$F"` and `"$T"` before each call, `"$A"` only when you pass `--anchor`, and `"$M"` only when you pass `--missing-assertion`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 
-**What to persist:**
-- **Tier C/D files:** all findings. Source: `test-audit/{date}`. Category: Test.
-- **Tier B critical gate failures** (Q7/Q11/Q13/Q15/Q17=0): separate item per gate
-- **Auto Tier-D red flags** (AP13/AP14/AP16): always persist as HIGH
+**Resolved entries** (**Closing, not removing**): a finding fixed before Phase 5 gets no call. Phase 5 files before Phase 7 fixes anything, so a finding Phase 5 recorded and Phase 7 then fixes is closed there (Phase 7, Verify), never left open and never removed. An open entry from an earlier audit is closed, never removed, only when this run re-read its cited test lines and found the defect fixed: a Tier A score does not prove any one defect is gone.
 
 ## Phase 6: Persistence Verification
 
@@ -640,7 +642,7 @@ Before presenting the report, verify all writes completed:
 ```
 PERSISTENCE VERIFICATION
   coverage.md updated: [N] rows ([N] downgraded, [N] confirmed, [N] new)
-  backlog.md updated:  [N] entries ([N] new, [N] deduped)
+  Recorded: [N] (backlog: [a], ledger: [b]), plus each NOT PERSISTED (<reason>) by name
   batch files cleaned: [yes/no]
 ```
 
@@ -658,8 +660,13 @@ After presenting the report, the user may request fixes:
    - All modified test files <= 400 lines
    - Q1-Q25 self-eval on each fixed file
    - Tier improvement confirmed (D->C+, C->B+, B->A)
+   - Each B- or F-id Phase 5 printed for a finding the fix resolved is closed, as `backlog-protocol.md` "Filing from a skill", **Closing, not removing**, says
 4. **Commit** -- behavior per `--commit` flag (ask/auto/off)
 5. **Re-audit** -- optionally re-run on fixed files to verify improvement
+
+## Closing Commit for backlog-add's Writes
+
+The run's last action, after Phase 7 (or after Phase 6 when no fix workflow ran) and so after every `backlog-add` call and every close: follow `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**, against the `backlog-snapshot:` Phase 0.0 printed. `--commit` governs the one question the run asks, the code commit of Phase 7 step 4, and the closing commit follows its answer: `--commit=auto` makes it; `--commit=ask` makes it when the code commit was approved; a declined `ask`, `--commit=off`, and an `ask` Phase 7 never reached (no fixes) make no commit and list the `wrote=` paths in the final summary. It is never a second pause. When another skill runs this audit, make no commit and print one line in the report, `Backlog writes: <path>, …` (or `Backlog writes: none`): that skill's closing commit carries them. Print the result in the final summary as `closing commit: <hash>`, `none: nothing to stage`, or `not committed (<reason>): <paths>`, only after the commit step has run.
 
 ## Next-Action Routing
 
@@ -682,7 +689,7 @@ COMPLETION GATE CHECK
 [ ] Untested public methods listed per file
 [ ] Adversarial review ran on audit report
 [ ] Coverage registry updated: memory/coverage.md rows written
-[ ] Backlog updated for critical gate failures
+[ ] Findings recorded through backlog-add (Phase 5), each B- or F-id reported or named under NOT PERSISTED (<reason>), or N/A under --read-only; the closing commit made, or none: nothing to stage, or not committed with the paths listed, or the `Backlog writes:` line printed (run by another skill)
 [ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
 ```

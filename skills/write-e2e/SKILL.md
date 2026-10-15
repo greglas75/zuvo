@@ -117,7 +117,7 @@ Helper absent (a Codex-only or Cursor-only install never ran `install_zuvo_home`
 
 Also detect the CodeSift index (else repository search), Playwright MCP (which gates live DOM inspection ONLY — a
 local `playwright test` run needs no MCP), the framework and the auth provider, then print `PREFLIGHT: <state>
-| CODESIFT: <..> | MCP: <..> | STACK: <..> | AUTH: <..>`.
+| CODESIFT: <..> | MCP: <..> | STACK: <..> | AUTH: <..>`. **Backlog snapshot.** Per `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** (read that section now, before the run's first finding): once, at the run's original start, before any `backlog-add` call, run `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout under test (a linked worktree's own root), assigned in the same shell call. Print the output under a `backlog-snapshot:` line (`backlog-snapshot: (empty)` when it printed nothing); a resumed run reuses the printed one and never takes it again, and if the snapshot command fails the run stages nothing at the end and lists its `wrote=` paths.
 
 ## Phase 0.5: Origin gate — every run that executes anything
 
@@ -201,9 +201,9 @@ and report its actual independence or an unmet requirement.
 Not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release). Wait for complete
 output, then act on findings: **CRITICAL** — confirm first (two or more lanes in its `.agreement`
 group, or your own check against the code), then fix immediately; an unconfirmed single-lane CRITICAL is triaged as a
-WARNING (`adversarial-loop.md` Step 4); **WARNING** — fix if localized (< 10 lines), else backlog with file:line; **INFO** —
+WARNING (`adversarial-loop.md` Step 4); **WARNING** — fix if localized (< 10 lines), else record it (**Adversarial review**, `backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source write-e2e --file "$F" --line <n> [--anchor "$A"] --title "$T"`; **INFO** —
 record, max 3. Confidence measures how sure the reviewer is, not how important the issue is, and "pre-existing" is no
-reason to skip a finding in a file this run is already editing.
+reason to skip a finding: in a file this run is already editing, fix it now; in any other file record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:write-e2e --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`drive-by-findings.md`). Assign `"$R"`, `"$F"` and `"$T"` before each call, and `"$A"` only when you pass `--anchor` (required for BUG, SEC or DATA), as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 
 ## Phase 4: Verification ladder
 
@@ -245,8 +245,8 @@ Everything else follows the include verbatim: fix below-A in-run (strengthening 
 `test(e2e):` when this run commits, otherwise the fixes stay in the working tree with the specs), max 2
 fix→re-audit iterations, `[GATE: test-quality] PASS|WARN|N/A` with the on-disk `zuvo/audits/` report path as
 proof of dispatch — an inline E2E-Q rescoring pass reported as this gate is a substituted gate = INVALID.
-Below-A after the cap → WARN + per-file backlog, never silence. In `--dry-run`/`--flows` mode (nothing
-written) print `[GATE: test-quality] N/A (no specs written)`.
+Below-A after the cap → WARN, each such file recorded once as the include's step 5 says (**Generic write**, whole-file), never silence. In `--dry-run`/`--flows` mode (nothing
+written) print `[GATE: test-quality] N/A (no specs written)`. **Closing commit.** After the run's last `backlog-add` call (the Phase 3 adversarial review's and this gate's, the only call sites; nothing after Phase 4.5 calls it), a run that commits makes the one closing commit, as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**, says, against the `backlog-snapshot:` Phase 0 printed. A run that does not commit stages nothing and lists the `wrote=` paths in the report. Run by another skill, it makes no commit and prints one line, `Backlog writes: <path>, …` (or `Backlog writes: none`).
 
 ## Artifact Contract
 
@@ -270,7 +270,7 @@ COMPLETION GATE CHECK
 [ ] Preflight state printed; effective baseURL resolved and its origin classified before anything executed
 [ ] Scored flow list printed with confidence and reasons; E2E-Q1..E2E-Q10 evidenced on every spec
 [ ] Adversarial review ran (--mode test); every flow carries exactly one verification state
-[ ] Test Quality Gate (Phase 4.5): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path from a dispatch that carried --include-e2e (inline E2E-Q rescoring is a substituted gate = INVALID); below-A specs fixed in-run + states re-earned, or WARN + backlogged
+[ ] Test Quality Gate (Phase 4.5): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path from a dispatch that carried --include-e2e (inline E2E-Q rescoring is a substituted gate = INVALID); below-A specs fixed in-run + states re-earned, or WARN with each one recorded through backlog-add
 [ ] memory/e2e-coverage.md upserted via the helper, or hand-written in the row shape when it is absent
 [ ] Run: line printed and appended to log
 
