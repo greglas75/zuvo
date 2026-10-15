@@ -42,6 +42,14 @@ Measured 2026-10-15 (campaign reports, hand-labelled gold sets):
   tags match by exact equality) → BM25 **0.83** → BM25 top-50 + `voyageai/rerank-2.5` **0.91**.
 - backlog: today's exact keys catch **0/38** reworded duplicates; BM25 top-15 +
   `voyageai/rerank-2.5-lite` leave-one-out F1 **0.89** at threshold 0.72.
+  **Correction (2026-10-15, raised by the ryzen-dev zuvo session that merged PR #80):** the 0/38 baseline
+  is the legacy text key (`normalize_signature`/`entry_key`, `sha1(body[:200])`). None of the 18 820
+  corpus entries carries the `F-` fingerprint (`sha1(CLASS|where|anchor)`) that `backlog-add` has
+  used since 2026-10-14, so how many of the 38 that fingerprint would already merge was never measured.
+  A rewording alone no longer splits an entry there; a different anchor within ±3 lines, class or
+  file still does (backlog `B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS`). Task 5 targets that remaining
+  gap, and legacy/manual entries, groom (Task 6) and the Task 4 bug are unaffected. The 0.72
+  threshold is calibrated on this gold set only; rerank scores are not probabilities.
 - `normalize_signature` bug (confirmed by running it): on table rows whose Problem cell precedes the
   File cell, the signature is the basename + 8 words of metadata columns, so
   `| B-1 | race in cache invalidation | src/a.py:10 | WARNING | review |…` and
