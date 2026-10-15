@@ -292,7 +292,7 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
   no index, no constraint) cites the line of the code that lacks it (the handler, the query, the model or
   schema definition), and its anchor is copied from that line; a schema-wide DATA finding cites the schema
   or model definition line, and a finding across several endpoints cites one representative handler and
-  lists the others in `--evidence "$E"`.
+  lists the others in `--evidence "$E"`; it is closed only when every handler listed there is fixed.
 - A **whole-file** finding (a below-A test file, a skipped or blocklisted file, a file-wide CQ or Q
   violation, a file over its size limit, a missing test file for a source file) is a file record that
   cites `--line 1`, and its title starts "Whole file: …". Line 1 is the convention for "the whole
