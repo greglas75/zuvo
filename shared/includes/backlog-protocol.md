@@ -272,6 +272,12 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
 - A **file** record takes `--file` and `--line`. `--anchor` is required on a BUG, SEC or DATA file
   record (at least 8 non-space characters, refused `missing-field:anchor` otherwise); on any class,
   an anchor that is given must appear within ±3 lines of `--line`.
+- A **whole-file** finding (a below-A test file, a skipped or blocklisted file, a file-wide CQ or Q
+  violation, a file over its size limit, a missing test file for a source file) is a file record that
+  cites `--line 1`, and its title starts "Whole file: …". Line 1 is the convention for "the whole
+  file", never a guess at a location. A class with no anchor requirement (CQ, TEST-GAP, SIZE, …)
+  passes no `--anchor`. A whole-file BUG, SEC or DATA needs an anchor within ±3 lines of its line, so
+  it is filed at the line that shows the defect, not at line 1.
 - A **target** record has no line, so no anchor is checked. A URL or host target needs `--evidence`
   (refused `missing-field:evidence` without it), whatever the class; a `subject:` target (PROCESS or
   SEC only) needs neither. Pass no `--anchor` with a target: on BUG, SEC and DATA a given anchor
