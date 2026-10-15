@@ -31,6 +31,7 @@ import zuvo_backlog_add as add  # noqa: E402
 import zuvo_backlog_entry as ent  # noqa: E402
 import zuvo_backlog_findings as fnd  # noqa: E402
 import zuvo_backlog_io as zio  # noqa: E402
+import zuvo_backlog_parse as zb  # noqa: E402
 
 ANCHOR = "if total > limit:"
 SOURCE = "a = 1\nb = 2\nif total > limit:\n    return total - limit\n"
@@ -776,6 +777,35 @@ class LockTests(AddCase):
                          (1, "", "backlog-add: RenderInvisible: render-invisible\n"))
         self.assertEqual(snapshot(r), before)
         self.assertFalse((r / LOCK_REL).exists())
+
+
+class LegacyTextKeysOnSomethingTests(unittest.TestCase):
+    """The second lookup's text must always carry a signature — the reason exit 13 may fall through.
+
+    `backlog-add` asks `lookup` twice: by B-id, then — only when that is ABSENT — by the legacy text
+    `<where> — <title>`. A cross-model review called it CRITICAL that a NO-SIGNATURE answer (exit 13)
+    falls through to filing a new entry instead of refusing. Filing IS the right outcome: a text that
+    keys on nothing cannot match an existing entry, and refusing would discard a finding that already
+    passed validation, the cited-code check and the bars. But that is only harmless while the answer
+    is unreachable here, so this pins the unreachability instead of restating the argument. Every
+    degenerate title `validate` still admits, against a file target and against `subject:`/URL
+    targets, must leave `normalize_signature` something to key on; if a future `_legacy_text` or a
+    looser title rule breaks that, this fails rather than the backlog quietly gaining duplicates.
+    """
+
+    TITLES = ("DONE", "FIXED", "CLOSED", "**Closed:**", "~~x~~", "a", ".", "RESOLVED 2026-01-01")
+    WHERES = ("src/x.ts:12", "subject:release-process", "https://example.test/path", "example.test")
+
+    def test_every_admitted_title_and_target_still_keys(self) -> None:
+        for where in self.WHERES:
+            for title in self.TITLES:
+                text = f"{where} — {' '.join(title.split())}"
+                sig = zb.normalize_signature(text)
+                with self.subTest(text=text):
+                    self.assertTrue(sig.replace("|", "").strip(),
+                                    f"legacy text {text!r} normalises to {sig!r}: the text lookup "
+                                    f"would answer NO-SIGNATURE, and the finding would be filed "
+                                    f"without ever being compared against an existing entry")
 
 
 if __name__ == "__main__":
