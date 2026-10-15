@@ -256,6 +256,8 @@ class ClientTest(Base):
                  ("ipv4 loopback", "http://127.0.0.1:8080/v1", None),
                  ("localhost name", "http://localhost:8080/v1", "insecure-url"),
                  ("ipv6 loopback", "http://[::1]:8080/v1", None),
+                 ("other 127/8 loopback literal", "http://127.0.0.2:8080/v1", None),
+                 ("non-loopback ip literal", "http://10.0.0.5/v1", "insecure-url"),
                  ("remote http", "http://openrouter.ai/api/v1", "insecure-url"),
                  ("loopback-looking remote", "http://127.0.0.1.evil.example/v1", "insecure-url"),
                  ("localhost-looking remote", "http://localhost.evil.example/v1", "insecure-url"),

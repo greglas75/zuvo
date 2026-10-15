@@ -6,7 +6,7 @@ called by anything but zuvo_rerank.
 KEY      OPENROUTER_API_KEY, else ZUVO_OR_KEY_FILE, else $HOME/.zuvo/openrouter.key — the rule of
          adversarial-lanes-http.sh: a file is read only at mode 600/400, and an empty key or one holding a
          quote, backslash or line break is refused.
-URL      the OpenRouter key goes ONLY to https://openrouter.ai or to loopback (literal 127.0.0.1 / ::1,
+URL      the OpenRouter key goes ONLY to https://openrouter.ai or to a loopback IP literal (IPv4 127/8, ::1;
          the test stub; http allowed there). Refused before any request: `bad-url` (does not parse, not
          http(s), or carries userinfo `user[:pw]@`), `insecure-url` (cleartext http to another host),
          `foreign-host` (https to any other host — the key is OpenRouter's, never another vendor's).
@@ -18,6 +18,7 @@ LOG      one TSV line per call, one os.write under LOG_LOCK; rotated to rerank.l
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import os
 import threading
@@ -27,7 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 LOG_MAX_BYTES = 5 * 1024 * 1024
-LOOPBACK = ("127.0.0.1", "::1")  # literal addresses only: a `localhost` name resolves through /etc/hosts
 KEY_HOSTS = ("openrouter.ai",)
 LOG_LOCK = threading.Lock()
 
@@ -58,6 +58,14 @@ def key() -> str | None:
     return k
 
 
+def _loopback(host: str) -> bool:
+    """An IP literal on loopback. Names never count: `localhost` resolves through /etc/hosts."""
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def url_problem(url: str) -> str | None:
     """None when `url` may carry the key; otherwise the outcome that refuses it."""
     try:
@@ -67,11 +75,11 @@ def url_problem(url: str) -> str | None:
         return "bad-url"
     if parts.scheme not in ("https", "http") or not host:
         return "bad-url"
-    if parts.scheme == "http" and host not in LOOPBACK:
+    if parts.scheme == "http" and not _loopback(host):
         return "insecure-url"
     if "@" in parts.netloc:
         return "bad-url"
-    if host not in LOOPBACK + KEY_HOSTS:
+    if not _loopback(host) and host not in KEY_HOSTS:
         return "foreign-host"
     return None
 
