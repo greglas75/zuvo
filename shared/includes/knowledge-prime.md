@@ -57,6 +57,19 @@ Never delete or overwrite malformed lines. They may contain data in an unknown s
 
 ### Step 3: Score and filter
 
+If `~/.zuvo/knowledge-rank` exists, run this in ONE Bash call (each call is a fresh shell, so the block sets `MAIN_ROOT` itself). Replace the two placeholders with `WORK_KEYWORDS` comma-joined and `WORK_FILES` one path per line, either may be empty. Fill each value single-quoted and write an embedded `'` as `'\''` — the values come from task text, and inside double quotes a `$(...)` or backtick would run. Use its order: it already applies Step 4's caps and prints `[{id,type,section,score}]`; look each entry up by `(id, type)` in that type's Step 2 file — if one type has an `id` twice, the newest (latest `updatedAt`) wins, as in the helper:
+
+```bash
+MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+[ -z "$MAIN_ROOT" ] && MAIN_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+WORK_KEYWORDS='<kw1,kw2>'
+WORK_FILES='<path1>
+<path2>'
+~/.zuvo/knowledge-rank --root "$MAIN_ROOT" --keywords "$WORK_KEYWORDS" --files "$WORK_FILES" --json
+```
+
+With an OpenRouter key present (the key is machine-global, so this holds for every repo on this machine), the helper sends knowledge facts to OpenRouter (Voyage) to rank them; `ZUVO_RERANK=0` opts out and keeps a local ranking. If the helper is missing, exits non-zero, or prints nothing or non-JSON, apply the table below.
+
 For each entry, compute a relevance score:
 
 | Condition | Points |
@@ -86,7 +99,7 @@ If two entries are equally specific at the same level, prefer the newer one (hig
 
 ### Step 4: Select entries (cap at 10 total)
 
-Apply per-section caps after filtering:
+`knowledge-rank` output already has these caps applied — take it as is. Otherwise apply per-section caps after filtering:
 
 | Section | Types | Max entries |
 |---------|-------|-------------|

@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -391,6 +392,51 @@ class KnowledgeRankTest(unittest.TestCase):
                 with self.scoped_stub({"": 0.5}) as stub:
                     self.run_cli(f"cache {name}")
                 self.assertEqual(stub.bodies[0]["model"], expected)
+
+    def run_step3_block(self, keywords: str, files: str) -> subprocess.CompletedProcess[str]:
+        """Run the fenced command from knowledge-prime.md Step 3 from a subdirectory of the repo.
+
+        Only the placeholder text inside the doc's own quotes is replaced, as an agent fills it, with the
+        embedded-quote rule applied (' written as '\\'')."""
+        doc = (ROOT / "shared" / "includes" / "knowledge-prime.md").read_text()
+        step3 = doc.split("### Step 3", 1)[1].split("### Step 4", 1)[0]
+        cmds = [b for b in re.findall(r"```bash\n(.*?)```", step3, re.S) if "knowledge-rank" in b]
+        self.assertEqual(len(cmds), 1, "Step 3 must hold exactly one fenced knowledge-rank block")
+
+        def fill(text: str, placeholder: str, value: str) -> str:
+            self.assertRegex(text, placeholder)
+            return re.sub(placeholder, lambda _: value.replace("'", "'\\''"), text)
+        cmd = fill(cmds[0], r"<kw1,kw2>", keywords)
+        cmd = fill(cmd, r"<path1>(?:\\n|\n)<path2>", files)
+        (self.zhome / "knowledge-rank").symlink_to(CLI)  # the path the doc names: ~/.zuvo/knowledge-rank
+        git = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        subprocess.run(["git", "init", "-q", str(self.main_root)], env={**self.env, **git}, check=True)
+        subdir = self.main_root / "src"
+        subdir.mkdir()
+        return subprocess.run(["bash", "-c", cmd], env={**self.env, **git}, cwd=subdir,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_step3_command_in_knowledge_prime_runs_against_the_helper(self) -> None:
+        # Catches the doc's command drifting from the helper (a renamed flag, a wrong path), and a Step 3 block
+        # that leans on $MAIN_ROOT set elsewhere: each Bash call is a fresh shell, so --root "" would make the
+        # helper read the CWD's knowledge/ (none, from a subdirectory), exit 0 and never fall back.
+        stub = self.stub({"eval": 0.95, "": 0.5})
+        proc = self.run_step3_block(EVERY, "src/cache/ttl.ts")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rows = json.loads(proc.stdout)
+        self.assertEqual([r["section"] for r in rows], [s for s, n in CAPS.items() for _ in range(n)])
+        self.assertGreaterEqual(stub.requests, 1)
+        self.assertEqual((rows[0]["id"], rows[0]["score"]), ("ap-shell-eval", 0.95))
+
+    def test_step3_block_does_not_execute_shell_syntax_in_the_filled_in_values(self) -> None:
+        # Catches the placeholders sitting in double quotes or $'...': a keyword or path taken from task text
+        # holding $(...) or a backtick would run as a command before the helper starts.
+        self.stub({"": 0.5})
+        marks = [self.main_root.parent / "pwned-subst", self.main_root.parent / "pwned-tick"]
+        keywords = f"{EVERY},$(touch {marks[0]}),`touch {marks[1]}`,it's"
+        proc = self.run_step3_block(keywords, f"src/$(touch {marks[0]})/`touch {marks[1]}`.ts")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual([m.exists() for m in marks], [False, False])
 
 TODAY = date(2026, 10, 15)
 
