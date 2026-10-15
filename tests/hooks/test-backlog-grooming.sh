@@ -362,9 +362,9 @@ ORPHANS = "    orphans = [_orphan_defect(rows[i]) for i in range(len(rows)) if i
 EXACT = '        exact = next((i for i in idx if rows[i].get("text_sha") == sha), None)'
 DEDUP_CMP = '        if str(row.get("verified_at", "")) >= str(chosen[hit].get("verified_at", "")):'
 DEDUP_IDS = '        ids = [(str(k), sha) for k in row.get("keys", [])]'
-PLACEMENT = "    if zio.is_ignored(real) and zio.is_ignored(ledger) is False:"
+PLACEMENT = "    if tracked_beside_ignored(zio.is_ignored(real), lambda: zio.is_ignored(ledger)):"
 NAMED = '                 f"    /memory/{LEDGER_NAME}\\n"'
-MODE_LINE = ("            mode = os.stat(real).st_mode & 0o7777     "
+MODE_LINE = ("    return os.stat(source).st_mode & 0o7777     "
              "# inherit the source's visibility AND its mode")
 LOCK_LINE = "    with zio.Lock(os.path.dirname(real)):"
 PREVALIDATE = ('    if bad:\n'
@@ -389,7 +389,7 @@ MUTATIONS = {
     "dedupsha": (DEDUP_IDS, '        ids = [(str(k), "") for k in row.get("keys", [])]'),
     "noplacement": (PLACEMENT, "    if False:"),
     "nonamed": (NAMED, '                 f"    /memory/done.md\\n"'),
-    "nomode": (MODE_LINE, "            mode = None"),
+    "nomode": (MODE_LINE, "    return None"),
     "nolock": (LOCK_LINE, "    if True:"),
     "prevalidate": (PREVALIDATE, "    if bad:\n        pass"),
     # `_KEY_RE` admitting only `id:` keys. This is the one-line change that would have FORCED Task 2 to

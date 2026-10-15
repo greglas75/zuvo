@@ -22,10 +22,10 @@
 
 4. **Respect confidence levels.** Rate each finding with a confidence percentage:
    - **51-100%** — Report directly. You have strong evidence.
-   - **26-50%** — Include in your report but mark as low-confidence. These get tracked in the backlog.
+   - **26-50%** — Include in your report to the orchestrator, marked low-confidence. The orchestrator persists it to the findings ledger and leaves it out of its report to the user. A `SEC` finding also lands in the backlog, prefixed `(low confidence — verify manually)`, and a drive-by `SEC` finding is still listed by name in the user's summary (`drive-by-findings.md`).
    - **0-25%** — Discard silently. This range indicates likely hallucination or insufficient evidence.
 
-5. **Separate scope from backlog.** Issues that fall within your assigned scope go in your main report. Issues you notice that are outside your scope belong in a separate `BACKLOG ITEMS` section at the end of your output. The orchestrating agent will persist backlog items using the backlog protocol. Prefix each with its drive-by tag (`[SEC]`, `[BUG]`, `[SIZE]`, `[DUP]`, `[CPLX]`, `[PERF]`, `[DEAD]`, `[READ]`) and hold it to that tag's bar — read `shared/includes/drive-by-findings.md` (beside this file) before writing the section: at least 51% confidence, except `[SEC]`, which is reported from 26% at any severity. An out-of-scope observation that fits no tag or clears no bar is not a backlog item; the bars are the filter. Item 4's 26-50% band applies to in-scope findings, not to this section. Cite a secret's kind and location, never its value.
+5. **Separate scope from backlog.** Issues that fall within your assigned scope go in your main report. Issues you notice that are outside your scope belong in a separate `BACKLOG ITEMS` section at the end of your output. You never call `backlog-add`; the orchestrating agent makes one `backlog-add` call per item (`backlog-protocol.md`) and handles its exit code as that file says (retry, correct, or `NOT PERSISTED`), so each item carries the fields that call needs (format below). Its `CLASS` is its drive-by tag (`SEC`, `BUG`, `SIZE`, `DUP`, `CPLX`, `PERF`, `DEAD`, `READ`), and it must meet that tag's condition — read `shared/includes/drive-by-findings.md` (beside this file) before writing the section. List every item from 26% confidence, as in item 4, uncapped; `backlog-add`, not you, decides whether it reaches the backlog or only the findings ledger. An out-of-scope observation that fits no tag is not a backlog item. `anchor` is text copied verbatim from the cited line and written in backticks, because it may itself contain `|`: required for `SEC` and `BUG` with a file, with at least 8 non-space characters, optional otherwise, and checked against the line whenever it is given; on a hardcoded secret it is the part of the line before the value — the name and what precedes it (`const db_pw =`), still at least 8 non-space characters — never any character of the value; when the line has fewer than 8 before the value, copy a line within ±3 lines of it that holds no secret, as the check accepts. A `target` is only for `SEC` and `BUG` on a live URL or host. Cite a secret's kind and location, never its value.
 
 ## Output Structure
 
@@ -44,8 +44,13 @@ Every agent report must follow this structure:
 
 ### BACKLOG ITEMS
 
-[Issues outside your scope, formatted as:]
-- [severity] file_path:line — description (confidence: N%)
+[Issues outside your scope, one per line, formatted as:]
+- [CLASS] conf: NN | file_path:line | anchor: `<text copied from that line>` | evidence: <what proves it> | severity: <critical|high|medium|low> | <the defect, one sentence>
+[or, for a SEC or BUG finding with no repository file (a live URL or host):]
+- [CLASS] conf: NN | target: <https://… or hostname> | evidence: <what proves it> | severity: <critical|high|medium|low> | <the defect, one sentence>
+[optional fields, appended before the defect when you have them:]
+  | fix: <the remedy> | also: <file_path:line of another site, DUP; repeat for each>
+[`anchor` may be omitted for tags other than SEC and BUG.]
 ```
 
 If you have no backlog items, include the section header with "None" underneath. The orchestrating agent uses this section marker to extract items for persistence.

@@ -45,7 +45,7 @@ import json
 import os
 import re
 import sys
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import zuvo_backlog_io as zio
 import zuvo_backlog_parse as zb
@@ -264,15 +264,27 @@ def _dedup(rows: Sequence[Row]) -> List[Row]:
     return chosen
 
 
+def tracked_beside_ignored(backlog_ignored: Optional[bool], path_ignored: Callable[[], Optional[bool]],
+                           ) -> bool:
+    """Ignored backlog + would-be-TRACKED file beside it; None (no repo) never counts as tracked.
+    `path_ignored` is probed only when the backlog IS ignored: a tracked backlog costs one git call."""
+    return bool(backlog_ignored) and path_ignored() is False
+
+
+def inherited_mode(source: str, target: str) -> Optional[int]:
+    """Mode for a NEW `target` beside the backlog: `source`'s own; None if `target` exists or `source` not."""
+    if os.path.exists(target) or not os.path.exists(source):
+        return None
+    return os.stat(source).st_mode & 0o7777     # inherit the source's visibility AND its mode
+
+
 def refuse_tracked_ledger(real: str, ledger: str) -> None:
     """The archiver's refusal, for the same reason, with the LEDGER named.
 
-    `is False`, never a bare falsy test: `is_ignored` answers None outside a git repository (the
-    canonical backlog lives there) and "unknown" must not masquerade as "tracked". The recipe names all
-    three siblings because a user who adds only the one the message asked for lands back here on the
-    next command.
+    The recipe names all three siblings because a user who adds only the one the message asked for
+    lands back here on the next command.
     """
-    if zio.is_ignored(real) and zio.is_ignored(ledger) is False:
+    if tracked_beside_ignored(zio.is_ignored(real), lambda: zio.is_ignored(ledger)):
         sys.exit(f"refusing to create a git-TRACKED verdict ledger beside a git-IGNORED backlog.\n"
                  f"the ledger quotes the entries it judges, so publishing it publishes content that\n"
                  f"was deliberately untracked. add these lines to .gitignore first, then re-run:\n"
@@ -307,9 +319,7 @@ def append_rows(repo: str, new_rows: Sequence[Row]) -> Tuple[int, List[str]]:
         if old and not old.endswith("\n"):
             old += "\n"
         fresh = "".join(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in new_rows)
-        mode: Optional[int] = None
-        if not os.path.exists(ledger) and os.path.exists(real):
-            mode = os.stat(real).st_mode & 0o7777     # inherit the source's visibility AND its mode
+        mode = inherited_mode(real, ledger)
         zio.atomic_write(ledger, old + fresh, mode)
     return len(new_rows), existing.defects
 

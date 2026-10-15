@@ -242,6 +242,25 @@ scripts/lib/adversarial-*.sh    — the adversarial driver's twelve modules (cli
                                   goes through tests/lib/adversarial-driver.sh — the driver file alone
                                   no longer holds the program, and an absence check against it passes
                                   vacuously.
+scripts/zuvo-home/backlog-add   — THE single write path for a finding (→ ~/.zuvo/backlog-add): one call
+                                  per finding, one lock; admission bars, dedupe over both backlog files
+                                  and the findings ledger, then the backlog entry and/or the ledger
+                                  record. Never append to memory/backlog.md by hand. Contract:
+                                  shared/includes/backlog-protocol.md § "Persisting a finding".
+                                  Its modules, all in scripts/zuvo-home/ (no shebang, no +x):
+                                  zuvo_backlog_add.py (the command: lock, both writes, verdicts),
+                                  zuvo_backlog_admit.py (bars, validation, identity; pure functions),
+                                  zuvo_backlog_findings.py (ledger location, segments, append, fold),
+                                  zuvo_backlog_vcs.py (work-tree anchor, default branch, [pr:N]/[branch:]
+                                  tag, changed lines), zuvo_backlog_entry.py (the line it writes, the
+                                  in-place bump), zuvo_backlog_lookup.py (fail-closed lookup over
+                                  backlog-archive.py). End-to-end smoke: tests/hooks/test-backlog-add-e2e.sh.
+memory/backlog.md               — open findings (memory/backlog-done.md: the archive). The intake tickets
+                                  every open entry, so only backlog-add writes here.
+memory/findings/                — the findings ledger beside the REAL backlog: append-only JSONL segments,
+                                  one per day, branch and host (<date>_<branch-slug>_<host>.jsonl),
+                                  folded on read. Every finding at conf ≥ 26 is kept here; not production
+                                  files for the pipeline-entry gate.
 tests/lib/                      — shared test helpers: dist-build.sh (per-run build cache; `--fresh`
                                   forces a real build), hermetic-tools.sh (links real tools onto a
                                   narrowed PATH), installer-sources.sh (the installer's text),

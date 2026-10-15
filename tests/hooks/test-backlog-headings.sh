@@ -2907,6 +2907,12 @@ while IFS= read -r f; do
       why="the three sites that spell \`kinds=KINDS\` — two loader reads and the count-neutrality oracle that licenses mint_write; the NAME is pinned at its definition below, which is where this module's selection actually lives" ;;
     backlog-census.py) want="0 1 count_file 0 0 -"
       why="one heading-dialect read in a module that performs no write at all" ;;
+    zuvo_backlog_entry.py) want="1 0 - 0 0 -"
+      why="the render self-check: one PINNED re-parse of the line backlog-add is about to write, so an entry the parser cannot see is refused instead of filed" ;;
+    # zuvo_backlog_lookup.py (the lookup wrapper split out of zuvo_backlog_entry.py) gets the `*)` arm, like
+    # every non-iterating sibling: it does not even import the parser, so the derivation leaves it out of
+    # the family today, and the day it does import it, "no iter_entries call" is exactly its expectation.
+    # The split moved no call site — self_check stayed in entry — so fam_pin below stays 9.
     *) want="0 0 - 0 0 -"
       why="no iter_entries call at all, so neither an unpinned selection nor a second gate can hide there" ;;
   esac
@@ -2939,9 +2945,11 @@ FAMEOF
 fam_loose_names="$(printf '%s' "$fam_loose_raw" | tr ',' '\n' | grep -v '^$' | LC_ALL=C sort | paste -sd, -)"
 WANT_LOOSE="_report_mint,cmd_index,count_file,find,load,load"
 echo "  ... family totals: pinned=$fam_pin env-gated=$fam_gated unpinned={$fam_loose_names}"
-[ "$fam_pin" -eq 8 ] && [ "$fam_gated" -eq 1 ] && [ "$fam_loose_names" = "$WANT_LOOSE" ] \
-  && ok "(H19c/AC4′) across the $fam_n-module family: exactly 8 unconditionally-pinned calls, exactly 1 env-gated site, and the unpinned bucket is exactly {$WANT_LOOSE} — a set, so a new unpinned site cannot hide behind a retired one" \
-  || no "(H19c/AC4′) family totals are pinned=$fam_pin env-gated=$fam_gated unpinned={$fam_loose_names}, expected pinned=8 env-gated=1 unpinned={$WANT_LOOSE}"
+# 9, not 8, since backlog-add: zuvo_backlog_entry.py's render self-check is the ninth pinned call (its
+# per-file arm above). Raised on purpose, with the unpinned set left exactly as it was.
+[ "$fam_pin" -eq 9 ] && [ "$fam_gated" -eq 1 ] && [ "$fam_loose_names" = "$WANT_LOOSE" ] \
+  && ok "(H19c/AC4′) across the $fam_n-module family: exactly 9 unconditionally-pinned calls, exactly 1 env-gated site, and the unpinned bucket is exactly {$WANT_LOOSE} — a set, so a new unpinned site cannot hide behind a retired one" \
+  || no "(H19c/AC4′) family totals are pinned=$fam_pin env-gated=$fam_gated unpinned={$fam_loose_names}, expected pinned=9 env-gated=1 unpinned={$WANT_LOOSE}"
 
 # --- H19d the NAME the three groom sites spell ----------------------------------------------------
 # `kinds=KINDS` is unpinned BY CONSTRUCTION: `is_pinned` demands the selection be readable AT the site,

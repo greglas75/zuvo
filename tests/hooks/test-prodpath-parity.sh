@@ -54,6 +54,7 @@ TABLE=(
   web/.prettierrc zuvo/plans/p.txt x/zuvo/y.txt .zuvo/proofs/a.txt a/.zuvo/b.txt VERSION pkg/VERSION
   CHANGELOG LICENSE sub/LICENCE NOTICE AUTHORS CONTRIBUTORS .github/workflows/src ""
   src/app.ts scripts/zuvo-home/bill Makefile CODEOWNERS hooks/x.sh
+  memory/findings/a.jsonl x/memory/findings/b.jsonl memory/findings/evil.py
 )
 py_verdicts="$(py 'import sys, zuvo_review_prodpath as m; print("\n".join("1" if m.is_production(p) else "0" for p in sys.argv[1:]))' "${TABLE[@]}")"
 i=0; drift=0; checked=0

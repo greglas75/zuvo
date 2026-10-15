@@ -106,6 +106,19 @@ else
   bad ".zuvo/ proofs wrongly classified: [$out]"
 fi
 
+# Findings-ledger segments (memory/findings/*.jsonl) are append-only data written by backlog-add.
+# Bugs caught: (1) ledger segments counted as production files, so a few segments in a push tripped
+# the >=3-file gate and demanded a review of machine-written rows; (2) any file under the findings
+# directory exempt from review: memory/findings/evil.py must stay production. The writer stays production.
+out="$(printf '%s\n' memory/findings/2026-10-13_main_mac.jsonl pkg/memory/findings/x.jsonl \
+  memory/findings/evil.py scripts/zuvo-home/zuvo_backlog_add.py \
+  | pg_classify_files | tr '\n' ' ')"
+if [ "$out" = "memory/findings/evil.py scripts/zuvo-home/zuvo_backlog_add.py " ]; then
+  pass "classify drops memory/findings *.jsonl segments but keeps non-ledger files and the writer"
+else
+  bad "ledger exclusion wrong (segments counted as production, or any file under the findings directory exempt from review): [$out]"
+fi
+
 # Extensionless repo-metadata files must NOT count as production: otherwise a pure
 # release commit (VERSION bump; every other file in it already excluded as *.md/*.json)
 # reads as production work and demands its own review artifact.
