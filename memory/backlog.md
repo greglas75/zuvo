@@ -5087,9 +5087,39 @@ sessions that pick DIFFERENT lines of the same defect therefore file two entries
 -> `ACCEPTED B-cart-BUG-021ef39e`. Much narrower than the wording problem it replaces (same wording no longer splits,
 same line no longer has to match), and it needs a measurement before a fix: how often two sightings of one defect pick
 different anchors is unknown, and the ledger now records enough to answer it.
-**Fix:** none until that is measured. The candidates are a second key on `CLASS | file | <line bucket>` consulted when
-the anchor key misses, or a `SIMILAR` report at add time listing same-file findings of the same class — the report
-costs nothing and leaves the decision where it is now. | severity: low | category: Tooling | conf: 85
+**Measured 2026-10-15 (owner asked for the decision-model route).** OpenRouter's Decisions API answers exactly this
+question and returns a PROBABILITY, not a label: `{"choice":"DUP","probabilities":{"DUP":0.76,...},"confidence":0.52}`,
+input-priced with output free. It is NOT reachable through `chat/completions` (the API says so and refuses); the call is
+`POST /api/alpha/decisions` with `{model, state, questions:{<name>:{type:"choice", instructions, criteria}}}`. Eleven
+models answer there today (openrouter.ai/rankings/decisions). Scored over `tests/lib/dedup-corpus.py` — positives: two
+revisions of ONE B-id with the id stripped from both sides, negatives: two different ids citing the same file:
+
+    model                              AUC    bal.acc@0.5   best        $/109 pairs   median
+    perplexity/pplx-decider-v1.1-27b   0.923      0.861      0.878@0.55    0.00056      332ms
+    nace-ai/drex-v2.0                  0.865      0.767      0.788@0.35    0.00127      320ms
+    inception/mercury-decide           0.860      0.711      0.778@0.05    0.00051      364ms   (:free variant exists)
+    ~typesafe/jev-latest               0.850      0.756      0.773@0.70    0.00222      274ms
+    typesafe/jev-1.13                  0.837      0.739      0.767@0.60    0.00222      275ms
+    microsoft/microsoft-decision-1     0.814      0.698      0.734@0.85    0.00094      332ms
+    openai/gpt-6-luna-decisions        0.771      0.617      0.772@0.25    0.00302      205ms
+    cloudflare/clef                    0.767 · nace-ai/drex-v1.5 0.765 · cloudflare/clef-flash 0.713
+
+A second corpus draw (seed 23, different commit step) keeps the order at the top: pplx-decider 0.913, mercury 0.868,
+drex-v2.0 0.838, jev 0.777 — jev is the least stable of the four. For scale, the words-half this fleet retired scored
+AUC 0.632 on its own corpus. LIMITS, binding: 19 positives (15 on the second draw), they are REVISIONS of one entry
+rather than two independent filings, and `--min-drift` keeps only low-overlap pairs, so these are a hard subset and a
+lower bound. The ledger's `seen>1` will give real pairs once entries accumulate.
+**Fix — staged, and nothing changes behaviour before stage 3.**
+1. ADVISORY ONLY: when the structural key MISSES, `backlog-add` asks `perplexity/pplx-decider-v1.1-27b` about the
+   candidate against same-file, same-class findings from the ledger and prints `SIMILAR F-… p=0.87` on stderr. Writes
+   nothing, decides nothing. Off unless `ZUVO_BACKLOG_SIMILAR=1` and a key is present; fail-open on any error, with the
+   call made BEFORE the lock is taken (the lock budget is 30 s and a network call must never sit inside it).
+2. MEASURE IN THE WILD: record each verdict and what the caller did next, so precision is computed on real pairs
+   instead of this proxy corpus.
+3. ACT, only if stage 2 supports it: at p above the measured threshold, BUMP instead of filing, recording
+   `dedup: <model> p=…` on the entry so it is auditable and reversible.
+   The deterministic `CLASS | file | anchor` key stays the identity throughout: the model is consulted only on a miss,
+   and never gets to overrule a structural match. | severity: low | category: Tooling | conf: 85
 
 - [x] B-20261009-DEDUP-EMPTY-QUERY-OPEN [FIXED 4505da07] [P2][correctness][conf 95]
 **Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
