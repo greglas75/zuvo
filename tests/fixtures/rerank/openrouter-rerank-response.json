@@ -1,0 +1,31 @@
+{
+ "model": "rerank-2.5-lite",
+ "results": [
+  {
+   "index": 0,
+   "relevance_score": 0.660357654094696,
+   "document": {
+    "text": "Two writers update the cache entry at once and the stale value wins."
+   }
+  },
+  {
+   "index": 2,
+   "relevance_score": 0.6537476181983948,
+   "document": {
+    "text": "Invalidate the cached result before the second request reads it."
+   }
+  },
+  {
+   "index": 1,
+   "relevance_score": 0.27611243724823,
+   "document": {
+    "text": "The log file is rotated when it grows past five megabytes."
+   }
+  }
+ ],
+ "usage": {
+  "total_tokens": 41,
+  "cost": 8.2e-07
+ },
+ "provider": "VoyageAI by MongoDB"
+}
