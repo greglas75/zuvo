@@ -39,7 +39,7 @@ CAPS = {"MUST AVOID": 3, "GOTCHAS": 2, "DECISIONS": 2, "CODEBASE FACTS": 2, "PAT
 def fixture_tags() -> list[str]:
     tags: set[str] = set()
     for f in FIXTURE.glob("*.jsonl"):
-        for line in f.read_text().split("\n"):
+        for line in f.read_text(encoding="utf-8").split("\n"):
             with contextlib.suppress(ValueError, AttributeError):
                 tags.update(json.loads(line).get("tags", []))
     return sorted(tags)
@@ -120,8 +120,8 @@ class KnowledgeRankTest(unittest.TestCase):
 
     def test_deeply_nested_line_is_skipped_not_fatal(self) -> None:
         # Catches json.loads' RecursionError escaping the malformed-line guard and killing the whole prime.
-        with (self.store / "gotchas.jsonl").open("a") as f:
-            f.write("[" * 200000 + "\n")
+        with (self.store / "gotchas.jsonl").open("a", encoding="utf-8") as f:
+            f.write("\n" + "[" * 200000 + "\n")  # own line even if the fixture lacks a final newline
         self.env["ZUVO_RERANK"] = "0"
         rows, _ = self.run_cli("timezone")
         self.assertIn("gotcha-timezone-midnight", self.ids(rows))
@@ -184,7 +184,7 @@ class KnowledgeRankTest(unittest.TestCase):
     def test_valid_json_that_is_not_an_object_is_skipped_as_malformed(self) -> None:
         # Catches `entry.get` raising AttributeError on a list, string or number line and ending the prime.
         self.write_store("decisions.jsonl", [{"id": "ok", "fact": "widget ok"}])
-        with (self.store / "decisions.jsonl").open("a") as f:
+        with (self.store / "decisions.jsonl").open("a", encoding="utf-8") as f:
             f.write('[1, 2]\n"widget"\n42\n')
         self.env["ZUVO_RERANK"] = "0"
         rows, proc = self.run_cli("widget")
@@ -194,7 +194,7 @@ class KnowledgeRankTest(unittest.TestCase):
         # Catches a typeless entry being dropped (or keyed as None), an unknown type taking a section slot,
         # and a blank line being reported as malformed.
         self.write_store("decisions.jsonl", [{"id": "typeless", "fact": "widget typeless"}])
-        with (self.store / "decisions.jsonl").open("a") as f:
+        with (self.store / "decisions.jsonl").open("a", encoding="utf-8") as f:
             f.write("\n   \n")
         (self.store / "notes.jsonl").write_text(json.dumps({"id": "note-1", "fact": "widget note"}) + "\n")
         self.env["ZUVO_RERANK"] = "0"
@@ -287,7 +287,7 @@ class KnowledgeRankTest(unittest.TestCase):
         self.store.mkdir()
         lines = [json.dumps({"id": f"fact-{i:02d}", "type": "codebase-fact", "tags": ["widget"],
                              "fact": f"Widget fact number {i}.", "recommendation": "Read it.",
-                             "confidence": "medium", "updatedAt": "2026-09-01"}) for i in range(60)]
+                             "confidence": "medium", "updatedAt": days_ago(5)}) for i in range(60)]
         (self.store / "codebase-facts.jsonl").write_text("\n".join(lines) + "\n")
         stub = self.stub({"": 0.5})
         self.run_cli("widget")
