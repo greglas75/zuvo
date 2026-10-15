@@ -5049,7 +5049,7 @@ confidence:98 source:self-account of the first live verify run 2026-10-06
 - B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
   collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
 
-- [ ] B-20261009-DEDUP-SIGNATURE-ONLY [P2][process][conf 95]
+- [x] B-20261009-DEDUP-SIGNATURE-ONLY [OBSOLETE 2026-10-15] [P2][process][conf 95]
 **Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|signature-match-only
 **Source:** owner's question 2026-10-09 — "czy agent przed dodaniem wpisu sprawdza czy podobny nie istnieje?"
 **What:** `skills/backlog/SKILL.md` "Adding Items" step 5 mandates `backlog-archive.py lookup` before an add, but the
@@ -5065,6 +5065,31 @@ symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone
 **Fix:** add a similarity tier under the exact signature — same cited path (any basename match) plus a token-overlap or
 embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
 agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
+**Resolution 2026-10-15 — NOT the similarity tier this asked for; the write path stopped needing one.** `backlog-add`
+(landed 2026-10-14) keys a finding on `CLASS | file | anchor`, where the anchor is text copied from the cited line, so
+"paraphrased titles collapse" by construction instead of by scoring. Probed on a scratch repo, two sessions filing the
+same defect in completely different words:
+  - same `--anchor`, titles sharing no content word -> `BUMPED … seen=2`, sources merged into the one entry
+  - same `--anchor`, `--line` off by one            -> `BUMPED … seen=3` (the anchor is the identity, not the line)
+  - DIFFERENT `--anchor` line, both legitimately within the ±3 the command allows -> `ACCEPTED` a second entry
+So the filed symptom ("dedup misses the same problem described by another session — the normal case") is gone for
+everything written through `backlog-add`, and adding a token-overlap tier now would introduce a SECOND notion of
+identity next to the structural one. What is left is narrower than what was filed and is tracked separately as
+B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS. The free-text `lookup` keeps its exact-signature behaviour, which is correct for
+what it is now: the resolver for legacy and hand-written entries, where there is no anchor to key on.
+
+- [ ] B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS [P4][process][conf 85]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_admit.py|fingerprint|anchor-choice-splits-identity
+**Source:** probing `backlog-add` while closing B-20261009-DEDUP-SIGNATURE-ONLY, 2026-10-15.
+**What:** `fingerprint` is `CLASS | file | anchor`, and the anchor is free choice within ±3 lines of `--line`. Two
+sessions that pick DIFFERENT lines of the same defect therefore file two entries. Measured on a scratch repo: anchor
+`if (sum > limit) {` -> `B-cart-BUG-37093f54`; anchor `return 0;` three lines down, same defect, same class, same file
+-> `ACCEPTED B-cart-BUG-021ef39e`. Much narrower than the wording problem it replaces (same wording no longer splits,
+same line no longer has to match), and it needs a measurement before a fix: how often two sightings of one defect pick
+different anchors is unknown, and the ledger now records enough to answer it.
+**Fix:** none until that is measured. The candidates are a second key on `CLASS | file | <line bucket>` consulted when
+the anchor key misses, or a `SIMILAR` report at add time listing same-file findings of the same class — the report
+costs nothing and leaves the decision where it is now. | severity: low | category: Tooling | conf: 85
 
 - [x] B-20261009-DEDUP-EMPTY-QUERY-OPEN [FIXED 4505da07] [P2][correctness][conf 95]
 **Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
