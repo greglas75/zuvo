@@ -30,6 +30,7 @@ ARCHIVER = os.path.join(HOME_DIR, "backlog-archive.py")
 FROZEN = os.path.join(ROOT, "tests", "fixtures", "zuvo-backlog-parse-frozen.pysnap")
 FID = "F-0123456789ab"
 TODAY = "2026-10-14"
+PR7 = "[pr:1234567]"      # 7 digits: part 1 wrote these; the intake takes 1–6
 BASE = adm.Finding(cls="BUG", conf=85, source="review", title="total is NaN when the cart is empty",
                    file="src/cart.ts", line=42, anchor="const total = sum(cart.items)",
                    evidence="sum([]) returns undefined", fix="default to 0", severity="high")
@@ -111,7 +112,7 @@ class RenderTests(unittest.TestCase):
         self.assertIsNotNone(ent.parse_own(line))
 
     def test_tag_tail_does_not_change_the_key(self) -> None:
-        for tag in ("[pr:123]", "[branch:feat/x]"):
+        for tag in ("[pr:123]", "[branch:feat/x]", "[pr:999999]", f"[branch:{'b' * 200}]"):
             with self.subTest(f"{tag} enters the key and splits one entry in two"):
                 line, bid = line_for(finding(), tag=tag)
                 self.assertEqual(line, line_for(finding())[0] + " " + tag)
@@ -175,6 +176,10 @@ class RenderTests(unittest.TestCase):
         ("seen 0 is written", {"seen": 0}, "seen must be >= 1, got 0"),
         ("a tag outside the intake charset is written", {"tag": "[branch:feat/a+b]"},
          "not a [pr:N] / [branch:name] tag: '[branch:feat/a+b]'"),
+        ("a 7-digit PR tag past the intake's 1–6 digits is written", {"tag": PR7},
+         f"not a [pr:N] / [branch:name] tag: '{PR7}'"),
+        ("a 201-character branch tag past the intake's 1–200 is written", {"tag": f"[branch:{'b' * 201}]"},
+         f"not a [pr:N] / [branch:name] tag: '[branch:{'b' * 201}]'"),
         ("an impossible date is written", {"today": "2026-02-31"}, "not a date: '2026-02-31'"),
         ("a malformed confidence renders `conf: None`, refused only as render-invisible",
          {"f": finding(conf="abc")}, "not a confidence: 'abc'"),
@@ -248,6 +253,10 @@ class RegressionTests(unittest.TestCase):
         ("a confidence above 100 is written", {"conf": 101}, "not a confidence: 101"),
         ("a tag outside the intake charset is written", {"tag": "[branch:feat/a+b]"},
          "not a [pr:N] / [branch:name] tag: '[branch:feat/a+b]'"),
+        ("a 7-digit PR tag past the intake's 1–6 digits is written", {"tag": PR7},
+         f"not a [pr:N] / [branch:name] tag: '{PR7}'"),
+        ("a 201-character branch tag past the intake's 1–200 is written", {"tag": f"[branch:{'b' * 201}]"},
+         f"not a [pr:N] / [branch:name] tag: '[branch:{'b' * 201}]'"),
         ("an impossible date is written", {"today": "2026-02-31"}, "not a date: '2026-02-31'"),
     ]
 
@@ -262,8 +271,16 @@ class RegressionTests(unittest.TestCase):
     def test_old_tag_is_replaced_by_the_current_one(self) -> None:
         # Defect: the merged PR's tag survives and the intake tickets a regression still on a branch.
         archived, bid = archived_line()
-        line = ent.render_regression(bid, archived, ARCHIVED_SECTION, "review", 85, "[branch:feat/x]", TODAY)
-        self.assertEqual(line, regression_line(bid, "| re-observed by review | conf: 85 [branch:feat/x]"))
+        legacy = archived.replace("[pr:7]", PR7)
+        self.assertIn(PR7, legacy)     # else the legacy row silently repeats the first one
+        rows = [("the merged PR's tag survives the re-open", archived),
+                ("a 7-digit tag part 1 wrote is no longer read as a tail, so it survives the re-open",
+                 legacy)]
+        want = regression_line(bid, "| re-observed by review | conf: 85 [branch:feat/x]")
+        for name, old in rows:
+            with self.subTest(name):
+                self.assertEqual(want, ent.render_regression(bid, old, ARCHIVED_SECTION, "review", 85,
+                                                             "[branch:feat/x]", TODAY))
 
     def test_bare_tick_is_recorded_as_such(self) -> None:
         # Defect: with no marker, the prose is split at an arbitrary word and half lands in "closed …".
@@ -301,6 +318,17 @@ class BumpTests(unittest.TestCase):
         self.assertEqual(out[1], line.replace("source: review | conf: 82 | seen: 1",
                                               "source: review, code-audit | conf: 90 | seen: 2")
                          .replace(TODAY, "2026-10-20") + "\n")
+
+    def test_seven_digit_tag_part_one_wrote_is_still_read_and_kept(self) -> None:
+        # Defect: the strict write bound also applied on read, so part 1's entries stop being bumped
+        # (every re-sighting only linked) or the bump drops their tag.
+        line, bid = line_for(finding())
+        old = f"{line} {PR7}"
+        out = ent.bump([old + "\n"], bid, 90, "code-audit", "2026-10-20")
+        assert out is not None
+        own = ent.parse_own(old)
+        assert own is not None
+        self.assertEqual((own.tag, out[0].endswith(f"| 2026-10-20 {PR7}\n")), (PR7, True))
 
     def test_lower_conf_and_known_source_keep_their_values(self) -> None:
         # Defect: conf drops to the weaker sighting's, or a source is listed twice.

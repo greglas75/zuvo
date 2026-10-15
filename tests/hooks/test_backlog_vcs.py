@@ -41,6 +41,7 @@ A_PY = "".join(f"x{n} = {n}\n" if n != 10 else "    if total  >  limit:\n" for n
 SIX = "a\nb\nc\nd\ne\nf\n"
 CACHE_REL = (".zuvo", "cache", "backlog-add-pr.tsv")
 SHA256_ACME_APP = "5f89da0438fa1b1767532b58bd38cda2396f39889ab9e492e7f8f20d22fc9e9f"  # sha256("acme/app")
+B200, B201 = "feat/" + "x" * 195, "feat/" + "x" * 196    # the intake takes branch names of 1–200 characters
 
 
 class _EIO(io.RawIOBase):
@@ -331,6 +332,17 @@ class TagTests(unittest.TestCase):
          ("pr", "17", "[pr:17]"), 1),
         ("legal branch name rewritten", "feat/x-y.1", BITBUCKET, None, {}, None,
          ("branch", "feat/x-y.1", "[branch:feat/x-y.1]"), 0),
+        ("`_` (inside the intake's set) read as an untaggable character", "feat/x_y", BITBUCKET, None, {},
+         None, ("branch", "feat/x_y", "[branch:feat/x_y]"), 0),
+        ("a 200-character branch (the intake's upper bound) held back as untaggable", B200, BITBUCKET, None,
+         {}, None, ("branch", B200, f"[branch:{B200}]"), 0),
+        ("a 201-character branch tagged although the intake cannot resolve it", B201, BITBUCKET, None, {},
+         None, ("untaggable", B201, ""), 0),
+        ("a 201-character branch drops the explicit --pr it could be tagged with", B201, BITBUCKET, None,
+         {}, "12", ("pr", "12", "[pr:12]"), 0),
+        ("a 6-digit --pr (the intake's upper bound) refused", "feat/x", GITHUB, None, {}, "999999",
+         ("pr", "999999", "[pr:999999]"), 0),
+        ("--pr 1 (the lower bound) refused", "feat/x", GITHUB, None, {}, "1", ("pr", "1", "[pr:1]"), 0),
         ("github.com in the PATH of another host sent to gh", "feat/x",
          "https://evil.example.com/github.com/acme/app.git", PR17, {}, None,
          ("branch", "feat/x", "[branch:feat/x]"), 0),
@@ -453,7 +465,14 @@ class TagTests(unittest.TestCase):
         sb.git("checkout", "-q", "-b", "feat/x")
         rows = [("--pr abc", "abc", {}, r"^--pr: 'abc' is not a PR number$"),
                 ("ZUVO_BACKLOG_PR=1.5", None, {"ZUVO_BACKLOG_PR": "1.5"},
-                 r"^ZUVO_BACKLOG_PR: '1\.5' is not a PR number$")]
+                 r"^ZUVO_BACKLOG_PR: '1\.5' is not a PR number$"),
+                ("--pr 0 tags [pr:0], which no PR has", "0", {}, r"^--pr: '0' is not a PR number$"),
+                ("--pr with a leading zero tags a PR the intake reads as another", "012345", {},
+                 r"^--pr: '012345' is not a PR number$"),
+                ("a 7-digit --pr tags [pr:1000000], past the intake's 1–6 digits", "1000000", {},
+                 r"^--pr: '1000000' is not a PR number$"),
+                ("a 7-digit ZUVO_BACKLOG_PR tags past the intake's 1–6 digits", None,
+                 {"ZUVO_BACKLOG_PR": "1234567"}, r"^ZUVO_BACKLOG_PR: '1234567' is not a PR number$")]
         for name, pr, env, message in rows:
             with self.subTest(name), sb.env(env), self.assertRaisesRegex(ValueError, message):
                 vcs.resolve_tag(str(sb.repo), pr)
@@ -628,14 +647,18 @@ class PrCacheTests(unittest.TestCase):
 
     def test_no_pr_answer_is_cached_as_a_miss(self) -> None:
         # a PR-less branch asking gh (up to ZUVO_GH_TIMEOUT) on every single backlog-add
-        rows = [("an empty list", NO_PR), ("only a fork's PR for the branch name", gh_prs((30, True)))]
-        for name, body in rows:
+        rows = [("an empty list", NO_PR, 1), ("only a fork's PR for the branch name", gh_prs((30, True)), 1),
+                ("a 7-digit PR (no taggable PR for the intake) tagged [pr:1234567], or gh asked on every add",
+                 gh_prs((1234567, False)), 1),
+                ("gh's garbage PR 0 cached as no PR, so a later add never asks gh again",
+                 gh_prs((0, False)), 2)]
+        for name, body, calls in rows:
             with self.subTest(name):
                 self.sb.counter.unlink(missing_ok=True)
                 shutil.rmtree(self.sb.home / ".zuvo", ignore_errors=True)
                 self.sb.stub_gh(body)
                 self.assertEqual(("[branch:feat/x]", "[branch:feat/x]"), (self.tag_at(0), self.tag_at(1)))
-                self.assertEqual(1, self.sb.gh_calls())
+                self.assertEqual(calls, self.sb.gh_calls())
 
     def test_unwritable_cache_warns_and_still_tags(self) -> None:
         # a cache write failure aborting the tag, or failing with no word on stderr
@@ -646,7 +669,8 @@ class PrCacheTests(unittest.TestCase):
 
     def test_tampered_cached_pr_is_asked_again(self) -> None:
         # a fresh, correctly keyed row whose PR is not a number rendered verbatim as `[pr:…]`
-        rows = [("text after the number", "17 injected"), ("a fraction", "1.5"), ("a leading zero", "017")]
+        rows = [("text after the number", "17 injected"), ("a fraction", "1.5"), ("a leading zero", "017"),
+                ("a 7-digit PR an older rule cached, rendered past the intake's 1–6 digits", "1234567")]
         cache = self.sb.home.joinpath(*CACHE_REL)
         for name, bad in rows:
             with self.subTest(name):

@@ -83,7 +83,7 @@ map are built from what has accumulated instead of from a fresh scan.
 | `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
 | `--missing-assertion` | TEST-GAP, MUTATION only | the assertion the tests lack |
 | `--also PATH:LINE` | no, repeatable | another site of the same finding (DUP) |
-| `--pr N` | no | the PR to tag with; `ZUVO_BACKLOG_PR` does the same |
+| `--pr N` | no | the PR to tag with (1–6 digits); `ZUVO_BACKLOG_PR` does the same |
 | `--dry-run`, `--json` | no | write nothing and print the verdict it would give, with ` dry-run` appended (and `wrote=-` on the verdicts that carry `wrote=`); print the verdict as one JSON object |
 | `--repo` | no | the checkout to file in (default: the current directory); it must be inside a git work tree |
 
@@ -133,10 +133,12 @@ can state the concrete input or state that produces the wrong output:
 
 **The tag.** On a branch other than the default, the entry ends with `[pr:N]` (from `--pr`,
 `ZUVO_BACKLOG_PR`, or the open PR `gh` finds on a github.com remote) or `[branch:<name>]`. The intake
-holds a tagged entry until that PR or branch merges and retires it when the PR is declined, so a
-finding about unmerged code is never ticketed early. A branch name with a character outside
-`[A-Za-z0-9._/-]` and no PR cannot be tagged: a non-SEC finding then stays in the ledger
-(`branch-untaggable`), and a SEC finding lands untagged so it is ticketed at once. The name is never
+takes a PR number of 1–6 digits, no leading zero; a branch name of 1–200 characters, all in
+`[A-Za-z0-9._/-]`. It holds a tagged entry until that PR or branch merges and retires it when the PR
+is declined, so a finding about unmerged code is never ticketed early. A PR `gh` reports past 6 digits
+counts as no PR, so the entry waits as `[branch:<name>]`. A branch name with a character outside that
+set, or longer than 200 characters, and no PR cannot be tagged: a non-SEC finding then stays in the
+ledger (`branch-untaggable`), and a SEC finding lands untagged so it is ticketed at once. The name is never
 rewritten, because a rewritten name resolves to no branch. A detached HEAD that is not on the default
 branch has no name to tag with: it takes `--pr`, else it is untaggable too. The PR lookup asks `gh`
 only on a github.com remote; with no `gh`, `gh` not authenticated, any other remote or
@@ -201,7 +203,7 @@ the dedupe and the lock it files exactly the entries the intake has to retire.
 | `bad-source` | A lowercase skill name, `drive-by:<skill>`, or `user`. |
 | `bad-target` | An `http(s)://` URL, a hostname, or `subject:<slug>`. |
 | `bad-path` | `--file` with a control character, a `\|` or surrounding spaces; an `--also` without `:LINE`. |
-| `bad-pr` | `--pr` or `ZUVO_BACKLOG_PR` must be a PR number. |
+| `bad-pr` | `--pr` or `ZUVO_BACKLOG_PR` must be a PR number of 1–6 digits, no leading zero. |
 | `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION; a target the class may not use (a URL or host: SEC, BUG, DATA; `subject:`: PROCESS, SEC). |
 | `path-outside-repo` | The path leaves the repository (`..`, an absolute path elsewhere, a symlink out). |
 | `file-not-in-worktree` | The file does not exist in the work tree. If the path is right, the code is gone: nothing is filed or reported as not persisted. If the path was mistyped, correct it. |

@@ -318,6 +318,9 @@ class VerdictTests(AddCase):
         ("an --also with no `:LINE` is kept as a site with no line", ("--also", "src/a.py"), "bad-path"),
         ("an --also with a non-integer line is kept or crashes", ("--also", "src/a.py:x"),
          "line-out-of-range"),
+        # Last: when it is wrongly accepted, its write must not fail the rows above for the wrong reason.
+        ("a 7-digit --pr is written as [pr:1000000], past the intake's 1–6 digits", ("--pr", "1000000"),
+         "bad-pr"),
     ]
 
     def test_refusals_exit_three_and_write_nothing(self) -> None:
@@ -514,16 +517,21 @@ class RoutingTests(AddCase):
         ("a SEC entry on an unresolvable branch is held back from the backlog", "SEC", "ACCEPTED"),
     ]
 
+    # A name outside the intake's charset, and one past its 200 characters (tagged, the intake never
+    # resolves it and holds the entry for ever).
+    UNRESOLVABLE = [("feat/a+b", "a"), ("feat/" + "x" * 196, "b")]
+
     def test_unresolvable_branch_keeps_non_sec_in_the_ledger_and_files_sec_untagged(self) -> None:
-        r = self.repo(branch="feat/a+b")
-        for name, cls, want in self.UNTAGGABLE:
-            with self.subTest(name):
-                p = self.add(r, "--class", cls, *BUG[2:])
-                kind, _, f_id = self.verdict(p)
-                records, _ = self.folded(r)
-                self.assertEqual((p.returncode, kind), (0, want))
-                self.assertEqual(records[f_id].fields["reason"], "branch-untaggable")
-                self.assertNotIn("[branch:", self.backlog(r))
+        for branch, repo_name in self.UNRESOLVABLE:
+            r = self.repo(name=repo_name, branch=branch)
+            for name, cls, want in self.UNTAGGABLE:
+                with self.subTest(f"{name} ({len(branch)}-character {branch[:8]}…)"):
+                    p = self.add(r, "--class", cls, *BUG[2:])
+                    kind, _, f_id = self.verdict(p)
+                    records, _ = self.folded(r)
+                    self.assertEqual((p.returncode, kind), (0, want))
+                    self.assertEqual(records[f_id].fields["reason"], "branch-untaggable")
+                    self.assertNotIn("[branch:", self.backlog(r))
 
     PROMOTION = [
         ("a gap on a line the branch changed is never promoted", "5", "ACCEPTED", r"B-a-BUG-[0-9a-f]{8}"),
