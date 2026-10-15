@@ -392,6 +392,7 @@ class KnowledgeRankTest(unittest.TestCase):
             {"id": "fact-text", "type": "codebase-fact", "fact": "widget text"}])
         stub = self.stub({"": 0.5})
         self.run_cli("widget", "src/x.ts")
+        self.assertIn("fact-bare", stub.bodies[0]["documents"])
         self.assertNotIn("", stub.bodies[0]["documents"])
 
     def test_rerank_payload_is_truncated(self) -> None:
@@ -521,6 +522,7 @@ class KnowledgeRankTest(unittest.TestCase):
         keywords = f"{EVERY},$(touch {marks[0]}),`touch {marks[1]}`,it's"
         proc = self.run_step3_block(keywords, f"src/$(touch {marks[0]})/`touch {marks[1]}`.ts")
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotEqual(proc.stdout.strip(), "", "the block never reached the helper")  # positive control
         self.assertEqual([m.exists() for m in marks], [False, False])
 
 TODAY = date(2026, 10, 15)
