@@ -251,9 +251,12 @@ add flow the skill never mints an id, runs the lookup or appends a line itself.
    - **Title** in one sentence, and a severity when the description implies one (Auto-Inference Rules).
 2. File it with `--source user`, one call per item. The user's words are free text, so every `"$X"`
    argument below is assigned just before the call, one assignment per value, as "Filing from a skill"
-   says (the form works in bash 3.2 and zsh):
+   says (the form works in bash 3.2 and zsh). `R` is the repository root, not free text: a literal, or
+   `git rev-parse --show-toplevel` of the run's checkout, assigned in the same shell call as the command,
+   never `$PWD` (the harness resets the working directory between calls):
 
    ```bash
+   R='<the absolute path of the repository root the run works in>'
    read -r -d '' T <<'ZUVO_TXT' || true
    <the title, verbatim>
    ZUVO_TXT
@@ -268,9 +271,9 @@ add flow the skill never mints an id, runs the lookup or appends a line itself.
    ZUVO_TXT
    ```
 
-   - `BUG`, `SEC`, `DATA`: `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source user --file "$F" --line <n> --anchor "$A" --title "$T" [--severity <level>]`
-   - any other class with a file: `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source user --file "$F" --line <n> --title "$T" [--severity <level>]`
-   - a process or decision item: `~/.zuvo/backlog-add --repo "$PWD" --class PROCESS --conf <N> --source user --target "subject:$S" --title "$T" [--severity <level>]`, where `S` is a slug of the title: kebab-case, ASCII `[a-z0-9-]` only (transliterate letters such as `ł` or `ą`, drop any other character), cut to 40 characters. A title with no ASCII letters or digits leaves it empty, and `backlog-add` refuses an empty target: ask the user for a slug
+   - `BUG`, `SEC`, `DATA`: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source user --file "$F" --line <n> --anchor "$A" --title "$T" [--severity <level>]`
+   - any other class with a file: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source user --file "$F" --line <n> --title "$T" [--severity <level>]`
+   - a process or decision item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf <N> --source user --target "subject:$S" --title "$T" [--severity <level>]`, where `S` is a slug of the title: kebab-case, ASCII `[a-z0-9-]` only (transliterate letters such as `ł` or `ą`, drop any other character), cut to 40 characters. A title with no ASCII letters or digits leaves it empty, and `backlog-add` refuses an empty target: ask the user for a slug
 
    Prefix the call with `ZUVO_BACKLOG_ADMIT=1` only when the user ran this `add` mode themselves in this
    message: their request for the item is the explicit request the override exists for, so a `CQ` or

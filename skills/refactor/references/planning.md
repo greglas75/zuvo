@@ -144,11 +144,11 @@ Produce the refactoring plan incorporating sub-agent results (when available):
    — no fixtures can be built, or the work exceeds the remaining window — the run ends **PARTIAL,
    loudly**: name the unit, state why in one paragraph, give the concrete follow-up, record it in
    the commit body and as a finding at the unit itself,
-   `~/.zuvo/backlog-add --repo "$PWD" --class CQ --conf <N> --source refactor --file "$F" --line <n> --title "$T" --evidence "$E"`
+   `~/.zuvo/backlog-add --repo "$R" --class CQ --conf <N> --source refactor --file "$F" --line <n> --title "$T" --evidence "$E"`
    (`backlog-protocol.md` "Filing from a skill", **Generic write**; `F` is the unit's file and `<n>` the
    line where the unit begins; `T` is the fixed title "Refactor stopped before this unit: <unit name>",
    and `E` holds the reason and the follow-up; a unit with no start line is the whole file: `--line 1`
-   and a title starting "Whole file: …" (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**); assign `"$F"`, `"$T"` and `"$E"`
+   and a title starting "Whole file: …" (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**); assign `"$R"`, `"$F"`, `"$T"` and `"$E"`
    before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)), print the partial verdict in the completion block, and name the
    F-id in the Post-Completion Summary. What is forbidden is the quiet version — reporting COMPLETE
    for a subset, or a deferral the summary does not name. "A verified partial beats an unverifiable full restructure" is true; "a

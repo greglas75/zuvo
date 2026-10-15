@@ -128,11 +128,22 @@ METAVARS: Dict[str, Dict[str, Dict[str, str]]] = {
     "hooks/backlog-hand-append-warn.sh": {"--conf": {"N": CONF}, "--line": {"N": DEFAULT_LINE},
                                           "--file": {"F": DEFAULT_FILE}},
 }
+# {path: reason}: files whose printed command may still pass `--repo "$PWD"`. A skill's `--repo "$PWD"` is
+# the bug the check below catches; the warning hook is the one source the plan keeps untouched (its hint is
+# fixed in a later change), and SH_PATH is the fixture standing for it.
+CWD_REPO_OK: Dict[str, str] = {
+    "hooks/backlog-hand-append-warn.sh": "the part-2 plan leaves the hook untouched; its hint is fixed later",
+    "hooks/fixture-warn.sh": "the self-check fixture that stands for the warning hook",
+}
+# `--repo` naming the working directory: `$PWD`, `${PWD}`, `$(pwd)` or a backtick `pwd`.
+CWD_REPO = re.compile(r"\$\{?PWD\}?|\$\(\s*pwd\s*\)|`\s*pwd\s*`")
 TITLE = "the limit check accepts a total equal to the limit"
 EVIDENCE = "limit=100 and total=100 pass the check"
 FIX = "compare with >="
 # The only variables a command may use: the protocol's `"$F"`, `"$A"`, `"$U"`, `"$T"`, `"$E"`, `"$M"`, the backlog
-# skill's slug `"$S"`, and `"$PWD"` (the repo). Any other is a problem: the shell expands it to nothing.
+# skill's slug `"$S"`, `"$R"` (the repository root, the temp repo here) and `"$PWD"` (the same temp repo, kept
+# for the warning hook's printed command only: CWD_REPO_OK). Any other is a problem: the shell expands it
+# to nothing.
 VARIABLES = {"F": DEFAULT_FILE, "A": DEFAULT_ANCHOR, "U": URL, "T": TITLE, "E": EVIDENCE, "S": "slug",
              "M": "the check never compares the total with the limit"}
 # Placeholders a free-text value may keep: the pentest title prefix, which the agent completes.
@@ -434,6 +445,10 @@ def parse(span: Span) -> bool:
         k += 1
     if "--class" not in span.flags and span.where not in NO_CLASS_OK:
         span.problems.append("no --class: the CLI refuses the call, so the command is never run")
+    repo = value(args, "--repo") or ""
+    if CWD_REPO.search(repo) and span.path not in CWD_REPO_OK:
+        span.problems.append(f"--repo {repo!r} is the working directory: the harness resets it between Bash "
+                             'calls, so the finding is filed in the wrong checkout; pass --repo "$R"')
     return True
 
 
@@ -471,7 +486,7 @@ def substitute(span: Span, repo: str, cls: Optional[str], conf: Optional[str] = 
     """The argv to run and the problems. Variables and placeholders are filled INSIDE each value; a
     variable outside VARIABLES and a `<…>` left in any value are problems. A free-text value that is
     wholly one `<…>` is that field's text, and FREE_TEXT_ALLOWED (`PT<n>:`) stays literal."""
-    variables = {**VARIABLES, "PWD": repo}
+    variables = {**VARIABLES, "R": repo, "PWD": repo}
     places = {"<skill>": owner(span.path), "<C>": cls or "<C>", "<N>": conf or CONF, "<gate>": "gate",
               "<slug>": "slug", "<path>": DEFAULT_FILE, "<url>": URL, "<level>": "high"}
     numbers = {"<n>": DEFAULT_LINE, "<line>": DEFAULT_LINE}
@@ -668,7 +683,7 @@ FIXTURE_PATH = "skills/fixture/SKILL.md"
 Z = "~/.zuvo/backlog-add"
 FIXTURE_LINES: List[Tuple[str, str]] = [
     ("", "# fixture"),
-    ("unknown", f'Unknown flag: `{Z} --repo "$PWD" --class SEC --conf 60 --source pentest --target "$U" '
+    ("unknown", f'Unknown flag: `{Z} --repo "$R" --class SEC --conf 60 --source pentest --target "$U" '
                 '--evidence "$E" --title "$T" --dimension PT3`.'),
     ("badsource", f'Bad source: `{Z} --class CQ --conf 60 --source zuvo:refactor --file "$F" --line <n> '
                   '--title "$T"`.'),
@@ -714,7 +729,7 @@ FIXTURE_LINES: List[Tuple[str, str]] = [
     ("unbalanced", f"Broken: `{Z} --class CQ --conf 60"),
     ("", ""),
     ("", "```bash"),
-    ("fenced", 'scripts/zuvo-home/backlog-add --repo "$PWD" --class CQ --conf <N> --source <skill> \\'),
+    ("fenced", 'scripts/zuvo-home/backlog-add --repo "$R" --class CQ --conf <N> --source <skill> \\'),
     ("", '  --file "$F" --line <n> --title "$T"'),
     ("", "```"),
     ("", ""),
@@ -735,6 +750,8 @@ FIXTURE_LINES: List[Tuple[str, str]] = [
     ("repeated", f'Repeated: `{Z} --class CQ --conf 60 --source <skill> --file "$F" --line <n> '
                  '--file src/other.py --title "$T"`.'),
     ("noclass", f'No class: `{Z} --source <skill> --file "$F" --line <n> --title "$T"`.'),
+    ("cwdrepo", f'Working directory: `{Z} --repo "$PWD" --class CQ --conf 60 --source <skill> --file "$F" '
+                '--line <n> --title "$T"`.'),
     ("glued", f'Substitution: `X=$({Z} --class CQ --conf 60 --source <skill> --file "$F" --line <n> '
               '--title "$T")`.'),
     ("operators", f'Quoted operators: `{Z} --class CQ --conf 60 --source <skill> --file "$F" --line <n> '
@@ -832,6 +849,9 @@ FIXTURE_ROWS: List[Tuple[str, int, str, str, str]] = [
     ("repeated", 0, "a repeated --file is a problem: argparse keeps the last, the seed the first", "problem",
      "--file is repeated"),
     ("noclass", 0, "a command with no --class is a problem, not a flag check only", "problem", "no --class"),
+    ("cwdrepo", 0, "--repo \"$PWD\" in a skill is a problem: the harness resets the cwd between calls, so "
+     "the finding is filed in the wrong checkout", "problem", "is the working directory"),
+    ("cwdrepo", 0, "a span with --repo \"$PWD\" is not run", "notrun", ""),
     ("glued", 0, "a command inside $( … ) is found and run", "verdict", "LEDGER"),
     ("gluedfence", 0, "a command word glued to a backtick is a problem, not a silent skip", "problem",
      "glued to shell syntax"),

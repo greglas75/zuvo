@@ -63,7 +63,8 @@ at conf ≥ 26 is still kept, as data, in the findings ledger, where reports suc
 map are built from what has accumulated instead of from a fresh scan.
 
 ```bash
-~/.zuvo/backlog-add --repo "$PWD" --class BUG --conf 85 --source review \
+R='/abs/path/of/the/repository/root'   # same shell call as the command; "Filing from a skill"
+~/.zuvo/backlog-add --repo "$R" --class BUG --conf 85 --source review \
   --file src/cart.ts --line 42 --anchor 'if (total > limit) {' \
   --title 'checkout accepts a total equal to the limit' \
   --evidence 'limit=100, total=100 passes; the order rules say strictly below' \
@@ -85,7 +86,7 @@ map are built from what has accumulated instead of from a fresh scan.
 | `--also PATH:LINE` | no, repeatable | another site of the same finding (DUP) |
 | `--pr N` | no | the PR to tag with (1–6 digits); `ZUVO_BACKLOG_PR` does the same |
 | `--dry-run`, `--json` | no | write nothing and print the verdict it would give, with ` dry-run` appended (and `wrote=-` on the verdicts that carry `wrote=`); print the verdict as one JSON object |
-| `--repo` | no | the checkout to file in (default: the current directory); it must be inside a git work tree |
+| `--repo` | no, but a skill always passes `"$R"` | the checkout to file in; an existing directory inside a git work tree, resolved to that work tree's top level (a subdirectory works). Left out, it is the current directory, which the harness resets between Bash calls ("Filing from a skill") |
 
 **The cited code must hold now.** "Holds" means the file exists in the work tree and the anchor is at
 the line. Files the run created count, because skills write before they commit. A deleted file is
@@ -244,7 +245,11 @@ ignored backlog keeps private; `backlog-add` refuses to write it.
 How a skill turns each situation into one `backlog-add` call. The bars, the dedupe, the tag and the
 exit handling are the ones in "Persisting a finding: backlog-add"; this table only says which class,
 source and location a skill passes. `<skill>` is the skill's own name (`review`, not `zuvo:review`).
-Every call carries `--repo "$PWD"`. Every free-text or externally sourced value is a double-quoted
+Every call carries `--repo "$R"`, never `--repo "$PWD"`: `R` is the absolute path of the repository root the
+run works in (in a linked worktree, the worktree's root), assigned in the same shell call as the command
+("The repository root" below). The harness resets the shell's working directory between Bash calls, back to
+the session's primary directory, so a `$PWD` read in a later call can name another checkout and the finding
+is filed there, silently. Every free-text or externally sourced value is a double-quoted
 variable assigned before the call (`"$T"`, `"$A"`, `"$E"`, `"$U"`, `"$F"`, `"$M"`: "Free text goes through a
 variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers the skill fills in.
 
@@ -264,8 +269,8 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
 | A source written `manual` | as the item is | `user` | as the item is |
 | A source written `debug/[date]` | as the finding is | `drive-by:debug` | as the finding is |
 | A source written `source:build` in a hand-written entry template | as the finding is | `build`; the template is gone | as the finding is |
-| A black-box pentest finding, on a live target (formerly suggested as `--source pentest --dimension PT<n>`) | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$PWD" --class SEC --conf <N> --source pentest --target "$U" --evidence "$E" --title "PT<n>: $T"`. `backlog-add` has no `--dimension` argument: the dimension lives in the title's `PT<n>:` prefix |
-| A white-box pentest finding, traced to a file and line | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$PWD" --class SEC --conf <N> --source pentest --file "$F" --line <n> --anchor "$A" --title "PT<n>: $T"`; the dimension again in the `PT<n>:` prefix |
+| A black-box pentest finding, on a live target (formerly suggested as `--source pentest --dimension PT<n>`) | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source pentest --target "$U" --evidence "$E" --title "PT<n>: $T"`. `backlog-add` has no `--dimension` argument: the dimension lives in the title's `PT<n>:` prefix |
+| A white-box pentest finding, traced to a file and line | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source pentest --file "$F" --line <n> --anchor "$A" --title "PT<n>: $T"`; the dimension again in the `PT<n>:` prefix |
 
 **The location rule.** A record names either a file or a target, never both (`bad-combination`).
 
@@ -304,6 +309,16 @@ ZUVO_TXT
 because `read -d ''` returns 1 at the end of the heredoc. The same two lines set `E`, `U`, `F` and `M` (the assertion the tests lack, for `--missing-assertion`).
 The text must not hold a line that is exactly `ZUVO_TXT`.
 
+**The repository root.** `R` is not free text, so it does not use the heredoc. Assign it in the SAME shell
+call as the `backlog-add` command, like the other variables, as a single-quoted literal of the absolute
+path of the repository root the run works in (`R='/abs/path/of/repo'`; a linked worktree's own root; a path
+that holds a `'` uses the heredoc form above) or as `R=$(git -C '/abs/path/of/repo' rev-parse --show-toplevel)`.
+Never `$PWD`, `$(pwd)` or the shell's current directory: it can be reset between calls, and a value assigned
+in an earlier call is gone. The helper checks `--repo` is an existing directory inside a git work tree
+(otherwise exit 2) and resolves it to that work tree's top level itself, so a subdirectory of the root
+also works; the branch tag, the backlog and the ledger are those of that checkout. Without `--repo` it
+files into whatever the current directory is, the very trap above.
+
 **A process item keeps its first title.** Its identity is the class, the `subject:` target and the
 first 8 words of the title, so pass the same title on every run (name the gate, not this run's
 circumstances): a repeat then only bumps `seen` on the one record. A reason that changes from run to
@@ -313,11 +328,11 @@ The sentences below are the text skills cite, `<skill>` replaced by the skill's 
 one code span, so it can be run as written once the variables are assigned and the placeholders
 filled.
 
-1. **Generic write.** Record it with `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (one call per finding; `backlog-protocol.md` "Persisting a finding"; `--anchor` is required on a BUG, SEC or DATA file record). The helper decides whether it reaches `memory/backlog.md` or only the findings ledger; report the B- or F-id it prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
+1. **Generic write.** Record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (one call per finding; `backlog-protocol.md` "Persisting a finding"; `--anchor` is required on a BUG, SEC or DATA file record). The helper decides whether it reaches `memory/backlog.md` or only the findings ledger; report the B- or F-id it prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 2. **Adversarial review.**
-   - **WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` "Persisting a finding").
-   - "Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source drive-by:<skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: don't dismiss it just because it existed before your changes.
-3. **Process item.** Record it as a process item: `~/.zuvo/backlog-add --repo "$PWD" --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`, with `T` the gate's fixed title, the same words on every run (`backlog-protocol.md` "Filing from a skill"). It is kept in the findings ledger, not ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options in `--evidence "$E"`.
+   - **WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` "Persisting a finding").
+   - "Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:<skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: don't dismiss it just because it existed before your changes.
+3. **Process item.** Record it as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`, with `T` the gate's fixed title, the same words on every run (`backlog-protocol.md` "Filing from a skill"). It is kept in the findings ledger, not ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options in `--evidence "$E"`.
 4. **Closing, not removing.** Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is closed, never removed: tick it and append its resolution marker (`[FIXED <sha7>]`) as `backlog-protocol.md` "How to Persist Findings" step 3 says; the archive helper moves it ("Archiving is done by the helper, never by hand"). For an audit's tier score: a Tier A score does not prove any one defect is gone: close only an entry whose cited code this run re-read and found fixed.
 
 ## Backlog Table Format

@@ -753,28 +753,28 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
      "Use `--source drive-by:<skill>` for a file the run is not editing.", None),
     ("a command on an existing id flagged as minting one", "Run `fix B-<id>` once the change is merged.", None),
     ("a valid source in a backlog-add unit flagged as invalid",
-     "`~/.zuvo/backlog-add --repo \"$PWD\" --class PROCESS --conf 90 --source review --target "
+     "`~/.zuvo/backlog-add --repo \"$R\" --class PROCESS --conf 90 --source review --target "
      "subject:review-gate --title 't'`", None),
     ("the canonical generic-write sentence flagged as a hand write",
-     "Record it with `~/.zuvo/backlog-add --repo \"$PWD\" --class <C> --conf <N> --source <skill> --file \"$F\" "
+     "Record it with `~/.zuvo/backlog-add --repo \"$R\" --class <C> --conf <N> --source <skill> --file \"$F\" "
      "--line <n> --anchor \"$A\" --title \"$T\"` (one call per finding; `backlog-protocol.md` "
      "\"Persisting a finding\"; `--anchor` is required on a BUG, SEC or DATA file record). The helper decides "
      "whether it reaches `memory/backlog.md` or only the findings ledger; report the B- or F-id it prints. "
      "On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under "
      "`NOT PERSISTED (<reason>)`, never appended by hand.", None),
     ("the canonical adversarial WARNING sentence flagged as a hand write",
-     "**WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo \"$PWD\" "
+     "**WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo \"$R\" "
      "--class <C> --conf <N> --source <skill> --file \"$F\" --line <n> --anchor \"$A\" --title \"$T\"` "
      "(`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` \"Persisting a "
      "finding\").", None),
     ("the canonical pre-existing (drive-by) sentence flagged as a hand write",
      "\"Pre-existing\" is NOT a reason to skip a finding. If the issue is in a file you are already editing, "
-     "fix it now. If not, record it with `~/.zuvo/backlog-add --repo \"$PWD\" --class <C> --conf <N> --source "
+     "fix it now. If not, record it with `~/.zuvo/backlog-add --repo \"$R\" --class <C> --conf <N> --source "
      "drive-by:<skill> --file \"$F\" --line <n> --anchor \"$A\" --title \"$T\"` (`--anchor` is required on a "
      "BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: "
      "don't dismiss it just because it existed before your changes.", None),
     ("the canonical process-item sentence flagged as a hand write",
-     "Record it as a process item: `~/.zuvo/backlog-add --repo \"$PWD\" --class PROCESS --conf 90 --source "
+     "Record it as a process item: `~/.zuvo/backlog-add --repo \"$R\" --class PROCESS --conf 90 --source "
      "<skill> --target subject:<skill>-<gate> --title \"$T\"`, with `T` the gate's fixed title, the same words "
      "on every run (`backlog-protocol.md` \"Filing from a skill\"). It is kept in the findings ledger, not "
      "ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A "

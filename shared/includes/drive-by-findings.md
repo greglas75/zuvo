@@ -66,7 +66,8 @@ count all of them too. `SEC` and `BUG` are uncapped: they are defects, the rest 
    second call only counts a second sighting.
 
    ```bash
-   ~/.zuvo/backlog-add --repo "$PWD" --class DUP --conf 85 --source 'drive-by:<skill>' \
+   R='/abs/path/of/the/repository/root'   # same shell call as the command; never "$PWD"
+   ~/.zuvo/backlog-add --repo "$R" --class DUP --conf 85 --source 'drive-by:<skill>' \
      --file src/orders/totals.ts --line 40 --also src/cart/sum.ts:12 \
      --title '<the defect, one sentence>' --evidence '<what proves it>' --severity medium
    ```

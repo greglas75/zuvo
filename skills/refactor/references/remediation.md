@@ -132,9 +132,9 @@ For each path in `modules_created`:
    finds it two weeks later on a "files without tests" list.
 3. Only these defer, and only **named**: a module whose test needs files outside the scope fence, or
    one the user explicitly declined. Size, lateness and "the facade covers it" are not reasons. Record
-   each module once with `~/.zuvo/backlog-add --repo "$PWD" --class TEST-GAP --conf <N> --source refactor --file "$F" --line 1 --title "$T" --evidence "$E"`
+   each module once with `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source refactor --file "$F" --line 1 --title "$T" --evidence "$E"`
    (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**): `F` the module, `T` starting "Whole file: …", `E` the reason it defers, and no
-   `--anchor`; assign `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
+   `--anchor`; assign `"$R"`, `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 4. Record `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` — e.g. `"7/7:fixed-in-run"`,
    `"7/5:2-backlogged-out-of-fence"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
 
@@ -225,9 +225,9 @@ audited file lies under it, or each audited file is a `files[].path` entry.
 Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
 No candidate → the field cannot be filled: re-run Step 2 over the audited files. A missing artifact has no `N/A`.
 Never from memory. `WARN` when gaps remain after the fix loop, each surviving mutant recorded with
-`~/.zuvo/backlog-add --repo "$PWD" --class MUTATION --conf <N> --source refactor --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`
+`~/.zuvo/backlog-add --repo "$R" --class MUTATION --conf <N> --source refactor --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`
 (`backlog-protocol.md` "Filing from a skill", **Generic write**): `F`, `<n>` and `A` the mutated
-production line, `M` the assertion the tests lack; assign `"$F"`, `"$A"`, `"$M"` and `"$T"` before
+production line, `M` the assertion the tests lack; assign `"$R"`, `"$F"`, `"$A"`, `"$M"` and `"$T"` before
 the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
 `plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is
