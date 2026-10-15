@@ -44,6 +44,7 @@ CLI values win, including zero where allowed. Example (proposal, never auto-writ
 K is finite, (0,10], first matching critical rule wins; default is 3, not a guessed auth regex.
 `profile: tooling` retains production scripts. Additional fields: `noise` (regex list), `ext`
 (extension list), `min_cc`, `engine`, `ref`, `history_dir`, `families` (`id`, exact `files`).
+`test_roots` (path list, `.` = whole repo) bounds the test census; it defaults to `source_roots`, so tests outside them are not read or linked. Without `source_roots` the test census stays repo-wide.
 Declared families must be disjoint and contained in the source census. User exclusions are
 exact paths, not ambiguous basenames. Candidate file sets may extend a narrow scope to keep
 a whole family; the source/graph census stays repo-wide. Limits cannot be bypassed by scope.

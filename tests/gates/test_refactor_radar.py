@@ -267,6 +267,24 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
         self.assertEqual(row["test_files"], ["src/order-service.test.ts"])
         self.assertEqual(row["test_loc_ratio"], 1.33)  # four test lines / three source lines
 
+    def test_source_roots_bound_the_test_census_unless_test_roots_widen_it(self) -> None:
+        # Bug: tests outside source_roots were still read, so a one-app scan of a monorepo
+        # exceeded the byte budget on the other apps' tests alone.
+        self.write("src/order-service.test.ts", "import { route } from './order-service';\n")
+        self.write("other/order-flow.test.ts", "import { route } from '../src/order-service';\n")
+        self.commit("test: inside and outside the source root")
+        self.write(".radar.json", json.dumps({"source_roots": ["src"]}))
+        scoped = self.scan()
+        self.assertEqual(scoped["meta"]["test_files"], 1)
+        self.assertEqual(self.row(scoped, "src/order-service.ts")["test_files"], ["src/order-service.test.ts"])
+        self.write(".radar.json", json.dumps({"source_roots": ["src"], "test_roots": ["."]}))
+        widened = self.scan()
+        self.assertEqual(widened["meta"]["test_files"], 2)
+        self.assertEqual(
+            self.row(widened, "src/order-service.ts")["test_files"],
+            ["other/order-flow.test.ts", "src/order-service.test.ts"],
+        )
+
     def test_fix_prefix_is_not_a_fix_commit(self) -> None:
         self.write("src/order-service.ts", SIMPLE + "// not a conventional fix\n")
         self.commit("fixture: seed a case")
