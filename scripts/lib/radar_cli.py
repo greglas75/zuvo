@@ -70,13 +70,16 @@ def config(root: Path, explicit: str | None) -> tuple[dict, str | None]:
 
 
 def validate_config(cfg: dict) -> None:
-    for key in ("noise", "ext", "source_roots", "exclude_paths"):
+    for key in ("noise", "ext", "source_roots", "test_roots", "exclude_paths"):
         if key in cfg and (
             not isinstance(cfg[key], list) or not all(isinstance(v, str) and v for v in cfg[key])
         ):
             raise ValueError(f"config.{key}: expected nonempty strings")
     for key in ("source_roots", "exclude_paths"):
         for path in cfg.get(key, []):
+            safe_path(path)
+    for path in cfg.get("test_roots", []):
+        if path != ".":
             safe_path(path)
     for pattern in cfg.get("noise", []):
         re.compile(pattern)
@@ -441,6 +444,7 @@ def report_for(data: dict, sha: str, config_path: str | None) -> dict:
         busy=data["busy"],
         population=len(rows) + len(excluded),
         source_files=len(data["sources"]),
+        test_files=len(data["tests"]),
         source_issues=data["issues"],
         measurement="estimated" if data["engine"] == "builtin" else "provided-codesift-envelope",
         graph="relative-import approximation; type-only/aliases need G5",

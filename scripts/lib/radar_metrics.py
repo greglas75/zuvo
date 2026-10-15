@@ -44,11 +44,15 @@ def classify(paths: list[str], cfg: dict) -> tuple[list[str], list[str]]:
     sources, tests = [], []
     noise = [re.compile(p) for p in cfg.get("noise", [])]
     roots = cfg.get("source_roots", [])
+    # Tests follow the source roots unless declared: a repo-wide test census of a large monorepo
+    # outgrew the byte budget on its own, even for a one-app scan. `test_roots: ["."]` = whole repo.
+    test_roots = cfg.get("test_roots", roots)
     for path in paths:
         if path.rsplit(".", 1)[-1] not in cfg.get("ext", EXTENSIONS) or NOISE.search(path):
             continue
         if TEST.search(path):
-            tests.append(path)
+            if not test_roots or any(in_scope(path, root) for root in test_roots):
+                tests.append(path)
         elif (
             not any(p.search(path) for p in noise)
             and (cfg.get("profile") == "tooling" or not path.startswith("scripts/"))
