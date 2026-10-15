@@ -58,7 +58,7 @@ Print `CORE FILES LOADED:` for items 1-7. After language detection, print `LANGU
 `--dry-run` mode: proceed with WARNING (no file mutation).
 
 ### GATE 3 — Write Scope
-Allowed: input file, `<file>.content-expand-backup`, `zuvo/reports/`. FORBIDDEN: everything else.
+Allowed: input file, `<file>.content-expand-backup`, `zuvo/reports/`, `memory/backlog.md` and `memory/findings/` (written by `backlog-add`). FORBIDDEN: everything else.
 
 ## Arguments
 
@@ -72,7 +72,7 @@ Allowed: input file, `<file>.content-expand-backup`, `zuvo/reports/`. FORBIDDEN:
 | `--domain <niche>` | Override domain detection (one of 17 niche IDs from `domain-profile-registry.md`) |
 | `--skip-research` | Skip web search; expand using existing content + LLM knowledge only |
 | `--rewrite` | Allow rewriting existing sentences that have concrete defects (factual errors, grammar, outdated info). Without this flag, existing text is never modified. |
-| `--light` | Skip reporting, backlog, knowledge curation. Just expand and write. |
+| `--light` | Skip reporting, recording findings through `backlog-add`, knowledge curation. Just expand and write. |
 
 ---
 
@@ -273,7 +273,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 ### Reporting (skip with `--light`)
 
-Unless `--light`: write report to `zuvo/reports/content-expand-YYYY-MM-DD.md`. Write JSON per `article-output-schema.md`. Run knowledge curation per `knowledge-curate.md`. Persist findings per `backlog-protocol.md`.
+Unless `--light`: write report to `zuvo/reports/content-expand-YYYY-MM-DD.md`. Write JSON per `article-output-schema.md`. Run knowledge curation per `knowledge-curate.md`. Record findings through `backlog-add` (`backlog-protocol.md` "Persisting a finding"). This skill does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none) in its final summary, whether it runs standalone or inside another skill, for the calling skill's closing commit to carry when there is one (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ### Retrospective (REQUIRED)
 

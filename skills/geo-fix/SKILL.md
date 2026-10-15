@@ -63,7 +63,7 @@ and report its actual independence or an unmet requirement.
 
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup and update
+3. `../../shared/includes/backlog-protocol.md` -- Filing findings through `backlog-add`
 4. `../../shared/includes/geo-fix-registry.md` -- Canonical fix_type, safety, eta, and manual verification rules
 5. `../../shared/includes/fix-output-schema.md` -- JSON report contract
 6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
@@ -105,7 +105,7 @@ in the final fix report.
 **Allowed write targets:**
 - Files listed in geo-fix-registry.md target paths (source/config files)
 - `zuvo/audits/` for the fix report (`.md` and `.json`)
-- `memory/backlog.md` for backlog updates
+- `memory/backlog.md` (ticking a resolved entry) and `memory/findings/` (written by `backlog-add`)
 
 **FORBIDDEN:**
 - Installing packages without explicit user confirmation. If a fix requires dependency installation, escalate to NEEDS_REVIEW with install instructions.
@@ -489,14 +489,14 @@ If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; th
 
 Wait for complete output. Handle findings by severity:
 - **CRITICAL** -- confirm it first: two or more lanes in its `.agreement` group, or your own check (a failing test, a reproduced input, the cited code read and the defect traced). Confirmed → fix immediately. A single-lane CRITICAL you cannot confirm is triaged as a WARNING and reported as `[CRITICAL→WARNING single-lane]` (`adversarial-loop.md` Step 4).
-- **WARNING** -- fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
+- **WARNING** -- fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source geo-fix --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`backlog-protocol.md` "Filing from a skill", **Adversarial review**; `<C>` and `<N>` are the class and confidence as for the Phase 5.1 write; pass `--anchor "$A"` only when the class requires one, BUG, SEC or DATA, or the finding carries one, never an invented one (`--anchor` is required on a BUG, SEC or DATA file record); assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Report the B- or F-id it prints; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 - **INFO** -- known concerns (max 3, one line each).
 
 **OUT_OF_SCOPE scaffold enforcement (MANDATORY):** Adversarial reviewer MUST verify that OUT_OF_SCOPE scaffolds contain only structural markers (HTML comments, placeholder text like `<!-- TODO: ... -->`) and NO generated prose body content. Any generated body text = adversarial review FAIL. If this check fails, revert the scaffold and mark as FAILED.
 
 Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this -- if true, it's serious."
 
-"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem -- don't dismiss it just because it existed before your changes.
+"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:geo-fix --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`drive-by-findings.md`; `backlog-protocol.md` "Filing from a skill", **Adversarial review**; `<C>` and `<N>` as for the Phase 5.1 write; the anchor as for the WARNING command above (`--anchor` is required on a BUG, SEC or DATA file record); assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Report the B- or F-id it prints; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand. The adversarial review found a real problem -- don't dismiss it just because it existed before your changes.
 
 Skip adversarial review ONLY if `--skip-adversarial` flag is passed. Note the skip in the report.
 
@@ -605,22 +605,22 @@ After printing the report block, append the `Run:` line value (without the `Run:
 
 ### 5.1 Backlog operations
 
-Per `shared/includes/backlog-protocol.md`:
+Per `shared/includes/backlog-protocol.md` "Filing from a skill":
 
 | Finding status | Backlog action |
 |----------------|---------------|
-| FIXED | Remove row by fingerprint |
-| NEEDS_REVIEW | If exists: increment `Seen`. If new: add as OPEN |
-| MANUAL | Add as OPEN if not present |
-| SCAFFOLDED | Persist with scaffold content reference |
-| OUT_OF_SCOPE | Add as OPEN with category `geo-manual` |
-| NO_TEMPLATE | Add as OPEN with category `geo-manual` |
+| FIXED | No record; close the open entry whose file (or target) and title check ID match, never by line (**Closing, not removing**) |
+| NEEDS_REVIEW | Record (`backlog-add`; `--file "$F"` when a repo file causes it, `--target "$U"` for a live page). The helper bumps a re-sighting. |
+| MANUAL | Record, as for NEEDS_REVIEW |
+| SCAFFOLDED | Record, as for NEEDS_REVIEW, with the scaffold content reference in `E` |
+| OUT_OF_SCOPE | Record, as for NEEDS_REVIEW, with `E` starting `geo-manual:` |
+| NO_TEMPLATE | Record, as for NEEDS_REVIEW, with `E` starting `geo-manual:` |
 | ALREADY_APPLIED_BY_SEO_FIX | No backlog action (handled by seo-fix backlog) |
 | INSUFFICIENT_DATA | Do not add (unconfirmed issue) |
 
-**Fingerprint format:** `{file}|{dimension}|{check}`
+A **Generic write** per recorded finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source geo-fix --file "$F" --line <n> [--anchor "$A"] --evidence "$E" --title "$T"` when a repository file causes it. A finding on a live page or host with no repository file causing it takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`, whatever the class: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source geo-fix --target "$U" --evidence "$E" --title "$T"`. `<N>` is your confidence that the finding is real. `<C>` is `CQ` for a failed check and `BUG` only when the finding names the input and the wrong output; BUG takes `--anchor "$A"`, copied from the line that shows the defect ("The location rule"). `T` starts with the finding's stable check ID, `<check-id>: <title>` (e.g. `robots-ai`, `schema-org`), NOT the fix_type, so FIXED can close the entry later. A whole-file finding is `--line 1` with a "Whole file: ..." title (after the check ID) and no `--anchor`; a whole-file BUG, SEC or DATA is filed at the line that shows the defect instead, with `--anchor "$A"` copied from it, never at line 1. Assign "$R", "$E" and "$T" before each call, "$F" only for a file finding, "$U" only for a target finding, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
 
-Same format as geo-audit backlog persistence. Uses the stable check ID from the finding (e.g., `robots-ai`, `schema-org`), NOT the fix_type. Example: `public/robots.txt|G3|robots-ai`.
+This skill does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none) in its final summary, whether it runs standalone or inside another skill, for the calling skill's closing commit to carry when there is one (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ---
 

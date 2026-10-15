@@ -138,7 +138,7 @@ This audit is read-only against source code.
 
 **Allowed write targets:**
 - `zuvo/audits/` for the report file (`.md` and `.json`)
-- `memory/backlog.md` only when `--persist-backlog` is explicitly enabled
+- `memory/backlog.md` and `memory/findings/` (written by `backlog-add`) only when `--persist-backlog` is explicitly enabled
 
 **FORBIDDEN:**
 - Writing to any source/production file
@@ -162,7 +162,7 @@ This audit is read-only against source code.
 | `--profile <marketing|docs|blog|ecommerce|app-shell>` | Canonical flag for overriding the D9/D10 content heuristics profile |
 | `--content-profile auto|marketing|docs|blog|ecommerce|app-shell` | Legacy alias for `--profile`; accept for backward compatibility |
 | `--live-sample-bots <default|all|bot1,bot2>` | In live mode, probe representative bots or an explicit subset from `seo-bot-registry.md` and emit a Bot Policy Matrix |
-| `--persist-backlog` | Persist prioritized findings to `memory/backlog.md` |
+| `--persist-backlog` | Record prioritized findings through `backlog-add` (Phase 7) |
 
 Default: `full` (no `--live-url`).
 
@@ -738,12 +738,15 @@ The `findings[].fix_type`, `findings[].fix_safety`, and `findings[].fix_params` 
 
 **Activated with `--persist-backlog` flag.**
 
-Emit entries to `memory/backlog.md` for findings that meet at least one condition:
+Record each finding that meets at least one condition through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here):
 - Priority >= 2.0
 - Any Critical Gate = FAIL
 
-Fingerprint format: `{file}|{dimension}|{check}` (e.g., `public/robots.txt|D5|robots-googlebot`).
-Same format used by seo-fix for backlog updates. Deduplicate against existing entries.
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source seo-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"` when a repository file causes it (a template, a config, a content file). A finding on a live page or host with no repository file causing it (a response header, a status code, a rendered tag) takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`, whatever the class: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source seo-audit --target "$U" --evidence "$E" --title "$T"`, `U` the page URL or the host. `<N>` is your confidence that the finding is real. `<C>` is `CQ` for a failed check and `BUG` only when the finding names the input and the wrong output; BUG takes `--anchor "$A"`, copied from the line that shows the defect ("The location rule"). `T` starts with the finding's `check` ID, `<check-id>: <title>` (e.g. `sitemap-exists`), so a later run can find the entry. A check that fails for the whole file is a whole-file finding: `--line 1`, a "Whole file: ..." title (after the check ID), and no `--anchor`; a whole-file BUG, SEC or DATA is filed at the line that shows the defect instead, with `--anchor "$A"` copied from it, never at line 1. Assign "$R" and "$T" before each call, "$F" only for a file finding, "$U" and "$E" only for a target finding, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+An open entry from an earlier audit that this run re-read and found fixed is closed, never removed (**Closing, not removing**): match it by its file (or target) and the check ID at the start of its title, never by line.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ### Next-Action Routing
 

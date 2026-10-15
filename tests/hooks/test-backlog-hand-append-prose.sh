@@ -96,6 +96,18 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                    "If missing, create with template",
                                    "[ ] Backlog updated for deferred findings",
                                    "`B-code-audit-incomplete-<date>`"],
+    # the web and content family: the opt-in persist steps emitted, fingerprinted and deduped by hand, and the
+    # fix tables removed rows by fingerprint and added OPEN rows; live pages are filed by URL now. content-expand
+    # persisted "per backlog-protocol.md" (no backlog word, so the patterns never flagged it)
+    "skills/content-audit/SKILL.md": ["Append findings to memory/backlog.md",
+                                      "persist findings per `shared/includes/backlog-protocol.md`",
+                                      "Add as OPEN with category `content-blocking`",
+                                      "**Fingerprint format:** `{file}|{dimension}|{check}`"],
+    "skills/content-expand/SKILL.md": ["Persist findings per `backlog-protocol.md`"],
+    "skills/content-fix/SKILL.md": ["`memory/backlog.md` for backlog updates",
+                                    "Remove row by fingerprint",
+                                    "Add as OPEN with category `content-manual`",
+                                    "**Fingerprint format:** `{file}|{dimension}|{check}`"],
     # db-audit: an incomplete run and a missing tool were a dated B-id and a "[BLOCKER]" item, and the report
     # template and checklist asked for /backlog add commands and a hand "updated" tick
     "skills/db-audit/SKILL.md": ["`[BLOCKER] db-audit needs <tool> on <project>`",
@@ -121,6 +133,16 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                   "add it to backlog with file:line",
                                   "Backlog holds only genuinely out-of-scope or user-declined items",
                                   "Bugs discovered: [N] (see backlog)"],
+    "skills/geo-audit/SKILL.md": ["Persist findings to `memory/backlog.md`",
+                                  "Emit entries to `memory/backlog.md` for findings that meet",
+                                  "Same format used by geo-fix for backlog updates"],
+    "skills/geo-fix/SKILL.md": ["`memory/backlog.md` for backlog updates",
+                                "If fix is larger, add to backlog with specific file:line",
+                                "add it to backlog with file:line",
+                                "Remove row by fingerprint",
+                                "Persist with scaffold content reference",
+                                "Add as OPEN with category `geo-manual`",
+                                "**Fingerprint format:** `{file}|{dimension}|{check}`"],
     # the auditor's own deferred-item line, which drifted from the preamble's format
     "skills/refactor/agents/cq-auditor.md": ["description (confidence: N%)"],
     # staging policy with no write verb: the `wrote=` paths backlog-add prints are staged now; the old
@@ -149,6 +171,15 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                        "Fingerprint: `file|dimension|endpoint`",
                                        "reported + backlogged",
                                        "`B-security-audit-incomplete-<date>`"],
+    "skills/seo-audit/SKILL.md": ["Persist prioritized findings to `memory/backlog.md`",
+                                  "Emit entries to `memory/backlog.md` for findings that meet",
+                                  "Same format used by seo-fix for backlog updates"],
+    "skills/seo-fix/SKILL.md": ["`memory/backlog.md` for backlog updates",
+                                "If fix is larger, add to backlog with specific file:line",
+                                "add it to backlog with file:line",
+                                "Remove row by fingerprint",
+                                "Add as OPEN with category `seo-manual`",
+                                "**Fingerprint format:** `{file}|{dimension}|{check}`"],
     # ship let a NIT be dropped silently (D7), wrote carried failures and RECOMMENDED by hand, and its report
     # line counted hand-backlogged findings
     "skills/ship/SKILL.md": ["<n> backlogged", "backlog or ignore", "record it in `memory/backlog.md`",
@@ -194,15 +225,9 @@ PENDING: Dict[str, int] = {
     "skills/a11y-audit/SKILL.md": 3,
     "skills/architecture/SKILL.md": 1,
     "skills/container-audit/SKILL.md": 1,
-    "skills/content-audit/SKILL.md": 4,
-    "skills/content-fix/SKILL.md": 3,
-    "skills/geo-audit/SKILL.md": 3,
-    "skills/geo-fix/SKILL.md": 7,
     "skills/infra-audit/SKILL.md": 1,
     "skills/pentest/SKILL.md": 1,
     "skills/performance-audit/SKILL.md": 1,
-    "skills/seo-audit/SKILL.md": 2,
-    "skills/seo-fix/SKILL.md": 7,
 }
 
 VERB_PATH = r"(?:persist|add|writ|wrote|record|append|push|emit|clean|remov|drop|delet)"

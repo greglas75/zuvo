@@ -39,7 +39,7 @@ and report its actual independence or an unmet requirement.
 2. `../../shared/includes/content-fix-registry.md` -- Canonical fix_type, safety, contracts
 3. `../../shared/includes/fix-output-schema.md` -- JSON report contract
 4. `../../shared/includes/content-check-registry.md` -- Check slugs reference
-5. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup
+5. `../../shared/includes/backlog-protocol.md` -- Filing findings through `backlog-add`
 6. `../../shared/includes/verification-protocol.md` -- Build verification rules
 7. `../../shared/includes/run-logger.md` -- Run logging contract
 8. `../../shared/includes/retrospective.md` -- Retrospective protocol
@@ -73,7 +73,7 @@ If any file is missing, STOP.
 **Allowed write targets:**
 - Content files from the audit manifest (files listed in audit JSON findings)
 - `zuvo/audits/` for the fix report (`.md` and `.json`)
-- `memory/backlog.md` for backlog updates
+- `memory/backlog.md` (ticking a resolved entry) and `memory/findings/` (written by `backlog-add`)
 
 **FORBIDDEN:**
 - Installing packages or dependencies
@@ -361,12 +361,14 @@ REFERENCE = <git SHA or relevant identifier>
 
 ### 5.3 Update backlog
 
-Per `shared/includes/backlog-protocol.md`:
+Per `shared/includes/backlog-protocol.md` "Filing from a skill":
 
 | Finding status | Backlog action |
 |----------------|---------------|
-| FIXED | Remove row by fingerprint |
-| NEEDS_REVIEW | If exists: increment `Seen`. If new: add as OPEN |
-| MANUAL | Add as OPEN with category `content-manual` |
+| FIXED | No record; close the open entry whose file (or target) and title check ID match, never by line (**Closing, not removing**) |
+| NEEDS_REVIEW | Record (`backlog-add`; `--file "$F"` when a repo file causes it, `--target "$U"` for a live page). The helper bumps a re-sighting. |
+| MANUAL | Record, as for NEEDS_REVIEW, with `E` starting `content-manual:` |
 
-**Fingerprint format:** `{file}|{dimension}|{check}`
+A **Generic write** per recorded finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source content-fix --file "$F" --line <n> [--anchor "$A"] --evidence "$E" --title "$T"` when a repository file causes it. A finding on a live page or host with no repository file causing it takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`, whatever the class: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source content-fix --target "$U" --evidence "$E" --title "$T"`. `<N>` is your confidence that the finding is real. `<C>` is `CQ` for a failed check and `BUG` only when the finding names the input and the wrong output; BUG takes `--anchor "$A"`, copied from the line that shows the defect ("The location rule"). `T` starts with the audit finding's `check` ID, `<check-id>: <title>` (e.g. `mojibake-detected`), NOT the fix_type, so FIXED can close the entry later. A whole-file finding is `--line 1` with a "Whole file: ..." title (after the check ID) and no `--anchor`; a whole-file BUG, SEC or DATA is filed at the line that shows the defect instead, with `--anchor "$A"` copied from it, never at line 1. Assign "$R", "$E" and "$T" before each call, "$F" only for a file finding, "$U" only for a target finding, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+This skill does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none) in its final summary, whether it runs standalone or inside another skill, for the calling skill's closing commit to carry when there is one (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
