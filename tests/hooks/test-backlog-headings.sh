@@ -42,6 +42,9 @@ trap 'rm -rf "$FIX"' EXIT
 # gated probes set it per COMMAND with `env VAR=1`, never for the whole file.
 unset ZUVO_BACKLOG_HEADING_ARCHIVE
 HEAD_ARCH_ENV=ZUVO_BACKLOG_HEADING_ARCHIVE
+# No paid API from this suite: backlog-add's duplicate check would send its fixtures to OpenRouter.
+export ZUVO_RERANK=0
+unset OPENROUTER_API_KEY ZUVO_OR_KEY_FILE
 
 # A misspelled helper prints "command not found", returns 127 and moves no counter — a whole file of
 # broken assertions then summarises as FAIL=0 (that happened in test-profile-session-tokens.sh).
@@ -2909,6 +2912,8 @@ while IFS= read -r f; do
       why="one heading-dialect read in a module that performs no write at all" ;;
     zuvo_backlog_entry.py) want="1 0 - 0 0 -"
       why="the render self-check: one PINNED re-parse of the line backlog-add is about to write, so an entry the parser cannot see is refused instead of filed" ;;
+    zuvo_backlog_dedup.py) want="0 1 load 0 0 -"
+      why="the duplicate-candidate loader: one read of checkbox, heading and table entries, used before the lock and for the lock-time re-check; it only scores and names a candidate, and backlog-add itself still never iterates" ;;
     # zuvo_backlog_lookup.py (the lookup wrapper split out of zuvo_backlog_entry.py) gets the `*)` arm, like
     # every non-iterating sibling: it does not even import the parser, so the derivation leaves it out of
     # the family today, and the day it does import it, "no iter_entries call" is exactly its expectation.
@@ -2943,10 +2948,11 @@ FAMEOF
 # the assertion does not depend on walk order, and duplicates are KEPT (`load,load`): two sites in one
 # function is a different fact from one.
 fam_loose_names="$(printf '%s' "$fam_loose_raw" | tr ',' '\n' | grep -v '^$' | LC_ALL=C sort | paste -sd, -)"
-WANT_LOOSE="_report_mint,cmd_index,count_file,find,load,load"
+WANT_LOOSE="_report_mint,cmd_index,count_file,find,load,load,load"
 echo "  ... family totals: pinned=$fam_pin env-gated=$fam_gated unpinned={$fam_loose_names}"
 # 9, not 8, since backlog-add: zuvo_backlog_entry.py's render self-check is the ninth pinned call (its
-# per-file arm above). Raised on purpose, with the unpinned set left exactly as it was.
+# per-file arm above). Raised on purpose. The third `load` is zuvo_backlog_dedup.py's, on purpose too:
+# it reads heading and table entries to score them and writes none.
 [ "$fam_pin" -eq 9 ] && [ "$fam_gated" -eq 1 ] && [ "$fam_loose_names" = "$WANT_LOOSE" ] \
   && ok "(H19c/AC4′) across the $fam_n-module family: exactly 9 unconditionally-pinned calls, exactly 1 env-gated site, and the unpinned bucket is exactly {$WANT_LOOSE} — a set, so a new unpinned site cannot hide behind a retired one" \
   || no "(H19c/AC4′) family totals are pinned=$fam_pin env-gated=$fam_gated unpinned={$fam_loose_names}, expected pinned=9 env-gated=1 unpinned={$WANT_LOOSE}"

@@ -14,7 +14,8 @@ input order fails. Modes that replace the answer:
   trickle       the body one byte per `trickle` seconds (a total-deadline test)
   trickle_headers  the WHOLE response, status line and headers too, one byte per this many seconds
   redirect      302 to this URL
-`delays` holds a sleep per query substring (`delay` for every query); `cost=None` drops `usage.cost`.
+`delays` holds a sleep per query substring (`delay` for every query); `hold_until` holds the answer to a
+query containing a key until its threading.Event is set (60 s at most); `cost=None` drops `usage.cost`.
 Any GET (a followed redirect) is recorded too. Tests clear HTTP(S)_PROXY and set NO_PROXY.
 """
 
@@ -33,12 +34,14 @@ class RerankStub:
                  body: bytes | None = None, raw: bytes | None = None, trickle: float = 0.0,
                  trickle_headers: float = 0.0, redirect: str | None = None, delay: float = 0.0,
                  delays: dict[str, float] | None = None,
+                 hold_until: dict[str, threading.Event] | None = None,
                  cost: float | None = 0.001) -> None:
         self.scores = dict(scores or {})
         self.status, self.body, self.cost = status, body, cost
         self.raw, self.trickle, self.redirect = raw, trickle, redirect
         self.trickle_headers = trickle_headers
         self.delay, self.delays = delay, dict(delays or {})
+        self.hold_until = dict(hold_until or {})
         self.bodies: list[dict[str, Any]] = []
         self.auth: list[str] = []
         self._lock = threading.Lock()
@@ -105,6 +108,9 @@ class RerankStub:
                 self._record(req)
                 query = str(req.get("query", ""))
                 time.sleep(next((d for k, d in stub.delays.items() if k in query), stub.delay))
+                for k, event in stub.hold_until.items():
+                    if k in query:
+                        event.wait(60)
                 with contextlib.suppress(OSError):  # the client already gave up (a timeout test)
                     self._send(req)
 

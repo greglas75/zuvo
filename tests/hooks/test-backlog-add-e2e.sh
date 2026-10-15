@@ -55,7 +55,9 @@ unset PYTHONPATH PYTHONHOME BASH_ENV 2>/dev/null || true
 for v in $(compgen -e); do
   case "$v" in ZUVO_*|GIT_*) unset "$v" ;; esac
 done
-export HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" ZUVO_PR_LOOKUP=0 \
+# ZUVO_RERANK=0 and no key: backlog-add's duplicate check must never send these findings to the paid API.
+unset OPENROUTER_API_KEY
+export HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" ZUVO_PR_LOOKUP=0 ZUVO_RERANK=0 \
        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 mkdir -p "$HOME" "$tmp/install-tmp" || { no "(pre) could not create the temp HOME"; finish; }
 
@@ -162,7 +164,7 @@ verdict(){
   if [ "$RC" -ne "$want_rc" ]; then no "$step: exit $RC, expected $want_rc"; show; return 1; fi
   if [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" != "1" ]; then no "$step: stdout is not one line"; show; return 1; fi
   case "$OUT" in
-    "$prefix"*) ok "$step: '$prefix…' exit $RC"; return 0 ;;
+    "$prefix"*) ok "$step: '${prefix}…' exit $RC"; return 0 ;;
     *) no "$step: verdict does not start with '$prefix'"; show; return 1 ;;
   esac
 }

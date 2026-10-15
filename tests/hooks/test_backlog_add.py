@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -27,20 +28,29 @@ HOME_DIR = os.path.join(ROOT, "scripts", "zuvo-home")
 LAUNCHER = os.path.join(HOME_DIR, "backlog-add")
 ARCHIVER = os.path.join(HOME_DIR, "backlog-archive.py")
 sys.path.insert(0, HOME_DIR)
+sys.path.insert(0, os.path.join(ROOT, "tests", "lib"))
 import zuvo_backlog_add as add  # noqa: E402
+import zuvo_backlog_dedup as dd  # noqa: E402
 import zuvo_backlog_entry as ent  # noqa: E402
 import zuvo_backlog_findings as fnd  # noqa: E402
 import zuvo_backlog_io as zio  # noqa: E402
 import zuvo_backlog_parse as zb  # noqa: E402
+from rerank_stub import RerankStub  # noqa: E402
 
 ANCHOR = "if total > limit:"
 SOURCE = "a = 1\nb = 2\nif total > limit:\n    return total - limit\n"
 NOW = "2026-10-13T10:00:00+00:00"
+# A developer's OpenRouter key would send these specs' findings to the paid rerank API, and the rest
+# would move its thresholds, its target or the opt-in bump under them.
+RERANK_SCRUB = ("OPENROUTER_API_KEY", "ZUVO_OR_KEY_FILE", "ZUVO_OPENROUTER_BASE_URL",
+                "ZUVO_BACKLOG_DEDUP_BUMP", "NO_PROXY", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy",
+                "https_proxy", "ALL_PROXY", "all_proxy")
+SCRUB_PREFIXES = ("ZUVO_RERANK", "ZUVO_BACKLOG_DUP")
 # Inherited from a developer shell or a git hook, each would change what the launcher (or the fixture's
 # own git) acts on.
 SCRUB = ("ZUVO_BACKLOG_PR", "ZUVO_BACKLOG_ADMIT", "ZUVO_DEFAULT_BRANCH", "ZUVO_LOCK_WAIT",
          "ZUVO_BACKLOG_READY_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
-         "GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES")
+         "GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES", *RERANK_SCRUB)
 # XDG_CONFIG_HOME too: GIT_CONFIG_GLOBAL stops ~/.gitconfig, not the default excludes file
 # ~/.config/git/ignore, so a developer's global `memory/` or `*.jsonl` changed what these specs saw.
 HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "XDG_CONFIG_HOME": os.devnull}
@@ -61,7 +71,7 @@ def bug_line(b_id: str, f_id: str, tag: str) -> str:
 
 
 def scrubbed_env() -> Dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+    env = {k: v for k, v in os.environ.items() if k not in SCRUB and not k.startswith(SCRUB_PREFIXES)}
     env.update(HERMETIC_GIT)
     return env
 
@@ -116,7 +126,8 @@ class AddCase(unittest.TestCase):
         """The launcher's environment; `now=""` runs it on the real clock."""
         env = scrubbed_env()
         env.update(HOME=str(self.home), ZUVO_PR_LOOKUP="0", ZUVO_BACKLOG_NOW=now, ZUVO_BACKLOG_HOST="t",
-                   **extra)
+                   ZUVO_RERANK="0")
+        env.update(extra)
         return env
 
     def repo(self, name: str = "r", ignore: str = "", memory: bool = True, branch: str = "feat/x",
@@ -175,11 +186,14 @@ class AddCase(unittest.TestCase):
         self.assertEqual(self.verdict(self.add(repo, *BUG, TZ="UTC"))[:2], ("REOPENED", b_id))
         return b_id
 
-    def flat(self, drop: str = "", fake_archiver: str = "") -> str:
-        """The launcher and its modules in ONE directory — the ~/.zuvo layout install_zuvo_home makes."""
-        d = self.tmp / "flat"
+    def flat(self, drop: str = "", fake_archiver: str = "", name: str = "flat") -> str:
+        """The launcher and its modules in ONE directory — the ~/.zuvo layout install_zuvo_home makes,
+        rerank client included, so a stub-backed case does not silently run the no-client path."""
+        d = self.tmp / name
         d.mkdir()
-        for src in [LAUNCHER, ARCHIVER, *glob.glob(os.path.join(HOME_DIR, "zuvo_backlog_*.py"))]:
+        rerank = [*glob.glob(os.path.join(HOME_DIR, "zuvo_rerank*.py")),
+                  os.path.join(HOME_DIR, "zuvo_bm25.py")]
+        for src in [LAUNCHER, ARCHIVER, *glob.glob(os.path.join(HOME_DIR, "zuvo_backlog_*.py")), *rerank]:
             if os.path.basename(src) != drop:
                 shutil.copy2(src, d)
         if fake_archiver:
@@ -777,6 +791,424 @@ class LockTests(AddCase):
                          (1, "", "backlog-add: RenderInvisible: render-invisible\n"))
         self.assertEqual(snapshot(r), before)
         self.assertFalse((r / LOCK_REL).exists())
+
+
+FIXTURE_PATH = Path(ROOT) / "tests" / "fixtures" / "rerank" / "backlog" / "open.md"
+A3 = "B-20261005-CP-R-A3"
+TEST_KEY = "test-key-not-a-real-credential"
+# The same defect as BUG one line down: a different anchor, so a different F- fingerprint and B-id.
+BUG2 = tuple(with_args(BUG, "--line", "4", "--anchor", "return total - limit", "--title",
+                       "limit check misses the equal case"))
+FSTR = tuple(with_args(BUG, "--title", "f-strings ignored by the tokenize fallback"))
+DUP_TAIL = "| ledger: {f} | possible-dup-of: {b} ({band}) | 2026-10-13 [branch:feat/x]"
+# The launcher's own work on a loaded host, on top of the rerank timeout (dd.TIMEOUT_S).
+TIMEOUT_ALLOWANCE_S = 5.0
+
+
+class DedupTests(AddCase):
+    """The add-time duplicate flag against tests/lib/rerank_stub.py: the API is called before the lock,
+    never under it, and every failure leaves today's verdict, exit code and bytes."""
+
+    fixture = ""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture = FIXTURE_PATH.read_text(encoding="utf-8")
+
+    def setUp(self) -> None:
+        super().setUp()
+        key = self.home / ".zuvo" / "openrouter.key"
+        key.parent.mkdir()
+        key.write_text(TEST_KEY + "\n", encoding="utf-8")
+        key.chmod(0o600)
+
+    def stub(self, scores: Optional[Dict[str, float]] = None, **kw: Any) -> RerankStub:
+        """A stub stopped when the TEST ends; subTest loops open their own with `with`."""
+        s = RerankStub(scores, **kw).start()
+        self.addCleanup(s.stop)
+        return s
+
+    @staticmethod
+    def bodies(stub: RerankStub) -> List[Dict[str, Any]]:
+        with stub._lock:                      # the handler threads append while the test reads
+            return list(stub.bodies)
+
+    def live(self, stub: RerankStub, **extra: str) -> Dict[str, str]:
+        """Launcher env with the rerank pass on, pointed at `stub`."""
+        return {"ZUVO_RERANK": "1", "ZUVO_RERANK_BASE_URL": stub.base_url, "NO_PROXY": "127.0.0.1",
+                "no_proxy": "127.0.0.1", "TZ": "UTC", **extra}
+
+    def on(self, stub: RerankStub, repo: Path, *args: str, launcher: str = LAUNCHER,
+           **extra: str) -> "subprocess.CompletedProcess[str]":
+        """Run the launcher with the rerank pass on against `stub`."""
+        env = self.env(**self.live(stub, **extra))
+        return subprocess.run([sys.executable, launcher, *args], cwd=repo, env=env, capture_output=True,
+                              text=True, timeout=180)
+
+    def inproc(self, repo: Path, *args: str, **extra: str) -> "subprocess.CompletedProcess[str]":
+        """`add.main` in this process, so a test can replace a dedup function. A usage error's SystemExit
+        becomes the return code, as it would be for the launcher."""
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, self.env(**extra), clear=True), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            try:
+                code = add.main(["--repo", str(repo), *args])
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 1
+        return subprocess.CompletedProcess([], code, out.getvalue(), err.getvalue())
+
+    def digest_of(self, repo: Path, b_id: str) -> str:
+        """The digest `candidates` would record for `b_id` in this repo's backlog."""
+        body = next((e.body for e in dd.load((self.backlog(repo),)) if e.ident == b_id), None)
+        self.assertIsNotNone(body, f"{b_id} is not in the backlog")
+        return dd.digest(body or "")
+
+    def first(self, r: Path, *args: str) -> str:
+        """File BUG (or `args`) with the rerank pass off; its B-id."""
+        p = self.add(r, *(args or BUG), TZ="UTC")
+        self.assertEqual((p.returncode, self.verdict(p)[0]), (0, "ACCEPTED"), p.stderr)
+        return self.verdict(p)[1]
+
+    BANDS = [
+        ("a strong score is not flagged strong", 0.81, "strong"),
+        ("a weak score is not flagged weak", 0.60, "weak"),
+    ]
+
+    def test_scored_duplicate_is_appended_with_its_band_and_the_candidate_is_untouched(self) -> None:
+        for name, score, band in self.BANDS:
+            with self.subTest(name), RerankStub({"off-by-one at the limit": score}) as stub:
+                r = self.repo(name=band)
+                b1 = self.first(r)
+                before = self.entries(r, b1)
+                p = self.on(stub, r, *BUG2)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                kind, b2, f2 = self.verdict(p)
+                self.assertEqual(kind, "ACCEPTED")
+                self.assertNotEqual(b2, b1)
+                self.assertTrue(self.entries(r, b2)[0].endswith(DUP_TAIL.format(f=f2, b=b1, band=band)))
+                self.assertIn("| seen: 1 |", self.entries(r, b2)[0])
+                self.assertEqual(self.entries(r, b1), before)
+
+    def test_score_under_the_weak_band_files_an_unflagged_entry(self) -> None:
+        # Defect: every add names its nearest neighbour, however unrelated, as a possible duplicate.
+        r = self.repo()
+        self.first(r)
+        stub = self.stub({"off-by-one at the limit": 0.54})
+        p = self.on(stub, r, *BUG2)
+        self.assertEqual((p.returncode, self.verdict(p)[0], stub.requests), (0, "ACCEPTED", 1))
+        self.assertNotIn("possible-dup-of", self.backlog(r))
+
+    def test_opt_in_bump_merges_a_strong_duplicate(self) -> None:
+        # Defect: ZUVO_BACKLOG_DEDUP_BUMP=1 is ignored, or the bump leaves a second entry behind.
+        r = self.repo()
+        b1 = self.first(r)
+        p = self.on(self.stub({"off-by-one at the limit": 0.81}), r, *BUG2, ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        kind, b, f2 = self.verdict(p)
+        self.assertEqual((kind, b), ("BUMPED", b1))
+        self.assertIn("| seen: 2 |", self.entries(r, b1)[0])
+        self.assertEqual(len(re.findall(r"^- \[ \] B-", self.backlog(r), re.M)), 1)
+        self.assertEqual(self.folded(r)[0][f2].fields["backlog"], b1)
+
+    def test_bumped_finding_seen_again_resolves_to_the_entry_it_was_merged_into(self) -> None:
+        # Defect: the merged finding's ledger record names no entry, so its exact repeat is filed as a
+        # new entry after all and the opt-in merge only postponed the duplicate.
+        r = self.repo()
+        b1 = self.first(r)
+        stub = self.stub({"off-by-one at the limit": 0.81})
+        merged = self.on(stub, r, *BUG2, ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertEqual(self.verdict(merged)[:2], ("BUMPED", b1))
+        p = self.add(r, *BUG2, TZ="UTC")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.verdict(p)[:2], ("BUMPED", b1))
+        self.assertIn("| seen: 3 |", self.entries(r, b1)[0])
+        self.assertEqual(len(re.findall(r"^- \[ \] B-", self.backlog(r), re.M)), 1)
+
+    def test_opt_in_bump_never_merges_a_weak_duplicate(self) -> None:
+        # Defect: the bump fires on a weak score, hiding a distinct finding inside another entry.
+        r = self.repo()
+        b1 = self.first(r)
+        p = self.on(self.stub({"off-by-one at the limit": 0.60}), r, *BUG2, ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.verdict(p)[0], "ACCEPTED")
+        self.assertIn("| seen: 1 |", self.entries(r, b1)[0])
+
+    def test_opt_in_bump_never_merges_into_an_entry_on_another_file(self) -> None:
+        # Defect: the merge keeps only the old entry's text, so a finding in another file loses its own
+        # location, evidence and fix inside a neighbour that merely reads alike.
+        r = self.repo()
+        (r / "src" / "b.py").write_text(SOURCE, encoding="utf-8")
+        git(r, "add", "src/b.py")
+        git(r, "commit", "-qm", "b")
+        b1 = self.first(r, *with_args(BUG, "--file", "src/b.py"))
+        p = self.on(self.stub({"off-by-one at the limit": 0.81}), r, *BUG2, ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        kind, b2, f2 = self.verdict(p)
+        self.assertEqual(kind, "ACCEPTED")
+        self.assertTrue(self.entries(r, b2)[0].endswith(DUP_TAIL.format(f=f2, b=b1, band="strong")))
+        self.assertIn("| seen: 1 |", self.entries(r, b1)[0])
+
+    def test_archived_candidate_is_flagged_and_never_bumped(self) -> None:
+        # Defect: the opt-in merge re-opens or edits an archived entry, or drops a true flag naming it.
+        r = self.repo()
+        b1 = self.first(r)
+        path = r / "memory" / "backlog.md"
+        path.write_text(self.backlog(r).replace(f"- [ ] {b1} ", f"- [x] {b1} ").rstrip("\n")
+                        + " DONE 2026-10-13\n", encoding="utf-8")
+        self.assertEqual(self.archive(r, "archive").returncode, 0)
+        done = (r / "memory" / "backlog-done.md").read_text(encoding="utf-8")
+        p = self.on(self.stub({"off-by-one at the limit": 0.81}), r, *BUG2, ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        kind, b2, f2 = self.verdict(p)
+        self.assertEqual(kind, "ACCEPTED")
+        self.assertTrue(self.entries(r, b2)[0].endswith(DUP_TAIL.format(f=f2, b=b1, band="strong")))
+        self.assertEqual((r / "memory" / "backlog-done.md").read_text(encoding="utf-8"), done)
+
+    def test_forced_admission_is_never_redirected_into_another_entry(self) -> None:
+        # Defect: a user-requested entry (ZUVO_BACKLOG_ADMIT=1) is bumped into a neighbour instead.
+        r = self.repo()
+        _, b1, _ = self.verdict(self.add(r, *CPLX, ZUVO_BACKLOG_ADMIT="1", TZ="UTC"))
+        cplx2 = with_args(CPLX, "--line", "4", "--title", "nesting is too deep")
+        p = self.on(self.stub({"too complex": 0.9}), r, *cplx2, ZUVO_BACKLOG_ADMIT="1",
+                    ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        kind, b2, _ = self.verdict(p)
+        self.assertEqual(kind, "ACCEPTED")
+        self.assertNotEqual(b2, b1)
+        self.assertIn("| seen: 1 |", self.entries(r, b1)[0])
+
+    FAIL_OPEN: List[Tuple[str, Dict[str, Any]]] = [
+        ("an HTTP 500 changes the verdict, the exit code or the bytes", {"status": 500, "body": b"oops"}),
+        ("a hung API changes the verdict, the exit code or the bytes, or waits past the timeout",
+         {"delay": dd.TIMEOUT_S + 1.0}),
+    ]
+
+    def test_api_failure_leaves_todays_verdict_exit_code_and_bytes(self) -> None:
+        for i, (name, kw) in enumerate(self.FAIL_OPEN):
+            with self.subTest(name), RerankStub({"f-string model": 0.9}, **kw) as stub:
+                off = self.repo(name=f"off-{i}", backlog=self.fixture)
+                on = self.repo(name=f"on-{i}", backlog=self.fixture)
+                want = self.add(off, *FSTR, TZ="UTC")
+                started = time.monotonic()
+                got = self.on(stub, on, *FSTR)
+                elapsed = time.monotonic() - started
+                self.assertEqual(stub.requests, 1)
+                self.assertEqual(got.returncode, want.returncode, got.stderr)
+                self.assertEqual(self.verdict(got), self.verdict(want))
+                self.assertEqual(self.backlog(on), self.backlog(off))
+                self.assertLessEqual(elapsed, dd.TIMEOUT_S + TIMEOUT_ALLOWANCE_S)
+
+    FAIL_INSIDE: List[Tuple[str, Dict[str, Any]]] = [
+        ("the loader raising before the lock escapes as a traceback", {"load": RuntimeError("load")}),
+        ("the scorer raising escapes as a traceback", {"candidates": RuntimeError("score")}),
+        ("the lock-time check raising escapes as a traceback",
+         {"candidates": dd.Candidate("B-x-1", 0.9, "strong", "0" * 64), "confirm": RuntimeError("confirm")}),
+    ]
+
+    def test_an_exception_inside_the_duplicate_check_leaves_todays_outcome(self) -> None:
+        for i, (name, patches) in enumerate(self.FAIL_INSIDE):
+            with self.subTest(name), RerankStub({"off-by-one at the limit": 0.81}) as stub:
+                off, on = self.repo(name=f"twin-{i}"), self.repo(name=f"raise-{i}")
+                self.first(off)
+                self.first(on)
+                want = self.inproc(off, *BUG2)
+                with contextlib.ExitStack() as stack:
+                    mocks = []
+                    for attr, value in patches.items():
+                        key = "side_effect" if isinstance(value, Exception) else "return_value"
+                        mocks.append(stack.enter_context(mock.patch.object(dd, attr, **{key: value})))
+                    got = self.inproc(on, *BUG2, **self.live(stub))
+                self.assertEqual([m.called for m in mocks], [True] * len(mocks))
+                self.assertEqual(got.returncode, want.returncode, got.stderr)
+                self.assertEqual(self.verdict(got), self.verdict(want))
+                self.assertEqual(self.backlog(on), self.backlog(off))
+
+    def test_the_lock_time_check_runs_only_when_an_entry_is_appended(self) -> None:
+        # Defect: the candidate is re-checked (both files re-read and parsed) under the lock even when a
+        # legacy entry is bumped and the result is thrown away.
+        legacy = "- [ ] src/a.py:4 — limit check misses the equal case\n"
+        for name, backlog, verdict, calls in (("a legacy bump still re-checks", legacy, "BUMPED", 0),
+                                              ("an append skips the re-check", "", "ACCEPTED", 1)):
+            with self.subTest(name):
+                r = self.repo(name=verdict.lower(), backlog="# Backlog\n\n" + backlog)
+                b1 = self.first(r)
+                cand = dd.Candidate(b1, 0.9, "weak", self.digest_of(r, b1))
+                with mock.patch.object(dd, "candidates", return_value=cand), \
+                        mock.patch.object(dd, "confirm", wraps=dd.confirm) as confirm:
+                    p = self.inproc(r, *BUG2)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertEqual((self.verdict(p)[0], confirm.call_count), (verdict, calls))
+
+    def test_the_lock_is_not_held_during_the_network_call(self) -> None:
+        # Defect: the rerank runs under the backlog lock, so one slow API call times out every writer
+        # queued behind it (ZUVO_LOCK_WAIT), and their findings are lost.
+        r = self.repo(backlog=self.fixture)
+        release = threading.Event()
+        stub = self.stub({"f-string model": 0.9}, hold_until={"alpha-marker": release})
+        self.addCleanup(release.set)
+        slow = with_args(FSTR, "--title", "alpha-marker f-strings ignored by the tokenize fallback")
+        a = subprocess.Popen([sys.executable, LAUNCHER, *slow], cwd=r, env=self.env(**self.live(stub)),
+                             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 30
+            while not any("alpha-marker" in b.get("query", "") for b in self.bodies(stub)):
+                self.assertIsNone(a.poll(), "A finished without ever calling the API")
+                self.assertLess(time.monotonic(), deadline, "A never called the API")
+                time.sleep(0.02)
+            b = self.on(stub, r, *BUG2, ZUVO_LOCK_WAIT="2")
+            a_still_waiting = a.poll() is None
+            release.set()
+            _, err = a.communicate(timeout=60)
+        finally:
+            if a.poll() is None:
+                a.kill()
+                a.communicate()
+        self.assertEqual(b.returncode, 0, b.stderr)
+        self.assertEqual(self.verdict(b)[0], "ACCEPTED")
+        self.assertTrue(a_still_waiting, "B returned after A: this run proves nothing about the lock")
+        self.assertEqual(a.returncode, 0, err)
+
+    RACE = [
+        ("a candidate whose id changed before the lock is still named",
+         lambda t: t.replace(A3, "B-renamed-1"), False),
+        ("a candidate rewritten before the lock is still named",
+         lambda t: t.replace("no f-string model", "a full f-string model now"), False),
+        ("an untouched candidate loses its flag at the lock", lambda t: t, True),
+    ]
+
+    def test_candidate_is_rechecked_under_the_lock(self) -> None:
+        for i, (name, edit, kept) in enumerate(self.RACE):
+            with self.subTest(name), RerankStub({"f-string model": 0.9}) as stub:
+                r = self.repo(name=f"race-{i}", backlog=self.fixture)
+                ready = self.tmp / f"ready-{i}"
+                env = self.env(**self.live(stub, ZUVO_BACKLOG_READY_FILE=str(ready), ZUVO_LOCK_WAIT="60"))
+                p = None
+                try:
+                    with zio.Lock(str(r / "memory")):
+                        p = subprocess.Popen([sys.executable, LAUNCHER, *FSTR], cwd=r, env=env, text=True,
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        deadline = time.monotonic() + 60
+                        while not ready.exists():
+                            self.assertLess(time.monotonic(), deadline, "the writer never reached the lock")
+                            time.sleep(0.02)
+                        path = r / "memory" / "backlog.md"
+                        path.write_text(edit(path.read_text(encoding="utf-8")), encoding="utf-8")
+                    out, err = p.communicate(timeout=60)
+                finally:
+                    if p is not None and p.poll() is None:
+                        p.kill()
+                        p.communicate()
+                done = subprocess.CompletedProcess([], p.returncode, out, err)
+                self.assertEqual(p.returncode, 0, err)
+                self.assertEqual(self.verdict(done)[0], "ACCEPTED")
+                self.assertEqual(f"possible-dup-of: {A3} (strong)" in self.backlog(r), kept)
+
+    LEGACY_CANDIDATES = [
+        ("a heading candidate is not flagged, or is edited by the bump",
+         "### B-heading-1 — off-by-one at the limit when the total equals it\n\nprose\n", "B-heading-1"),
+        ("a table-row candidate is not flagged, or is edited by the bump",
+         "| ID | Problem | File |\n|---|---|---|\n| B-t-1 | off-by-one at the limit | src/a.py:3 |\n",
+         "B-t-1"),
+    ]
+
+    def test_heading_and_table_candidates_are_flagged_never_bumped(self) -> None:
+        for name, block, cand in self.LEGACY_CANDIDATES:
+            with self.subTest(name), RerankStub({"off-by-one at the limit": 0.81}) as stub:
+                r = self.repo(name=cand.lower(), backlog="# Backlog\n\n## Open\n\n" + block)
+                p = self.on(stub, r, *BUG2, ZUVO_BACKLOG_DEDUP_BUMP="1")
+                self.assertEqual(p.returncode, 0, p.stderr)
+                kind, b2, f2 = self.verdict(p)
+                self.assertEqual(kind, "ACCEPTED")
+                tail = DUP_TAIL.format(f=f2, b=cand, band="strong")
+                self.assertTrue(self.entries(r, b2)[0].endswith(tail))
+                self.assertIn(block, self.backlog(r))
+
+    def test_a_failure_while_checking_the_bump_appends_with_the_flag(self) -> None:
+        # Defect: an exception reading the candidate for the opt-in bump escapes as a traceback, so the
+        # finding is lost although the flag alone would have filed it.
+        r = self.repo()
+        b1 = self.first(r)
+        cand = dd.Candidate(b1, 0.9, "strong", self.digest_of(r, b1))
+        parse_own = ent.parse_own
+
+        def broken(line: str) -> Optional[ent.Own]:
+            if line.startswith(f"- [ ] {b1} "):
+                raise RuntimeError("parse_own")
+            return parse_own(line)
+
+        with mock.patch.object(dd, "candidates", return_value=cand), \
+                mock.patch.object(ent, "parse_own", side_effect=broken) as patched:
+            p = self.inproc(r, *BUG2, ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertTrue(any(c.args[0].startswith(f"- [ ] {b1} ") for c in patched.call_args_list))
+        self.assertEqual(p.returncode, 0, p.stderr)
+        kind, b2, f2 = self.verdict(p)
+        self.assertEqual(kind, "ACCEPTED")
+        self.assertTrue(self.entries(r, b2)[0].endswith(DUP_TAIL.format(f=f2, b=b1, band="strong")))
+        self.assertIn("| seen: 1 |", self.entries(r, b1)[0])
+
+    def test_dry_run_makes_no_request(self) -> None:
+        # Defect: --dry-run, which promises no side effect, sends the finding to the API.
+        r = self.repo()
+        self.first(r)
+        stub = self.stub({"off-by-one at the limit": 0.81})
+        p = self.on(stub, r, *BUG2, "--dry-run")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue(p.stdout.strip(), "no verdict printed")
+        self.assertEqual((p.stdout.split()[0], stub.requests), ("ACCEPTED", 0))
+
+    def test_flagged_entry_seen_again_is_bumped_and_keeps_its_flag(self) -> None:
+        # Defect: the field makes the entry unreadable to parse_own, so its own exact repeat is only
+        # linked as legacy (never counted), or the archiver's verify rejects the line.
+        r = self.repo()
+        b1 = self.first(r)
+        stub = self.stub({"off-by-one at the limit": 0.81})
+        _, b2, _ = self.verdict(self.on(stub, r, *BUG2))
+        p = self.on(stub, r, *BUG2)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.verdict(p)[:2], ("BUMPED", b2))
+        self.assertNotIn(" legacy ", p.stdout)
+        line = self.entries(r, b2)[0]
+        self.assertIn("| seen: 2 |", line)
+        self.assertIn(f"| possible-dup-of: {b1} (strong) |", line)
+        self.assertIsNotNone(ent.parse_own(line))
+        self.assertEqual(self.archive(r, "verify").returncode, 0)
+
+    def test_verdict_line_never_carries_the_flag_and_json_does(self) -> None:
+        # Defect: the field leaks into the text verdict line (VERDICT_RE, which skills parse, breaks), or
+        # --json drops it so a caller cannot report the possible duplicate.
+        r, rj = self.repo(name="line"), self.repo(name="json")
+        b1 = self.first(r)
+        self.first(rj)
+        stub = self.stub({"off-by-one at the limit": 0.81})
+        line = self.on(stub, r, *BUG2)
+        obj = json.loads(self.on(stub, rj, *BUG2, "--json").stdout)
+        self.assertEqual(self.verdict(line)[0], "ACCEPTED")
+        self.assertNotIn("possible-dup-of", line.stdout)
+        self.assertEqual(obj["possible_dup_of"], {"backlog": b1, "band": "strong", "score": 0.81})
+
+    def test_flat_copy_without_the_client_behaves_as_today(self) -> None:
+        # Defect: a top-level import of zuvo_rerank breaks every flat/mutant copy built from the
+        # zuvo_backlog_*.py glob; and a full flat copy must really reach the client (a control).
+        for name, drop, flagged in (("no client", "zuvo_rerank.py", False), ("full copy", "", True)):
+            with self.subTest(name), RerankStub({"off-by-one at the limit": 0.81}) as stub:
+                r = self.repo(name="flat-" + name.replace(" ", "-"))
+                b1 = self.first(r)
+                launcher = self.flat(drop=drop, name="bin-" + name.replace(" ", "-"))
+                p = self.on(stub, r, *BUG2, launcher=launcher)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertEqual(self.verdict(p)[0], "ACCEPTED")
+                self.assertEqual((stub.requests, f"possible-dup-of: {b1}" in self.backlog(r)),
+                                 (1, True) if flagged else (0, False))
+
+    def test_the_specs_env_carries_no_rerank_setting_from_the_parent(self) -> None:
+        # Defect: a developer's key, base URL, thresholds or opt-in bump leak into these specs' launcher
+        # env, so they reach the paid API or test other thresholds than the ones they name.
+        parent = {k: "from-parent" for k in (*RERANK_SCRUB, "ZUVO_RERANK_BASE_URL", "ZUVO_RERANK_BUDGET_USD",
+                                              "ZUVO_BACKLOG_DUP_HIGH", "ZUVO_BACKLOG_DUP_LOW")}
+        with mock.patch.dict(os.environ, {**parent, "ZUVO_RERANK": "1"}):
+            env = self.env()
+        self.assertEqual(env["ZUVO_RERANK"], "0")
+        self.assertEqual(sorted(k for k in parent if k in env), [])
 
 
 class LegacyTextKeysOnSomethingTests(unittest.TestCase):

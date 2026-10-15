@@ -16,6 +16,13 @@ UNDER `zuvo_backlog_io.Lock` on the backlog's directory, in this order and no ot
      id only a heading carries), which is linked in the ledger and its text never edited — then the
      ledger append.
 
+A REWORDED DUPLICATE the F- fingerprint does not merge (another anchor, class or file, or a hand-written
+entry) is scored by the rerank API BEFORE the lock (`zuvo_backlog_dedup.candidates`, route backlog only,
+never on --dry-run): the network never runs inside the lock budget below. When step 3 is about to
+append, it re-checks that candidate in memory (still defined, same body) and appends the new entry with
+`possible-dup-of: <B> (strong|weak)`; only ZUVO_BACKLOG_DEDUP_BUMP=1 bumps the candidate instead
+(`_opt_in_bump`). Any failure anywhere in this check, raised or not, names no candidate: today's path.
+
 Backlog before ledger: a crash between the two leaves an entry with no record, and the next sighting
 finds the entry by its `id:` key and writes the record then. The reverse order would leave a record
 claiming an entry that does not exist. A lookup outside the lock would let two writers both see ABSENT
@@ -75,6 +82,7 @@ from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import zuvo_backlog_admit as adm
+import zuvo_backlog_dedup as dd
 import zuvo_backlog_entry as ent
 import zuvo_backlog_findings as fnd
 import zuvo_backlog_io as zio
@@ -96,6 +104,7 @@ EXIT_CODES: Dict[int, str] = {
                  "stderr names the backlog path already written as wrote=",
 }
 ADMIT_ENV = "ZUVO_BACKLOG_ADMIT"
+DEDUP_BUMP_ENV = "ZUVO_BACKLOG_DEDUP_BUMP"
 _FAILURES = (OSError, ValueError, lk.LookupFailed, ent.RenderInvisible)
 # Test-only (TD11): one line is appended to this file immediately before the lock is requested, so a
 # concurrency test knows every writer is AT the lock rather than guessing with a sleep.
@@ -114,6 +123,7 @@ class Result(NamedTuple):
     legacy: bool = False            # linked to an entry not in backlog-add's own format; text untouched
     wrote: Tuple[str, ...] = ()
     forced: bool = False            # ZUVO_BACKLOG_ADMIT=1 changed the route
+    dup: Optional[dd.Candidate] = None  # the entry the new one may reword (--json only)
 
 
 @dataclasses.dataclass
@@ -134,6 +144,7 @@ class _Call:
     now: str = ""                   # `now` and `segment` are set once the lock is held
     segment: Path = Path()
     written: List[str] = dataclasses.field(default_factory=list)
+    dedup: Optional[dd.Candidate] = None    # scored before the lock, re-checked under it
 
     @property
     def today(self) -> str:
@@ -329,12 +340,36 @@ def _legacy_text(c: _Call) -> str:
     return f"{where} — {' '.join(c.f.title.split())}"
 
 
+def _confirmed(c: _Call) -> Optional[dd.Candidate]:
+    """The pre-lock candidate, still defined with the body that was scored; None on any failure."""
+    try:
+        return dd.confirm(c.dedup, (zio.read(c.real), zio.read(c.archive))) if c.dedup else None
+    except Exception:  # never fatal: the flag is a guess, the finding must still be filed
+        return None
+
+
+def _opt_in_bump(c: _Call, dup: dd.Candidate) -> bool:
+    """Opt-in (ZUVO_BACKLOG_DEDUP_BUMP=1, strong score, not forced): merge only into an open entry in this
+    command's own format on the same file. The new finding's own text is not kept, which is what the
+    opt-in accepts. False, also on any failure, means the new entry is appended with the flag."""
+    if dup.band != "strong" or os.environ.get(DEDUP_BUMP_ENV) != "1" or c.d.forced or not c.f.file:
+        return False
+    try:
+        line = next((ln for ln in zio.read(c.real).splitlines()
+                     if zb.definition_id(ln).lower() == dup.b_id.lower()), "")
+        own = ent.parse_own(line)
+        same_file = own is not None and own.loc.rpartition(":")[0] == c.f.file
+    except Exception:  # never fatal: appending with the flag still files the finding
+        return False
+    return same_file and _bump(c, dup.b_id)    # a write failure here is exit 1, as for any bump
+
+
 def _backlog_route(c: _Call, rec: Optional[fnd.Record]) -> Result:
     linked = rec.fields.get("backlog") if rec else None
     derived = adm.b_id(c.f, c.d, c.fid)
     b_id = linked or derived
     v = lk.lookup(c.repo, b_id, timeout=_lookup_timeout())
-    legacy, shown = False, b_id
+    legacy, shown, flag = False, b_id, None
     if v.status == lk.LOOKUP_OPEN:
         verdict, legacy = "BUMPED", not _bump(c, b_id)
     elif v.status == lk.LOOKUP_ARCHIVED:
@@ -342,16 +377,21 @@ def _backlog_route(c: _Call, rec: Optional[fnd.Record]) -> Result:
         _reopen(c, b_id, v)
     else:
         old = lk.lookup(c.repo, _legacy_text(c), timeout=_lookup_timeout())
+        dup = None if old.status == lk.LOOKUP_OPEN else _confirmed(c)
         if old.status == lk.LOOKUP_OPEN:
             verdict, legacy, b_id, shown = "BUMPED", True, old.ident or "", old.ident or old.key
+        elif dup and _opt_in_bump(c, dup):
+            verdict, b_id, shown = "BUMPED", dup.b_id, dup.b_id
         else:
-            verdict, b_id = "ACCEPTED", derived
+            verdict, b_id, flag = "ACCEPTED", derived, dup
             seen = rec.seen + 1 if rec else 1
-            _append_backlog(c, ent.render(c.f, c.d, b_id, c.fid, seen, c.tag.render(), c.today))
+            mark = f"{dup.b_id} ({dup.band})" if dup else ""
+            _append_backlog(c, ent.render(c.f, c.d, b_id, c.fid, seen, c.tag.render(), c.today, mark))
             shown = b_id
     seen_after = _ledger_write(c, rec, b_id or None)
     shown_seen = seen_after if verdict == "BUMPED" else None      # only BUMPED's line shows a count
-    return Result(verdict, backlog=shown, ledger=c.fid, seen=shown_seen, legacy=legacy, forced=c.d.forced)
+    return Result(verdict, backlog=shown, ledger=c.fid, seen=shown_seen, legacy=legacy, forced=c.d.forced,
+                  dup=flag)
 
 
 def _locked(c: _Call) -> Result:
@@ -411,10 +451,25 @@ def _ready() -> None:
             fh.write(f"{os.getpid()}\n")
 
 
+def _dedup(c: _Call) -> Optional[dd.Candidate]:
+    """The entry this finding may reword, scored without the lock; None on any failure (today's path)."""
+    try:
+        entries = dd.load((zio.read(c.real), zio.read(c.archive)))
+        derived = adm.b_id(c.f, c.d, c.fid)
+        if any(e.ident.lower() == derived.lower() for e in entries):
+            return None                         # an exact repeat: the lookup under the lock bumps it
+        query = " | ".join(x for x in (_legacy_text(c), c.f.evidence, c.f.fix) if x and x.strip())
+        return dd.candidates(entries, query)
+    except Exception:  # never fatal: a half-installed module or a parser bug must not lose the finding
+        return None
+
+
 def _execute(a: argparse.Namespace, repo: str) -> Result:
     c = _prepare(a, repo)
     if isinstance(c, Result):
         return c
+    if c.d.route == adm.ROUTE_BACKLOG and not c.dry:
+        c.dedup = _dedup(c)                     # the network call, before the lock and its budget
     memdir = os.path.dirname(c.real)
     if c.dry and not os.path.isdir(memdir):
         return _locked(c)                       # nothing to read and nothing to race with
@@ -453,7 +508,9 @@ def render_json(r: Result, dry: bool) -> str:
     return json.dumps({"verdict": r.verdict, "exit": r.code, "backlog": r.backlog, "ledger": r.ledger,
                        "seen": r.seen, "reason": r.reason, "legacy": r.legacy,
                        "regression": r.verdict == "REOPENED", "wrote": list(r.wrote), "dry_run": dry,
-                       "forced": r.forced},
+                       "forced": r.forced,
+                       "possible_dup_of": r.dup and {"backlog": r.dup.b_id, "band": r.dup.band,
+                                                     "score": r.dup.score}},
                       ensure_ascii=False, sort_keys=True)
 
 

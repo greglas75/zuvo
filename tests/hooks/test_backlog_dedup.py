@@ -1,5 +1,6 @@
 """scripts/zuvo-home/zuvo_backlog_verdicts.py — table rows must not be paired or archived through a
-signature made only of metadata columns.
+signature made only of metadata columns. And scripts/zuvo-home/zuvo_backlog_dedup.py's add-time
+candidate: which entry a new finding may duplicate, scored against tests/lib/rerank_stub.py only.
 
 `normalize_signature` reads a path token and the 8 words AFTER it. On a table row whose Problem cell
 precedes the File cell those 8 words are Severity/Source/Date, so two different findings in one file
@@ -14,13 +15,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional, Tuple
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOME_DIR = os.path.join(ROOT, "scripts", "zuvo-home")
 sys.path.insert(0, HOME_DIR)
+sys.path.insert(0, os.path.join(ROOT, "tests", "lib"))
+import zuvo_backlog_admit as adm  # noqa: E402
+import zuvo_backlog_dedup as dd  # noqa: E402
+import zuvo_backlog_entry as ent  # noqa: E402
 import zuvo_backlog_parse as zb  # noqa: E402
 import zuvo_backlog_verdicts as zv  # noqa: E402
+import zuvo_rerank as rr  # noqa: E402
+from rerank_stub import RerankStub  # noqa: E402
 
 HEADER = "## Open\n| ID | Problem | File | Severity | Source | Date |\n|---|---|---|---|---|---|\n"
 ROW_RACE = "| B-1 | race in cache invalidation | src/a.py:10 | WARNING | review | 2026-10-01 |\n"
@@ -147,6 +155,247 @@ class ArchiveMatchTests(unittest.TestCase):
         self.assertEqual(self.refused, [])
         self.assertEqual([(v.verdict, v.klass) for v in verdicts],
                          [(zv.zl.VERDICT_STALE_FIXED, zv.CLASS_ARCHIVED)])
+
+
+FIXTURES = Path(ROOT) / "tests" / "fixtures" / "rerank" / "backlog"
+QUERY = "zuvo_comment_scan.py:540 — [BUG] f-strings are not understood by the tokenize fallback"
+A3 = "B-20261005-CP-R-A3"
+LEGACY_TEXT = ("# Backlog\n\n## Open\n\n### B-heading-1 — heading entry: f-string model missing in the"
+               " tokenize fallback\n\nprose\n\n| ID | Problem | File |\n|---|---|---|\n"
+               "| B-table-1 | table row: f-string model missing | zuvo_comment_scan.py:536 |\n")
+# Cleared from these specs' env: the OpenRouter key and key file, the base URLs, the proxies, the opt-in
+# bump and every ZUVO_RERANK* / ZUVO_BACKLOG_DUP* setting.
+RERANK_KEYS = ("OPENROUTER_API_KEY", "ZUVO_OR_KEY_FILE", "ZUVO_OPENROUTER_BASE_URL",
+               "ZUVO_BACKLOG_DEDUP_BUMP", "NO_PROXY", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy",
+               "https_proxy", "ALL_PROXY", "all_proxy")
+RERANK_PREFIXES = ("ZUVO_RERANK", "ZUVO_BACKLOG_DUP")
+
+
+def rerank_free(env: Dict[str, str]) -> Dict[str, str]:
+    return {k: v for k, v in env.items() if k not in RERANK_KEYS and not k.startswith(RERANK_PREFIXES)}
+
+
+class FixtureCase(unittest.TestCase):
+    open_text = ""
+    done_text = ""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.open_text = (FIXTURES / "open.md").read_text(encoding="utf-8").rstrip("\n") + "\n"
+        cls.done_text = (FIXTURES / "done.md").read_text(encoding="utf-8").rstrip("\n") + "\n"
+
+
+class CandidateTests(FixtureCase):
+    """`candidates` against the stub: the band each score lands in, and every way it stays silent."""
+
+    def setUp(self) -> None:
+        home = tempfile.mkdtemp(prefix="dedup-home-")
+        self.addCleanup(shutil.rmtree, home, True)
+        env = rerank_free(dict(os.environ))
+        env.update(HOME=home, ZUVO_HOME=os.path.join(home, ".zuvo"), NO_PROXY="127.0.0.1",
+                   no_proxy="127.0.0.1", OPENROUTER_API_KEY="test-key-not-a-real-credential")
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        rr.reset_budget()
+        self.entries = dd.load((self.open_text, self.done_text))
+
+    def stub(self, scores: Optional[Dict[str, float]] = None, **kw: Any) -> RerankStub:
+        """A stub stopped when the TEST ends; a subTest loop uses `scored` instead."""
+        s = RerankStub(scores, **kw).start()
+        self.addCleanup(s.stop)
+        os.environ["ZUVO_RERANK_BASE_URL"] = s.base_url
+        return s
+
+    def scored(self, scores: Dict[str, float], entries: List[zb.Entry]) -> Optional[dd.Candidate]:
+        """`candidates` against a stub that lives for this one call."""
+        rr.reset_budget()
+        with RerankStub(scores) as s, mock.patch.dict(os.environ, {"ZUVO_RERANK_BASE_URL": s.base_url}):
+            return dd.candidates(entries, QUERY)
+
+    BANDS = [
+        ("a strong score is reported as weak, or not at all", 0.81, "strong"),
+        ("the 0.72 boundary itself falls out of the strong band", 0.72, "strong"),
+        ("a weak score is dropped or promoted to strong", 0.60, "weak"),
+        ("the 0.55 boundary itself falls out of the weak band", 0.55, "weak"),
+        ("a score under 0.55 still names a candidate", 0.54, None),
+    ]
+
+    def test_score_bands(self) -> None:
+        for name, score, band in self.BANDS:
+            with self.subTest(name):
+                got = self.scored({"f-string model": score}, self.entries)
+                self.assertEqual((got.b_id, got.band) if got else None, (A3, band) if band else None)
+
+    THRESHOLDS: List[Tuple[str, Dict[str, str], float, Optional[str]]] = [
+        ("an overridden HIGH is ignored", {"ZUVO_BACKLOG_DUP_HIGH": "0.9"}, 0.81, "weak"),
+        ("an overridden pair is ignored", {"ZUVO_BACKLOG_DUP_HIGH": "0.9", "ZUVO_BACKLOG_DUP_LOW": "0.8"},
+         0.6, None),
+        ("a non-number raises or disables the band", {"ZUVO_BACKLOG_DUP_HIGH": "abc"}, 0.81, "strong"),
+        ("nan makes every score fail the strong test", {"ZUVO_BACKLOG_DUP_HIGH": "nan"}, 0.81, "strong"),
+        ("inf makes the strong band unreachable", {"ZUVO_BACKLOG_DUP_HIGH": "inf"}, 0.81, "strong"),
+        ("a threshold above 1 makes the band unreachable", {"ZUVO_BACKLOG_DUP_HIGH": "1.5"}, 0.81, "strong"),
+        ("a negative threshold flags every neighbour", {"ZUVO_BACKLOG_DUP_LOW": "-0.1"}, 0.54, None),
+        ("LOW above HIGH turns weak scores strong or drops them", {"ZUVO_BACKLOG_DUP_LOW": "0.8"}, 0.6,
+         "weak"),
+    ]
+
+    def test_thresholds_from_the_env(self) -> None:
+        for name, env, score, band in self.THRESHOLDS:
+            with self.subTest(name), mock.patch.dict(os.environ, env):
+                got = self.scored({"f-string model": score}, self.entries)
+                self.assertEqual((got.b_id, got.band) if got else None, (A3, band) if band else None)
+
+    def test_at_most_fifteen_documents_are_sent(self) -> None:
+        # Bug caught: the whole backlog (hundreds of entries) goes to the API on every add.
+        stub = self.stub({"f-string model": 0.81})
+        extra = "".join(f"- [ ] B-x-{i} tokenize fallback f-strings {i}\n" for i in range(40))
+        dd.candidates(dd.load((self.open_text + extra,)), QUERY)
+        self.assertEqual(stub.requests, 1)
+        docs = stub.bodies[0]["documents"]
+        self.assertEqual(len(docs), 15)
+        self.assertTrue(any(d.startswith(A3) for d in docs), "the real near-duplicate was not sent")
+
+    def test_the_lite_model_is_asked(self) -> None:
+        # Bug caught: the add path calls the dearer knowledge model the thresholds were not calibrated on.
+        stub = self.stub({"f-string model": 0.81})
+        dd.candidates(self.entries, QUERY)
+        self.assertEqual(stub.requests, 1)
+        self.assertEqual(stub.bodies[0]["model"], "voyageai/rerank-2.5-lite")
+
+    def test_kill_switch_sends_nothing(self) -> None:
+        # Bug caught: ZUVO_RERANK=0 still reaches the network from backlog-add.
+        stub = self.stub({"f-string model": 0.81})
+        os.environ["ZUVO_RERANK"] = "0"
+        self.assertIsNone(dd.candidates(self.entries, QUERY))
+        self.assertEqual(stub.requests, 0)
+
+    def test_a_failing_api_names_no_candidate(self) -> None:
+        # Bug caught: an HTTP 500 is read as scores, or raises into backlog-add.
+        stub = self.stub(status=500, body=b"oops")
+        self.assertIsNone(dd.candidates(self.entries, QUERY))
+        self.assertEqual(stub.requests, 1)
+
+    def test_without_the_client_modules_no_candidate_and_no_error(self) -> None:
+        # Bug caught: a flat copy without zuvo_rerank.py (the backlog suites' mutant dirs) crashes.
+        stub = self.stub({"f-string model": 0.81})
+        with mock.patch.dict(sys.modules, {"zuvo_rerank": None}):
+            self.assertIsNone(dd.candidates(self.entries, QUERY))
+        self.assertEqual(stub.requests, 0)
+
+    def test_a_half_copied_client_names_no_candidate_and_no_error(self) -> None:
+        # Bug caught: a truncated zuvo_rerank.py raises SyntaxError, which is not an ImportError, so it
+        # escapes into backlog-add and the finding is never filed.
+        broken = tempfile.mkdtemp(prefix="dedup-broken-")
+        self.addCleanup(shutil.rmtree, broken, True)
+        Path(broken, "zuvo_rerank.py").write_text("def rerank(:\n", encoding="utf-8")
+        stub = self.stub({"f-string model": 0.81})
+        with mock.patch.dict(sys.modules), mock.patch.object(sys, "path", [broken, *sys.path]):
+            sys.modules.pop("zuvo_rerank", None)
+            self.assertIsNone(dd.candidates(self.entries, QUERY))
+        self.assertEqual(stub.requests, 0)
+
+    LEGACY_KINDS = [
+        ("a hand-written heading entry is never compared", "heading entry", "B-heading-1"),
+        ("a table row is never compared, though its id sits in a cell", "table row", "B-table-1"),
+    ]
+
+    def test_heading_and_table_entries_are_candidates(self) -> None:
+        for name, marker, b_id in self.LEGACY_KINDS:
+            with self.subTest(name):
+                got = self.scored({marker: 0.81}, dd.load((LEGACY_TEXT,)))
+                self.assertEqual((got.b_id, got.band) if got else None, (b_id, "strong"))
+
+
+class RecheckTests(FixtureCase):
+    """The lock-time check: the candidate scored before the lock must still be there, unchanged."""
+
+    def setUp(self) -> None:
+        body = next((e.body for e in dd.load((self.open_text,)) if e.ident == A3), None)
+        self.assertIsNotNone(body, f"{A3} is not in the fixture")
+        self.cand = dd.Candidate(A3, 0.81, "strong", dd.digest(body or ""))
+        self.line = next(ln for ln in self.open_text.splitlines(keepends=True) if A3 in ln)
+
+    def test_recheck(self) -> None:
+        cases = [
+            ("an unchanged candidate loses its flag", self.open_text, True),
+            ("a candidate whose id was renamed keeps its flag", self.open_text.replace(A3, "B-gone"), False),
+            ("a candidate rewritten between scoring and the lock keeps its flag",
+             self.open_text.replace("no f-string model", "a full f-string model now"), False),
+        ]
+        for name, text, kept in cases:
+            with self.subTest(name):
+                self.assertEqual(dd.confirm(self.cand, (text,)), self.cand if kept else None)
+
+    def test_a_candidate_archived_before_the_lock_is_still_named(self) -> None:
+        # Bug caught: the archiver moving the entry between scoring and the lock drops a flag that is
+        # still true (the archived entry is the same finding, and groom reports against the archive).
+        moved_open = self.open_text.replace(self.line, "")
+        moved_done = self.done_text + self.line.replace("- [ ] ", "- [x] ", 1)
+        self.assertNotIn(A3, moved_open)
+        self.assertEqual(dd.confirm(self.cand, (moved_open, moved_done)), self.cand)
+
+    def test_only_a_text_that_names_the_candidate_is_parsed_under_the_lock(self) -> None:
+        # Bug caught: the lock-time check re-parses the whole archive on every add, inside the budget.
+        with mock.patch.object(zb, "iter_entries", wraps=zb.iter_entries) as parse:
+            self.assertEqual(dd.confirm(self.cand, (self.open_text, self.done_text)), self.cand)
+        self.assertEqual([c.args[0] for c in parse.call_args_list], [self.open_text])
+
+    LEGACY_RECHECK = [
+        ("an unchanged heading candidate loses its flag", "B-heading-1", LEGACY_TEXT, True),
+        ("an unchanged table candidate loses its flag", "B-table-1", LEGACY_TEXT, True),
+        ("a table candidate rewritten before the lock keeps its flag", "B-table-1",
+         LEGACY_TEXT.replace("table row: f-string", "table row: full f-string"), False),
+    ]
+
+    def test_recheck_heading_and_table_candidates(self) -> None:
+        scored = {e.ident or "": e for e in dd.load((LEGACY_TEXT,))}
+        for name, b_id, text, kept in self.LEGACY_RECHECK:
+            with self.subTest(name):
+                self.assertIn(b_id, scored)
+                cand = dd.Candidate(b_id, 0.81, "strong", dd.digest(scored[b_id].body))
+                self.assertEqual(dd.confirm(cand, (text,)), cand if kept else None)
+
+
+class RenderFieldTests(unittest.TestCase):
+    """`possible-dup-of` in the line backlog-add writes: visible, bumpable, and identity-neutral."""
+
+    F = adm.Finding(cls="BUG", conf=85, source="review", title="off-by-one at the limit", file="src/a.py",
+                    line=3)
+    D = adm.Decision(route="backlog", reason="", cls="BUG", title="off-by-one at the limit", forced=False)
+    FID = "F-0123456789ab"
+
+    def line(self, dup: str = "") -> str:
+        return ent.render(self.F, self.D, "B-a-BUG-01234567", self.FID, 1, "[pr:7]", "2026-10-15", dup=dup)
+
+    def test_field_sits_between_ledger_and_date_and_reads_back(self) -> None:
+        # Bug caught: the field breaks parse_own, so a flagged entry is never bumped again (legacy).
+        line = self.line("B-x-1 (strong)")
+        self.assertIn("| ledger: F-0123456789ab | possible-dup-of: B-x-1 (strong) | 2026-10-15 [pr:7]", line)
+        own = ent.parse_own(line)
+        self.assertEqual((own.dup, own.f_id, own.date, own.tag) if own else None,
+                         ("B-x-1 (strong)", self.FID, "2026-10-15", "[pr:7]"))
+        self.assertTrue(ent.self_check(line, "B-a-BUG-01234567"))
+
+    def test_field_does_not_change_the_entry_identity(self) -> None:
+        # Bug caught: the flag rotates the entry's fp: key, so groom and lookup see a different entry.
+        flagged, plain = (zb.entry_key(zb.strip_ident(zb.body_of(x))) for x in (self.line("B-x-1 (weak)"),
+                                                                                  self.line()))
+        self.assertEqual(flagged, plain)
+        self.assertTrue(plain.startswith("fp:"))
+
+    def test_bump_keeps_the_field(self) -> None:
+        # Bug caught: a re-sighting rewrites the tail and silently drops the flag groom reports on.
+        flagged = self.line("B-x-1 (strong)")
+        bumped = ent.bump([flagged + "\n"], "B-a-BUG-01234567", 90, "audit", "2026-10-16")
+        want = flagged.replace("source: review | conf: 85 | seen: 1",
+                               "source: review, audit | conf: 90 | seen: 2")
+        self.assertEqual(bumped, [want.replace("2026-10-15", "2026-10-16") + "\n"])
+
+    def test_a_malformed_field_is_refused(self) -> None:
+        # Bug caught: a caller's typo writes a field parse_own cannot read, so the entry is never bumped.
+        with self.assertRaises(ValueError):
+            self.line("B-x-1 (maybe)")
 
 
 if __name__ == "__main__":

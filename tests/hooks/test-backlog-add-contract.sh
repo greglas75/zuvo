@@ -447,9 +447,11 @@ else:
        f"({len(NOT_BY_CLI)})")
 
 tmp = tempfile.mkdtemp(prefix="backlog-add-contract-")
-env = {k: v for k, v in os.environ.items() if not k.startswith(("ZUVO_", "GIT_"))}
+env = {k: v for k, v in os.environ.items()
+       if not k.startswith(("ZUVO_", "GIT_")) and k != "OPENROUTER_API_KEY"}
+# ZUVO_RERANK=0: backlog-add's duplicate check must never send these fixtures to the paid API.
 env.update(HOME=os.path.join(tmp, "home"), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
-           ZUVO_PR_LOOKUP="0")
+           ZUVO_PR_LOOKUP="0", ZUVO_RERANK="0")
 os.makedirs(env["HOME"])
 
 
