@@ -293,6 +293,16 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
   schema definition), and its anchor is copied from that line; a schema-wide DATA finding cites the schema
   or model definition line, and a finding across several endpoints cites one representative handler and
   lists the others in `--evidence "$E"`; it is closed only when every handler listed there is fixed.
+- **A secret or user data is never copied into a record.** A value that is a secret or user data (a
+  credential, token, key, password, cookie, or a form field's value) is never copied into `--anchor`,
+  `--title`, `--evidence` or `--target`; the helper refuses only the shapes it knows (`secret-like-value`),
+  so the rule is the skill's. For a finding about a secret, the anchor is the key or variable name on
+  that line (`ENV API_KEY=`), never the value: the helper checks an anchor as a substring of lines
+  `--line`−3 to `--line`+3 with the whitespace removed from both, so a name without its value is
+  accepted when it has 8 non-space characters (a shorter name takes the neighbouring non-secret text of
+  the same line with it). A URL target has its query string stripped (the helper strips it from
+  `--target` too, but not from the title or the evidence). "Path order", wherever an audit uses it to
+  pick a file, is byte-wise order, `LC_ALL=C sort`.
 - A **whole-file** finding (a below-A test file, a skipped or blocklisted file, a file-wide CQ or Q
   violation, a file over its size limit, a missing test file for a source file) is a file record that
   cites `--line 1`, and its title starts "Whole file: …". Line 1 is the convention for "the whole
