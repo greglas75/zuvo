@@ -167,6 +167,8 @@ $ARGUMENTS = other         -> task description, FULL mode
 
 ## Phase 0: Stack Detection and CodeSift Setup
 
+Before any `backlog-add` call, record the snapshot `git -C "$R" status --porcelain -- memory/` (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+
 ### Knowledge Prime
 
 Run `knowledge-prime.md`: `WORK_TYPE = "implementation"`, `WORK_KEYWORDS = <target file/module names>`, `WORK_FILES = <files to refactor>`.

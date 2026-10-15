@@ -264,7 +264,7 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
 | A NIT at ship time | `CQ` | `ship` | `--file "$F" --line <n>`; it is recorded (the ledger keeps it), never ignored silently |
 | An item the user files through the backlog skill's `add` mode | `BUG` when the user states the input and the wrong result, else `CQ`; `PROCESS` with `--target subject:<slug>` only for a process or decision item (for a code defect, the file and a verified line: the backlog skill's "Adding Items") | `user` | as the item says; `ZUVO_BACKLOG_ADMIT=1` only when the user invoked that mode in their own message |
 | A finding this run fixed | none: no call | none | an open entry it resolved is closed (sentence 4 below) |
-| A skill that commits after filing | none | none | it stages exactly the `wrote=` paths `backlog-add` printed, and nothing else |
+| A skill that commits after filing | none | none | **Committing what backlog-add wrote** below: one closing commit after the run's last call, never a per-task commit |
 | A source written `zuvo:refactor` or `zuvo:refactor/cq-auditor` | as the finding is | `refactor`; the agent's name goes in `--evidence` | as the finding is |
 | A source written `test-audit/{date}` | as the finding is | `test-audit` | as the finding is |
 | A source written `manual` | as the item is | `user` | as the item is |
@@ -324,6 +324,30 @@ files into whatever the current directory is, the very trap above.
 first 8 words of the title, so pass the same title on every run (name the gate, not this run's
 circumstances): a repeat then only bumps `seen` on the one record. A reason that changes from run to
 run goes in that run's report, not in the ledger.
+
+**Committing what backlog-add wrote.** `backlog-add` prints `wrote=` followed by the repo-relative
+paths it wrote inside the checkout `--repo` names that git does not ignore (`wrote=-` when there are
+none). They are always under `memory/`: the backlog `memory/backlog.md`, its archive
+`memory/backlog-done.md`, and the findings ledger `memory/findings/` (one JSONL segment per day, branch
+and host, beside the real backlog). A backlog reached through a symlink, or kept in the main checkout
+while the run works in a linked worktree, is outside the checkout and never listed. So a snapshot of
+`memory/` sees every path `wrote=` can name.
+
+- **The snapshot.** At its start, before its first `backlog-add` call, the run records
+  `git -C "$R" status --porcelain -- memory/`. A path that snapshot shows modified holds someone else's
+  edits.
+- **No per-step commit.** A per-task, per-file or per-step commit never stages a `wrote=` path. Every task
+  and every parallel run writes the same backlog and ledger segment, and a task that ends BLOCKED never
+  reaches its commit.
+- **One closing commit.** A skill that commits makes ONE closing commit,
+  `chore(backlog): record findings of <skill> run`, after its LAST `backlog-add` call. That includes the
+  calls of a review it runs and of steps after its own commits (the test-quality gate, drive-by findings).
+  It stages exactly the union of the `wrote=` paths the run printed, with `git -C "$R" add -- <path> …`,
+  minus three kinds: `wrote=-`; any path for which `git -C "$R" check-ignore -q -- <path>` succeeds; and
+  any path the snapshot showed modified. With no path left there is no closing commit. The final summary
+  names each path left out, with its reason.
+- **A skill that does not commit** stages nothing and lists the `wrote=` paths in its final summary.
+- Every git call names the repository: `git -C "$R"`, never the shell's current directory.
 
 The sentences below are the text skills cite, `<skill>` replaced by the skill's name. Each command is
 one code span, so it can be run as written once the variables are assigned and the placeholders

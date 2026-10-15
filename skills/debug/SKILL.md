@@ -370,12 +370,12 @@ If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; th
 
 Wait for complete output. Handle findings by severity:
 - **CRITICAL** — confirm it first: two or more lanes in its `.agreement` group, or your own check (a failing test, a reproduced input, the cited code read and the defect traced). Confirmed → fix immediately. A single-lane CRITICAL you cannot confirm is triaged as a WARNING and reported as `[CRITICAL→WARNING single-lane]` (`adversarial-loop.md` Step 4).
-- **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
+- **WARNING** — fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source debug --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`backlog-protocol.md` "Filing from a skill", **Adversarial review**; pass `--anchor "$A"` only when the class requires one, BUG, SEC or DATA, or the finding carries one, never an invented one; assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Report the B- or F-id it prints; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 - **INFO** — known concerns (max 3, one line each).
 
 Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
 
-"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
+"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, call `backlog-add` for each pre-existing finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:debug --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`drive-by-findings.md`; `backlog-protocol.md` "Filing from a skill", **Adversarial review**; `<C>` is the drive-by tag the finding qualifies for; the anchor as for the WARNING command above; assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). The helper's bars may keep it in the backlog, keep it in the ledger only, or discard it, so report what it printed. Each one it kept counts, under its tag, in the `Drive-by: N recorded (…)` line and the `~/.zuvo/log-drive-by` receipt of "Backlog Persistence" below. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
 
 ### 4.7 Defense-in-Depth
 
@@ -490,11 +490,16 @@ rm -f __bisect_test.ts __bisect_test.py __bisect_test.sh
 If debugging reveals unrelated issues, do not fix them during the debug session. Follow
 `../../shared/includes/drive-by-findings.md` with `<skill> = debug`: backlog the security, bug,
 size, duplication, complexity, performance, dead-code and readability problems noticed OUTSIDE
-the bug's fence in files the investigation read (dedup and the backlog location per
-`../../shared/includes/backlog-protocol.md` "Where the Backlog Lives"), list every `SEC` one in
-the Debug Report, then ALWAYS record the receipt `~/.zuvo/log-drive-by --skill debug --sec <a>
---bug <b> …` (all zeros is an honest outcome). Entries carry `source: drive-by:debug` (formerly
-`debug/[date]`).
+the bug's fence in files the investigation read (each one `backlog-add` call with
+`--source drive-by:debug`, which dedupes and picks the backlog or the findings ledger:
+`drive-by-findings.md` step 1), list every `SEC` one in the Debug Report, then ALWAYS record the
+receipt `~/.zuvo/log-drive-by --skill debug --sec <a> --bug <b> …` (all zeros is an honest
+outcome). The counts include the pre-existing adversarial findings 4.6b filed with
+`--source drive-by:debug`.
+
+Debug does not commit, so it stages nothing: the Debug Report lists the `wrote=` paths every
+`backlog-add` call of the run printed, for the user's own commit (`backlog-protocol.md` "Filing from
+a skill", **Committing what backlog-add wrote**).
 
 ---
 
@@ -627,7 +632,7 @@ COMPLETION GATE CHECK
 [ ] Regression test written with Q self-eval (>=16)
 [ ] CQ self-eval on modified production files
 [ ] Adversarial review ran on staged diff
-[ ] Backlog updated
+[ ] Deferred adversarial findings recorded through backlog-add, each B- or F-id reported, or "none"
 [ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
@@ -648,7 +653,8 @@ Regression test: [test file path]
 Verification: targeted PASS | full suite PASS | repro RESOLVED
 CQ: [score]/[applicable] | Q: [score]/[applicable]
 Confidence: HIGH / MEDIUM / LOW
-Backlog: [N items added | "none"]
+Recorded: [N (backlog: a, ledger: b) | "none"] [plus each NOT PERSISTED (<reason>) by name]
+Backlog files written (unstaged): [wrote= paths | "none"]
 
 Run: <ISO-8601-Z>\tdebug\t<project>\t<CQ>\t<Q>\t<VERDICT>\t-\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 

@@ -10,7 +10,7 @@ Classify findings with `change-assessment.md` before selecting fixes. In preserv
 fix regressions and authorized remediation targets. Verified baseline debt is reported rather
 than changing established behavior to satisfy an absolute audit score.
 
-This phase OWNS all committing of the refactor and its fixes. Phase 4 records; its one commit is the trailing `chore(refactor): telemetry` commit of the `wrote=` paths `backlog-add` printed, and only when the run commits (`completion.md` "Telemetry vs commits").
+This phase OWNS all committing of the refactor and its fixes. Phase 4 records; the `wrote=` paths `backlog-add` printed go into the run's one closing commit, and only when the run commits (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
 
 **Disposition (the line is fix-SCOPE, not severity or size):**
 
@@ -232,8 +232,8 @@ Never from memory. `WARN` when gaps remain after the fix loop, each surviving mu
 production line, `M` the assertion the tests lack. A survivor the artifact gives no line for is a
 whole-file record (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**): `--line 1`, a title starting "Whole file: …"
 that names the artifact's mutant id, and no `--anchor`, since MUTATION, like TEST-GAP, requires none.
-Assign `"$R"`, `"$F"`, `"$M"`, `"$T"` and, when passed, `"$A"` before
-the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
+Assign `"$R"`, `"$F"`, `"$M"` and `"$T"` before the call, and `"$A"` only when you pass
+`--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
 `plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is
 a score with no digit in it: `WARN:substituted-inline` is a real value a field run once invented

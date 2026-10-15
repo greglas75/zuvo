@@ -82,6 +82,19 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
     "shared/includes/refactor-reference.md": ["**Backlog:** Persist ONLY"],
     # POLICY with no write verb, so the patterns never flagged it: the path wraps onto the next line
     "shared/includes/test-bugfix-protocol.md": ["user-declined items remain in"],
+    # the auditor's deferred label and its stale "Phase 4.4" hand-off (the hand template is gone), and a
+    # checklist label for the below-A WARN, which is now filed through backlog-add
+    "skills/build/SKILL.md": ["DEFER (backlog)", "Persist to backlog in Phase 4.4", "or WARN + backlogged"],
+    # the legacy drive-by source, now `drive-by:debug`
+    "skills/debug/SKILL.md": ["debug/[date]"],
+    # execute's own fingerprint, dedupe and confidence bands, and the labels and references that named them
+    "skills/execute/SKILL.md": ["0-25 discard, 26-50 backlog only",
+                                "New work → `memory/backlog.md`",
+                                "is a backlog candidate (persist via `backlog-protocol.md`)",
+                                "same scheme as Backlog Persistence",
+                                "or WARN + backlogged",
+                                "[ ] Backlog persistence ran for deferred findings",
+                                "every finding with confidence above 25% is persisted"],
     # the auditor's own deferred-item line, which drifted from the preamble's format
     "skills/refactor/agents/cq-auditor.md": ["description (confidence: N%)"],
     # staging policy with no write verb: the `wrote=` paths backlog-add prints are staged now; the old
@@ -98,14 +111,11 @@ PENDING: Dict[str, int] = {
     "skills/a11y-audit/SKILL.md": 3,
     "skills/api-audit/SKILL.md": 4,
     "skills/architecture/SKILL.md": 1,
-    "skills/build/SKILL.md": 9,
     "skills/code-audit/SKILL.md": 6,
     "skills/container-audit/SKILL.md": 1,
     "skills/content-audit/SKILL.md": 4,
     "skills/content-fix/SKILL.md": 3,
     "skills/db-audit/SKILL.md": 4,
-    "skills/debug/SKILL.md": 3,
-    "skills/execute/SKILL.md": 10,
     "skills/fix-tests/SKILL.md": 2,
     "skills/geo-audit/SKILL.md": 3,
     "skills/geo-fix/SKILL.md": 7,
