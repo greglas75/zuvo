@@ -184,7 +184,9 @@ nothing (`skipped:dry-run`).
 **Egress.** Whenever an OpenRouter key is present, entry text (the new finding and up to 15 existing
 entries per add; up to 300 requests of entry text per groom) is sent to OpenRouter for ranking, on
 every repository of the machine. `ZUVO_RERANK=0` turns it off; without a key nothing is sent and both
-commands behave as they did before.
+commands behave as they did before. `ZUVO_RERANK_BUDGET_USD` and `ZUVO_RERANK_MAX_CALLS` bound one
+process: they cap a groom run, but every `backlog-add` is its own process with at most one request, so
+across adds the only off switch is `ZUVO_RERANK=0`.
 
 ### Verdicts and exit codes
 

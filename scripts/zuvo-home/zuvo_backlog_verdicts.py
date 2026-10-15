@@ -185,17 +185,6 @@ def marker_pos(e: zb.Entry) -> int:
             else zb.resolution_marker_pos(e.body))
 
 
-def archive_index(archived: Sequence[zb.Entry]) -> Dict[str, zb.Entry]:
-    """key -> the archived entry carrying it. Built from `keys_for`, never from `key` alone, so the
-    pre-mint content key an archived entry still answers to is in the index too — that bridge is the
-    only thing that finds an entry which was archived AFTER an id was minted into it."""
-    out: Dict[str, zb.Entry] = {}
-    for e in archived:
-        for key in zb.keys_for(e.body, e.ident):
-            out.setdefault(key, e)
-    return out
-
-
 def duplicate_anchors(entries: Sequence[zb.Entry],
                       sigs: Optional[Dict[int, str]] = None) -> Dict[int, Tuple[str, zb.Entry]]:
     """lineno -> (the shared key, the FIRST entry carrying it) for every entry that is not the first.
@@ -230,7 +219,9 @@ def _scoped(key: str, sig: str) -> str:
 
 def _scoped_archive_index(archived: Sequence[zb.Entry]) -> Dict[Tuple[str, str], zb.Entry]:
     """(key, scoped signature) -> the first archived entry with that pair, so a different row sharing
-    the key cannot hide a later twin. Every pair's key is one `archive_index` holds."""
+    the key cannot hide a later twin. Built from `keys_for`, never from `key` alone, so the pre-mint
+    content key an archived entry still answers to is in the index too — that bridge is the only
+    thing that finds an entry which was archived AFTER an id was minted into it."""
     out: Dict[Tuple[str, str], zb.Entry] = {}
     for e in archived:
         sig = zd.group_signature(e)

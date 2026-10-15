@@ -176,7 +176,10 @@ class ClientTest(Base):
         for name, kw, outcome in cases:
             with self.subTest(name):
                 self.stub(**kw)
-                self.assertIsNone(rr.rerank(MODEL, f"q {name}", DOCS, timeout=0.3, caller="t"))
+                # A short deadline only where the deadline is the point: under farm load a 1 MiB body or
+                # a deeply nested one can take longer than 0.3 s and read as "timeout" instead.
+                limit = 0.3 if outcome == "timeout" else 5.0
+                self.assertIsNone(rr.rerank(MODEL, f"q {name}", DOCS, timeout=limit, caller="t"))
                 self.assertEqual(self.last_outcome(), outcome)
         self.assertNotIn(KEY, (self.zhome / "rerank.log").read_text())  # no error path writes the key
 
@@ -347,6 +350,28 @@ class ClientTest(Base):
             self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
         self.assertEqual(post.call_args.args[:2], ("https://openrouter.ai/api/v1/rerank", KEY))
 
+    ENV_NUMS = [
+        ("a non-number lifts the limit", "abc", 2.0),
+        ("nan compares false against every bound", "nan", 2.0),
+        ("inf removes the limit", "inf", 2.0),
+        ("a negative limit inverts the check", "-1", 2.0),
+        ("an empty value reads as 0 and refuses every call", "", 2.0),
+        ("a valid value is ignored", "0.5", 0.5),
+    ]
+
+    def test_env_num_never_lets_a_typo_lift_a_limit(self) -> None:
+        for name, raw, want in self.ENV_NUMS:
+            with self.subTest(name), mock.patch.dict(os.environ, {"ZUVO_T_LIMIT": raw}):
+                self.assertEqual(rio.env_num("ZUVO_T_LIMIT", 2.0), want)
+
+    def test_an_infinite_call_cap_still_leaves_the_budget_in_force(self) -> None:
+        # Bug caught: ZUVO_RERANK_MAX_CALLS=inf read as a number removes the cap; the budget must still bind.
+        stub = self.stub(cost=0.001)
+        os.environ.update(ZUVO_RERANK_MAX_CALLS="inf", ZUVO_RERANK_BUDGET_USD="0.001")
+        self.assertIsNotNone(rr.rerank(MODEL, "q1", DOCS, caller="t"))
+        self.assertIsNone(rr.rerank(MODEL, "q2", DOCS, caller="t"))
+        self.assertEqual((stub.requests, self.last_outcome()), (1, "budget"))
+
     def test_reset_budget_lets_a_new_run_call_again(self) -> None:
         # A reset that kept the spent total would refuse every later run in a long-lived process.
         stub = self.stub(cost=0.001)
@@ -393,7 +418,8 @@ class ClientTest(Base):
         # calls log, so an unguarded lookup turns "never fatal" into a crash.
         del os.environ["ZUVO_HOME"]
         with mock.patch.object(Path, "home", side_effect=RuntimeError("no home")):
-            self.assertIsNone(rio.log("t", MODEL, 1, time.monotonic(), None, "error"))
+            rio.log("t", MODEL, 1, time.monotonic(), None, "error")  # raising here fails the test
+        self.assertFalse((self.zhome / "rerank.log").exists())
 
     def test_log_sanitises_every_non_printable_character(self) -> None:
         # \v, \f, \x1c-\x1e, \x85, U+2028/9 split lines for splitlines(); ESC drives a terminal.

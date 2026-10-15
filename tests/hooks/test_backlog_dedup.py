@@ -5,7 +5,7 @@ candidate: which entry a new finding may duplicate, scored against tests/lib/rer
 `normalize_signature` reads a path token and the 8 words AFTER it. On a table row whose Problem cell
 precedes the File cell those 8 words are Severity/Source/Date, so two different findings in one file
 share one `fp:` key. The keys stay frozen (H10 pins them); what is tested here is that the GROUPING
-built on them (`duplicate_anchors`, the `archive_index` match in `classify`) no longer trusts a
+built on them (`duplicate_anchors`, the archive match in `classify`) no longer trusts a
 table-row key alone. Every row names the defect it catches. Fixtures are synthetic.
 """
 
