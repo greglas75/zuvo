@@ -76,10 +76,12 @@ evidence line.** Not a sample — the whole set. Read
 four evidence shapes, the ledger schema and the fan-out contract, and this file deliberately does not
 paraphrase any of them.
 
+Every call passes `--repo "$R"`, `R` being the repository root assigned in the same shell call (`../../shared/includes/backlog-protocol.md` "The repository root"): a relative path would resolve against a working directory the harness may have reset.
+
 ```bash
-backlog-groom.py plan --repo . [--dry-run]       # mint, decide the deterministic classes, queue the rest
-backlog-groom.py dispatch --repo . --chunk N     # hand ONE chunk to the lane, seeds mixed in
-backlog-groom.py ingest --repo . --dispatch <D> --response <R>
+backlog-groom.py plan --repo "$R" [--dry-run]       # mint, decide the deterministic classes, queue the rest
+backlog-groom.py dispatch --repo "$R" --chunk N     # hand ONE chunk to the lane, seeds mixed in
+backlog-groom.py ingest --repo "$R" --dispatch <D> --response <R>
 ```
 
 `plan --fleet` is the read-only variant: it verifies from the collector's snapshot, writes
@@ -94,7 +96,7 @@ itself writes costs nothing either.
 ## Mode: groom
 
 ```bash
-backlog-groom.py apply --repo . [--dry-run]
+backlog-groom.py apply --repo "$R" [--dry-run]
 ```
 
 `apply` **refuses** unless every entry carries a current verdict, naming the shortfall by id and
@@ -109,7 +111,7 @@ and where no helper will act the entry is reported `no-remedy` with its reason r
 ## Mode: doc
 
 ```bash
-backlog-groom.py render --repo . [--partial]
+backlog-groom.py render --repo "$R" [--partial]
 ```
 
 The working document — clustered by theme, ranked by the `prioritize` score above, with per-cluster
@@ -131,9 +133,9 @@ The orchestration is in `scripts/zuvo-home/backlog-groom.py`, never in this file
 
 | Step | Command |
 |------|---------|
-| mint, decide the deterministic classes, write the queue | `backlog-groom.py plan --repo . [--dry-run]` |
-| hand one chunk to the lane, seeds mixed in | `backlog-groom.py dispatch --repo . --chunk N` |
-| check the response and append only if nothing refused | `backlog-groom.py ingest --repo . --dispatch <D> --response <R>` |
+| mint, decide the deterministic classes, write the queue | `backlog-groom.py plan --repo "$R" [--dry-run]` |
+| hand one chunk to the lane, seeds mixed in | `backlog-groom.py dispatch --repo "$R" --chunk N` |
+| check the response and append only if nothing refused | `backlog-groom.py ingest --repo "$R" --dispatch <D> --response <R>` |
 
 Read `../../shared/includes/backlog-grooming.md` before using any of them. Two things about this lane
 that are easy to get wrong and expensive to get wrong:

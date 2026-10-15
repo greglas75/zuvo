@@ -7428,8 +7428,8 @@ MUTATIONS = {
     "skilldeep": ("  4. ../../shared/includes/backlog-grooming.md",
                   "  4. ../../../shared/includes/backlog-grooming.md"),
     # A mode word typed as a command inside a fence: what the plan's prose would have produced.
-    "skillfencemode": ("backlog-groom.py apply --repo . [--dry-run]",
-                       "backlog-groom.py groom --repo . [--dry-run]"),
+    "skillfencemode": ("backlog-groom.py apply --repo \"$R\" [--dry-run]",
+                       "backlog-groom.py groom --repo \"$R\" [--dry-run]"),
     "skilltwomaps": ("| Mode | Runs | Phase section |\n|------|------|---------------|",
                      "| Mode | Runs | Phase section |\n|------|------|---------------|\n"
                      "| Mode | Runs | Phase section |\n|------|------|---------------|"),

@@ -31,8 +31,9 @@
 #         conf above every bar; no class left is a problem. Each run must exit 0, ACCEPTED or LEDGER.
 #       Counts are printed and held to floors (the counts of T4 round 3; later batches only add commands).
 #   W   every `--repo` a command in the prose passes, whatever the helper (backlog-archive.py, backlog-groom.py,
-#       backlog-add …): naming the working directory (`$PWD`, `${PWD}`, `$(pwd)`) is a problem outside
-#       CWD_REPO_OK, since the harness resets the cwd between calls. A span that opens with `--repo` names the
+#       backlog-add …): naming the working directory (`$PWD`, `${PWD}`, `$(pwd)`) or a path relative to it
+#       (`.`, `./…`) is a problem outside CWD_REPO_OK, since the harness resets the cwd between calls and a
+#       relative path then resolves against the wrong checkout. A span that opens with `--repo` names the
 #       flag and runs nothing. A fixture runs first, so a reader that finds nothing cannot pass.
 #   F   flow: three canonical sentences of backlog-protocol.md "Filing from a skill" run for real in a
 #       repo on feat/x: BUG -> ACCEPTED with [branch:feat/x], CQ -> LEDGER class-report-only with the
@@ -139,8 +140,9 @@ CWD_REPO_OK: Dict[str, str] = {
     "hooks/backlog-hand-append-warn.sh": "the part-2 plan leaves the hook untouched; its hint is fixed later",
     "hooks/fixture-warn.sh": "the self-check fixture that stands for the warning hook",
 }
-# `--repo` naming the working directory: `$PWD`, `${PWD}`, `$(pwd)` or a backtick `pwd`.
-CWD_REPO = re.compile(r"\$\{?PWD\}?|\$\(\s*pwd\s*\)|`\s*pwd\s*`")
+# `--repo` naming the working directory: `$PWD`, `${PWD}`, `$(pwd)` or a backtick `pwd`, or a path relative to
+# it (`.`, `./…`, optionally quoted): the harness may reset the cwd, and a relative --repo resolves against it.
+CWD_REPO = re.compile(r"\$\{?PWD\}?|\$\(\s*pwd\s*\)|`\s*pwd\s*`|^[\"']?\.(?:/[^\"']*)?[\"']?$")
 TITLE = "the limit check accepts a total equal to the limit"
 EVIDENCE = "limit=100 and total=100 pass the check"
 FIX = "compare with >="
@@ -451,8 +453,8 @@ def parse(span: Span) -> bool:
         span.problems.append("no --class: the CLI refuses the call, so the command is never run")
     repo = value(args, "--repo") or ""
     if CWD_REPO.search(repo) and span.path not in CWD_REPO_OK:
-        span.problems.append(f"--repo {repo!r} is the working directory: the harness resets it between Bash "
-                             'calls, so the finding is filed in the wrong checkout; pass --repo "$R"')
+        span.problems.append(f"--repo {repo!r} is the working directory or relative to it: the harness resets it between "
+                             'Bash calls, so the finding is filed in the wrong checkout; pass --repo "$R"')
     return True
 
 
@@ -951,8 +953,14 @@ REPO_FIXTURE = "\n".join([
     "```",
     'Archive: `~/.zuvo/backlog-archive.py archive --repo "$R"`.',
     'Every call carries `--repo "$R"`, never `--repo "$PWD"`.',
+    # A relative --repo resolves against a cwd the harness may have reset: the same wrong-checkout bug as "$PWD".
+    'Status: `~/.zuvo/backlog-archive.py status --repo . --json`.',
+    "```bash",
+    "backlog-groom.py apply --repo ./sub --dry-run",
+    "```",
+    'Never `--repo .` in a skill.',
 ])
-REPO_FIXTURE_HITS = [1, 3]      # the lookup and the fenced groom call; the "$R" one and the mention are not
+REPO_FIXTURE_HITS = [1, 3, 7, 9]    # lookup, fenced groom, relative status, fenced relative apply; "$R" and mentions are not
 
 
 def cwd_repo_hits(path: str, text: str) -> List[int]:
@@ -969,7 +977,7 @@ def cwd_repo_hits(path: str, text: str) -> List[int]:
 def repo_check() -> None:
     got = cwd_repo_hits(FIXTURE_PATH, REPO_FIXTURE)
     (ok if got == REPO_FIXTURE_HITS else no)(
-        f"W self-check: the cwd --repo of any helper is found, a \"$R\" one and a mention are not "
+        f"W self-check: the cwd or relative --repo of any helper is found, a \"$R\" one and a mention are not "
         f"(lines {got}, expected {REPO_FIXTURE_HITS})")
     files = sorted({os.path.relpath(f, ROOT) for g in SCOPE_GLOBS for f in glob.glob(os.path.join(ROOT, g))})
     files += list(EXTRA_SOURCES)
@@ -979,7 +987,7 @@ def repo_check() -> None:
             continue
         for line in cwd_repo_hits(rel, open(os.path.join(ROOT, rel), encoding="utf-8").read()):
             bad += 1
-            no(f"W {rel}:{line}: --repo names the working directory, which the harness resets between "
+            no(f"W {rel}:{line}: --repo names the working directory or a path relative to it, which the harness resets between "
                'calls; pass --repo "$R" (backlog-protocol.md "The repository root")')
     if not bad:
         ok(f"W no command in {len(files)} files passes --repo naming the working directory")
