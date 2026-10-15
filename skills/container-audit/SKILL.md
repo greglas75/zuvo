@@ -51,6 +51,7 @@ CORE FILES LOADED:
   4. ../../shared/includes/severity-vocabulary.md      -- [READ | MISSING -> STOP]
   5. ../../shared/includes/run-logger.md               -- [READ | MISSING -> STOP]
   6. ../../shared/includes/retrospective.md            -- [READ | MISSING -> STOP]
+  7. ../../shared/includes/backlog-protocol.md         -- [READ | MISSING -> STOP]   (Filing findings through backlog-add)
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -69,7 +70,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 | `--compose <path>` | Audit a single compose file |
 | `--quick` | Critical gates only (K1 + K2 + K3) |
 | `--k8s` | Activate reserved dimensions K7-K10 (Kubernetes manifest/RBAC/Pod-Security/network-policy) |
-| `--persist-backlog` | Push findings to `zuvo:backlog` |
+| `--persist-backlog` | Record findings via `backlog-add` |
 
 ---
 
@@ -77,7 +78,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 ### GATE 1 -- Read-Only
 
-The only write target is `zuvo/audits/`. FORBIDDEN: modifying any Dockerfile, compose, or
+The only write targets are `zuvo/audits/` and, through `backlog-add`, `memory/backlog.md` and `memory/findings/`. FORBIDDEN: modifying any Dockerfile, compose, or
 source file; **building, running, tagging, or pushing** images.
 
 ### GATE 2 -- Secret Censorship
@@ -418,6 +419,16 @@ Write `zuvo/audits/container-audit-[YYYY-MM-DD].json` — write a `.tmp` then at
 - Dimension scores sum to the applicable total; denominator excludes N/A dims.
 - Finding counts match the Executive Summary.
 - No actual secret values appear anywhere (Gate 2).
+
+### Backlog Persistence (`--persist-backlog`)
+
+With `--persist-backlog`, every CRITICAL and HIGH finding goes through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars and the dedupe are the protocol's, so compute no fingerprint and restate nothing). `<level>` is `critical` or `high`. Without the flag nothing is recorded.
+
+A **Generic write** per finding. The class is `SEC` for a security finding (K1, K2, K3, K5, K6) and `CQ` for the rest (K4). A Dockerfile or compose finding is filed at its line. A `SEC` one takes `--anchor "$A"`, copied from the line that shows the defect or, for something absent (no `USER`), from the line of the code that lacks it, such as the `FROM` line of that stage ("The location rule"): `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source container-audit --file "$F" --line <n> --anchor "$A" --severity <level> --title "$T"`. A `CQ` one takes no anchor: `~/.zuvo/backlog-add --repo "$R" --class CQ --conf <N> --source container-audit --file "$F" --line <n> --severity <level> --title "$T"`. A finding on a live host or image with no repository file causing it takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`, and no anchor at all, `U` the host or the image reference: `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source container-audit --target "$U" --evidence "$E" --severity <level> --title "$T"`. `E` follows Gate 2: a secret value is `***`, never recorded.
+
+Assign "$R" and "$T" before each call, "$F" only for a file finding ("$A" only for a `SEC` one), "$U" and "$E" only for a live-target finding, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ---
 

@@ -102,7 +102,7 @@ If any Stage 1 file is missing, STOP.
 ### Stage 2 — Before Phase 3 (report writing)
 
 ```text
-  5. ../../shared/includes/backlog-protocol.md       -- [READ | MISSING]   (findings → backlog entries)
+  5. ../../shared/includes/backlog-protocol.md       -- [READ | MISSING]   (findings are recorded through backlog-add)
   6. ../../shared/includes/run-logger.md             -- [READ | MISSING]   (Run: line + append-runlog)
   7. ../../shared/includes/retrospective.md          -- [READ | MISSING]   (RETRO: marker + retros.log/.md append)
   8. ../../shared/includes/report-output-location.md -- [READ | MISSING]   (canonical $ZUVO_DIR — output MUST go to zuvo/audits/)
@@ -247,8 +247,8 @@ if ! { [ -f "$GITIGNORE" ] && grep -qE '^/?zuvo/?$' "$GITIGNORE"; }; then
 fi
 ```
 
-The ONLY write outside `RUN_DIR` permitted by the whole run is this one-time
-`zuvo/` line (AC10 exemption).
+The ONLY writes outside `RUN_DIR` permitted by the whole run are this one-time
+`zuvo/` line (AC10 exemption) and, through `backlog-add`, `memory/backlog.md` and `memory/findings/`.
 
 ### Phase 0.3 — Target source resolution + first-run scaffold (DD-2)
 

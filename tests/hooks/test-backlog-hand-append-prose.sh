@@ -82,10 +82,19 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
     "shared/includes/refactor-reference.md": ["**Backlog:** Persist ONLY"],
     # POLICY with no write verb, so the patterns never flagged it: the path wraps onto the next line
     "shared/includes/test-bugfix-protocol.md": ["user-declined items remain in"],
+    # a11y-audit: the persist step wrote a pipe-less B-{N} line by hand, deduped it with a `seen:N` counter,
+    # and was automatic on a CRITICAL finding; the flag row said "Emit backlog entries"
+    "skills/a11y-audit/SKILL.md": ["For each CRITICAL or HIGH finding, persist to `memory/backlog.md`",
+                                   "increment `seen:N`",
+                                   "Emit backlog entries for CRITICAL/HIGH findings"],
     # api-audit: the opt-in persist step read, fingerprinted, deduped and deleted by hand
     "skills/api-audit/SKILL.md": ["persist findings (confidence 26+) to `memory/backlog.md`",
                                   "If missing, create with template",
                                   "Delete resolved items. Confidence 0-25 = DISCARD"],
+    # architecture: every output item was written to memory/backlog.md by hand, and "may be silently
+    # discarded" was a rule with no bar behind it
+    "skills/architecture/SKILL.md": ["persist actionable items to `memory/backlog.md`",
+                                     "they must reach the backlog"],
     # the auditor's deferred label and its stale "Phase 4.4" hand-off (the hand template is gone), and a
     # checklist label for the below-A WARN, which is now filed through backlog-add
     "skills/build/SKILL.md": ["DEFER (backlog)", "Persist to backlog in Phase 4.4", "or WARN + backlogged"],
@@ -96,6 +105,8 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                    "If missing, create with template",
                                    "[ ] Backlog updated for deferred findings",
                                    "`B-code-audit-incomplete-<date>`"],
+    # container-audit: the flag pushed findings to a skill that has no such mode
+    "skills/container-audit/SKILL.md": ["Push findings to `zuvo:backlog`"],
     # the web and content family: the opt-in persist steps emitted, fingerprinted and deduped by hand, and the
     # fix tables removed rows by fingerprint and added OPEN rows; live pages are filed by URL now. content-expand
     # persisted "per backlog-protocol.md" (no backlog word, so the patterns never flagged it)
@@ -143,6 +154,14 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                 "Persist with scaffold content reference",
                                 "Add as OPEN with category `geo-manual`",
                                 "**Fingerprint format:** `{file}|{dimension}|{check}`"],
+    # infra-audit: the Stage 2 load line read "findings → backlog entries", a hand-written step with no body
+    "skills/infra-audit/SKILL.md": ["(findings → backlog entries)"],
+    # pentest: the suggested `zuvo:backlog add` used flags (`--severity HIGH`, `--dimension`) that do not exist; the
+    # full quote is kept, because `--dimensions PT1,PT2` in the flag table is a real flag
+    "skills/pentest/SKILL.md": ["--source pentest --dimension PT3",
+                                "suggest a backlog entry:"],
+    # performance-audit: a "propose a backlog entry" step whose `/backlog add` command was a hand-written entry
+    "skills/performance-audit/SKILL.md": ["/backlog add PERF", "propose a backlog entry:"],
     # the auditor's own deferred-item line, which drifted from the preamble's format
     "skills/refactor/agents/cq-auditor.md": ["description (confidence: N%)"],
     # staging policy with no write verb: the `wrote=` paths backlog-add prints are staged now; the old
@@ -221,14 +240,7 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
 
 # {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
 # batches and then deleted with its code.
-PENDING: Dict[str, int] = {
-    "skills/a11y-audit/SKILL.md": 3,
-    "skills/architecture/SKILL.md": 1,
-    "skills/container-audit/SKILL.md": 1,
-    "skills/infra-audit/SKILL.md": 1,
-    "skills/pentest/SKILL.md": 1,
-    "skills/performance-audit/SKILL.md": 1,
-}
+PENDING: Dict[str, int] = {}
 
 VERB_PATH = r"(?:persist|add|writ|wrote|record|append|push|emit|clean|remov|drop|delet)"
 VERB_DEST = r"(?:persist|add|writ|record|push|go|went|rout|defer|reach|stay)"

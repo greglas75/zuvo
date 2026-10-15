@@ -74,6 +74,7 @@ CORE FILES LOADED:
   2. env-compat.md       -- [READ | MISSING -> STOP]
   3. ../../shared/includes/run-logger.md -- [READ | MISSING -> STOP]
   4. ../../shared/includes/retrospective.md -- [READ | MISSING -> STOP]
+  5. ../../shared/includes/backlog-protocol.md -- [READ | MISSING -> STOP]   (Filing findings through backlog-add)
 ```
 
 If any file is missing, STOP.
@@ -559,10 +560,13 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 ## Backlog Integration (ALL MODES)
 
-After completing any mode, persist actionable items to `memory/backlog.md` — resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (the checkout's own copy when git tracks it, else the MAIN checkout root; never an untracked worktree-local copy):
+After completing any mode, every actionable item below goes through `backlog-add`, one call per item (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and where the backlog lives are the protocol's, so compute no fingerprint and restate nothing).
 
-**Review mode:** Each Critical and Needs-work issue from the report.
-**ADR mode:** "Harder" consequences, "Revisit when" triggers, incomplete action items.
-**Design mode:** Open questions, scale triggers, rollout risks.
+**Review mode:** each Critical and Needs-work issue from the report is a **Generic write**, `--severity critical` for a Critical one and `--severity medium` for a Needs-work one (`<level>` below). The class follows the dimension: A1 Modularity, A2 Layering, A3 Dependency direction, A5 Scalability, A6 Testability, A7 Observability and A9 SOLID are `CQ`; A4 is `SIZE` for a god class or module over its size limit, `CPLX` for one too complex to follow, `DUP` for duplicated logic, else `CQ`; A8 Security boundary is `SEC`. A `CQ`, `SIZE`, `CPLX` or `DUP` issue takes no anchor: `~/.zuvo/backlog-add --repo "$R" --class CQ --conf <N> --source architecture --file "$F" --line <n> --severity <level> --title "$T"` (pass `SIZE`, `CPLX` or `DUP` as the class for those). A `SEC` issue takes `--anchor "$A"`, copied from the line that shows the defect or, for a missing check, from the line of the code that lacks it ("The location rule"): `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source architecture --file "$F" --line <n> --anchor "$A" --severity <level> --title "$T"`. An issue that holds for the whole file is a whole-file finding: `--line 1`, a "Whole file: ..." title. A repo-wide issue with no single file (a dependency cycle, a layering violation) is filed at the first file of the cycle or violation in path order, with `--line 1` and a "Whole file: ..." title, and the other files go in `--evidence "$E"`.
+**ADR mode:** each "Harder" consequence, "Revisit when" trigger and incomplete action item is a **Process item**, and so is each open question, scale trigger and rollout risk of **Design mode**. A question is a decision subject: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source architecture --target subject:architecture-decision-<slug> --evidence "$E" --title "$T"`, with `T` the question (or the follow-up), the same words on every run, and `E` both options (for a consequence or risk with one answer, the mitigation and accepting it). `<slug>` names the decision's subject in 3 to 6 words joined by hyphens, ASCII `[a-z0-9-]`, chosen once, written into the report entry, reused on a resume and distinct for each decision.
 
-Zero risks may be silently discarded. If the output has consequences, questions, or risks, they must reach the backlog.
+Assign "$R" and "$T" before each call, "$F" only for a file finding ("$A" only for a `SEC` one), "$E" only for a process item or a repo-wide issue, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name, and name each process item's F-id in the final summary. On a non-zero exit act on the protocol's exit table, and never append by hand.
+
+Nothing is dropped silently: an item is recorded, or listed under `NOT PERSISTED (<reason>)`.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).

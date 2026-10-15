@@ -80,6 +80,7 @@ CORE FILES LOADED:
   3. ../../rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
   4. ../../shared/includes/run-logger.md        -- [READ | MISSING -> STOP]
   5. ../../shared/includes/retrospective.md        -- [READ | MISSING -> STOP]
+  6. ../../shared/includes/backlog-protocol.md  -- [READ | MISSING -> STOP]   (Filing findings through backlog-add)
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -108,7 +109,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 ## Safety Gate
 
-This audit is **read-only**. The only write target is `zuvo/audits/`. Do not modify
+This audit is **read-only**. The only write targets are `zuvo/audits/` and, through `backlog-add`, `memory/backlog.md` and `memory/findings/`. Do not modify
 source files, configs, build output, or runtime environments. Tooling probes
 (bundle analysis, Lighthouse) may be invoked but must not alter the build.
 
@@ -608,12 +609,13 @@ score of 0 still fires it; it is simply not necessary.
 
 ### Backlog Integration
 
-For each HIGH+ finding, propose a backlog entry:
+Every HIGH+ finding goes through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars and the dedupe are the protocol's, so compute no fingerprint and restate nothing). `<level>` is `critical` or `high`.
 
-```
-/backlog add PERF-D7: N+1 in OrderService.list() -- findMany inside forEach.
-Fix: eager load with include or batch with where { id: { in: ids } }
-```
+A **Generic write** per finding. The class is `PERF`, and no anchor: `~/.zuvo/backlog-add --repo "$R" --class PERF --conf <N> --source performance-audit --file "$F" --line <n> --evidence "$E" --severity <level> --title "$T"`. `T` is stable, `D7: <problem> in <symbol>` (`D7: N+1 in OrderService.list()`), and `E` carries the proposed fix (eager load with include, or batch with where { id: { in: ids } }). A finding that names the input and the wrong result is a `BUG` instead, filed at the line that shows the defect with an anchor, never at line 1, even when it concerns the whole file: `~/.zuvo/backlog-add --repo "$R" --class BUG --conf <N> --source performance-audit --file "$F" --line <n> --anchor "$A" --evidence "$E" --severity <level> --title "$T"`, with `A` copied from that line. A `PERF` finding that holds for the whole file is a whole-file finding (`--line 1`, a "Whole file: ..." title).
+
+Assign "$R", "$F", "$T" and "$E" before each call, "$A" only for a `BUG`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ---
 

@@ -210,7 +210,7 @@ Discovery scripts >20 lines: save to file, `chmod +x`, execute. No long inline s
 
 ### GATE 4 -- Tool Scope
 
-This audit is read-only against production code. Sole write target: `zuvo/audits/`. Forbidden: modifying source files, sending requests to production, installing packages, running DB mutations.
+This audit is read-only against production code. The only write targets are `zuvo/audits/` and, through `backlog-add`, `memory/backlog.md` and `memory/findings/`. Forbidden: modifying source files, sending requests to production, installing packages, running DB mutations.
 
 ---
 
