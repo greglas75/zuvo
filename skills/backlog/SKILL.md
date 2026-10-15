@@ -263,11 +263,14 @@ add flow the skill never mints an id, runs the lookup or appends a line itself.
    read -r -d '' A <<'ZUVO_TXT' || true
    <the anchor, copied from the cited line>
    ZUVO_TXT
+   read -r -d '' S <<'ZUVO_TXT' || true
+   <the slug, a process or decision item only>
+   ZUVO_TXT
    ```
 
    - `BUG`, `SEC`, `DATA`: `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source user --file "$F" --line <n> --anchor "$A" --title "$T" [--severity <level>]`
    - any other class with a file: `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source user --file "$F" --line <n> --title "$T" [--severity <level>]`
-   - a process or decision item: `~/.zuvo/backlog-add --repo "$PWD" --class PROCESS --conf <N> --source user --target subject:<slug> --title "$T" [--severity <level>]`, where `<slug>` is the title in kebab-case, cut to 40 characters
+   - a process or decision item: `~/.zuvo/backlog-add --repo "$PWD" --class PROCESS --conf <N> --source user --target "subject:$S" --title "$T" [--severity <level>]`, where `S` is a slug of the title: kebab-case, ASCII `[a-z0-9-]` only (transliterate letters such as `ł` or `ą`, drop any other character), cut to 40 characters. A title with no ASCII letters or digits leaves it empty, and `backlog-add` refuses an empty target: ask the user for a slug
 
    Prefix the call with `ZUVO_BACKLOG_ADMIT=1` only when the user ran this `add` mode themselves in this
    message: their request for the item is the explicit request the override exists for, so a `CQ` or

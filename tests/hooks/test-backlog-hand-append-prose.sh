@@ -173,9 +173,11 @@ QUOTE = re.compile(r'"[^"\n]*"|“[^”\n]*”')
 # A quoted span is kept (only its quote marks blanked, so `to "the backlog"` still reads "to the backlog")
 # when it is part of an instruction: it holds both a write verb and the destination (`"append the row to
 # memory/backlog.md"`), or it is nothing but the destination (`Append the row to "memory/backlog.md"`) or
-# nothing but the verb (`Then "add" it to the backlog`). A quoted phrase with other words in it is a
+# nothing but the verb (`Then "add" it to the backlog`), or it names the destination while a write verb sits
+# before it in the same sentence (`Add it to the "main backlog"`: only the destination words survive). A quoted phrase with other words in it is a
 # mention and is blanked: `the "RECOMMENDED → backlog" reflex`, `"I'll backlog the bug" is the rationalization`.
 QUOTE_DEST = re.compile(r"(?i)\bbacklog(?![-\w])|memory/")
+QUOTE_DEST_TOKEN = re.compile(r"(?i)\bbacklog(?![-\w])|memory/[\w./-]*")
 QUOTE_VERB = re.compile(r"(?i)\b(?:%s|%s)\w*" % (VERB_PATH, VERB_DEST))
 QUOTE_ONLY_DEST = re.compile(r"(?i)\s*(?:the\s+)?(?:backlog|memory/[\w./-]*)\s*")
 QUOTE_ONLY_VERB = re.compile(r"(?i)\s*(?:%s|%s)\w*\s*" % (VERB_PATH, VERB_DEST))
@@ -186,7 +188,9 @@ FENCE_OPEN = re.compile(r"^(```|~~~)")
 TABLE_SEP = re.compile(r"^\s*\|[\s:|-]+\|?\s*$")
 SENTENCE_END = re.compile(r"[.!?](?=\s)|\s\|\s")
 # An abbreviation's full stop ends no sentence: "Add the finding (e.g. src/x.py) to the backlog." is one.
-ABBREVIATION = re.compile(r"(?i)\b(?:e\.g|i\.e|etc|vs|cf)\.")
+# `etc.` is not one: it usually ends the sentence ("... BUG, SEC, etc. Otherwise add it to backlog.").
+ABBREVIATION = re.compile(r"(?i)\b(?:e\.g|i\.e|vs|cf)\.")
+ABBREVIATION_ETC = re.compile(r"(?i)\b(?:e\.g|i\.e|etc|vs|cf)\.")
 G6_CONTEXT = re.compile(r"backlog-add(?!s)|zuvo:backlog add")
 SOURCE_TOKEN = re.compile(r"--source(?![-\w])(?:=|\s+)(?:\"([^\"\n]*)\"|'([^'\n]*)'|([^\s'`\"|),;]+))")
 SOURCE_OK = re.compile(r"(?:drive-by:)?[a-z0-9-]+")
@@ -213,6 +217,7 @@ class Cfg:
     cite_scope: str = "sentence"
     fence_lines: bool = True
     mask_abbrev: bool = True
+    abbreviation: Pattern[str] = ABBREVIATION
     split_items: bool = True
     join_lines: bool = True
     quote_mode: str = "line"
@@ -261,10 +266,17 @@ def blank(s: str) -> str:
     return re.sub(r"[^\n]", " ", s)
 
 
+def sentence_head(prefix: str) -> str:
+    """The part of `prefix` after its last sentence end: the words before a quote that are in its sentence."""
+    masked = ABBREVIATION.sub(lambda m: "x" * len(m.group(0)), prefix)
+    ends = [m.end() for m in SENTENCE_END.finditer(masked)]
+    return prefix[ends[-1]:] if ends else prefix
+
+
 def strip_quotes(line: str, mode: str) -> str:
     """Blank a balanced quotation of <= 80 characters within the line, unless it is part of an instruction
     (see QUOTE_DEST); code spans are kept verbatim."""
-    if mode not in ("line", "all", "both") or ('"' not in line and "“" not in line):
+    if mode not in ("line", "prior", "all", "both") or ('"' not in line and "“" not in line):
         return line
     codes: List[str] = []
 
@@ -282,9 +294,19 @@ def strip_quotes(line: str, mode: str) -> str:
         inner = span[1:-1]
         both = bool(QUOTE_DEST.search(inner) and QUOTE_VERB.search(inner))
         alone = bool(QUOTE_ONLY_DEST.fullmatch(inner) or QUOTE_ONLY_VERB.fullmatch(inner))
-        # "both": only a span holding both halves is kept (the earlier rule), as a mutant.
-        if (mode == "line" and (both or alone)) or (mode == "both" and both):
+        # A write verb before the quote, in its own sentence, makes a quoted destination the object of
+        # that verb (`Add it to the "main backlog"`), whatever else the quote says.
+        after_verb = bool(QUOTE_DEST.search(inner) and QUOTE_VERB.search(sentence_head(m.string[:m.start()])))
+        # "both": only a span holding both halves is kept (the earlier rule); "prior": the round-3 rule
+        # without the verb-before-the-quote case. Each is a mutant.
+        if (mode == "line" and (both or alone)) or (mode == "prior" and (both or alone)) or (mode == "both" and both):
             return " " + inner + " "
+        if mode == "line" and after_verb:
+            # Only the destination survives, so `to the "main backlog"` still reads "to the   backlog".
+            kept = [" "] * len(inner)
+            for d in QUOTE_DEST_TOKEN.finditer(inner):
+                kept[d.start():d.end()] = list(d.group(0))
+            return " " + "".join(kept) + " "
         return blank(span)
 
     return unmask(QUOTE.sub(drop, CODE_SPAN.sub(mask, line)))
@@ -337,7 +359,7 @@ def boundaries(unit: Unit, cfg: Cfg) -> List[Tuple[int, int]]:
         return [(m.start(), m.end()) for m in re.finditer("\n", unit.raw)]
     masked = CODE_SPAN.sub(lambda m: "x" * len(m.group(0)), unit.raw)
     if cfg.mask_abbrev:
-        masked = ABBREVIATION.sub(lambda m: "x" * len(m.group(0)), masked)
+        masked = cfg.abbreviation.sub(lambda m: "x" * len(m.group(0)), masked)
     return [(m.start(), m.end()) for m in SENTENCE_END.finditer(masked)]
 
 
@@ -649,6 +671,19 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
     ("a quote holding only the verb hides the hand write", 'Then "add" it to the backlog.', "B:verb-to-backlog"),
     ("a quoted destination after the verb hides the hand write", 'Add it to "the backlog" now.',
      "B:verb-to-backlog"),
+    ("a quote holding the destination and extra words hides the hand append (path, 'the backlog file')",
+     'Append it to "the backlog file memory/backlog.md".', "B:verb-before-backlog-md"),
+    ("a quote holding 'the file' and the path hides the hand append",
+     'Append the row to "the file memory/backlog.md" by hand.', "B:verb-before-backlog-md"),
+    ("a quoted 'main backlog' hides the hand write", 'Add it to the "main backlog".', "B:verb-to-backlog"),
+    ("a quoted 'the project backlog' hides the hand write",
+     'Write the finding to "the project backlog".', "B:verb-to-backlog"),
+    ("a quoted path with a trailing gloss hides the hand record",
+     'Record it in "memory/backlog.md (the open file)".', "B:verb-before-backlog-md"),
+    ("`etc.` ends the sentence, so the citation before it does not excuse the hand write after it",
+     "Call `backlog-add` for BUG, SEC, etc. Otherwise add it to backlog by hand.", "B:verb-to-backlog"),
+    ("a negation before `etc.` negates nothing after it",
+     "Never guess etc. Add it to backlog.", "B:verb-to-backlog"),
     ("backlog used as a verb on a finding", "Backlog it with the file and line when the fix is larger.",
      "B:backlog-object"),
     ("an arrow routing a result to the backlog", "Below-A after the cap → WARN + per-file backlog.",
@@ -745,6 +780,8 @@ STRUCTURAL: List[Tuple[str, Cfg]] = [
     ("negation-crosses-sentence", replace(REAL, neg_sentence=False)),
     ("abbreviations-end-sentences", replace(REAL, mask_abbrev=False)),
     ("quote-kept-only-with-both-halves", replace(REAL, quote_mode="both")),
+    ("quote-kept-without-a-verb-before-it", replace(REAL, quote_mode="prior")),
+    ("etc-masked-as-an-abbreviation", replace(REAL, abbreviation=ABBREVIATION_ETC)),
     ("unit-allowlist-unit-wide", replace(REAL, allow_unit_wide=True)),
     ("table-header-substring", replace(REAL, table_exact=False)),
     ("table-header-any-word", replace(REAL, table_all=False)),
