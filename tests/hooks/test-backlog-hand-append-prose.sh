@@ -1,0 +1,1075 @@
+#!/usr/bin/env bash
+# The prose guard: no skill, agent, reference or include tells an agent to write `memory/backlog.md`
+# by hand.
+#
+# The defect this catches: a skill sentence such as "If fix is larger, add to backlog with file:line"
+# makes the agent append a row itself, which skips every bar, the dedupe and the lock of
+# `~/.zuvo/backlog-add`; the intake then tickets that row. The runtime hook only warns after the fact,
+# so the sentence has to be caught where it is written.
+#
+# Usage: bash tests/hooks/test-backlog-hand-append-prose.sh [--only PATH ...]
+# Exit 0 = PASS, 1 = any FAIL, 2 = usage error. The self-test (G2), the mutants (G2m), the verdict-logic
+# checks (G2u) and the tree-path mutation (G2t) run on every invocation, so a matcher that silently reads
+# nothing cannot pass. `--only` scans just the named files, strictly: PENDING does not excuse them.
+#
+# Reads only files under the repo root: no git, no ~/.zuvo, no network, no subprocess.
+#
+# Rules, all in the Python below:
+#   Tier A  hand-write mechanics (a `B-{N}` row template, a dated process id, "increment Seen",
+#           "Remove row by fingerprint", ...). Exempt only by a negation in the same sentence (an
+#           abbreviation's full stop ends none) or the allowlist; a `unit` key excuses its own sentence only.
+#   Tier B  soft verbs ("add it to backlog", "-> per-file backlog", "**Backlog:**", ...). Also exempt
+#           when the SENTENCE holding the match (the line, inside a fence) cites `backlog-add`,
+#           `drive-by-findings.md` or the protocol sections.
+#   B:restated-verdict-table  a `| Verdict | Exit |` table outside the protocol (CQ14).
+#   G6      every `--source` in a `backlog-add` unit is valid, and the legacy source tokens are gone.
+# PENDING is an exact ratchet: a pending file must flag exactly its recorded count. More is a new hand
+# write; fewer means a rewire landed and the count must be lowered (zero: the entry removed).
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
+
+echo "== backlog hand-append prose guard =="
+python3 - "$ROOT" "$@" <<'PY'
+import glob
+import os
+import re
+import sys
+import time
+from dataclasses import dataclass, replace
+from typing import Callable, Dict, FrozenSet, List, Optional, Pattern, Sequence, Set, Tuple
+
+STARTED = time.monotonic()
+ROOT = sys.argv[1]
+ARGV = sys.argv[2:]
+
+SCOPE_GLOBS = ("skills/*/SKILL.md", "skills/*/agents/*.md", "skills/*/references/*.md",
+               "shared/includes/*.md")
+FILE_FLOOR = 200
+# 90% of the units measured on the tree this guard shipped with: a splitter that stops splitting, or a
+# glob that loses a directory, drops below it.
+UNIT_FLOOR = 25146
+PROTOCOL = "shared/includes/backlog-protocol.md"
+FILE_SCOPE_ALLOWED = ("shared/includes/backlog-protocol.md", "shared/includes/backlog-grooming.md",
+                      "skills/backlog/agents/backlog-verifier.md")
+FORBIDDEN_SECTIONS = ("Adding Items",)
+
+# (path, scope, key, reason). scope: file | section (an exact heading) | unit (an exact substring of
+# one unit, for a proven false positive). No line numbers: they drift.
+Allow = Tuple[str, str, str, str]
+ALLOWLIST: List[Allow] = [
+    ("shared/includes/backlog-protocol.md", "file", "",
+     "the protocol defines the backlog format, the lookup and the archive; it is the contract itself"),
+    ("shared/includes/backlog-grooming.md", "file", "",
+     "grooming verdicts and dispositions over existing entries; no finding is filed from it"),
+    ("skills/backlog/agents/backlog-verifier.md", "file", "",
+     "read-only grooming lane: it returns verdicts on existing entries"),
+    ("skills/backlog/SKILL.md", "unit", "It writes nothing to `memory/backlog.md`",
+     "groom mode states that `apply` writes nothing to the backlog itself; the archive helper closes entries"),
+    ("shared/includes/drive-by-findings.md", "unit",
+     "goes at the TOP of the final summary, not only in the backlog",
+     "says a SEC drive-by is also shown in the summary, beside the entry backlog-add filed; no hand write"),
+    ("skills/refactor/references/completion.md", "unit",
+     "an adversarial pass that surfaces 8 bugs and backlogs them",
+     "a prohibition: parking findings instead of fixing them is BLOCKED; the negation sits outside the window"),
+]
+
+# {path: [quote, ...]}: sentences a batch retired. A quote back in its file is a FAIL, permanently.
+RETIRED_QUOTES: Dict[str, List[str]] = {}
+
+# {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
+# batches and then deleted with its code.
+PENDING: Dict[str, int] = {
+    "shared/includes/blind-coverage-audit.md": 1,
+    "shared/includes/followup-ideas.md": 1,
+    "shared/includes/no-pause-protocol.md": 1,
+    "shared/includes/quality-gates.md": 1,
+    "shared/includes/refactor-reference.md": 2,
+    "shared/includes/severity-vocabulary.md": 1,
+    "shared/includes/test-blocklist.md": 2,
+    "shared/includes/test-bugfix-protocol.md": 1,
+    "shared/includes/test-code-types-core.md": 1,
+    "shared/includes/test-quality-gate.md": 2,
+    "skills/a11y-audit/SKILL.md": 3,
+    "skills/api-audit/SKILL.md": 4,
+    "skills/architecture/SKILL.md": 1,
+    "skills/build/SKILL.md": 9,
+    "skills/code-audit/SKILL.md": 6,
+    "skills/container-audit/SKILL.md": 1,
+    "skills/content-audit/SKILL.md": 4,
+    "skills/content-fix/SKILL.md": 3,
+    "skills/db-audit/SKILL.md": 4,
+    "skills/debug/SKILL.md": 3,
+    "skills/execute/SKILL.md": 10,
+    "skills/fix-tests/SKILL.md": 2,
+    "skills/geo-audit/SKILL.md": 3,
+    "skills/geo-fix/SKILL.md": 7,
+    "skills/infra-audit/SKILL.md": 1,
+    "skills/pentest/SKILL.md": 1,
+    "skills/performance-audit/SKILL.md": 1,
+    "skills/receive-review/SKILL.md": 3,
+    "skills/refactor/agents/cq-auditor.md": 1,
+    "skills/refactor/references/completion.md": 2,
+    "skills/refactor/references/planning.md": 2,
+    "skills/refactor/references/remediation.md": 7,
+    "skills/refactor/references/review.md": 1,
+    "skills/refactor/references/transformation.md": 1,
+    "skills/review/SKILL.md": 22,
+    "skills/review/agents/confidence-rescorer.md": 2,
+    "skills/security-audit/SKILL.md": 3,
+    "skills/seo-audit/SKILL.md": 2,
+    "skills/seo-fix/SKILL.md": 7,
+    "skills/ship/SKILL.md": 3,
+    "skills/structure-audit/SKILL.md": 2,
+    "skills/test-audit/SKILL.md": 5,
+    "skills/write-e2e/SKILL.md": 2,
+    "skills/write-tests/SKILL.md": 12,
+}
+
+VERB_PATH = r"(?:persist|add|writ|wrote|record|append|push|emit|clean|remov|drop|delet)"
+VERB_DEST = r"(?:persist|add|writ|record|push|go|went|rout|defer|reach|stay)"
+# (name, required literal, regex). A rule can only match a unit that holds its literal (lowercase
+# literal: compared case-insensitively), so the literal is an exact pre-filter; check_config proves each
+# literal is spelled inside its own regex.
+TIER_A: Tuple[Tuple[str, str, str], ...] = (
+    ("b-n-pipe", "B-{N}", r"B-\{N\}\s*\|"),
+    ("next-b-n", "B-{N}", r"\bnext .{0,10}B-\{N\}"),
+    ("b-n-line", "B-{N}", r"(?m:^\s*- B-\{N\})"),
+    ("dated-process-id", "B-", r"\bB-[\w-]+-(?:<date>|YYYY-MM-DD)"),
+    ("increment-seen", "een", r"(?i:increment)\s+[`*]*[Ss]een"),
+    ("add-as-open", "dd as OPEN", r"\b[Aa]dd as OPEN\b"),
+    ("remove-row-by-fingerprint", "remove row by fingerprint", r"(?i:remove row by fingerprint)"),
+    ("delete-resolved", "delete ", r"(?i:\bdelete (?:resolved items|any open backlog))"),
+    ("create-if-missing", "if missing, create", r"(?i:memory/backlog\.md`?\. if missing, create)"),
+    ("slash-backlog-add", "backlog add", r"(?:zuvo:|/)backlog add\b"),
+)
+TIER_B: Tuple[Tuple[str, str, str], ...] = (
+    ("verb-before-backlog-md", "memory/backlog.md", r"(?i:\b%s\w*\b.{0,80}?memory/backlog\.md)" % VERB_PATH),
+    ("verb-to-backlog", "backlog", r"(?i:\b%s\w*\b.{0,60}?\b(?:to|in|into)\s+(?:the\s+)?backlog(?![-\w]))" % VERB_DEST),
+    ("backlog-object", "backlog", r"(?i:\bbacklog(?:s|ged)? (?:it|them|the \w+|each|with)\b)"),
+    ("arrow-backlog", "backlog", r"(?i:(?:→|->|\+) (?:per-file |per-module )?backlog(?![-\w]))"),
+    ("record-backlog-item", "backlog", r"(?i:\b(?:add|record)\w*\b.{0,40}?\bbacklog (?:item|entry))"),
+    ("and-backlogged", "backlog", r"(?i:\band backlogged\b)"),
+    ("backlog-only-if", "backlog", r"(?i:\bbacklog only if\b)"),
+    ("and-the-backlog", "backlog", r"(?i:\band the backlog(?![-\w]))"),
+    ("backlog-label", "backlog", r"(?i:\*\*backlog(?: persistence)?:\*\*)"),
+    ("named-backlog-item", "backlog", r"(?i:\b(?:per-file|per-module|named) backlog (?:item|entry))"),
+    ("after-backlog", "backlog", r"(?i:\bafter backlog\b)"),
+    ("push-zuvo-backlog", "zuvo:backlog", r"(?i:\b(?:push|emit|send)\w*\b.{0,40}?`?zuvo:backlog\b)"),
+)
+TABLE_RULE = ("B", "restated-verdict-table")
+G6_RULES = (("G6", "bad-source"), ("G6", "legacy-source"))
+
+# `backlog-add(?!s)`: the telemetry field `backlog-adds` names a count, not the helper, so it cites nothing.
+CITE = re.compile(r"~/\.zuvo/backlog-add|backlog-add(?!s)|drive-by-findings\.md|Persisting a finding|"
+                  r"Filing from a skill")
+NEG_WORDS: FrozenSet[str] = frozenset({"never", "not", "no", "don't", "nor", "without"})
+NEG_PAIRS = {("instead", "of"), ("rather", "than")}
+# "not fixed", "no ... resolved": a condition on the finding, not a prohibition of the write.
+STATE_WORDS = frozenset({"fixed", "resolved", "done", "addressed", "handled", "applied"})
+WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+CODE_SPAN = re.compile(r"`[^`\n]*`")
+QUOTE = re.compile(r'"[^"\n]*"|“[^”\n]*”')
+# A quoted span is kept (only its quote marks blanked, so `to "the backlog"` still reads "to the backlog")
+# when it is part of an instruction: it holds both a write verb and the destination (`"append the row to
+# memory/backlog.md"`), or it is nothing but the destination (`Append the row to "memory/backlog.md"`) or
+# nothing but the verb (`Then "add" it to the backlog`). A quoted phrase with other words in it is a
+# mention and is blanked: `the "RECOMMENDED → backlog" reflex`, `"I'll backlog the bug" is the rationalization`.
+QUOTE_DEST = re.compile(r"(?i)\bbacklog(?![-\w])|memory/")
+QUOTE_VERB = re.compile(r"(?i)\b(?:%s|%s)\w*" % (VERB_PATH, VERB_DEST))
+QUOTE_ONLY_DEST = re.compile(r"(?i)\s*(?:the\s+)?(?:backlog|memory/[\w./-]*)\s*")
+QUOTE_ONLY_VERB = re.compile(r"(?i)\s*(?:%s|%s)\w*\s*" % (VERB_PATH, VERB_DEST))
+MASK = re.compile(r"\x00(\d+)\x00")
+ITEM_START = re.compile(r"^(?:[-*+]|\d+[a-z]?[.)]|\|)")
+HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+FENCE_OPEN = re.compile(r"^(```|~~~)")
+TABLE_SEP = re.compile(r"^\s*\|[\s:|-]+\|?\s*$")
+SENTENCE_END = re.compile(r"[.!?](?=\s)|\s\|\s")
+# An abbreviation's full stop ends no sentence: "Add the finding (e.g. src/x.py) to the backlog." is one.
+ABBREVIATION = re.compile(r"(?i)\b(?:e\.g|i\.e|etc|vs|cf)\.")
+G6_CONTEXT = re.compile(r"backlog-add(?!s)|zuvo:backlog add")
+SOURCE_TOKEN = re.compile(r"--source(?![-\w])(?:=|\s+)(?:\"([^\"\n]*)\"|'([^'\n]*)'|([^\s'`\"|),;]+))")
+SOURCE_OK = re.compile(r"(?:drive-by:)?[a-z0-9-]+")
+SOURCE_PLACEHOLDERS = {"<skill>", "drive-by:<skill>", "<src>"}
+LEGACY_SOURCE = re.compile(r"(?i)--source zuvo:|source:\**\s*`?test-audit/|source:\**\s*`manual`|formerly `debug/")
+
+
+@dataclass(frozen=True)
+class Cfg:
+    """Everything a mutant may change. The real guard is `REAL`; each mutant is one `replace` of it."""
+    rules: Tuple[Tuple[str, str, str, str], ...]
+    table_check: bool = True
+    table_icase: bool = True
+    table_exact: bool = True
+    table_all: bool = True
+    g6_bad: bool = True
+    g6_legacy: bool = True
+    g6_raw: bool = True
+    neg_window: Optional[int] = 3
+    neg_sentence: bool = True
+    neg_words: FrozenSet[str] = NEG_WORDS
+    state_is_condition: bool = True
+    cite: Pattern[str] = CITE
+    cite_scope: str = "sentence"
+    fence_lines: bool = True
+    mask_abbrev: bool = True
+    split_items: bool = True
+    join_lines: bool = True
+    quote_mode: str = "line"
+    cite_tier_a: bool = False
+    allow_unit_wide: bool = False
+
+
+@dataclass(frozen=True)
+class Unit:
+    """`text` is `raw` with quotations blanked, character for character, so offsets are shared."""
+    start: int
+    end: int
+    text: str
+    raw: str
+    fence: bool
+
+
+@dataclass(frozen=True)
+class Hit:
+    """`lo`/`hi`: the sentence (or fence line) holding the match, as offsets into the unit; -1 when the
+    hit belongs to the whole unit (G6, the verdict table), which a `unit` allowlist key never excuses."""
+    tier: str
+    name: str
+    lo: int = -1
+    hi: int = -1
+
+
+@dataclass(frozen=True)
+class Flag:
+    line: int
+    hits: Tuple[Hit, ...]
+    text: str
+    raw: str
+
+
+_COMPILED: Dict[Tuple[Tuple[str, str, str, str], ...], Tuple[Tuple[str, str, str, Pattern[str]], ...]] = {}
+
+
+def compiled(cfg: Cfg) -> Tuple[Tuple[str, str, str, Pattern[str]], ...]:
+    if cfg.rules not in _COMPILED:
+        _COMPILED[cfg.rules] = tuple((t, n, tok, re.compile(p)) for t, n, tok, p in cfg.rules)
+    return _COMPILED[cfg.rules]
+
+
+def blank(s: str) -> str:
+    return re.sub(r"[^\n]", " ", s)
+
+
+def strip_quotes(line: str, mode: str) -> str:
+    """Blank a balanced quotation of <= 80 characters within the line, unless it is part of an instruction
+    (see QUOTE_DEST); code spans are kept verbatim."""
+    if mode not in ("line", "all", "both") or ('"' not in line and "“" not in line):
+        return line
+    codes: List[str] = []
+
+    def mask(m: "re.Match[str]") -> str:
+        codes.append(m.group(0))
+        return "\x00%d\x00" % (len(codes) - 1)
+
+    def unmask(s: str) -> str:
+        return MASK.sub(lambda m: codes[int(m.group(1))], s)
+
+    def drop(m: "re.Match[str]") -> str:
+        span = unmask(m.group(0))
+        if len(span) > 80:
+            return m.group(0)
+        inner = span[1:-1]
+        both = bool(QUOTE_DEST.search(inner) and QUOTE_VERB.search(inner))
+        alone = bool(QUOTE_ONLY_DEST.fullmatch(inner) or QUOTE_ONLY_VERB.fullmatch(inner))
+        # "both": only a span holding both halves is kept (the earlier rule), as a mutant.
+        if (mode == "line" and (both or alone)) or (mode == "both" and both):
+            return " " + inner + " "
+        return blank(span)
+
+    return unmask(QUOTE.sub(drop, CODE_SPAN.sub(mask, line)))
+
+
+def split_units(text: str, cfg: Cfg) -> List[Unit]:
+    units: List[Unit] = []
+    cur: List[Tuple[int, str]] = []
+    fence: Optional[str] = None
+
+    def flush(is_fence: bool = False) -> None:
+        if not cur:
+            return
+        raws = [r.strip() for _, r in cur]
+        sep = "\n" if is_fence else " "
+        raw = sep.join(raws)
+        joined = sep.join(strip_quotes(r, cfg.quote_mode) for r in raws)
+        if cfg.quote_mode == "greedy":
+            joined = re.sub(r'".*"', lambda m: blank(m.group(0)), joined, flags=re.S)
+        units.append(Unit(cur[0][0], cur[-1][0], joined, raw, is_fence))
+        cur.clear()
+
+    for n, line in enumerate(text.split("\n"), 1):
+        s = line.strip()
+        if fence is not None:
+            cur.append((n, line))
+            if s.startswith(fence):
+                flush(True)
+                fence = None
+            continue
+        m = FENCE_OPEN.match(s)
+        if m:
+            flush()
+            fence = m.group(1)
+            cur.append((n, line))
+            continue
+        if not s:
+            flush()
+            continue
+        if (cfg.split_items and ITEM_START.match(s)) or HEADING.match(s) or not cfg.join_lines:
+            flush()
+        cur.append((n, line))
+    flush(fence is not None)
+    return units
+
+
+def boundaries(unit: Unit, cfg: Cfg) -> List[Tuple[int, int]]:
+    """Where one sentence (or table cell) ends and the next begins; inside a fence, each line break."""
+    if unit.fence and cfg.fence_lines:
+        return [(m.start(), m.end()) for m in re.finditer("\n", unit.raw)]
+    masked = CODE_SPAN.sub(lambda m: "x" * len(m.group(0)), unit.raw)
+    if cfg.mask_abbrev:
+        masked = ABBREVIATION.sub(lambda m: "x" * len(m.group(0)), masked)
+    return [(m.start(), m.end()) for m in SENTENCE_END.finditer(masked)]
+
+
+def sentence_of(bounds: List[Tuple[int, int]], start: int, end: int, size: int) -> Optional[Tuple[int, int]]:
+    """The sentence holding [start, end), or None when the match runs across a sentence boundary: a verb
+    in one sentence and "backlog" in the next are two statements, not one instruction."""
+    a, b = 0, size
+    for bs, be in bounds:
+        if be <= start:
+            a = be
+        elif bs >= end:
+            b = bs
+            break
+        else:
+            return None
+    return a, b
+
+
+def negated(unit: Unit, start: int, sentence_start: int, cfg: Cfg) -> bool:
+    """A NEG word among the `neg_window` words before the match, within its sentence: "Do not skip this.
+    Add it to backlog." negates nothing in the second sentence. `if not` / `or not` and a `not`/`no`
+    followed by a state word ("not fixed") are conditions; inside a fence the window stops at the line."""
+    text = unit.text
+    floor = text.rfind("\n", 0, start) + 1 if unit.fence and cfg.fence_lines else 0
+    if cfg.neg_sentence:
+        floor = max(floor, sentence_start)
+    lo = floor if cfg.neg_window is None else max(floor, start - 200)
+    words = [w.lower() for w in WORD.findall(text[lo:start].replace("’", "'"))]
+    first = 0 if cfg.neg_window is None else max(0, len(words) - cfg.neg_window)
+    for i in range(first, len(words)):
+        w = words[i]
+        prev = words[i - 1] if i > 0 else ""
+        nxt = words[i + 1] if i + 1 < len(words) else ""
+        if w == "not" and prev in ("if", "or"):
+            continue
+        if cfg.state_is_condition and w in ("not", "no") and nxt in STATE_WORDS:
+            continue
+        if w in cfg.neg_words or (cfg.neg_words and (w.startswith("forbid") or (prev, w) in NEG_PAIRS)):
+            return True
+    return False
+
+
+def g6_hits(unit: Unit, cfg: Cfg) -> List[Hit]:
+    body = unit.raw if cfg.g6_raw else unit.text
+    out: List[Hit] = []
+    if cfg.g6_bad and G6_CONTEXT.search(body):
+        for m in SOURCE_TOKEN.finditer(body):
+            quoted = m.group(1) if m.group(1) is not None else m.group(2)
+            tok = quoted if quoted is not None else m.group(3).rstrip(".:")
+            if tok not in SOURCE_PLACEHOLDERS and not SOURCE_OK.fullmatch(tok):
+                out.append(Hit("G6", "bad-source"))
+                break
+    if cfg.g6_legacy and LEGACY_SOURCE.search(unit.raw):
+        out.append(Hit("G6", "legacy-source"))
+    return out
+
+
+def unit_hits(unit: Unit, cfg: Cfg) -> List[Hit]:
+    text = unit.text
+    lower = text.lower()
+    hits: List[Hit] = []
+    bounds: Optional[List[Tuple[int, int]]] = None
+    for tier, name, tok, rx in compiled(cfg):
+        if tok not in (lower if tok.islower() else text):
+            continue
+        m = rx.search(text)
+        while m:
+            if bounds is None:
+                bounds = boundaries(unit, cfg)
+            # Tier A phrases are mechanics that may span a full stop ("backlog.md. If missing, create"),
+            # so only a Tier B match must sit inside one sentence.
+            span = sentence_of(bounds, m.start(), m.end() if tier == "B" else m.start() + 1, len(text))
+            cited = False
+            if span is not None and (tier == "B" or cfg.cite_tier_a):
+                lo, hi = (0, len(text)) if cfg.cite_scope == "unit" else span
+                cited = cfg.cite.search(unit.raw, lo, hi) is not None
+            if span is not None and not cited and not negated(unit, m.start(), span[0], cfg):
+                hits.append(Hit(tier, name, span[0], span[1]))
+                # One hit per rule per sentence: a later sentence may hold another, which a `unit`
+                # allowlist key on this one must not excuse.
+                m = rx.search(text, max(span[1], m.start() + 1))
+                continue
+            # Overlapping search: an excused match must not hide a later one that starts inside it.
+            m = rx.search(text, m.start() + 1)
+    return hits + g6_hits(unit, cfg)
+
+
+def verdict_table_lines(lines: Sequence[str], icase: bool, exact: bool = True, every: bool = True) -> Set[int]:
+    """Header rows with a cell that is exactly `Verdict` and one that is exactly `Exit`. A cell holding both
+    words ("Driver exit / verdict") or a table with only a Verdict column is not the protocol's table."""
+    out: Set[int] = set()
+    for i, ln in enumerate(lines[:-1]):
+        if ln.lstrip().startswith("|") and TABLE_SEP.match(lines[i + 1]):
+            cells = {c.strip().strip("*`").strip() for c in ln.strip().strip("|").split("|")}
+            if icase:
+                cells = {c.lower() for c in cells}
+                want = {"verdict", "exit"}
+            else:
+                want = {"Verdict", "Exit"}
+            if exact:
+                found = {w for w in want if w in cells}
+            else:
+                found = {w for w in want for c in cells if w in c}
+            header = found == want if every else bool(found)
+            if header:
+                out.add(i + 1)
+    return out
+
+
+def scan_text(text: str, cfg: Cfg) -> Tuple[List[Unit], List[Flag]]:
+    units = split_units(text, cfg)
+    tables = (verdict_table_lines(text.split("\n"), cfg.table_icase, cfg.table_exact, cfg.table_all)
+              if cfg.table_check else set())
+    flags: List[Flag] = []
+    for u in units:
+        hits = unit_hits(u, cfg)
+        if any(u.start <= t <= u.end for t in tables):
+            hits.append(Hit(*TABLE_RULE))
+        if hits:
+            flags.append(Flag(u.start, tuple(hits), u.text, u.raw))
+    return units, flags
+
+
+def sections(text: str) -> Dict[str, Tuple[int, int]]:
+    """Each heading's text -> (first line, last line) up to the next heading of the same or higher level.
+    A fence closes only on its own opener, so a ~~~ inside a ``` block toggles nothing."""
+    lines = text.split("\n")
+    heads: List[Tuple[int, int, str]] = []
+    fence: Optional[str] = None
+    for n, ln in enumerate(lines, 1):
+        s = ln.strip()
+        if fence is not None:
+            if s.startswith(fence):
+                fence = None
+            continue
+        opener = FENCE_OPEN.match(s)
+        if opener:
+            fence = opener.group(1)
+            continue
+        m = HEADING.match(ln)
+        if m:
+            heads.append((n, len(m.group(1)), m.group(2)))
+    out: Dict[str, Tuple[int, int]] = {}
+    for i, (n, level, title) in enumerate(heads):
+        end = next((h[0] - 1 for h in heads[i + 1:] if h[1] <= level), len(lines))
+        out.setdefault(title, (n, end))
+    return out
+
+
+def key_in_sentence(raw: str, key: str, hit: Hit) -> bool:
+    """An occurrence of `key` overlaps the sentence that holds `hit`."""
+    if hit.lo < 0:
+        return False
+    at = raw.find(key)
+    while at >= 0:
+        if at < hit.hi and at + len(key) > hit.lo:
+            return True
+        at = raw.find(key, at + 1)
+    return False
+
+
+def kept_hits(rel: str, text: str, flag: Flag, allowlist: Sequence[Allow], cfg: Cfg) -> Tuple[Hit, ...]:
+    """The flag's hits the allowlist does not excuse. G6 hits are never excused; a `unit` key excuses only
+    the hits in the sentence it sits in, so a second hand write added to that unit still flags."""
+    kept: List[Hit] = []
+    for h in flag.hits:
+        excused = False
+        for path, scope_name, key, _ in allowlist if h.tier != "G6" else ():
+            if path != rel:
+                continue
+            if scope_name == "file":
+                excused = True
+            elif scope_name == "section":
+                span = sections(text).get(key)
+                excused = bool(span and span[0] <= flag.line <= span[1])
+            elif scope_name == "unit":
+                excused = key in flag.raw if cfg.allow_unit_wide else key_in_sentence(flag.raw, key, h)
+            if excused:
+                break
+        if not excused:
+            kept.append(h)
+    return tuple(kept)
+
+
+@dataclass(frozen=True)
+class FileScan:
+    units: List[Unit]
+    raw_flags: List[Flag]
+    flags: List[Flag]
+
+
+def scan_file(rel: str, text: str, cfg: Cfg, allowlist: Sequence[Allow] = ALLOWLIST) -> FileScan:
+    """The tree scan: every rule, then the allowlist. G2t calls this same function on a mutated text."""
+    units, raw = scan_text(text, cfg)
+    kept: List[Flag] = []
+    for f in raw:
+        hits = kept_hits(rel, text, f, allowlist, cfg)
+        if hits:
+            kept.append(replace(f, hits=hits))
+    return FileScan(units, raw, kept)
+
+
+class Tally:
+    def __init__(self, echo: bool) -> None:
+        self.passed = 0
+        self.failed = 0
+        self.echo = echo
+
+    def ok(self, msg: str) -> None:
+        self.passed += 1
+        if self.echo:
+            print(f"  PASS {msg}")
+
+    def no(self, msg: str) -> None:
+        self.failed += 1
+        if self.echo:
+            print(f"  FAIL {msg}")
+
+
+OUT = Tally(echo=True)
+
+
+def ok(msg: str) -> None:
+    OUT.ok(msg)
+
+
+def no(msg: str) -> None:
+    OUT.no(msg)
+
+
+def failures(check: Callable[[], None]) -> int:
+    """The FAILs one verdict function reports, counted silently (the G2u checks)."""
+    global OUT
+    saved, OUT = OUT, Tally(echo=False)
+    try:
+        check()
+        return OUT.failed
+    finally:
+        OUT = saved
+
+
+REAL = Cfg(rules=tuple(("A", n, t, p) for n, t, p in TIER_A) + tuple(("B", n, t, p) for n, t, p in TIER_B))
+ALL_RULES: List[Tuple[str, str]] = [(t, n) for t, n, _, _ in REAL.rules] + [TABLE_RULE, *G6_RULES]
+
+# ---- G2 self-test: (the defect it catches, document, expected "tier:pattern" or None for clean) --------
+FIXTURES: List[Tuple[str, str, Optional[str]]] = [
+    # Tier A, one dedicated true positive each.
+    ("a B-{N} row template with a citation nearby still hand-writes a row (citation never exempts Tier A)",
+     "- [ ] `B-{N} | {file}:{line} | {title}` is the entry line (see `backlog-add`).", "A:b-n-pipe"),
+    ("minting the next id by hand", "Assign the next free B-{N} to the entry.", "A:next-b-n"),
+    ("a fenced hand-append line", "```\n- B-{N} {file}:{line} {title}\n```", "A:b-n-line"),
+    ("a hand-append list item under an intro line (list items must start their own unit)",
+     "Each entry is one line:\n- B-{N} {file}:{line} {title}", "A:b-n-line"),
+    ("a dated process id makes every repeat a new entry",
+     "If the run stops early, file `B-review-incomplete-<date>` with the reason.", "A:dated-process-id"),
+    ("a hand-maintained Seen counter", "If it exists, increment `Seen` and update the date.", "A:increment-seen"),
+    ("a fix table that appends rows itself", "| NEEDS_REVIEW | Add as OPEN with the finding text |",
+     "A:add-as-open"),
+    ("a fix table that deletes rows itself", "| FIXED | Remove row by fingerprint |",
+     "A:remove-row-by-fingerprint"),
+    ("deleting resolved entries instead of archiving them", "3. Delete resolved items.", "A:delete-resolved"),
+    ("a lowercase hand delete of resolved entries", "3. delete resolved items.", "A:delete-resolved"),
+    ("creating the backlog file by hand",
+     "1. Read `memory/backlog.md`. If missing, create it from the template.", "A:create-if-missing"),
+    ("a lowercase hand creation of the backlog file",
+     "1. Read `memory/backlog.md`. if missing, create it.", "A:create-if-missing"),
+    ("a slash command that files outside backlog-add",
+     "Suggest `/backlog add PERF-D7: N+1 in the order list` for each finding.", "A:slash-backlog-add"),
+    # Tier B, one dedicated true positive each.
+    ("a hand write whose path is on the next line (lines must be joined)",
+     "For each finding the run leaves open, record it in\n`memory/backlog.md` with its file and line.",
+     "B:verb-before-backlog-md"),
+    ("the adversarial boilerplate", "Persist to backlog if not fixed in this session.", "B:verb-to-backlog"),
+    ("'if not' is a condition, not a negation", "If not, add it to backlog.", "B:verb-to-backlog"),
+    ("quotes must pair within the line, never greedily across it",
+     '{"a": 1} persist to backlog {"b": 2}', "B:verb-to-backlog"),
+    ("the telemetry field `backlog-adds` is not a citation of the helper",
+     "Count the `backlog-adds` and persist the rest to the backlog.", "B:verb-to-backlog"),
+    ("a citation in the next list item does not excuse this one",
+     "- If fix is larger, add to backlog with specific file:line.\n"
+     "- Pre-existing issues elsewhere: see `drive-by-findings.md`.", "B:verb-to-backlog"),
+    ("a citation in the previous sentence does not excuse this one",
+     "Call `backlog-add` for BUG. Otherwise add to backlog by hand.", "B:verb-to-backlog"),
+    ("a citation on another line of the same fence does not excuse this line",
+     "```\n~/.zuvo/backlog-add --class CQ --conf 60 --source review --file a.py --line 1 --title t\n"
+     "then append the row to memory/backlog.md by hand\n```", "B:verb-before-backlog-md"),
+    ("a quoted instruction is still an instruction",
+     'Then "append the row to memory/backlog.md".', "B:verb-before-backlog-md"),
+    ("a negation far before the verb does not negate it",
+     "Not every finding is fixed in this run; the remaining ones go straight to the backlog.",
+     "B:verb-to-backlog"),
+    ("'not fixed' is a condition, not a prohibition", "Items that are not fixed, add to backlog.",
+     "B:verb-to-backlog"),
+    ("'not fixed' before an arrow is a condition", "Anything not fixed → backlog", "B:arrow-backlog"),
+    ("a negation ending the previous sentence negates nothing in this one",
+     "Do not skip this. Add it to backlog with file:line.", "B:verb-to-backlog"),
+    ("a negation in the previous sentence, beyond the word window, negates nothing (the review's example)",
+     "Do not skip this step. Add it to backlog with file:line.", "B:verb-to-backlog"),
+    ("a prohibition in the previous sentence does not excuse this hand write",
+     "Never drop findings. Persist to backlog with file:line.", "B:verb-to-backlog"),
+    ("an abbreviation's full stop does not split the instruction",
+     "Add the finding (e.g. src/x.py) to the backlog.", "B:verb-to-backlog"),
+    ("an abbreviation inside a hand write to the backlog path",
+     "Persist the finding (e.g. with file:line) to memory/backlog.md.", "B:verb-before-backlog-md"),
+    ("a quote holding only the destination hides the hand append",
+     'Append the row to "memory/backlog.md" by hand.', "B:verb-before-backlog-md"),
+    ("a quote holding only the destination hides the hand record",
+     'Record the row in "memory/backlog.md" directly.', "B:verb-before-backlog-md"),
+    ("a quote holding only the verb hides the hand write", 'Then "add" it to the backlog.', "B:verb-to-backlog"),
+    ("a quoted destination after the verb hides the hand write", 'Add it to "the backlog" now.',
+     "B:verb-to-backlog"),
+    ("backlog used as a verb on a finding", "Backlog it with the file and line when the fix is larger.",
+     "B:backlog-object"),
+    ("an arrow routing a result to the backlog", "Below-A after the cap → WARN + per-file backlog.",
+     "B:arrow-backlog"),
+    ("adding a backlog item by hand", "Add a backlog item for the blocked tool.", "B:record-backlog-item"),
+    ("reported and filed by hand", "Unfixed findings are reported and backlogged.", "B:and-backlogged"),
+    ("a conditional hand write", "Backlog only if the user declines.", "B:backlog-only-if"),
+    ("a second destination named beside the commit", "Record it in the commit body and the backlog.",
+     "B:and-the-backlog"),
+    ("a bold step label that means 'write the backlog'",
+     "**Backlog:** unfixed out-of-scope items are kept for later.", "B:backlog-label"),
+    ("a named entry per file", "Each skipped file gets a named backlog entry.", "B:named-backlog-item"),
+    ("a skip that presumes a hand write", "Skip after backlog when the file cannot be fixed.",
+     "B:after-backlog"),
+    ("pushing findings through the backlog skill",
+     "Push findings to `zuvo:backlog` when the flag is set.", "B:push-zuvo-backlog"),
+    ("a skill restating the protocol's verdict table",
+     "| Verdict | Exit | What you do |\n|---|---|---|\n| `ACCEPTED` | 0 | report it |",
+     "B:restated-verdict-table"),
+    ("a restated verdict table with a lowercase header",
+     "| verdict | exit | next step |\n|---|---|---|\n| ok | 0 | report it |", "B:restated-verdict-table"),
+    ("a source the CLI refuses",
+     "Run `~/.zuvo/backlog-add --class CQ --conf 60 --source Review_Pass --file a.py --line 1 --title 't'`.",
+     "G6:bad-source"),
+    ("a double-quoted source the CLI refuses, in a fence",
+     "```\n~/.zuvo/backlog-add --class CQ --conf 60 --file a.py --line 1 --title t --source \"Zuvo Review\"\n```",
+     "G6:bad-source"),
+    ("a legacy source token", "Source: `manual`", "G6:legacy-source"),
+    # True negatives, each named by the false positive it would be.
+    ("the pinned 'no backlog' phrase flagged as a hand write", "no cap, no backlog", None),
+    ("a negation right before the verb flagged as a hand write", "never backlog it", None),
+    ("a negated noun phrase flagged as a hand write", "Never a silent backlog row.", None),
+    ("a quoted mention flagged as an instruction", 'This closes the "RECOMMENDED → backlog" reflex.', None),
+    ("the adversarial driver's exit/verdict table flagged as the protocol's verdict table",
+     "| Driver exit / verdict | Meaning |\n|---|---|\n| 0 / PASS | the lane answered |", None),
+    ("a findings table with only a Verdict column flagged as the protocol's verdict table",
+     "| Finding | Verdict |\n|---|---|\n| F1 | CONFIRMED |", None),
+    ("a placeholder source flagged as invalid",
+     "Use `--source drive-by:<skill>` for a file the run is not editing.", None),
+    ("a command on an existing id flagged as minting one", "Run `fix B-<id>` once the change is merged.", None),
+    ("a valid source in a backlog-add unit flagged as invalid",
+     "`~/.zuvo/backlog-add --repo \"$PWD\" --class PROCESS --conf 90 --source review --target "
+     "subject:review-gate --title 't'`", None),
+    ("the canonical generic-write sentence flagged as a hand write",
+     "Record it with `~/.zuvo/backlog-add --repo \"$PWD\" --class <C> --conf <N> --source <skill> --file \"$F\" "
+     "--line <n> --anchor \"$A\" --title \"$T\"` (one call per finding; `backlog-protocol.md` "
+     "\"Persisting a finding\"; `--anchor` is required on a BUG, SEC or DATA file record). The helper decides "
+     "whether it reaches `memory/backlog.md` or only the findings ledger; report the B- or F-id it prints. "
+     "On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under "
+     "`NOT PERSISTED (<reason>)`, never appended by hand.", None),
+    ("the canonical adversarial WARNING sentence flagged as a hand write",
+     "**WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo \"$PWD\" "
+     "--class <C> --conf <N> --source <skill> --file \"$F\" --line <n> --anchor \"$A\" --title \"$T\"` "
+     "(`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` \"Persisting a "
+     "finding\").", None),
+    ("the canonical pre-existing (drive-by) sentence flagged as a hand write",
+     "\"Pre-existing\" is NOT a reason to skip a finding. If the issue is in a file you are already editing, "
+     "fix it now. If not, record it with `~/.zuvo/backlog-add --repo \"$PWD\" --class <C> --conf <N> --source "
+     "drive-by:<skill> --file \"$F\" --line <n> --anchor \"$A\" --title \"$T\"` (`--anchor` is required on a "
+     "BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: "
+     "don't dismiss it just because it existed before your changes.", None),
+    ("the canonical process-item sentence flagged as a hand write",
+     "Record it as a process item: `~/.zuvo/backlog-add --repo \"$PWD\" --class PROCESS --conf 90 --source "
+     "<skill> --target subject:<skill>-<gate> --title \"$T\"`, with `T` the gate's fixed title, the same words "
+     "on every run (`backlog-protocol.md` \"Filing from a skill\"). It is kept in the findings ledger, not "
+     "ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A "
+     "deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options "
+     "in `--evidence \"$E\"`.", None),
+    ("the canonical pentest rows flagged as a hand write or a bad source",
+     "| A white-box pentest finding, traced to a file and line | `SEC` | `pentest` | `~/.zuvo/backlog-add "
+     "--repo \"$PWD\" --class SEC --conf <N> --source pentest --file \"$F\" --line <n> --anchor \"$A\" "
+     "--title \"PT<n>: $T\"`; the dimension again in the `PT<n>:` prefix |", None),
+    ("the canonical closing-not-removing sentence flagged as a hand delete",
+     "Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is "
+     "closed, never removed: tick it and append its resolution marker (`[FIXED <sha7>]`) as "
+     "`backlog-protocol.md` \"How to Persist Findings\" step 3 says; the archive helper moves it "
+     "(\"Archiving is done by the helper, never by hand\").", None),
+    ("code-audit's Tier A closing rule flagged as a hand delete",
+     "A Tier A score does not prove any one defect is gone: close only an entry whose cited code this run "
+     "re-read and found fixed.", None),
+]
+
+# The allowlist's own self-test: (the defect it catches, document, `unit` key, expected or None).
+ALLOW_FIXTURES: List[Tuple[str, str, str, Optional[str]]] = [
+    ("a unit allowlist key excuses the whole unit, so a second hand write beside it goes unflagged",
+     "The summary goes at the TOP, not only in the backlog. Add it to backlog by hand.",
+     "goes at the TOP, not only in the backlog", "B:verb-to-backlog"),
+    ("a unit allowlist key that no longer excuses its own sentence",
+     "The summary goes at the TOP, not only in the backlog.", "goes at the TOP, not only in the backlog", None),
+]
+ALLOW_REL = "skills/x/SKILL.md"
+
+STRUCTURAL: List[Tuple[str, Cfg]] = [
+    ("negation-crosses-sentence", replace(REAL, neg_sentence=False)),
+    ("abbreviations-end-sentences", replace(REAL, mask_abbrev=False)),
+    ("quote-kept-only-with-both-halves", replace(REAL, quote_mode="both")),
+    ("unit-allowlist-unit-wide", replace(REAL, allow_unit_wide=True)),
+    ("table-header-substring", replace(REAL, table_exact=False)),
+    ("table-header-any-word", replace(REAL, table_all=False)),
+    ("negation-window-unbounded", replace(REAL, neg_window=None)),
+    ("negation-lexicon-empty", replace(REAL, neg_words=frozenset())),
+    ("state-words-negate", replace(REAL, state_is_condition=False)),
+    ("backlog-adds-guard-dropped", replace(REAL, cite=re.compile(CITE.pattern.replace("(?!s)", "")))),
+    ("citation-unit-wide", replace(REAL, cite_scope="unit")),
+    ("fence-exemptions-unit-wide", replace(REAL, fence_lines=False)),
+    ("paragraph-level-split", replace(REAL, split_items=False)),
+    ("quote-stripping-off", replace(REAL, quote_mode="off")),
+    ("quote-stripping-greedy", replace(REAL, quote_mode="greedy")),
+    ("quote-stripping-hides-instructions", replace(REAL, quote_mode="all")),
+    ("wrapped-lines-not-joined", replace(REAL, join_lines=False)),
+    ("citation-exempts-tier-a", replace(REAL, cite_tier_a=True)),
+    ("table-header-case-sensitive", replace(REAL, table_icase=False)),
+    ("g6-reads-quote-stripped-text", replace(REAL, g6_raw=False)),
+]
+
+
+def fixture_names(doc: str, cfg: Cfg) -> Set[str]:
+    return {f"{h.tier}:{h.name}" for f in scan_text(doc, cfg)[1] for h in f.hits}
+
+
+def fixture_holds(doc: str, expect: Optional[str], cfg: Cfg) -> bool:
+    names = fixture_names(doc, cfg)
+    return not names if expect is None else expect in names
+
+
+def allow_fixture_holds(doc: str, key: str, expect: Optional[str], cfg: Cfg) -> bool:
+    scan = scan_file(ALLOW_REL, doc, cfg, [(ALLOW_REL, "unit", key, "fixture")])
+    names = {f"{h.tier}:{h.name}" for f in scan.flags for h in f.hits}
+    return not names if expect is None else expect in names
+
+
+def all_fixtures_hold(cfg: Cfg) -> bool:
+    return (all(fixture_holds(doc, e, cfg) for _, doc, e in FIXTURES)
+            and all(allow_fixture_holds(doc, k, e, cfg) for _, doc, k, e in ALLOW_FIXTURES))
+
+
+def without(rule: Tuple[str, str]) -> Cfg:
+    if rule == TABLE_RULE:
+        return replace(REAL, table_check=False)
+    if rule == ("G6", "bad-source"):
+        return replace(REAL, g6_bad=False)
+    if rule == ("G6", "legacy-source"):
+        return replace(REAL, g6_legacy=False)
+    return replace(REAL, rules=tuple(r for r in REAL.rules if (r[0], r[1]) != rule))
+
+
+def self_test() -> None:
+    for why, doc, expect in FIXTURES:
+        got = sorted(fixture_names(doc, REAL))
+        if fixture_holds(doc, expect, REAL):
+            ok(f"(G2) {'TP' if expect else 'TN'} {expect or 'clean'}: {why}")
+        else:
+            no(f"(G2) {'TP' if expect else 'TN'} {expect or 'clean'} got {got}: {why}")
+    for why, doc, key, expect in ALLOW_FIXTURES:
+        verdict = "TP" if expect else "TN"
+        (ok if allow_fixture_holds(doc, key, expect, REAL) else no)(
+            f"(G2) allowlist {verdict} {expect or 'clean'}: {why}")
+    caught = 0
+    for rule in ALL_RULES:
+        label = f"{rule[0]}:{rule[1]}"
+        tps = [doc for _, doc, e in FIXTURES if e == label]
+        if not tps:
+            no(f"(G2m) pattern without fixture: {label}")
+            continue
+        # The dedicated TP must go fully clean without the rule: the rule is the only thing catching it.
+        if any(not fixture_names(doc, without(rule)) for doc in tps):
+            caught += 1
+            ok(f"(G2m) mutant {label} caught")
+        else:
+            no(f"(G2m) mutant {label} NOT caught: every TP naming it is still flagged without it")
+    for name, cfg in STRUCTURAL:
+        if not all_fixtures_hold(cfg):
+            caught += 1
+            ok(f"(G2m) mutant {name} caught")
+        else:
+            no(f"(G2m) mutant {name} NOT caught: it changes no fixture's outcome")
+    want = len(ALL_RULES) + len(STRUCTURAL)
+    if caught == want:
+        ok(f"(G2m) {caught} caught mutants == {len(ALL_RULES)} patterns + {len(STRUCTURAL)} structural")
+    else:
+        no(f"(G2m) {caught} caught mutants, expected {want}")
+
+
+def synthetic(n_flags: int, raw: str = "add it to backlog by hand") -> FileScan:
+    units = [Unit(i + 1, i + 1, raw, raw, False) for i in range(max(n_flags, 1))]
+    flags = [Flag(u.start, (Hit("B", "verb-to-backlog"),), u.text, u.raw) for u in units[:n_flags]]
+    return FileScan(units, flags, flags)
+
+
+def verdict_logic_checks() -> None:
+    """G2u: each verdict function, fed a synthetic scan, must move the FAIL counter exactly as stated."""
+    rel = "skills/x/SKILL.md"
+    cases: List[Tuple[str, Callable[[], None], int]] = [
+        ("a pending file over its count fails", lambda: judge_file(rel, synthetic(3), False, {rel: 2}), 1),
+        ("a pending file under its count fails (lower the max)",
+         lambda: judge_file(rel, synthetic(1), False, {rel: 2}), 1),
+        ("a pending file at zero fails (remove it)", lambda: judge_file(rel, synthetic(0), False, {rel: 2}), 1),
+        ("a pending file at exactly its count passes", lambda: judge_file(rel, synthetic(2), False, {rel: 2}), 0),
+        ("--only ignores PENDING: every flag fails", lambda: judge_file(rel, synthetic(2), True, {rel: 2}), 2),
+        ("a flag in a file outside PENDING fails", lambda: judge_file(rel, synthetic(1), False, {}), 1),
+        ("a unit allowlist key matching no unit is stale",
+         lambda: check_allowlist_rot(rel, "x", synthetic(1), [(rel, "unit", "no such text", "r")]), 1),
+        ("a unit allowlist key matching two units is stale",
+         lambda: check_allowlist_rot(rel, "x", synthetic(2), [(rel, "unit", "add it", "r")]), 1),
+        ("a unit allowlist key matching one flagged unit resolves",
+         lambda: check_allowlist_rot(rel, "x", synthetic(1), [(rel, "unit", "add it", "r")]), 0),
+        ("a section allowlist key whose heading is gone is stale",
+         lambda: check_allowlist_rot(rel, "# Other\n", synthetic(1), [(rel, "section", "Gone", "r")]), 1),
+        ("a retired quote back in its file fails",
+         lambda: check_retired(rel, "then add it to backlog", {rel: ["add it to backlog"]}), 1),
+        ("a retired quote that stays gone passes",
+         lambda: check_retired(rel, "record it with backlog-add", {rel: ["add it to backlog"]}), 0),
+    ]
+    for why, check, want in cases:
+        got = failures(check)
+        (ok if got == want else no)(f"(G2u) {why}: {got} FAIL(s), expected {want}")
+    heads = set(sections("```\n~~~\n# not a heading\n~~~\n```\n# Real\n"))
+    (ok if heads == {"Real"} else no)(f"(G2u) a ~~~ inside a ``` fence toggles nothing: headings {sorted(heads)}")
+    n_units = len(split_units("+ one\n+ two\n1) three\n2) four", REAL))
+    (ok if n_units == 4 else no)(f"(G2u) `+` and `N)` items each start a unit: {n_units} of 4")
+
+
+def check_config(expansion: Set[str]) -> None:
+    for tier, name, tok, pattern in REAL.rules:
+        spelled = re.sub(r"\\(.)", r"\1", pattern)
+        if tok not in spelled and not (tok.islower() and tok in spelled.lower()):
+            no(f"(G2) rule {tier}:{name}: its pre-filter literal {tok!r} is not spelled in its regex")
+    for path, scope_name, key, reason in ALLOWLIST:
+        if scope_name not in ("file", "section", "unit") or not reason:
+            no(f"(G5) allowlist entry needs a scope of file|section|unit and a reason: {path} {key!r}")
+        if scope_name == "file" and path not in FILE_SCOPE_ALLOWED:
+            no(f"(G5) file-scope allowlist is reserved for {FILE_SCOPE_ALLOWED}: {path}")
+        if scope_name == "section" and key in FORBIDDEN_SECTIONS:
+            no(f"(G5) section {key!r} may never be allowlisted: {path}")
+    for path in PENDING:
+        if path not in expansion:
+            no(f"(G4) PENDING names a file outside the scope: {path}")
+
+
+def check_anchors() -> None:
+    try:
+        doc = open(os.path.join(ROOT, PROTOCOL), encoding="utf-8").read()
+    except OSError as exc:
+        no(f"(G1) {PROTOCOL} unreadable: {exc}")
+        return
+    spans = sections(doc)
+    persist = spans.get("Persisting a finding: backlog-add")
+    body = "\n".join(doc.split("\n")[persist[0] - 1:persist[1]]) if persist else ""
+    if "Never append a finding to `memory/backlog.md` by hand" in re.sub(r"\s+", " ", body):
+        ok("(G1) 'Persisting a finding: backlog-add' forbids a hand append")
+    else:
+        no("(G1) '## Persisting a finding: backlog-add' is missing or no longer says "
+           "\"Never append a finding to `memory/backlog.md` by hand\"")
+    filing = spans.get("Filing from a skill")
+    table_fmt = spans.get("Backlog Table Format")
+    if filing and persist and table_fmt and persist[0] < filing[0] < table_fmt[0]:
+        ok("(G1) '## Filing from a skill' sits between 'Persisting a finding' and 'Backlog Table Format'")
+    else:
+        no("(G1) '## Filing from a skill' is missing or not between '## Persisting a finding: backlog-add' "
+           "and '## Backlog Table Format'")
+
+
+def parse_only(expansion: Set[str]) -> Optional[List[str]]:
+    if not ARGV:
+        return None
+    if ARGV[0] != "--only" or len(ARGV) < 2:
+        print("usage: test-backlog-hand-append-prose.sh [--only PATH ...]", file=sys.stderr)
+        sys.exit(2)
+    out: List[str] = []
+    for arg in ARGV[1:]:
+        full = os.path.normpath(arg if os.path.isabs(arg) else os.path.join(ROOT, arg))
+        rel = os.path.relpath(full, ROOT)
+        if rel.startswith(".."):
+            no(f"(G3) --only path is outside the repo: {arg}")
+        elif not os.path.isfile(full):
+            no(f"(G3) --only path does not exist: {arg}")
+        elif rel not in expansion:
+            no(f"(G3) --only path is outside the guard's scope {SCOPE_GLOBS}: {arg}")
+        else:
+            out.append(rel)
+    return out
+
+
+def read(rel: str) -> Optional[str]:
+    try:
+        return open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        no(f"(G3) unreadable {rel}: {exc}")
+        return None
+
+
+def judge_file(rel: str, scan: FileScan, strict: bool, pending: Dict[str, int]) -> None:
+    n = len(scan.flags)
+    if rel in pending and not strict:
+        want = pending[rel]
+        if n > want:
+            no(f"(G4) new hand-write in a pending file: {rel} flagged={n} recorded={want}")
+            for f in scan.flags if OUT.echo else []:
+                print(f"       {rel}:{f.line} [{f.hits[0].tier}:{f.hits[0].name}] {f.text[:140]}")
+        elif n == 0:
+            no(f"(G4) pending file is clean: remove it from PENDING: {rel}")
+        elif n < want:
+            no(f"(G4) pending file flags fewer units than recorded: lower its count to {n}: {rel} "
+               f"recorded={want}")
+        else:
+            ok(f"(G4) pending {rel} flagged={n} == recorded")
+        return
+    for f in scan.flags:
+        h = f.hits[0]
+        no(f"{rel}:{f.line} [{h.tier}:{h.name}] {f.text[:140]}")
+
+
+def check_allowlist_rot(rel: str, text: str, scan: FileScan, allowlist: Sequence[Allow]) -> None:
+    secs = sections(text)
+    ab_flagged = [f for f in scan.raw_flags if any(h.tier != "G6" for h in f.hits)]
+    for path, scope_name, key, _ in allowlist:
+        if path != rel:
+            continue
+        if scope_name == "file":
+            ok(f"(G5) file allowlist key resolves: {rel}")
+        elif scope_name == "section":
+            span = secs.get(key)
+            if span and any(span[0] <= f.line <= span[1] for f in ab_flagged):
+                ok(f"(G5) section allowlist key resolves and excuses a flag: {rel} '{key}'")
+            else:
+                no(f"(G5) stale allowlist key: {rel} section '{key}' is gone or holds no flagged unit")
+        elif scope_name == "unit":
+            matching = [u for u in scan.units if key in u.raw]
+            flagged = [f for f in ab_flagged if key in f.raw]
+            if len(matching) == 1 and flagged:
+                ok(f"(G5) unit allowlist key matches exactly one flagged unit: {rel} {key[:60]!r}")
+            else:
+                no(f"(G5) stale allowlist key: {rel} {key[:60]!r} matches {len(matching)} unit(s), "
+                   f"{len(flagged)} flagged")
+
+
+def check_retired(rel: str, text: str, retired: Dict[str, List[str]]) -> None:
+    for quote in retired.get(rel, []):
+        if quote in text:
+            no(f"(G5) retired quote back in {rel}: {quote!r}")
+        else:
+            ok(f"(G5) retired quote absent from {rel}: {quote[:60]!r}")
+
+
+def tree_mutation(expansion: List[str], cache: Dict[str, FileScan], texts: Dict[str, str]) -> None:
+    allowlisted = {p for p, *_ in ALLOWLIST}
+    line = "If fix is larger, add to backlog with specific file:line."
+    for rel in expansion:
+        if rel in PENDING or rel in allowlisted:
+            continue
+        text = texts.get(rel)
+        if text is None:
+            text = read(rel)
+            if text is None:
+                continue
+            texts[rel] = text
+        before = cache.get(rel) or scan_file(rel, text, REAL)
+        if before.flags:
+            continue
+        after = scan_file(rel, text.rstrip("\n") + "\n\n" + line + "\n", REAL)
+        new = [f for f in after.flags if line in f.raw]
+        if len(after.flags) == 1 and len(new) == 1:
+            ok(f"(G2t) tree-mutation caught {rel}")
+        else:
+            no(f"(G2t) tree mutation of {rel}: expected exactly one new flag, got {len(after.flags)}")
+        return
+    no("(G2t) no clean, non-allowlisted, non-pending file to mutate")
+
+
+def main() -> None:
+    expansion = sorted({os.path.relpath(p, ROOT) for g in SCOPE_GLOBS for p in glob.glob(os.path.join(ROOT, g))})
+    exp_set = set(expansion)
+    only = parse_only(exp_set)
+    self_test()
+    verdict_logic_checks()
+    check_config(exp_set)
+    check_anchors()
+    targets = expansion if only is None else only
+    cache: Dict[str, FileScan] = {}
+    texts: Dict[str, str] = {}
+    counts: Dict[str, int] = {}
+    units_total = 0
+    for rel in targets:
+        text = read(rel)
+        if text is None:
+            continue
+        texts[rel] = text
+        scan = scan_file(rel, text, REAL)
+        cache[rel] = scan
+        units_total += len(scan.units)
+        if only is not None and not scan.units:
+            no(f"(G3) --only path yields no unit: {rel}")
+        judge_file(rel, scan, only is not None, PENDING)
+        check_allowlist_rot(rel, text, scan, ALLOWLIST)
+        check_retired(rel, text, RETIRED_QUOTES)
+        if scan.flags:
+            counts[rel] = len(scan.flags)
+    if only is None:
+        for path in RETIRED_QUOTES:
+            if path not in exp_set:
+                no(f"(G5) RETIRED_QUOTES names a file outside the scope: {path}")
+        for p in [p for p, *_ in ALLOWLIST if p not in exp_set]:
+            no(f"(G5) stale allowlist key: {p} does not exist")
+        if len(texts) == len(expansion) >= FILE_FLOOR:
+            ok(f"(G3) scanned {len(texts)} files == the globs' expansion (floor {FILE_FLOOR})")
+        else:
+            no(f"(G3) scanned {len(texts)} of {len(expansion)} files (floor {FILE_FLOOR})")
+        if units_total >= UNIT_FLOOR:
+            ok(f"(G3) {units_total} units >= floor {UNIT_FLOOR}")
+        else:
+            no(f"(G3) {units_total} units < floor {UNIT_FLOOR}: the splitter or the globs lost text")
+    tree_mutation(expansion, cache, texts)
+    print(f"  units scanned: {units_total} in {len(texts)} files")
+    for rel in sorted(counts):
+        print(f"  flagged-units {rel} {counts[rel]}")
+    print(f"  flagged total: {sum(counts.values())} units in {len(counts)} files; "
+          f"PENDING records {sum(PENDING.values())} units in {len(PENDING)} files")
+    print(f"  runtime: {time.monotonic() - STARTED:.2f}s")
+    print(f"RESULT: PASS={OUT.passed} FAIL={OUT.failed}")
+    sys.exit(1 if OUT.failed else 0)
+
+
+main()
+PY

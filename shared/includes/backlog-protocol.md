@@ -102,7 +102,8 @@ Precedence, in this order:
 3. `ZUVO_BACKLOG_ADMIT=1` in the environment sends any class at conf ≥ 26 to the backlog. It is set
    only on the user's explicit request for a specific finding: the user sets it, or an agent sets it
    on the one call for the finding the user's own message asked to have filed. An agent never sets it
-   on its own judgement, and no skill instructs it. Nothing in the shell can tell who typed it, so
+   on its own judgement. The one skill text that names it is the backlog skill's `add` mode, and only
+   for the item the user's own message asked it to file; no other skill instructs it. Nothing in the shell can tell who typed it, so
    what keeps it honest is that every use stays visible. A first sighting it forces records
    `forced: true` and reason `forced`. A forced re-sighting of a finding already in the ledger records
    a status patch whose `note` is `forced (natural: <the reason the bars gave>)`, which the fold keeps
@@ -237,6 +238,81 @@ ignored backlog keeps private; `backlog-add` refuses to write it.
   and retired with it if that PR is declined, until a later sighting files it again.
 - Only credential shapes are refused. PII such as an e-mail address is not scanned: keep it out of
   titles and evidence yourself.
+
+## Filing from a skill
+
+How a skill turns each situation into one `backlog-add` call. The bars, the dedupe, the tag and the
+exit handling are the ones in "Persisting a finding: backlog-add"; this table only says which class,
+source and location a skill passes. `<skill>` is the skill's own name (`review`, not `zuvo:review`).
+Every call carries `--repo "$PWD"`. Every free-text or externally sourced value is a double-quoted
+variable assigned before the call (`"$T"`, `"$A"`, `"$E"`, `"$U"`, `"$F"`: "Free text goes through a
+variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers the skill fills in.
+
+| Situation | Class | Source | Location |
+|-----------|-------|--------|----------|
+| A finding in a file the run is editing, which the run defers | its class: `BUG` only when it names the input and the wrong output, else `CQ` or the class the finding is | `<skill>` | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
+| A finding in a file the run is not editing | its class | `drive-by:<skill>` (`drive-by-findings.md`) | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
+| A finding on a live page or host, with no repository file causing it | any class; the bars still route it, so a report-only class stays in the ledger | `<skill>` | `--target "$U" --evidence "$E"`, `U` a URL or a host (the location rule below) |
+| A validity-gate item: an incomplete run, a skipped tier, an escape hatch taken | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-<gate>`, with no date in it and the gate's fixed title on every run, so a repeat bumps the one record (`LEDGER-BUMPED seen=N`); kept in the ledger only |
+| A deferred decision, or follow-up work the run will not do | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-decision-<slug>`; the question as the title, both options in `--evidence "$E"` |
+| A NIT at ship time | `CQ` | `ship` | `--file "$F" --line <n>`; it is recorded (the ledger keeps it), never ignored silently |
+| An item the user files through the backlog skill's `add` mode | `BUG` when the user states the input and the wrong result, else `CQ`; `PROCESS` with `--target subject:<slug>` only for a process or decision item (for a code defect, the file and a verified line: the backlog skill's "Adding Items") | `user` | as the item says; `ZUVO_BACKLOG_ADMIT=1` only when the user invoked that mode in their own message |
+| A finding this run fixed | none: no call | none | an open entry it resolved is closed (sentence 4 below) |
+| A skill that commits after filing | none | none | it stages exactly the `wrote=` paths `backlog-add` printed, and nothing else |
+| A source written `zuvo:refactor` or `zuvo:refactor/cq-auditor` | as the finding is | `refactor`; the agent's name goes in `--evidence` | as the finding is |
+| A source written `test-audit/{date}` | as the finding is | `test-audit` | as the finding is |
+| A source written `manual` | as the item is | `user` | as the item is |
+| A source written `debug/[date]` | as the finding is | `drive-by:debug` | as the finding is |
+| A source written `source:build` in a hand-written entry template | as the finding is | `build`; the template is gone | as the finding is |
+| A black-box pentest finding, on a live target (formerly suggested as `--source pentest --dimension PT<n>`) | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$PWD" --class SEC --conf <N> --source pentest --target "$U" --evidence "$E" --title "PT<n>: $T"`. `backlog-add` has no `--dimension` argument: the dimension lives in the title's `PT<n>:` prefix |
+| A white-box pentest finding, traced to a file and line | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$PWD" --class SEC --conf <N> --source pentest --file "$F" --line <n> --anchor "$A" --title "PT<n>: $T"`; the dimension again in the `PT<n>:` prefix |
+
+**The location rule.** A record names either a file or a target, never both (`bad-combination`).
+
+- A **file** record takes `--file` and `--line`. `--anchor` is required on a BUG, SEC or DATA file
+  record (at least 8 non-space characters, refused `missing-field:anchor` otherwise); on any class,
+  an anchor that is given must appear within ±3 lines of `--line`.
+- A **target** record has no line, so no anchor is checked. A URL or host target needs `--evidence`
+  (refused `missing-field:evidence` without it), whatever the class; a `subject:` target (PROCESS or
+  SEC only) needs neither. Pass no `--anchor` with a target: on BUG, SEC and DATA a given anchor
+  replaces the title as the record's identity, and nothing checks it.
+
+**Free text goes through a variable.** A title, evidence, fix, anchor, file path or target taken from
+a live page, a tool's output, a pentest response or the user's own words can hold a `'`, a `"` or a
+`$(`, which ends a quoted argument or runs a command. Assign every `"$X"` argument of the call just
+before it, one assignment per value, from a quoted heredoc, and pass the variable in double quotes;
+never splice such text into single quotes. This form works in bash 3.2 (macOS `/bin/bash`, which
+mis-parses quotes inside a heredoc nested in `$(…)`, so `T=$(cat <<'ZUVO_TXT' …)` is not used) and
+in zsh:
+
+```bash
+read -r -d '' T <<'ZUVO_TXT' || true
+<the title, verbatim>
+ZUVO_TXT
+read -r -d '' A <<'ZUVO_TXT' || true
+<the anchor, copied from the cited line>
+ZUVO_TXT
+```
+
+`read` drops leading and trailing whitespace and keeps everything else byte for byte; `|| true`
+because `read -d ''` returns 1 at the end of the heredoc. The same two lines set `E`, `U` and `F`.
+The text must not hold a line that is exactly `ZUVO_TXT`.
+
+**A process item keeps its first title.** Its identity is the class, the `subject:` target and the
+first 8 words of the title, so pass the same title on every run (name the gate, not this run's
+circumstances): a repeat then only bumps `seen` on the one record. A reason that changes from run to
+run goes in that run's report, not in the ledger.
+
+The sentences below are the text skills cite, `<skill>` replaced by the skill's name. Each command is
+one code span, so it can be run as written once the variables are assigned and the placeholders
+filled.
+
+1. **Generic write.** Record it with `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (one call per finding; `backlog-protocol.md` "Persisting a finding"; `--anchor` is required on a BUG, SEC or DATA file record). The helper decides whether it reaches `memory/backlog.md` or only the findings ledger; report the B- or F-id it prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
+2. **Adversarial review.**
+   - **WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` "Persisting a finding").
+   - "Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source drive-by:<skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: don't dismiss it just because it existed before your changes.
+3. **Process item.** Record it as a process item: `~/.zuvo/backlog-add --repo "$PWD" --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`, with `T` the gate's fixed title, the same words on every run (`backlog-protocol.md` "Filing from a skill"). It is kept in the findings ledger, not ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options in `--evidence "$E"`.
+4. **Closing, not removing.** Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is closed, never removed: tick it and append its resolution marker (`[FIXED <sha7>]`) as `backlog-protocol.md` "How to Persist Findings" step 3 says; the archive helper moves it ("Archiving is done by the helper, never by hand"). For an audit's tier score: a Tier A score does not prove any one defect is gone: close only an entry whose cited code this run re-read and found fixed.
 
 ## Backlog Table Format
 

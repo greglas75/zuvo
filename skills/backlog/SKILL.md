@@ -2,10 +2,10 @@
 name: backlog
 description: >
   Manage the project's tech debt backlog. Add, list, fix, wontfix, delete,
-  prioritize, and suggest batch actions on tracked issues. Used by audit
-  and review skills to persist findings, and directly by users to manage
-  accumulated debt. Modes: list [category], add [description], fix B-{N},
-  wontfix B-{N} [reason], delete B-{N}, stats, prioritize, suggest, and the
+  prioritize, and suggest batch actions on tracked issues, run by the user
+  to manage accumulated debt (skills file their findings through
+  ~/.zuvo/backlog-add themselves, never through this skill). Modes: list [category], add [description], fix B-<id>,
+  wontfix B-<id> [reason], delete B-<id>, stats, prioritize, suggest, and the
   three grooming modes verify, groom and doc (whether each entry is still true,
   the dispositions that follow, and the ranked working document).
 category: Utility
@@ -13,7 +13,7 @@ category: Utility
 
 # zuvo:backlog — Tech Debt Management
 
-Add, list, and manage backlog items. The backlog tracks technical debt discovered by audit skills, review agents, and manual entries.
+Add (through `~/.zuvo/backlog-add`), list, and manage backlog items. The backlog tracks technical debt discovered by audit skills, review agents, and manual entries.
 
 **Backlog location:** `memory/backlog.md`, resolved per `../../shared/includes/backlog-protocol.md` ("Where the Backlog Lives"): when git tracks it in the checkout you are in, that checkout's copy is the backlog for its branch; otherwise it lives at the **MAIN checkout root**. The helper applies the rule — `~/.zuvo/backlog-archive.py path --repo "$PWD"` prints the path — and every helper call below takes `--repo "$PWD"`. By hand, copy the protocol's whole resolution block (its fallback is mandatory: without it a non-git CWD yields an empty root and re-forks the backlog).
 
@@ -27,16 +27,16 @@ For an UNTRACKED backlog, NEVER create or write a `memory/backlog.md` inside a l
 | Input | Action |
 |-------|--------|
 | _(empty)_ or `list` | Show all OPEN items as a summary table |
-| `list category:[x]` | Show OPEN items filtered by category (code/test/arch/dep/doc/infra) |
+| `list category:[x]` | Show OPEN items filtered by category (code/test/arch/dep/doc/infra; an entry `backlog-add` wrote is matched by its class, [Tech Debt Categories](#tech-debt-categories)) |
 | `list all` | Show all items including RESOLVED and WONTFIX |
-| `add` | Interactive: ask what to add, then append |
-| `add [description]` | Parse natural language description, add to backlog |
-| `fix B-{N}` | Mark item as RESOLVED |
-| `wontfix B-{N} [reason]` | Mark item as WONTFIX with reason |
-| `delete B-{N}` | Remove item (show details, ask confirmation) |
-| `delete B-{N} --force` | Remove without confirmation |
+| `add` | Interactive: ask what to file, then file it with one `backlog-add` call ([Adding Items](#adding-items)) |
+| `add [description]` | Parse the description and file it with one `backlog-add` call ([Adding Items](#adding-items)) |
+| `fix B-<id>` | Mark item as RESOLVED |
+| `wontfix B-<id> [reason]` | Mark item as WONTFIX with reason |
+| `delete B-<id>` | Remove item (show details, ask confirmation) |
+| `delete B-<id> --force` | Remove without confirmation |
 | `archive [--dry-run]` | Move ticked, resolution-marked entries to `memory/backlog-done.md` |
-| `regression B-{N}` | Re-open an archived entry under the same id (lookup said ARCHIVED) |
+| `regression B-<id>` | Re-open an archived entry under the same id (lookup said ARCHIVED) |
 | `stats` | Show counts by severity and category |
 | `prioritize` | Score and rank all OPEN items by urgency |
 | `suggest` | Group items by pattern, propose batch fix commands |
@@ -205,13 +205,13 @@ All interactions use these columns:
 
 | Column | Description | Set by |
 |--------|-------------|--------|
-| ID | `B-{N}` sequential | Auto |
+| ID | `B-<id>`, minted by `backlog-add` | Auto |
 | Status | OPEN, RESOLVED, WONTFIX | Auto (default: OPEN) |
 | Fingerprint | Dedup key (see format below) | Auto |
 | File | File path | Required |
 | Problem | Short description | Required |
 | Severity | CRITICAL, HIGH, MEDIUM, LOW | Required |
-| Category | Code, Test, Architecture, Dependency, Documentation, Infrastructure | Required |
+| Category | Code, Test, Architecture, Dependency, Documentation, Infrastructure | Legacy rows only; an entry `backlog-add` writes has none and is mapped from its `[<CLASS>]` ([Tech Debt Categories](#tech-debt-categories)) |
 | Source | Which skill added it | Auto |
 | Seen | Occurrence count | Auto |
 | Added | Date first added (YYYY-MM-DD) | Auto |
@@ -232,42 +232,68 @@ Default view shows: `ID | Severity | File | Problem | Seen`
 
 ## Adding Items
 
-When adding (interactive or from description):
+Every item the user adds is one `~/.zuvo/backlog-add` call, made per "Persisting a finding: backlog-add"
+and "Filing from a skill" in `../../shared/includes/backlog-protocol.md`. The helper mints the id, runs
+the duplicate check across `backlog.md`, `backlog-done.md` and the findings ledger, and writes. In this
+add flow the skill never mints an id, runs the lookup or appends a line itself.
 
-1. Read the current `memory/backlog.md`
-2. Determine the next `B-{N}` ID
-3. If natural language input, extract:
-   - **File** (ask if not apparent from description)
-   - **Problem** (short description)
-   - **Severity** (infer from keywords -- see inference rules)
-   - **Category** (infer from file path)
-4. Compute the key per `../../shared/includes/backlog-protocol.md` (id-preferred, content-fallback)
-5. Dedup check across **both** files — run the lookup, do not re-implement it:
-   `~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<candidate>"`
-   - `OPEN` (exit 10): update that entry in place — Seen, date, severity if worse. No duplicate.
-   - `ARCHIVED` (exit 11): **REGRESSION.** Re-open under the SAME id with the back-link the protocol
-     defines. Never mint a new id; never file it as a fresh finding.
-   - `ABSENT` (exit 0): append a new entry with a fresh id.
-   - `NO-SIGNATURE` (exit 13): the candidate keys on nothing — empty, or stripped to nothing as
-     resolution markers. Not a verdict about the backlog: nothing was looked up. Rewrite the
-     candidate so it names the file and the defect, then run the lookup again.
-   Checking only `backlog.md` is not a check — an entry that exists solely in `backlog-done.md`
-   reads as ABSENT and comes back as new work.
-6. Confirm what was added
+1. From the description (or by asking, in interactive mode), take:
+   - **Site:** the file and line. A code defect the user describes without naming a file: ask for the
+     file. With the file known, find the line by reading the file and confirm the defect is at it; when
+     the line cannot be verified that way, ask the user for it. Never guess a line. Only a process or
+     decision item (a gate, a follow-up, an open question) has no file.
+   - **Class:** `BUG` only when the user states both the input and the wrong result; otherwise `CQ`, or
+     the class the item plainly is (`SEC`, `PERF`, ...); `PROCESS` for a process or decision item. The
+     Auto-Inference keywords are hints, never a substitute for the input and the wrong result.
+   - **Confidence:** derived from what the user stated and what this run checked, never a fixed number:
+     the cited line read and the defect seen there, or the behaviour reproduced → 80-95; stated by the
+     user but not checked → 50-75.
+   - **Title** in one sentence, and a severity when the description implies one (Auto-Inference Rules).
+2. File it with `--source user`, one call per item. The user's words are free text, so every `"$X"`
+   argument below is assigned just before the call, one assignment per value, as "Filing from a skill"
+   says (the form works in bash 3.2 and zsh):
+
+   ```bash
+   read -r -d '' T <<'ZUVO_TXT' || true
+   <the title, verbatim>
+   ZUVO_TXT
+   read -r -d '' F <<'ZUVO_TXT' || true
+   <the file path, repo-relative>
+   ZUVO_TXT
+   read -r -d '' A <<'ZUVO_TXT' || true
+   <the anchor, copied from the cited line>
+   ZUVO_TXT
+   ```
+
+   - `BUG`, `SEC`, `DATA`: `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source user --file "$F" --line <n> --anchor "$A" --title "$T" [--severity <level>]`
+   - any other class with a file: `~/.zuvo/backlog-add --repo "$PWD" --class <C> --conf <N> --source user --file "$F" --line <n> --title "$T" [--severity <level>]`
+   - a process or decision item: `~/.zuvo/backlog-add --repo "$PWD" --class PROCESS --conf <N> --source user --target subject:<slug> --title "$T" [--severity <level>]`, where `<slug>` is the title in kebab-case, cut to 40 characters
+
+   Prefix the call with `ZUVO_BACKLOG_ADMIT=1` only when the user ran this `add` mode themselves in this
+   message: their request for the item is the explicit request the override exists for, so a `CQ` or
+   `PROCESS` item lands in the backlog instead of only the ledger. Never when a skill or an agent invokes
+   this mode, and never for an item the user did not ask to file.
+3. Report the verdict `backlog-add` printed: the B-id it filed or bumped, REGRESSION for `REOPENED`, the
+   F-id for a ledger record. A refusal is corrected only when the input was mistyped (a path, a line,
+   the anchor text) and then resubmitted once; never by changing `--class` or `--conf` to get past a
+   bar. Anything else is reported as `NOT PERSISTED (<reason>)`. Never append the item by hand.
 
 ### Batch Add
 
-If the user provides multiple issues (numbered list, bullets, or comma-separated), add them all in one pass. Show a summary table for confirmation before writing.
+If the user provides several items (numbered list, bullets, or comma-separated), file each with its own
+`backlog-add` call in one pass, without pausing for confirmation, then show one summary table: item,
+class, site and the verdict each call printed.
 
 ### Auto-Inference Rules
 
-Do not ask per-item for batch adds. Infer missing fields:
+Do not ask per-item for batch adds, except for the file of a code defect that names none, or a line
+that reading the file cannot verify. Infer the
+rest; the keywords are hints:
 
-- **Severity:** `race condition`, `security`, `data loss` -> HIGH. `any type`, `missing test` -> MEDIUM. `typo`, `naming` -> LOW.
-- **Category:** `*.test.*` -> Test. `*.service.*`, `*.controller.*` -> Code. `docker*`, `*.yml` -> Infrastructure.
-- **Source:** `manual`
-- **Seen:** 1
-- **Added:** today's date
+- **Class:** a wrong behaviour stated with its input (`returns`, `crashes`, `loses`, `wrong`) -> `BUG`; a process or decision item -> `PROCESS`; otherwise `CQ`.
+- **Severity** (`--severity`): `race condition`, `security`, `data loss` -> `high`. `any type`, `missing test` -> `medium`. `typo`, `naming` -> `low`.
+- **Source:** `user`
+- The id, `seen` and the date are set by `backlog-add`.
 
 ---
 
@@ -277,16 +303,24 @@ Do not ask per-item for batch adds. Infer missing fields:
 record: the archive is what lets a later sighting be recognised as a regression instead of being
 re-filed as new work.
 
-- `fix B-{N}`: verify exists (error if not), tick the box and **append** `[FIXED <sha7>]` to the
+Finding the entry a mode acts on, or answering "is this already known?" without filing anything, is
+the lookup across **both** files — run it, do not re-implement it:
+`~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<B-id or candidate text>"`. It answers `OPEN` (exit 10),
+`ARCHIVED` (exit 11: the `regression` path), `ABSENT` (exit 0), or `NO-SIGNATURE` (exit 13: the query keys
+on nothing — empty, or stripped to nothing as resolution markers; nothing was looked up, so rewrite it to
+name the file and the defect, or pass the B-id). Checking only `backlog.md` is not a check: an entry that
+exists solely in `backlog-done.md` reads as ABSENT.
+
+- `fix B-<id>`: verify exists (error if not), tick the box and **append** `[FIXED <sha7>]` to the
   existing text — never write over the problem description, because the description is what the
   content key is computed from.
-- `wontfix B-{N} [reason]`: verify exists, tick the box and append `WONTFIX — <reason>`.
+- `wontfix B-<id> [reason]`: verify exists, tick the box and append `WONTFIX — <reason>`.
 - `archive [--dry-run]`: move every ticked, marker-carrying entry into `backlog-done.md` via
   `~/.zuvo/backlog-archive.py archive --repo "$PWD"`. Entries holding a live `[ ]` sub-item are
   refused, not moved — split them first.
-- `regression B-{N}`: the `ARCHIVED` path of the lookup. Re-open under the same id with the
+- `regression B-<id>`: the `ARCHIVED` path of the lookup. Re-open under the same id with the
   back-link, severity one band higher, and the word REGRESSION in the report.
-- `delete B-{N}`: destructive and rarely right. Print "this destroys the record — `archive` is what
+- `delete B-<id>`: destructive and rarely right. Print "this destroys the record — `archive` is what
   you want", show the item, ask "Delete? (y/n)". With `--force`, skip the confirmation only.
 
 **Never archive by hand.** `~/.zuvo/backlog-archive.py archive` does it — with a lock, byte conservation, minted ids and the git-tracking refusal. What a hand-written archive breaks, and the measured incident behind the rule, are in `backlog-protocol.md` → "Archiving is done by the helper, never by hand" (kept there once rather than paraphrased here).
@@ -420,8 +454,8 @@ Hotspot: offer.service.ts (6 items) -> zuvo:refactor src/offer/offer.service.ts
 | Situation | Response |
 |-----------|----------|
 | `fix B-99` but B-99 not found | "B-99 not found. Run `zuvo:backlog list` to see current items." |
-| `list` but backlog is empty | "Backlog is empty. Use `zuvo:backlog add` to track issues." |
-| `add` with vague description (no file) | Ask for file path and specific problem |
+| `list` but backlog is empty | "Backlog is empty. Use the `add` mode to track issues." |
+| `add` with vague description (no file) | Ask for the file and the specific problem; only a process or decision item is filed without one, as `PROCESS` (Adding Items) |
 | `prioritize` with 0-1 items | "Only N item(s) -- no ranking needed." |
 | `suggest` with 0 items | "Backlog is clear. Consider scheduling a periodic audit." |
 
@@ -437,6 +471,19 @@ Hotspot: offer.service.ts (6 items) -> zuvo:refactor src/offer/offer.service.ts
 | dep | Dependency | Outdated libraries, CVEs, unmaintained packages |
 | doc | Documentation | Missing runbooks, outdated READMEs |
 | infra | Infrastructure | Manual deploys, no monitoring, missing IaC |
+
+An entry `backlog-add` writes carries no Category column: its line holds the class in brackets after
+the location (`- [ ] B-<id> <path>:<line> — [<CLASS>] <title> | …`). `list category:[x]` and `stats`
+read a legacy table row's Category column as written, and map an entry `backlog-add` wrote by that
+class:
+
+| Class | Category |
+|-------|----------|
+| `BUG`, `SEC`, `DATA`, `DUP`, `CPLX`, `SIZE`, `PERF`, `DEAD`, `READ`, `CQ` | code |
+| `TEST-GAP`, `MUTATION` | test |
+| `PROCESS`, `ADVISORY` | none: shown by an unfiltered `list` only |
+
+No class maps to arch, dep, doc or infra; those filters match legacy rows only.
 
 ---
 
