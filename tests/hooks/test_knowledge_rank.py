@@ -168,6 +168,19 @@ class KnowledgeRankTest(unittest.TestCase):
         self.assertEqual(self.ids(rows), ["ok"])
         self.assertEqual(proc.stderr.count("Preserved malformed line"), 2)
 
+    def test_wrongly_typed_fields_neither_crash_the_load_nor_hide_the_good_entries(self) -> None:
+        # Catches a hand-edited entry (tags as a string, fact as a list, updatedAt as a number,
+        # affectedFiles as a string, confidence as a list) raising out of the scoring and ending the prime.
+        self.write_store("gotchas.jsonl", [
+            {"id": "odd", "type": "gotcha", "tags": "widget", "fact": ["widget"], "updatedAt": 5,
+             "affectedFiles": "src/**", "confidence": ["high"]},
+            {"id": "ok", "type": "gotcha", "fact": "widget ok"}])
+        self.env["ZUVO_RERANK"] = "0"
+        rows, _ = self.run_cli("widget", "src/x.ts")   # run_cli fails the test on a non-JSON crash
+        self.assertIn("ok", self.ids(rows))
+        prime = self.run_raw("", None, "--json")       # the session prime scores every field too
+        self.assertEqual(prime.returncode, 0, prime.stderr)
+
     def test_valid_json_that_is_not_an_object_is_skipped_as_malformed(self) -> None:
         # Catches `entry.get` raising AttributeError on a list, string or number line and ending the prime.
         self.write_store("decisions.jsonl", [{"id": "ok", "fact": "widget ok"}])
