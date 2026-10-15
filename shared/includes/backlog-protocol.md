@@ -161,6 +161,31 @@ writes (a `--target` finding puts the target where `<path>:<line>` is):
 - [ ] B-<stem>-<CLASS>-<fp8> <path>:<line> — [<CLASS>] <title> | evidence: <how> | fix: <fix> | severity: <sev> | source: <src> | conf: NN | seen: N | ledger: F-<12> | <YYYY-MM-DD> [pr:N]
 ```
 
+### Possible duplicates (`possible-dup-of`)
+
+Before the lock, a new entry is scored against the open and archived entries (checkbox, `## B-id`
+heading and table rows alike) by a rerank model. When one scores high enough, the appended line carries
+`| possible-dup-of: <B> (strong|weak) |` between `ledger:` and the date, and `--json` carries it as
+`possible_dup_of`. It is a flag only: the verdict line is unchanged, nothing is merged, and the entry's
+identity is the same with or without it. Only `ZUVO_BACKLOG_DEDUP_BUMP=1` bumps a `strong` candidate
+instead, and only an open entry in this format on the same file.
+
+`backlog-groom.py plan` reports the same kind of pair among undecided open entries, as report lines
+only (never a verdict, a queue verdict or a ledger row; the entry still goes to the verifier):
+`SEMANTIC_DUPLICATE=<line> <key> <other key> <score>`, `SEMANTIC_CHECKED=<answered>/<eligible>` and
+`SEMANTIC_DUPLICATES=<n>` or `skipped:<disabled|dry-run|no-client|no-key|failed|error>`. An entry is
+answered when its own request succeeded or it shares no word with any other entry (no possible
+duplicate, so no request); when any eligible entry was not (the request budget was spent, or its request
+failed or was skipped after 5 failures in a row), the count reads `<n>+partial`, never a clean `<n>`.
+`skipped:failed` means no entry was answered and every request sent failed. At most
+`ZUVO_GROOM_RERANK_MAX` (300) requests are sent per run; `0` is `skipped:disabled`. `--dry-run` sends
+nothing (`skipped:dry-run`).
+
+**Egress.** Whenever an OpenRouter key is present, entry text (the new finding and up to 15 existing
+entries per add; up to 300 requests of entry text per groom) is sent to OpenRouter for ranking, on
+every repository of the machine. `ZUVO_RERANK=0` turns it off; without a key nothing is sent and both
+commands behave as they did before.
+
 ### Verdicts and exit codes
 
 One line on stdout; `--json` prints the same fields as one object, and `--dry-run` appends ` dry-run`.

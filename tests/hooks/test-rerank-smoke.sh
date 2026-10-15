@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Rerank smoke against a LOCAL stub of the paid rerank API, never the real one. It covers knowledge-prime
-# Step 3 only; the backlog-add checks are appended where marked, by a later task.
+# Rerank smoke against a LOCAL stub of the paid rerank API, never the real one. Two halves:
+#  (1) knowledge-prime Step 3: the command extracted from knowledge-prime.md, run from a subdirectory of a
+#      temp git repo carrying the fixture knowledge store, so a doc that drifts from the helper fails here;
+#  (2) backlog-add: a finding, then a reworded duplicate of it, in fresh temp repos — flagged
+#      possible-dup-of (strong), bumped instead with ZUVO_BACKLOG_DEDUP_BUMP=1, untouched under ZUVO_RERANK=0.
 # Runs in a temp HOME holding a mode-600 key file, with ZUVO_RERANK_BASE_URL pointing at
-# tests/lib/rerank_stub.py on 127.0.0.1, in a temp git repo carrying the fixture knowledge store. The
-# command run is the one extracted from knowledge-prime.md, from a subdirectory, so a doc that drifts from
-# the helper fails here.
+# tests/lib/rerank_stub.py on 127.0.0.1.
 # Prints one PASS/FAIL line per check and a summary; exits non-zero on any failure.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)" || exit 1
@@ -148,7 +149,69 @@ check_rows "knowledge: JSON order follows the stub's scores and the Step 4 caps 
 [ "$(stub_requests)" -ge 1 ]
 check "knowledge: the stub received the rerank request" $?
 
-# --- (2) backlog-add: Task 6 appends its section HERE (same stub, same temp HOME) ---------------------
+# --- (2) backlog-add (same temp HOME; a fresh stub, so its request count starts at 0) --------------------
+# Restarted rather than reused: (1)'s scores rank any document holding "eval" at 0.95. This one scores
+# the first finding's text 0.8, inside the strong band.
+restart_stub() { # restart_stub <scores json>
+  : >"$WORK/stop"
+  wait "$stub_pid" 2>/dev/null
+  mv -f "$WORK/stop" "$WORK/stop.prev" && mv -f "$WORK/stub.url" "$WORK/stub.url.prev" \
+    && mv -f "$WORK/stub.count" "$WORK/stub.count.prev" || return 1
+  start_stub "$1"
+}
+restart_stub '{"off-by-one at the limit": 0.8}'
+
+# A repo on a branch off main holding src/a.py, whose line 3 is the anchor the first finding cites.
+mkrepo() { # mkrepo <name> -> prints its path
+  local r="$WORK/$1"
+  mkdir -p "$r/src" "$r/memory" || return 1
+  printf 'a = 1\nb = 2\nif total > limit:\n    return total - limit\n' >"$r/src/a.py"
+  printf '# Backlog\n\n' >"$r/memory/backlog.md"
+  (cd "$r" && export GIT_CONFIG_GLOBAL=/dev/null && git init -q -b main . && git add -A \
+    && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm init \
+    && git checkout -qb feat/x) || return 1
+  printf '%s' "$r"
+}
+ADD="python3 '$ROOT/scripts/zuvo-home/backlog-add'"
+FIRST="$ADD --class BUG --conf 85 --file src/a.py --line 3 --anchor 'if total > limit:' --title 'off-by-one at the limit' --source review"
+# The same defect one line down, reworded: another anchor, so another F- fingerprint and B-id.
+SECOND="$ADD --class BUG --conf 85 --file src/a.py --line 4 --anchor 'return total - limit' --title 'limit check misses the equal case' --source review"
+add_pair() { # add_pair <repo> [NAME=VALUE ...] -> the second add's verdict; $WORK/b1 holds the first B-id
+  local r="$1"; shift
+  run_clean ZUVO_PR_LOOKUP=0 TZ=UTC "$@" -- "$r" "$FIRST" | awk '{print $3}' >"$WORK/b1"
+  run_clean ZUVO_PR_LOOKUP=0 TZ=UTC "$@" -- "$r" "$SECOND"
+}
+
+R1="$(mkrepo flag)"
+check "backlog: the temp repo was created" $?
+OUT="$(add_pair "$R1")"; B1="$(cat "$WORK/b1")"
+case "$OUT" in ACCEPTED*) true ;; *) false ;; esac
+check "backlog: the reworded duplicate is filed as its own entry (ACCEPTED): $OUT" $?
+grep -F -- '- [ ] B-' "$R1/memory/backlog.md" | grep -v -F -- "- [ ] $B1 " \
+  | grep -qF "| possible-dup-of: $B1 (strong) |"
+check "backlog: the second line carries possible-dup-of: <first B-id> (strong)" $?
+[ "$(stub_requests)" -ge 1 ]
+check "backlog: the add-time candidate was scored by the stub" $?
+
+R2="$(mkrepo bump)"
+OUT="$(add_pair "$R2" ZUVO_BACKLOG_DEDUP_BUMP=1)"; B1="$(cat "$WORK/b1")"
+# The verdict's seen= counts the new finding's ledger record (1); the entry's own seen: is the bump.
+case "$OUT" in "BUMPED backlog $B1 "*) true ;; *) false ;; esac
+check "backlog: ZUVO_BACKLOG_DEDUP_BUMP=1 bumps the first entry instead: $OUT" $?
+grep -F -- "- [ ] $B1 " "$R2/memory/backlog.md" | grep -qF '| seen: 2 |'
+check "backlog: the bumped entry reads seen: 2" $?
+[ "$(grep -c -F -- '- [ ] B-' "$R2/memory/backlog.md")" -eq 1 ]
+check "backlog: the opt-in bump leaves one entry, not two" $?
+
+R3="$(mkrepo off)"
+BEFORE="$(stub_requests)"
+OUT="$(add_pair "$R3" ZUVO_RERANK=0)"
+case "$OUT" in ACCEPTED*) true ;; *) false ;; esac
+check "backlog: ZUVO_RERANK=0 still files the second finding (ACCEPTED): $OUT" $?
+[ "$(stub_requests)" -eq "$BEFORE" ]
+check "backlog: ZUVO_RERANK=0 sends no request" $?
+! grep -qF 'possible-dup-of' "$R3/memory/backlog.md"
+check "backlog: ZUVO_RERANK=0 writes no possible-dup-of (today's behaviour)" $?
 
 echo "rerank smoke: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -138,6 +138,9 @@ def _band(score: float) -> Optional[str]:
     return "strong" if score >= high else "weak" if score >= low else None
 
 
+band = _band   # public: groom's semantic pass reuses the add path's bands
+
+
 def candidates(entries: Sequence[zb.Entry], query: str) -> Optional[Candidate]:
     """The entry `query` most likely duplicates, or None: no band, no client, the API failed."""
     try:

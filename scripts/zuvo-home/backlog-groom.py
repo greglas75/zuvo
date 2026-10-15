@@ -84,6 +84,7 @@ import zuvo_backlog_apply as zap  # noqa: E402  (same path dependency)
 # 400-line Python default, and `render` alone is ~200 lines of markdown emission.
 import zuvo_backlog_render as zr  # noqa: E402  (same path dependency)
 import zuvo_backlog_fleet as zf  # noqa: E402  (same path dependency)
+import zuvo_backlog_groom_semantic as zsem  # noqa: E402  (same path dependency)
 # The mint pre-pass, extracted for the 400-line reason its own docstring records. RE-EXPORTED by name
 # rather than reached through `zp.`, so a probe that loads this file still finds `mint_set`/`mintable`/
 # `mint_lines` on it and a mutant of the prepass is the one that gets imported.
@@ -179,7 +180,8 @@ def cmd_plan(a: argparse.Namespace) -> int:
     loaded = _report_mint(a.repo, loaded, targets, a.dry_run)
     tree = zv.Tree(root=loaded.root, real=loaded.real, archive=loaded.archive)
     verdicts, refused = zv.classify(loaded.entries, tree, loaded.archived)
-    _report_verdicts(verdicts, refused)
+    zr.report_verdicts(verdicts, refused)
+    zsem.report(loaded.entries, verdicts, a.dry_run)   # report lines only: no verdict, queue, ledger
     read = zl.read_ledger(zl.ledger_paths(a.repo)[1])
     # An `index` row would otherwise be REUSED here, so the entry is never dispatched to a verifier at
     # all — the quietest of the three outcomes, and the one no later gate can notice.
@@ -204,15 +206,6 @@ def cmd_plan(a: argparse.Namespace) -> int:
     appended, defects = zl.append_rows(a.repo, zv.ledger_rows(verdicts)) if verdicts else (0, [])
     print("LEDGER_APPENDED=%d preexisting_defects=%d" % (appended, len(defects)))
     return 0
-
-
-def _report_verdicts(verdicts: Sequence[zv.Verdict], refused: Sequence[str]) -> None:
-    print("DETERMINISTIC=%d" % len(verdicts))
-    for klass in zv.CLASSES:
-        print("DET_CLASS=%s %d" % (klass, sum(1 for v in verdicts if v.klass == klass)))
-    print("REFUSED_EVIDENCE=%d" % len(refused))
-    for line in refused:
-        print("REFUSED=" + line)
 
 
 # The two files `dispatch` writes. The ANSWER KEY is a SEPARATE file on purpose: the dispatch is what a

@@ -46,6 +46,9 @@ SEVERITY="$ROOT/shared/includes/severity-vocabulary.md"
 # The lock wait is the only thing this shortens: the held-lock assertions below would otherwise sit
 # out the 5 s default twice. It changes no behaviour under test — nothing here contends for real.
 export ZUVO_LOCK_WAIT=0.5
+# plan's semantic pass would send this suite's fixture entries to the paid rerank API wherever a key
+# exists; W2b asserts the pass reports itself off.
+export ZUVO_RERANK=0
 
 PASS=0; FAIL=0
 ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
@@ -1142,12 +1145,16 @@ LOAD_MOD="$SCRIPTS/zuvo_backlog_load.py"
 ARCHIVE_PY="$SCRIPTS/backlog-archive.py"
 BLOCK_MOD="$SCRIPTS/zuvo_backlog_block.py"
 MINT_MOD="$SCRIPTS/zuvo_backlog_mint.py"
+# The rerank plan's two (groom's semantic pass and the duplicate guard it reuses): same family, same loops.
+SEMANTIC_MOD="$SCRIPTS/zuvo_backlog_groom_semantic.py"
+DEDUP_MOD="$SCRIPTS/zuvo_backlog_dedup.py"
 CAP_REAL=25000
 T2="$FIX/t2"
 mkdir -p "$T2"
 
 for f in "$GROOM_PY" "$CENSUS_PY" "$VERDICTS_MOD" "$QUEUE_MOD" "$BLOCK_MOD" "$MINT_MOD" \
-         "$PREPASS_MOD" "$AGENT_MOD" "$SEEDS_MOD" "$APPLY_MOD" "$LOAD_MOD" "$ARCHIVE_PY"; do
+         "$PREPASS_MOD" "$AGENT_MOD" "$SEEDS_MOD" "$APPLY_MOD" "$LOAD_MOD" "$ARCHIVE_PY" \
+         "$SEMANTIC_MOD" "$DEDUP_MOD"; do
   [ -f "$f" ] && ok "(Q0) present: ${f#"$ROOT"/}" || { no "(Q0) missing: ${f#"$ROOT"/} — nothing in this half can be checked"; finish; }
 done
 
@@ -2736,7 +2743,7 @@ print("NFUNCS=%d" % n)
 print("NOVER=%d" % len(over))
 PYEOF
 for f in "$GROOM_PY" "$CENSUS_PY" "$VERDICTS_MOD" "$QUEUE_MOD" "$PREPASS_MOD" "$AGENT_MOD" \
-         "$SEEDS_MOD" "$APPLY_MOD" "$LOAD_MOD"; do
+         "$SEEDS_MOD" "$APPLY_MOD" "$LOAD_MOD" "$SEMANTIC_MOD" "$DEDUP_MOD"; do
   base="${f#"$ROOT"/}"; tag="$T2/lim-$(basename "$f").out"
   if ! python3 "$LIMITS" "$f" >"$tag" 2>&1; then
     no "(FL) could not measure $base: $(tail -1 "$tag")"; continue
@@ -2790,7 +2797,7 @@ PYEOF
   && ok "(FL4a) the sys.path detector finds backlog-groom.py's own insert at line(s) $(syspath2 "$GROOM_PY") — it is not blind, so FL4 below means something" \
   || no "(FL4a) the detector found no sys.path insert in backlog-groom.py, which demonstrably has one"
 for f in "$VERDICTS_MOD" "$QUEUE_MOD" "$PREPASS_MOD" "$AGENT_MOD" "$SEEDS_MOD" "$APPLY_MOD" \
-         "$LOAD_MOD"; do
+         "$LOAD_MOD" "$SEMANTIC_MOD" "$DEDUP_MOD"; do
   base="$(basename "$f")"
   head -1 "$f" | grep -q '^#!' \
     && no "(FL4) $base carries a shebang — it is imported like zuvo_backlog_io.py, not run" \
@@ -3280,6 +3287,9 @@ W_DET="$(sed -n 's/^DETERMINISTIC=//p' "$T3/plan.out" | head -1)"
 [ "${W_ENT:-0}" = "3" ] && [ "${W_DET:-1}" = "0" ] \
   && ok "(W2) the fixture yields 3 entries and 0 deterministic verdicts, so all three reach the LANE — a fixture whose entries were decided by the pre-pass would exercise none of this" \
   || no "(W2) the fixture yields ${W_ENT:-?} entries with ${W_DET:-?} deterministic verdict(s); the lane assertions would be about a different set"
+grep -qx 'SEMANTIC_DUPLICATES=skipped:disabled' "$T3/plan.out" \
+  && ok "(W2b) ZUVO_RERANK=0 turns plan's semantic pass off, and it says so (disabled, not no-client)" \
+  || no "(W2b) plan's semantic pass did not report skipped:disabled: $(grep '^SEMANTIC_' "$T3/plan.out" | tr '\n' ' ')"
 
 groom3 dispatch --repo "$T3R" --chunk 0 >"$T3/disp.out" 2>&1; W_DISP_RC=$?
 cat "$T3/disp.out"

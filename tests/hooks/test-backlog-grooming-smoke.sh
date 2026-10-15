@@ -81,6 +81,9 @@ ARCHIVER="$SCRIPTS/backlog-archive.py"
 
 # The lock wait is the only thing shortened; nothing here contends for real.
 export ZUVO_LOCK_WAIT=0.5
+# This suite runs plan with the REAL HOME, so a developer's key would send this repo's whole backlog to
+# the paid rerank API; the kill switch keeps it local, and the dogfood plan asserts it reported off.
+export ZUVO_RERANK=0
 
 PASS=0; FAIL=0
 ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
@@ -718,6 +721,9 @@ grep '^DUP=' "$FIX/census-dog.out"
 G7 "$CTL" "$DOG" "$DOG_OUT" plan --dry-run >"$FIX/dog-plan-dry.out" 2>&1
 P_ENTRIES="$(iv7 "$FIX/dog-plan-dry.out" ENTRIES)"
 P_MARKERS="$(sed -n 's/^DET_CLASS=marker //p' "$FIX/dog-plan-dry.out" | head -1)"
+grep -qx 'SEMANTIC_DUPLICATES=skipped:disabled' "$FIX/dog-plan-dry.out" \
+  && ok "(P0) ZUVO_RERANK=0 keeps the dogfood plan off the rerank API, and the pass says disabled" \
+  || no "(P0) the dogfood plan's semantic pass did not report skipped:disabled: $(grep '^SEMANTIC_' "$FIX/dog-plan-dry.out" | tr '\n' ' ')"
 [ "${P_ENTRIES:-x}" = "${D_ENTRIES:-y}" ] \
   && ok "(D5) the shipped pre-pass independently reports ENTRIES=$P_ENTRIES, equal to the census — two derivations, one number, no literal" \
   || no "(D5) the census says $D_ENTRIES entries and the pre-pass says ${P_ENTRIES:-<none>}; one of the two parses the file differently and a smoke proof cannot sit on either"

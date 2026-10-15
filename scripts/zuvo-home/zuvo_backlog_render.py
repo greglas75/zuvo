@@ -46,6 +46,7 @@ import zuvo_backlog_io as zio
 import zuvo_backlog_fleet as zf
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb  # noqa: F401  (joins H19c's derived pin-guard family by importing)
+import zuvo_backlog_verdicts as zv
 from zuvo_backlog_load import Loaded
 from zuvo_backlog_prepass import RC_PARTIAL, refuse
 from zuvo_backlog_score import (RANK_CAVEAT, Scored, cluster_of, score_entries, suggestion)
@@ -354,3 +355,13 @@ def render(loaded: Loaded, repo: str, zuvo: str, partial: bool, dry_run: bool) -
     zio.atomic_write(path, text, None)
     print("REPORT_BYTES=%d" % len(text.encode("utf-8")))
     return 0
+
+
+def report_verdicts(verdicts: Sequence[zv.Verdict], refused: Sequence[str]) -> None:
+    """`plan`'s deterministic counts, moved here from backlog-groom.py to keep it under 400 lines."""
+    print("DETERMINISTIC=%d" % len(verdicts))
+    for klass in zv.CLASSES:
+        print("DET_CLASS=%s %d" % (klass, sum(1 for v in verdicts if v.klass == klass)))
+    print("REFUSED_EVIDENCE=%d" % len(refused))
+    for line in refused:
+        print("REFUSED=" + line)
