@@ -82,9 +82,27 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
     "shared/includes/refactor-reference.md": ["**Backlog:** Persist ONLY"],
     # POLICY with no write verb, so the patterns never flagged it: the path wraps onto the next line
     "shared/includes/test-bugfix-protocol.md": ["user-declined items remain in"],
+    # api-audit: the opt-in persist step read, fingerprinted, deduped and deleted by hand
+    "skills/api-audit/SKILL.md": ["persist findings (confidence 26+) to `memory/backlog.md`",
+                                  "If missing, create with template",
+                                  "Delete resolved items. Confidence 0-25 = DISCARD"],
     # the auditor's deferred label and its stale "Phase 4.4" hand-off (the hand template is gone), and a
     # checklist label for the below-A WARN, which is now filed through backlog-add
     "skills/build/SKILL.md": ["DEFER (backlog)", "Persist to backlog in Phase 4.4", "or WARN + backlogged"],
+    # code-audit: the persist step and Tier A rule deleted open entries; the checklist and the incomplete-run
+    # item named a hand backlog update and a dated B-id
+    "skills/code-audit/SKILL.md": ["Delete any open backlog items for Tier A files",
+                                   "Delete resolved items (Tier A files with open items)",
+                                   "If missing, create with template",
+                                   "[ ] Backlog updated for deferred findings",
+                                   "`B-code-audit-incomplete-<date>`"],
+    # db-audit: an incomplete run and a missing tool were a dated B-id and a "[BLOCKER]" item, and the report
+    # template and checklist asked for /backlog add commands and a hand "updated" tick
+    "skills/db-audit/SKILL.md": ["`[BLOCKER] db-audit needs <tool> on <project>`",
+                                 "`B-db-audit-incomplete-<date>`",
+                                 "[/backlog add commands for HIGH+ findings]",
+                                 "[ ] Backlog updated for HIGH+ findings",
+                                 "and add a backlog item."],
     # the legacy drive-by source, now `drive-by:debug`
     "skills/debug/SKILL.md": ["debug/[date]"],
     # execute's own fingerprint, dedupe and confidence bands, and the labels and references that named them
@@ -125,10 +143,20 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                "All backlog writes happen AFTER Phase 4",
                                "<B-id> NO_VALID_DEFER_REASON",
                                "Record applied vs deferred (backlog IDs)"],
+    # security-audit: the opt-in persist step fingerprinted by hand, the grace line counted "backlogged"
+    # findings, and the incomplete-run item was a dated B-id
+    "skills/security-audit/SKILL.md": ["persist CRITICAL and HIGH findings to `memory/backlog.md`",
+                                       "Fingerprint: `file|dimension|endpoint`",
+                                       "reported + backlogged",
+                                       "`B-security-audit-incomplete-<date>`"],
     # ship let a NIT be dropped silently (D7), wrote carried failures and RECOMMENDED by hand, and its report
     # line counted hand-backlogged findings
     "skills/ship/SKILL.md": ["<n> backlogged", "backlog or ignore", "record it in `memory/backlog.md`",
                              "silently is fine", "write them to `memory/backlog.md`"],
+    # structure-audit: HIGH/CRITICAL findings were fingerprinted and deduped by hand under a dated incomplete id
+    "skills/structure-audit/SKILL.md": ["persist to `memory/backlog.md`",
+                                        "Fingerprint format: `file|SA-dimension|check-id`",
+                                        "`B-structure-audit-incomplete-<date>`"],
     # test-audit wrote memory/backlog.md by hand (read, fingerprint, increment Seen, delete resolved items)
     # under an invalid dated source, and its report and checklist counted those hand writes
     "skills/test-audit/SKILL.md": ["test-audit/{date}",
@@ -164,22 +192,17 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
 # batches and then deleted with its code.
 PENDING: Dict[str, int] = {
     "skills/a11y-audit/SKILL.md": 3,
-    "skills/api-audit/SKILL.md": 4,
     "skills/architecture/SKILL.md": 1,
-    "skills/code-audit/SKILL.md": 6,
     "skills/container-audit/SKILL.md": 1,
     "skills/content-audit/SKILL.md": 4,
     "skills/content-fix/SKILL.md": 3,
-    "skills/db-audit/SKILL.md": 4,
     "skills/geo-audit/SKILL.md": 3,
     "skills/geo-fix/SKILL.md": 7,
     "skills/infra-audit/SKILL.md": 1,
     "skills/pentest/SKILL.md": 1,
     "skills/performance-audit/SKILL.md": 1,
-    "skills/security-audit/SKILL.md": 3,
     "skills/seo-audit/SKILL.md": 2,
     "skills/seo-fix/SKILL.md": 7,
-    "skills/structure-audit/SKILL.md": 2,
 }
 
 VERB_PATH = r"(?:persist|add|writ|wrote|record|append|push|emit|clean|remov|drop|delet)"

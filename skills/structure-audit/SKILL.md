@@ -560,9 +560,13 @@ Save to: `zuvo/audits/structure-audit-YYYY-MM-DD.md` — at the **project root**
 
 ### 5.3 Backlog Integration
 
-For HIGH and CRITICAL findings, persist to `memory/backlog.md` — resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (the checkout's own copy when git tracks it, else the MAIN checkout root; never an untracked worktree-local copy):
-- Fingerprint format: `file|SA-dimension|check-id`
-- Deduplicate against existing entries
+Every HIGH and CRITICAL finding goes through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the checkout the helper writes to, the bars and the dedupe are the protocol's, so compute no fingerprint and restate nothing).
+
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source structure-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is the finding's own class: `SIZE` (SA7, a file over its size limit), `DUP` (SA10), `CPLX` (SA9, SA13), `DEAD` (unused exports and dead files) or `CQ`, none of which takes an `--anchor`. A finding about a whole file (an oversized or dead file) is `--line 1` with a "Whole file: ..." title ("The location rule"). Pass `--severity critical|high`. A finding that is a defect with a wrong output rather than a structure problem is a `BUG`, which takes `--anchor "$A"`, copied from the line that shows it ("The location rule"). Assign "$R", "$F" and "$T" before each call, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+**Resolved entries** (**Closing, not removing**): a finding the `--fix` mode (5.4) resolved, or this run otherwise fixed, gets no call. An open entry from an earlier audit that this run re-read and found fixed (including by `--fix`) is closed, never removed: in one edit tick its box (`- [x]`) and append its resolution marker (`[FIXED <sha7>]`), as `backlog-protocol.md` "How to Persist Findings" step 3 says. That tick is the one hand edit the protocol sanctions (no helper ticks), and it is not a `wrote=` path: this audit does not stage it and names each ticked entry in its report. Moving a closed entry to the archive is the helper's job (`~/.zuvo/backlog-archive.py archive`, which `append-runlog` runs at the end of the run), never done by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ### 5.4 Auto-Fix Mode (--fix)
 
@@ -647,7 +651,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item `B-structure-audit-incomplete-<date>`.
+If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source structure-audit --target subject:structure-audit-incomplete --title "$T"`, with `T` the fixed title `structure-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed; name its F-id in the report.
 
 The Validity Gate must be printed **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`). Printing it before guarantees `NOT_APPENDED`.
 

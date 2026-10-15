@@ -73,7 +73,7 @@ The **14** v2 vulnerability `finding_type`s — `xxe`, `prototype_pollution`, `r
 **warning-only through the grace window: the minor that introduces them up to but excluding the next
 minor** (introduced in the `1.4.x` line; they graduate to full gate weight in `1.5.0`). During the
 window they are reported in the findings list AND persisted to backlog (`--persist-backlog`
-unaffected), but do NOT count toward the HIGH/CRITICAL gate total / pentest score caps that a CI
+unaffected; with it on, a v2 finding is recorded through `backlog-add` when it is CRITICAL or HIGH, like any other finding: 10.4), but do NOT count toward the HIGH/CRITICAL gate total / pentest score caps that a CI
 "zero-HIGH" policy keys on — so updating the plugin never breaks an existing pipeline.
 
 - `--strict-v2` opts in to full gate weight immediately — each skill applies it to its own gate
@@ -82,7 +82,7 @@ unaffected), but do NOT count toward the HIGH/CRITICAL gate total / pentest scor
 - `--quick` still reports v2 findings if its dimensions surface them; grace only changes gate
   weighting, never whether a finding is shown.
 - When any v2-class finding is present without `--strict-v2`, both skills print the identical line:
-  `v2-grace: warning-only (N v2 findings reported + backlogged, excluded from gate; --strict-v2 to enforce)`
+  `v2-grace: warning-only (N v2 findings reported, excluded from gate; --strict-v2 to enforce)`
   where N counts v2-class findings.
 
 | Mode | Scope | Phases | Live Probes |
@@ -859,9 +859,13 @@ Fix any issues in-place before proceeding.
 
 **Default: off.** Activate with `--persist-backlog` or explicit user request.
 
-When active, persist CRITICAL and HIGH findings to `memory/backlog.md`:
+When active, every CRITICAL and HIGH finding goes through `backlog-add`, one call per finding (`backlog-protocol.md` "Filing from a skill"; the bars and the dedupe are the protocol's, so compute no fingerprint and restate nothing).
 
-Fingerprint: `file|dimension|endpoint`. Prevents duplicate entries across audits.
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source security-audit --file "$F" --line <n> --anchor "$A" --title "$T"`. SEC takes `--anchor "$A"`, copied from the line that shows the defect or, for something absent (no auth check, no header), from the line of the code that lacks it ("The location rule"); there is no line-1 filing for SEC. A v2-class finding follows the same rule (the grace window changes gate weighting, not what is recorded). Pass `--severity critical|high`. A Phase 8 finding on a live host with no repository file causing it takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`: `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source security-audit --target "$U" --evidence "$E" --title "$T"`. Assign "$R" and "$T" before each call, "$F" and "$A" only for a file finding, "$U" and "$E" only for a target finding, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)`, plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+**Resolved entries** (**Closing, not removing**): a finding this run fixed gets no call (this audit is read-only, so it fixes none). An open entry from an earlier audit that this run re-read and found fixed is closed, never removed: in one edit tick its box (`- [x]`) and append its resolution marker (`[FIXED <sha7>]`), as `backlog-protocol.md` "How to Persist Findings" step 3 says. That tick is the one hand edit the protocol sanctions (no helper ticks), and it is not a `wrote=` path: this audit does not stage it and names each ticked entry in its report. Moving a closed entry to the archive is the helper's job (`~/.zuvo/backlog-archive.py archive`, which `append-runlog` runs at the end of the run), never done by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 Full protocol: `../../shared/includes/backlog-protocol.md`.
 
@@ -953,8 +957,9 @@ Three clarifications (per adversarial review):
   counts an entry point as audited only when its dimensions actually ran on it, not on a glance.
 
 If `gate_status = FAIL` OR `surface_gate = FAIL` (NOT `N/A`) → VERDICT overrides to `INCOMPLETE`, append
-`[VALIDITY GATE FAIL]` / `[COVERAGE GATE FAIL]` to NOTES, add backlog item
-`B-security-audit-incomplete-<date>`. Print Validity Gate AFTER retro append + `~/.zuvo/append-runlog` so postamble fields can be `yes(verified)`.
+`[VALIDITY GATE FAIL]` / `[COVERAGE GATE FAIL]` to NOTES, record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"):
+`~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source security-audit --target subject:security-audit-incomplete --title "$T"`, with `T` the fixed title
+`security-audit run INCOMPLETE: validity or coverage gate failed`, the same words on every run and no date (this run's reason goes in the report, never in the title). Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed; name its F-id in the report. Print Validity Gate AFTER retro append + `~/.zuvo/append-runlog` so postamble fields can be `yes(verified)`.
 
 Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
 

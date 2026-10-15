@@ -288,7 +288,11 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
   8 non-space characters, copy the anchor from the nearest line within ±3 of it that has them (the
   helper compares the anchor, whitespace removed, with lines `--line`−3 to `--line`+3). If no line
   within ±3 qualifies, the finding is listed under `NOT PERSISTED (no anchor within ±3 lines)`; it is
-  never filed under another class to avoid the anchor.
+  never filed under another class to avoid the anchor. A finding about something ABSENT (no auth check,
+  no index, no constraint) cites the line of the code that lacks it (the handler, the query, the model or
+  schema definition), and its anchor is copied from that line; a schema-wide DATA finding cites the schema
+  or model definition line, and a finding across several endpoints cites one representative handler and
+  lists the others in `--evidence "$E"`.
 - A **whole-file** finding (a below-A test file, a skipped or blocklisted file, a file-wide CQ or Q
   violation, a file over its size limit, a missing test file for a source file) is a file record that
   cites `--line 1`, and its title starts "Whole file: …". Line 1 is the convention for "the whole
