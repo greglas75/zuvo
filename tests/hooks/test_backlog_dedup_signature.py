@@ -45,6 +45,24 @@ class ProblemCellTests(unittest.TestCase):
         # Bug: `🔴 HIGH` was not recognised as a severity and outranked the problem text.
         self.assertEqual(zd.table_signature(one("| B-1 | 🔴 HIGH | NPE | src/a.py:10 |\n")), "a.py|npe")
 
+    FALLBACKS = [
+        ("a row with no path cell takes a basename from another cell", "| B-1 | NPE on save | HIGH |\n",
+         "|npe on save"),
+        ("a path only inside the problem text loses the basename",
+         "| B-1 | NPE when src/a.py:10 saves | HIGH |\n", "a.py|npe when src a py 10 saves"),
+        ("a row with only metadata reads a metadata cell as the problem",
+         "| B-1 | src/a.py:10 | HIGH | open |\n", "a.py|"),
+    ]
+
+    def test_signature_fallbacks(self) -> None:
+        for name, row, sig in self.FALLBACKS:
+            with self.subTest(name):
+                self.assertEqual(zd.table_signature(one(row)), sig)
+
+    def test_a_non_table_entry_never_signs(self) -> None:
+        # Bug caught: a checkbox entry groups with a table row that happens to share its words.
+        self.assertEqual(zd.group_signature(entries("## Open\n- [ ] B-1 NPE on save in src/a.py\n")[0]), "")
+
 
 class LinearGroupingTests(unittest.TestCase):
     def test_duplicate_anchors_signs_each_entry_once(self) -> None:

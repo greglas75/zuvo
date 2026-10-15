@@ -146,6 +146,50 @@ class KnowledgeRankTest(unittest.TestCase):
         self.assertIn("duplicate id dup: kept knowledge/decisions-new.jsonl line 1, "
                       "skipped knowledge/decisions.jsonl line 1", proc.stderr)
 
+    def test_duplicate_read_later_and_newer_replaces_the_kept_one(self) -> None:
+        # Catches "first read wins": decisions-new.jsonl sorts first, so here the NEWER copy is read second.
+        self.write_store("decisions.jsonl", [{"id": "dup", "type": "decision", "fact": "widget new",
+                                              "updatedAt": days_ago(5)}])
+        (self.store / "decisions-new.jsonl").write_text(json.dumps(
+            {"id": "dup", "type": "decision", "fact": "widget old", "updatedAt": days_ago(50)}) + "\n")
+        self.env["ZUVO_RERANK"] = "0"
+        rows, proc = self.run_cli("widget")
+        self.assertEqual(self.ids(rows), ["dup"])
+        self.assertIn("duplicate id dup: kept knowledge/decisions.jsonl line 1, "
+                      "skipped knowledge/decisions-new.jsonl line 1", proc.stderr)
+
+    def test_entry_without_a_string_id_is_skipped_as_malformed(self) -> None:
+        # Catches a numeric or missing id reaching the (type, id) key and the TSV output as a non-string.
+        self.write_store("decisions.jsonl", [{"id": 7, "type": "decision", "fact": "widget seven"},
+                                             {"type": "decision", "fact": "widget none"},
+                                             {"id": "ok", "type": "decision", "fact": "widget ok"}])
+        self.env["ZUVO_RERANK"] = "0"
+        rows, proc = self.run_cli("widget")
+        self.assertEqual(self.ids(rows), ["ok"])
+        self.assertEqual(proc.stderr.count("Preserved malformed line"), 2)
+
+    def test_valid_json_that_is_not_an_object_is_skipped_as_malformed(self) -> None:
+        # Catches `entry.get` raising AttributeError on a list, string or number line and ending the prime.
+        self.write_store("decisions.jsonl", [{"id": "ok", "fact": "widget ok"}])
+        with (self.store / "decisions.jsonl").open("a") as f:
+            f.write('[1, 2]\n"widget"\n42\n')
+        self.env["ZUVO_RERANK"] = "0"
+        rows, proc = self.run_cli("widget")
+        self.assertEqual((self.ids(rows), proc.stderr.count("Preserved malformed line")), (["ok"], 3))
+
+    def test_load_takes_the_type_from_the_file_and_drops_unknown_types(self) -> None:
+        # Catches a typeless entry being dropped (or keyed as None), an unknown type taking a section slot,
+        # and a blank line being reported as malformed.
+        self.write_store("decisions.jsonl", [{"id": "typeless", "fact": "widget typeless"}])
+        with (self.store / "decisions.jsonl").open("a") as f:
+            f.write("\n   \n")
+        (self.store / "notes.jsonl").write_text(json.dumps({"id": "note-1", "fact": "widget note"}) + "\n")
+        self.env["ZUVO_RERANK"] = "0"
+        rows, proc = self.run_cli("widget")
+        self.assertEqual([(r["id"], r["type"], r["section"]) for r in rows],
+                         [("typeless", "decision", "DECISIONS")])
+        self.assertNotIn("malformed", proc.stderr)
+
     def test_unicode_line_separator_inside_a_string_keeps_the_entry(self) -> None:
         # Catches str.splitlines() cutting a JSON line at U+2028, which JSON allows unescaped in a string.
         entry = {"id": "fact-ls", "type": "codebase-fact", "fact": "widget\u2028second line",
@@ -280,6 +324,15 @@ class KnowledgeRankTest(unittest.TestCase):
         self.stub({"alpha": 0.50, "beta": 0.44})
         rows, _ = self.run_cli("widget", "src/x.ts")
         self.assertEqual(self.ids(rows), ["fact-strong", "fact-glob"])
+
+    def test_all_zero_rerank_scores_still_let_the_glob_match_lead(self) -> None:
+        # Catches the boost scaling by a best score of 0: the affected-files match would get no boost.
+        self.write_store("codebase-facts.jsonl", [
+            {"id": "fact-other", "type": "codebase-fact", "fact": "alpha widget"},
+            {"id": "fact-glob", "type": "codebase-fact", "fact": "beta widget", "affectedFiles": ["src/**"]}])
+        self.stub({})
+        rows, _ = self.run_cli("widget", "src/x.ts")
+        self.assertEqual([(r["id"], r["score"]) for r in rows], [("fact-glob", 0.1), ("fact-other", 0.0)])
 
     def test_negative_rerank_score_in_the_pool_is_kept_last(self) -> None:
         # Catches eligibility read off "score > 0": a pool member scored below 0 is still a match.

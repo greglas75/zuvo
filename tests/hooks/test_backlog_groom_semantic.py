@@ -201,6 +201,36 @@ class PairTests(SemanticCase):
                          ["SEMANTIC_CHECKED=3/3", "SEMANTIC_DUPLICATES=1"])
         self.assertEqual(stub.requests, 2)
 
+    def test_a_non_number_cap_falls_back_to_the_default_not_to_zero(self) -> None:
+        # Defect: a typo in ZUVO_GROOM_RERANK_MAX raises out of the plan or silently disables the pass.
+        stub = self.stub()
+        os.environ.update(ZUVO_RERANK_BASE_URL=stub.base_url, ZUVO_GROOM_RERANK_MAX="lots")
+        self.assertEqual(semantic_lines(self.report("## Open\n" + CACHE + RELOAD))[-2:],
+                         ["SEMANTIC_CHECKED=2/2", "SEMANTIC_DUPLICATES=1"])
+
+    def test_an_empty_backlog_is_a_complete_check_of_nothing(self) -> None:
+        # Defect: no open entry divides by zero building the index, or reads as a skip.
+        stub = self.stub()
+        os.environ["ZUVO_RERANK_BASE_URL"] = stub.base_url
+        self.assertEqual(semantic_lines(self.report("## Open\n")),
+                         ["SEMANTIC_CHECKED=0/0", "SEMANTIC_DUPLICATES=0"])
+        self.assertEqual(stub.requests, 0)
+
+    def test_a_ticked_entry_is_neither_counted_nor_sent(self) -> None:
+        # Defect: a closed entry is re-reported as a duplicate of an open one, and costs a request.
+        stub = self.stub()
+        os.environ["ZUVO_RERANK_BASE_URL"] = stub.base_url
+        out = self.report("## Open\n" + CACHE + RELOAD.replace("- [ ]", "- [x]", 1))
+        self.assertEqual(semantic_lines(out), ["SEMANTIC_CHECKED=1/1", "SEMANTIC_DUPLICATES=0"])
+        self.assertEqual(stub.requests, 0)
+
+    def test_semantic_pairs_raises_the_skip_it_reports(self) -> None:
+        # Defect: semantic_pairs returns an empty Found when it could not run, which reads as "0 duplicates".
+        os.environ["ZUVO_RERANK"] = "0"
+        with self.assertRaises(zsem.Skipped) as ctx:
+            zsem.semantic_pairs(list(zb.iter_entries(BACKLOG)), max_calls=300)
+        self.assertEqual(str(ctx.exception), "disabled")
+
     def test_a_full_check_reads_a_plain_count(self) -> None:
         # Defect: "+partial" printed on a run that answered every entry, so the marker means nothing.
         stub = self.stub()
@@ -221,6 +251,8 @@ class PairTests(SemanticCase):
         ("the kill switch still sends a request", {"ZUVO_RERANK": "0"}, False, "disabled"),
         ("a dry run hides the kill switch", {"ZUVO_RERANK": "0"}, True, "disabled"),
         ("a cap of 0 reads as zero duplicates", {"ZUVO_GROOM_RERANK_MAX": "0"}, False, "disabled"),
+        ("a negative cap sends requests or reads as zero duplicates", {"ZUVO_GROOM_RERANK_MAX": "-5"}, False,
+         "disabled"),
         ("a dry run sends entry text", {}, True, "dry-run"),
         ("no key still sends a request, or reads as zero duplicates", {}, False, "no-key"),
     ]
@@ -243,6 +275,23 @@ class PairTests(SemanticCase):
         with mock.patch.dict(sys.modules, {"zuvo_rerank": None}):
             out = self.report(BACKLOG)
         self.assertEqual(semantic_lines(out), ["SEMANTIC_DUPLICATES=skipped:no-client"])
+        self.assertEqual(stub.requests, 0)
+
+    def test_a_half_copied_client_is_a_no_client_skip(self) -> None:
+        # Defect: a truncated zuvo_rerank.py raises SyntaxError, not ImportError, and escapes the client
+        # guard as "skipped:error" (or kills the plan) instead of naming the missing client.
+        broken = tempfile.mkdtemp(prefix="groom-broken-")
+        self.addCleanup(shutil.rmtree, broken, True)
+        Path(broken, "zuvo_rerank.py").write_text("def rerank(:\n", encoding="utf-8")
+        stub = self.stub()
+        os.environ["ZUVO_RERANK_BASE_URL"] = stub.base_url
+        err = io.StringIO()
+        with mock.patch.dict(sys.modules), mock.patch.object(sys, "path", [broken, *sys.path]), \
+                contextlib.redirect_stderr(err):
+            sys.modules.pop("zuvo_rerank", None)
+            out = self.report(BACKLOG)
+        self.assertEqual(semantic_lines(out), ["SEMANTIC_DUPLICATES=skipped:no-client"])
+        self.assertEqual(err.getvalue(), "backlog-groom: semantic pass has no client: SyntaxError\n")
         self.assertEqual(stub.requests, 0)
 
     def test_a_failing_api_is_a_skip_and_stops_after_breaker_requests(self) -> None:
@@ -278,6 +327,7 @@ class PairTests(SemanticCase):
         cases = [
             ("a wrong-length score list raises or pairs the wrong entries", lambda *a, **k: [0.9]),
             ("an exception from the client aborts the whole pass", mock.Mock(side_effect=RuntimeError("x"))),
+            ("a None answer (today's behaviour) is read as scores", lambda *a, **k: None),
         ]
         for name, bad in cases:
             stub = self.stub()

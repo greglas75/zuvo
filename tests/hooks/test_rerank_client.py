@@ -84,9 +84,11 @@ class ClientTest(Base):
 
     def test_real_openrouter_response_parses_by_index(self) -> None:
         # Ties the parser to the live shape (extra `document`, `model`, `provider` fields, sorted results).
-        scores, cost, outcome = rr._parse(FIXTURE.read_bytes(), 3)
-        self.assertEqual((scores, cost, outcome),
-                         ([0.660357654094696, 0.27611243724823, 0.6537476181983948], 8.2e-7, "ok"))
+        self.stub(body=FIXTURE.read_bytes())
+        self.assertEqual(rr.rerank(MODEL, "q", DOCS, caller="t"),
+                         [0.660357654094696, 0.27611243724823, 0.6537476181983948])
+        cost, outcome = self.log_lines()[-1].split("\t")[5:]
+        self.assertEqual((float(cost), outcome), (8.2e-7, "ok"))
 
     def test_empty_docs_return_empty_without_a_request(self) -> None:
         # An empty candidate list must not cost a call or read as a failure.
@@ -156,6 +158,13 @@ class ClientTest(Base):
                                    b'{"index":1,"relevance_score":0.1},{"index":2,"relevance_score":0.2}]}'},
              "bad-shape"),
             ("wrong length", {"body": results((0, 0.1))}, "bad-shape"),
+            ("top level is a list", {"body": b"[0.1, 0.2, 0.3]"}, "bad-shape"),
+            ("row is not an object", {"body": b'{"results":[0.1, 0.2, 0.3]}'}, "bad-shape"),
+            ("missing score", {"body": b'{"results":[{"index":0,"relevance_score":0.1},'
+                                       b'{"index":1},{"index":2,"relevance_score":0.3}]}'}, "bad-shape"),
+            ("string score", {"body": b'{"results":[{"index":0,"relevance_score":0.1},'
+                                      b'{"index":1,"relevance_score":"0.9"},{"index":2,"relevance_score":0.3}]}'},
+             "bad-shape"),
             ("truncated JSON", {"body": b'{"results":[{"index":0,'}, "bad-json"),
             ("deep nesting", {"body": b"[" * 200_000}, "bad-json"),
             ("oversize body", {"body": results((0, 0.1), (1, 0.2), (2, 0.3))[:-1]
@@ -188,6 +197,7 @@ class ClientTest(Base):
         # "foo" raised ValueError from Request(); cleartext http to a remote host would expose the key.
         cases = (("malformed", "foo", "bad-url"),
                  ("non-loopback http", "http://rerank.example.invalid/api/v1", "insecure-url"),
+                 ("https to another host", "https://rerank.example.invalid/api/v1", "foreign-host"),
                  ("connection refused", f"http://127.0.0.1:{free_port()}/api/v1", "http-000"))
         for name, url, outcome in cases:
             with self.subTest(name):
@@ -321,6 +331,31 @@ class ClientTest(Base):
         self.assertIsNotNone(rr.rerank(MODEL, "q1", DOCS, caller="t"))
         self.assertIsNone(rr.rerank(MODEL, "q2", DOCS, caller="t"))
         self.assertEqual((stub.requests, self.last_outcome()), (1, "budget"))
+
+    def test_unusable_cost_is_logged_as_unknown_and_the_scores_still_count(self) -> None:
+        # A string or NaN usage.cost must not raise, drop good scores, or reach the budget as a number.
+        for name, cost in (("string cost", "0.002"), ("boolean cost", True)):
+            with self.subTest(name):
+                self.stub(cost=cost)
+                self.assertEqual(rr.rerank(MODEL, f"q {name}", DOCS, caller="t"), [0.0, 0.0, 0.0])
+                self.assertEqual(self.log_lines()[-1].split("\t")[5:], ["-", "ok"])
+
+    def test_default_endpoint_is_openrouter_rerank(self) -> None:
+        # A wrong default would send every unconfigured run's documents, with the key, to another path.
+        del os.environ["ZUVO_RERANK_BASE_URL"]
+        with mock.patch.object(rhttp, "post", return_value=(None, "http-000")) as post:
+            self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
+        self.assertEqual(post.call_args.args[:2], ("https://openrouter.ai/api/v1/rerank", KEY))
+
+    def test_reset_budget_lets_a_new_run_call_again(self) -> None:
+        # A reset that kept the spent total would refuse every later run in a long-lived process.
+        stub = self.stub(cost=0.001)
+        os.environ["ZUVO_RERANK_BUDGET_USD"] = "0.001"
+        rr.rerank(MODEL, "q1", DOCS, caller="t")
+        self.assertIsNone(rr.rerank(MODEL, "q2", DOCS, caller="t"))
+        rr.reset_budget()
+        self.assertIsNotNone(rr.rerank(MODEL, "q3", DOCS, caller="t"))
+        self.assertEqual(stub.requests, 2)
 
     def test_negative_cost_is_not_credited_to_the_budget(self) -> None:
         # A negative usage.cost would refill the budget and let calls run past it.

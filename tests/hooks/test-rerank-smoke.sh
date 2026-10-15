@@ -146,8 +146,8 @@ check_rows "knowledge: ZUVO_RERANK=0 still returns a local ranking within the ca
 OUT="$(run_clean -- "$WORK/repo/src" "$STEP3" 2>"$WORK/err1")"; RC=$?
 check "knowledge: the Step 3 command exits 0 from a subdirectory with a key present" "$RC"
 check_rows "knowledge: JSON order follows the stub's scores and the Step 4 caps hold" "$RC" "$OUT" ranked
-[ "$(stub_requests)" -ge 1 ]
-check "knowledge: the stub received the rerank request" $?
+[ "$(stub_requests)" -eq 1 ]
+check "knowledge: the stub received exactly one rerank request" $?
 
 # --- (2) backlog-add (same temp HOME; a fresh stub, so its request count starts at 0) --------------------
 # Restarted rather than reused: (1)'s scores rank any document holding "eval" at 0.95. This one scores
@@ -190,8 +190,9 @@ check "backlog: the reworded duplicate is filed as its own entry (ACCEPTED): $OU
 grep -F -- '- [ ] B-' "$R1/memory/backlog.md" | grep -v -F -- "- [ ] $B1 " \
   | grep -qF "| possible-dup-of: $B1 (strong) |"
 check "backlog: the second line carries possible-dup-of: <first B-id> (strong)" $?
-[ "$(stub_requests)" -ge 1 ]
-check "backlog: the add-time candidate was scored by the stub" $?
+# The first add meets an empty backlog, so only the second one has anything to send.
+[ "$(stub_requests)" -eq 1 ]
+check "backlog: the add-time candidate was scored by the stub, once" $?
 
 R2="$(mkrepo bump)"
 OUT="$(add_pair "$R2" ZUVO_BACKLOG_DEDUP_BUMP=1)"; B1="$(cat "$WORK/b1")"

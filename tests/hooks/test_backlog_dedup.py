@@ -295,6 +295,38 @@ class CandidateTests(FixtureCase):
             self.assertIsNone(dd.candidates(self.entries, QUERY))
         self.assertEqual(stub.requests, 0)
 
+    SILENT_INPUTS = [
+        ("an empty backlog still sends a request", "", QUERY),
+        ("a query sharing no word with any entry sends the whole pool", "keep", "zzqx wvvb"),
+    ]
+
+    def test_nothing_to_compare_sends_nothing(self) -> None:
+        for name, which, query in self.SILENT_INPUTS:
+            with self.subTest(name):
+                stub = self.stub({"": 0.9})
+                self.assertIsNone(dd.candidates(self.entries if which else [], query))
+                self.assertEqual(stub.requests, 0)
+
+    def test_without_a_key_no_candidate_and_no_request(self) -> None:
+        # Bug caught: a keyless run is read as "no duplicate found" only after an unauthenticated request.
+        stub = self.stub({"f-string model": 0.81})
+        del os.environ["OPENROUTER_API_KEY"]
+        self.assertIsNone(dd.candidates(self.entries, QUERY))
+        self.assertEqual(stub.requests, 0)
+
+    def test_each_document_is_cut_to_the_doc_cap(self) -> None:
+        # Bug caught: one long entry (pasted logs) sends megabytes per add and is billed by length.
+        stub = self.stub({"f-string model": 0.81})
+        long_entry = f"- [ ] B-x-long f-string model {'padding ' * 600}\n"
+        dd.candidates(dd.load((self.open_text + long_entry,)), QUERY)
+        self.assertEqual(max(len(d) for d in stub.bodies[0]["documents"]), dd.DOC_CAP)
+
+    def test_an_entry_without_an_id_is_never_a_candidate(self) -> None:
+        # Bug caught: a table row with no id cell is named as `possible-dup-of: ` (an empty id).
+        text = ("## Open\n\n| Problem | File |\n|---|---|\n"
+                "| f-string model missing | zuvo_comment_scan.py:536 |\n")
+        self.assertEqual(dd.load((text,)), [])
+
     LEGACY_KINDS = [
         ("a hand-written heading entry is never compared", "heading entry", "B-heading-1"),
         ("a table row is never compared, though its id sits in a cell", "table row", "B-table-1"),

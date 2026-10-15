@@ -948,6 +948,20 @@ class DedupTests(AddCase):
         self.assertTrue(self.entries(r, b2)[0].endswith(DUP_TAIL.format(f=f2, b=b1, band="strong")))
         self.assertIn("| seen: 1 |", self.entries(r, b1)[0])
 
+    def test_opt_in_bump_never_merges_a_finding_without_a_file(self) -> None:
+        # Defect: a target-only finding has no file to compare, and "" matches an entry whose location
+        # has no colon, so it is merged into a neighbour and loses its own subject.
+        r = self.repo()
+        sec = ("--class", "SEC", "--conf", "80", "--target", "subject:token-in-log", "--source", "review")
+        _, b1, _ = self.verdict(self.add(r, *sec, "--title", "token written to the debug log", TZ="UTC"))
+        p = self.on(self.stub({"token": 0.81}), r, *sec, "--title", "bearer token printed in debug output",
+                    ZUVO_BACKLOG_DEDUP_BUMP="1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        kind, b2, f2 = self.verdict(p)
+        self.assertEqual(kind, "ACCEPTED")
+        self.assertTrue(self.entries(r, b2)[0].endswith(DUP_TAIL.format(f=f2, b=b1, band="strong")))
+        self.assertIn("| seen: 1 |", self.entries(r, b1)[0])
+
     def test_archived_candidate_is_flagged_and_never_bumped(self) -> None:
         # Defect: the opt-in merge re-opens or edits an archived entry, or drops a true flag naming it.
         r = self.repo()
