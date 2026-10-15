@@ -61,10 +61,12 @@ exec "$OR_REAL_SLEEP" "$@"
 EOF
 chmod +x "$OR_HOME/bin/curl" "$OR_HOME/bin/date" "$OR_HOME/bin/sleep"
 
-# openrouter_case <response file> [<http status>] — one request answered with that body and status.
+# openrouter_case <response file> [<http status>] — one request answered with that body and status, under a
+# ZUVO_HOME of its own: the cases review the same input far more than the driver's three passes allow.
 openrouter_case() {
   rm -f "$OR_HOME/curl.calls"
-  OR_CURL_LOG="$OR_HOME/curl.calls" OR_RESPONSE_FILE="$1" OR_HTTP_STATUS="${2:-200}" \
+  ZUVO_HOME="$(mktemp -d "$OR_HOME/oc.XXXXXX")" \
+    OR_CURL_LOG="$OR_HOME/curl.calls" OR_RESPONSE_FILE="$1" OR_HTTP_STATUS="${2:-200}" \
     bash "$ADV" --provider openrouter --single --json --files "$ADV_TEST_EMPTY" 2>"$OR_HOME/driver.err"
 }
 # curl_calls — how many requests the last run made.

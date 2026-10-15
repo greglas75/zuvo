@@ -328,13 +328,17 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter-alt` and `openrouter-3` (ZUVO_ADV_OPENROUTER_LANES overrides the list, e.g.
+                           Adds `openrouter-alt` (ZUVO_ADV_OPENROUTER_LANES overrides the list, e.g.
                            "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, qwen/qwen3.8-flash)
   ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: xiaomi/mimo-v2.6-flash)
   ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: deepseek/deepseek-v4.1-flash)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
+  ZUVO_BYTEPLUS_OR_FALLBACK_<LANE>  OpenRouter model a BytePlus lane (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) runs
+                           while the plan's quota is spent (default: glm-5.3-flash -> z-ai/glm-5.3-flash,
+                           deepseek-v4-1-flash -> deepseek/deepseek-v4.1-flash, none for the rest: left out).
+                           Set but empty = no fallback. The reset is kept in ~/.zuvo/byteplus-quota-until.
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
   ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)

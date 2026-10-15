@@ -122,7 +122,7 @@ run_bp c5a "$PLAN_URL" byteplus >/dev/null
 run_bp c5 "$PLAN_URL" byteplus-alt >/dev/null
 m4="$(jq -r '.model' "$BPTMP/c5a/payload.json" 2>/dev/null)"; m5="$(jq -r '.model' "$BPTMP/c5/payload.json" 2>/dev/null)"
 assert_eq "glm-5.3-flash" "$m4" "byteplus asks for glm-5.3-flash"
-assert_eq "deepseek-v4-flash" "$m5" "byteplus-alt asks for deepseek-v4-flash"
+assert_eq "deepseek-v4-1-flash-260910" "$m5" "byteplus-alt asks for deepseek-v4-1-flash-260910"
 assert_ne "$m4" "$m5" "…two different models"
 
 # ─── 6. the lane is opt-in, like every other paid-or-shared lane ──────────
@@ -136,7 +136,7 @@ bp_listed() { # bp_listed <ZUVO_ADV_BYTEPLUS value> -> the byteplus lanes detect
     ZUVO_ADV_BYTEPLUS="$1" bash "$ADV" --list-providers 2>/dev/null | awk '/^byteplus/' | tr '\n' ' ' | sed 's/ $//'
 }
 assert_eq "" "$(bp_listed 0)" "without ZUVO_ADV_BYTEPLUS=1 the lane is not detected"
-assert_eq "byteplus byteplus-3" "$(bp_listed 1)" "anchor: with it (and the key), both default lanes are"
+assert_eq "byteplus byteplus-alt byteplus-3" "$(bp_listed 1)" "anchor: with it (and the key), the three default lanes are"
 
 # ─── 7. the plan's own key, never the OpenRouter one ──────────────────────
 # run_byteplus reuses the OpenRouter client, which reads OPENROUTER_API_KEY FIRST. A BytePlus lane must

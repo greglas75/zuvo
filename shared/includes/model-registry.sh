@@ -257,7 +257,8 @@ ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}"
 # openrouter-alt = xiaomi/mimo-v2.6-flash: +17 defects over the production lineup at ~$0.0063 per review
 # (docs/runbook/model-benchmark.md). Slow: its benchmark mean (~319 s) is above the 300 s lane ceiling.
 ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}"
-# openrouter-3 = deepseek-v4.1-flash (owner's pick); gpt-oss (openrouter-4) is out of the default roster.
+# openrouter-3 = deepseek-v4.1-flash, off by default: the model runs as byteplus-alt inside the plan.
+# gpt-oss (openrouter-4) is out of the default roster.
 ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-deepseek/deepseek-v4.1-flash}"
 ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}"
 
@@ -278,11 +279,9 @@ ZUVO_BYTEPLUS_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytep
 # measured after Gemini 3.8 Flash, on the same 20 diffs and the same Opus judge as the rest of
 # this file. On OpenRouter the identical model is $0.15/$0.50 per 1M; here it is inside the plan.
 ZUVO_MODEL_BYTEPLUS="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}"
-# deepseek-v4-flash: a second VENDOR family in the same plan, which is where cross-model
-# coverage actually comes from. (The benched sibling deepseek-v4-pro scored 64%/+6; the flash
-# variant is the one the plan lists and is not yet benched here — measure before promoting it
-# past the alt slot.)
-ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"
+# deepseek-v4.1-flash: a second vendor family in the same plan, for cross-model coverage. With the
+# quota spent it runs on OpenRouter as deepseek/deepseek-v4.1-flash (run_byteplus).
+ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}"
 # Verified 2026-09-22 against the live plan: glm-5.3-flash 7s, deepseek-v4-flash 5s.
 # 'ark-code-latest' is REJECTED as UnsupportedModel on this plan — name a concrete model.
 

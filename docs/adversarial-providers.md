@@ -77,7 +77,7 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 A lane name is an **account slot, not a model**: `byteplus-3` is "the third BytePlus slot", and its
 model comes from an env variable (`ZUVO_MODEL_BYTEPLUS_3`, …). One vendor can run three unrelated
 models (2026-09-30: `byteplus` = glm-5.3-flash, `byteplus-3` = dola-seed-2.0-code, `byteplus-alt`
-= deepseek-v4-flash). So never report usage per lane alone:
+= deepseek-v4-flash; since 2026-10-15 deepseek-v4-1-flash-260910). So never report usage per lane alone:
 
 **The BytePlus lanes stream (`"stream": true`, since 2026-10-05).** The Coding Plan endpoint closes a
 non-streaming request after ~60 s without a byte (curl exit 16 over HTTP/2, 52 over HTTP/1.1), and a
@@ -89,6 +89,17 @@ never a review: it fails with a named reason and is retried like a dropped conne
 18/92). An error event the provider sent on purpose is not retried. Still open: glm-5.3-flash needs
 3-10 min per review (bench rerun 2026-10-06: 171-576 s), so the slowest diffs exceed the 500 s lane
 timeout — backlog `B-20261006-BYTEPLUS-GLM-TIMEOUT-VS-500S`.
+
+**A spent BytePlus quota falls back to OpenRouter (since 2026-10-15).** The plan answers a spent
+monthly, weekly or 5-hour quota with HTTP 429 `AccountQuotaExceeded` and names its reset ("It will
+reset at 2026-10-22 23:59:59 +0800"). That 429 is not retried: the reset goes to
+`~/.zuvo/byteplus-quota-until`, an hour ahead when the message names none, and until then no lane,
+chunk or run asks the plan. Meanwhile `byteplus` (glm-5.3-flash) runs as `z-ai/glm-5.3-flash` and
+`byteplus-alt` (deepseek-v4-1-flash-260910) as `deepseek/deepseek-v4.1-flash` on OpenRouter, about
+$0.001 a call on the OpenRouter key. `byteplus-3` (dola-seed-2.0-code, ~$0.005 a call at ~1500 calls a day)
+has no stand-in: it is left out (outcome `no-key`, not held against the lane). The run log and the
+ledger name the OpenRouter model that answered. `ZUVO_BYTEPLUS_OR_FALLBACK_<LANE>` sets a lane's
+stand-in, and set but empty turns it off. Delete the file to ask the plan again before the reset.
 
 ```bash
 ~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES
