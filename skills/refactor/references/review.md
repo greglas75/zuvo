@@ -147,8 +147,11 @@ next provider costs one dispatch, not another full timeout.
 | Diff size | Max passes | Rationale |
 |-----------|-----------|-----------|
 | < 50 lines | 2 | Small extraction — quick sanity check |
-| 50-200 lines | 3 | Standard refactor — most issues found in 2-3 passes |
-| > 200 lines or GOD_CLASS | 4 | Large split — fixes on fixes need full depth |
+| 50+ lines or GOD_CLASS | 3 | The hard cap for every skill (`adversarial-loop.md` Step 5); the driver refuses a 4th pass (exit 7) |
+
+Pass 1 reviews the move; every later pass reviews only the fixes since the previous pass, and runs
+only when that pass led to a fix of a CONFIRMED CRITICAL or a behaviour-changing WARNING. The
+`> 200 lines → 4 passes` row was removed on 2026-10-15 with the rest of the per-skill caps above 3.
 
 **Remediation review passes `--multi` (changed 2026-09-02).** It used to pass `--rotate` — one
 random provider per pass — on the reasoning that diversity accumulates ACROSS the capped passes
@@ -163,18 +166,18 @@ SAME code — but each pass here reviews the FIX diff, not the original, so a de
 missed in pass 1 is never shown to provider B at all. Rotation across passes diversifies the
 reviewer, not the coverage of any given change.
 
-The cost is real and is the price of that coverage: 4 passes now fan out to every configured
+The cost is real and is the price of that coverage: up to 3 passes now fan out to every configured
 provider instead of one, so provider calls per refactor rise roughly 5x. Bound the spend with the
 PASS CAP (the table above) and `--exclude`, not by narrowing each pass to a single opinion.
 
-**Convergence at the pass cap (the last pass is never the finish line for a CRITICAL).** The cap bounds *review* effort, not *remediation*. If the LAST permitted pass surfaces a CRITICAL, apply the fix and run ONE verification-only pass beyond the cap. That pass may ONLY confirm the CRITICAL is gone and (via the ledger) that the fix introduced nothing new — it may **not** open a new remediation loop for fresh WARNINGs. **Non-CRITICAL findings on the last pass do NOT earn an extra pass.** When the final permitted pass
+**Convergence at the pass cap (the last pass is never the finish line for a CRITICAL).** The cap bounds *review* effort, not *remediation*. If the LAST permitted pass surfaces a CONFIRMED CRITICAL, apply the fix and prove it with its regression test going red-then-green — there is NO pass beyond the cap (the old "one verification-only pass beyond the cap" was removed on 2026-10-15; the driver refuses it). The test is the verification, and the ledger records it. **Non-CRITICAL findings on the last pass do NOT earn an extra pass.** When the final permitted pass
 returns only WARNING/INFO: apply mechanical fixes within the authorized behavior scope, run the focused tests, record each
 disposition in the ledger, and stop. Spending another full rotated pass to re-confirm a set of
 one-line fixes is the loop this cap exists to end — the ledger already records what was done, and
-the tests already prove it. The extra pass is reserved for the CRITICAL case below, where the
-question is whether a *safety* claim still holds.
+the tests already prove it. A CRITICAL on the last pass is settled by its regression test, not by
+another pass.
 
-If a CRITICAL is still unresolved after that verification pass, **or the verification pass surfaces a NEW CRITICAL** (introduced by the fix or otherwise), that CRITICAL counts as unresolved and the run is **BLOCKED (unsafe), not "shipped at cap"** — do not spin another fix loop past the cap. An unfixed CRITICAL blocks completion no matter how many passes were spent.
+If a CRITICAL cannot be proven fixed by its regression test, that CRITICAL counts as unresolved and the run is **BLOCKED (unsafe), not "shipped at cap"** — do not spin another fix loop past the cap. An unfixed CRITICAL blocks completion no matter how many passes were spent.
 
 **Per-pass fix policy (disposition by fix-SCOPE, never by line count):**
 

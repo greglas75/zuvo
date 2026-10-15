@@ -106,7 +106,7 @@ Read the output file. Extract findings between the header/footer markers. Each f
 
 ### Step 4: Merge with internal findings
 
-- CRITICAL findings from cross-provider review are added as `[CROSS]` tagged items at MUST-FIX severity
+- CONFIRMED CRITICAL findings (two or more lanes agree in `.agreement`, or verified against the code) are added as `[CROSS]` tagged items at MUST-FIX severity; a single-lane CRITICAL nobody confirmed goes in at RECOMMENDED, tagged `[CRITICAL→WARNING single-lane]` (`adversarial-loop.md` Step 4)
 - WARNING findings are added at RECOMMENDED severity
 - INFO findings are added at NIT severity
 - Deduplicate against internal findings (same file:line + same issue = drop)
@@ -144,8 +144,9 @@ the cap and relied on each agent remembering to. Stderr prints
 
 What still needs caller attention:
 
-1. **Wall time scales with chunk count** — each chunk is a full provider pass. For very large
-   ranges prefer `--rotate` (one provider per chunk) over `--multi`; a 500KB range under
+1. **Wall time scales with chunk WAVES** — parts run `ZUVO_ADV_CHUNK_PARALLEL` at a time (default 3,
+   since 2026-10-15), each up to the 300s lane ceiling, so 5 parts take two waves, ~10 min. For very
+   large ranges prefer `--rotate` (one provider per chunk) over `--multi`; a 500KB range under
    `--multi` is N chunks x M providers.
 2. **Always verify the artifact exists and is non-empty** before treating a pass as complete:
    `[ -s "$ARTIFACT" ] || { echo "[CROSS-REVIEW] empty artifact"; }`. Exit 0 alone does NOT

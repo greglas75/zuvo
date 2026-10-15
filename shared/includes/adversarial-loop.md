@@ -61,11 +61,11 @@ IF HIGH_RISK AND file paths match */migrations/*, schema.prisma, *.sql:
 
 Run the script as a **single Bash call with a long timeout**. The script auto-detects available providers and returns results. Do NOT manage providers yourself.
 
-> **The Bash-tool timeout — NOT the script — is the #1 cause of spurious "adversarial timed out/skipped".** The Bash tool defaults to **120s**, but the script runs each provider up to `PROVIDER_TIMEOUT` (**500s**, flat — no per-mode bump since 2026-09-09). A foreground call left at the 120s default is KILLED before findings arrive (retros 2026-07-03/04: repeated "multi timed out under CPU load", "single-provider forced"). **Do ONE of these, always:**
+> **The Bash-tool timeout — NOT the script — is the #1 cause of spurious "adversarial timed out/skipped".** The Bash tool defaults to **120s**, but the script runs each provider up to `PROVIDER_TIMEOUT` (**300s** since 2026-10-15, flat — no per-mode bump). A foreground call left at the 120s default is KILLED before findings arrive (retros 2026-07-03/04: repeated "multi timed out under CPU load", "single-provider forced"). **Do ONE of these, always:**
 > - **Background + wait (preferred):** run with `run_in_background: true`, then WAIT for the completion notification before reading the artifact. No timeout guessing; survives 600s runs.
-> - **Foreground with an explicit timeout:** set the Bash tool's `timeout` parameter to **≥ 600000** (600s — the script's own 500s ceiling plus grace and artifact-writing margin; this is the same number the outer `timeout 600` wrappers in `cross-provider-review.md` and `plan/SKILL.md` use). The bare 120s default is never enough, and so is the 420000 this line used to say: it sat BELOW the script's ceiling, so the outer kill fired first and the run died with NO artifact — strictly worse than the timeout it was meant to prevent.
+> - **Foreground with an explicit timeout:** set the Bash tool's `timeout` parameter to **≥ 600000** (600s — the script's own 300s ceiling plus grace and artifact-writing margin; it covers ONE wave of chunks, so an input over 30,000 chars, which is split into parts run 3 at a time, goes in the background, never foreground; this is the same number the outer `timeout 600` wrappers in `cross-provider-review.md` and `plan/SKILL.md` use). The bare 120s default is never enough, and so is the 420000 this line used to say: it sat BELOW the script's ceiling, so the outer kill fired first and the run died with NO artifact — strictly worse than the timeout it was meant to prevent.
 >
-> **On a loaded machine** (concurrent builds/tests/other agents), providers can exceed even the 500s *script* timeout and force a single-provider fallback (retros 2026-07-04 "cpu-contention-forced-single-provider"). When you know the box is busy, export `ZUVO_REVIEW_TIMEOUT=900` and run in the background — and note that **480, which this line used to recommend, is now a DOWNGRADE**: the default is 500, so following that advice quietly lowered the ceiling by 20s, on exactly the lanes whose p90 sits at it — do NOT record the reduced coverage as "done"; a rate-limited/contended pass is retried, per `stall-recovery.md`, not a quality lever.
+> **On a loaded machine** (concurrent builds/tests/other agents) a lane that does not answer in 300s is dropped from that pass, and the pass is `partial` — that is the intended trade (2026-10-15: the owner capped every lane at 300s; 10-18% of all passes had been held to the old 500s ceiling by the one or two lanes that rarely answer). Do NOT raise `ZUVO_REVIEW_TIMEOUT` to rescue a slow lane, and do not record the reduced coverage as a clean pass: surface `timeout_count` as Step 2's `partial` row says.
 
 **Build the review input with the scoped patch helper — never by staging.** `~/.zuvo/build-review-patch` (installed by `scripts/install.sh`) emits the review patch on **stdout** and **never writes the git index**: no `git add`, no `git stash`, no `--intent-to-add`. Staging the caller's work to build a diff silently changes what their next commit captures, and `--staged` alone still misses brand-new untracked files — the helper covers tracked changes (unstaged + staged) *and* untracked, non-ignored files in one patch.
 
@@ -197,6 +197,7 @@ The script may return a non-clean `status` when not all requested providers ran.
 | *(none — stderr `adversarial-review cannot run`)* | 2 | The driver's own modules (`scripts/lib/adversarial-*.sh`) are missing, incomplete, out of step with their install stamp, or do not load — nothing was read and no provider was called; stdout is empty, so `--json` callers get no document | reinstall (`./scripts/install.sh`); record the pass as not run, never as reviewed |
 | `error` | 2 | Every provider was reached and returned no review | record `Adversarial review: skipped (provider error)` and continue. Each provider's stderr is preserved under `evidence_dir` (`~/.zuvo/adversarial-failures/<run_id>/`) — read it before claiming a cause |
 | `no_material` | **5** | **NOTHING WAS REVIEWED** — the payload carried nothing to judge (an empty or preamble-only code payload, or a document below the per-mode minimum), so no provider was called | **Do NOT record coverage, do not tick an adversarial gate, do not write an artifact citing this pass.** Fix the payload and re-run: the usual cause is a `git diff <range>` that resolved to nothing while a `PRIOR FINDINGS:` line kept the input non-empty. Until 2026-09-18 this case exited **0**, which every caller reads as a clean review |
+| *(none — stderr `PASS CAP:`)* | **7** | **NOTHING WAS REVIEWED** — three earlier passes in the last 3 h, in this repository on this branch, covered every file under review now (Step 5's hard cap — the part of it the driver can see; no override) | do not run another pass; record the open findings as known concerns and finish per Step 6 — an open VERIFIED CRITICAL still means "not complete" |
 | *(none — stderr `over ZUVO_ADV_MAX_INPUT_BYTES`)* | 2 | The input is over the ceiling (default 8 MiB) — refused before any provider was called | record the pass as not run; review the change in parts (`--files` on a subset) |
 | `partial_no_material` | **4** | **A CHUNKED run reviewed some parts and never judged others** (no material, or not started because `ZUVO_RUN_DEADLINE` was spent) — same practical state as a truncated input: part of the range reached no provider | treat exactly as exit 4 below: findings are real, absence proves nothing about the unjudged parts. The stderr `CHUNKED:` line names how many |
 | `ok` / any | **4** | **Review COMPLETED but the input was TRUNCATED** — part of the change was never sent to any provider (`input_truncated=true`, and the artifact lists the omitted files) | **Do NOT report the review complete.** Findings that came back are real; the ABSENCE of findings says nothing about the omitted files. Re-run over the omitted set (`build-review-patch <those paths>`) or split the input, then merge the verdicts |
@@ -279,6 +280,13 @@ IF finding.severity in [CRITICAL, WARNING]:
     Annotate: "(downgraded: no file:line evidence — cannot action)"
 ```
 
+**Why a single-lane CRITICAL is a WARNING until confirmed (2026-10-15).** The severity is the lane's
+word, not a fact. Of the lane-reported CRITICALs Bill judged on 2026-10-01..15 (Mac + ryzen-dev,
+16,362 of them) 21-22% were real and ~50% false positives; and every one handled as "fix immediately"
+bought a fix plus another full pass. Agreement between lanes and your own verification are what
+separate the fifth that is real. Verifying is cheap — read the cited code — so a single-lane CRITICAL
+is still checked, never waved through; it just does not start the fix-and-re-run loop on its own say-so.
+
 **Rationale:** Vague findings without evidence cannot be verified, fixed, or explained to the user. A finding that says "authentication looks insecure" with no location is unfixable. A finding that says "auth/token.ts:47 — JWT secret is hardcoded as a string literal, violates no-hardcoded-secrets" is actionable.
 
 After validation, apply fix policy:
@@ -286,8 +294,13 @@ After validation, apply fix policy:
 ```
 For each finding:
 
-  CRITICAL  ->  Fix immediately. No exceptions.
-               Output: [CRITICAL] <description> (<file>:<line>)
+  CRITICAL  ->  CONFIRMED? (>= 2 lanes in its `.agreement` group, OR you verified it yourself:
+                a failing test, a reproduced input, or the cited code read and the defect traced)
+                  YES  ->  Fix immediately. No exceptions.
+                           Output: [CRITICAL] <description> (<file>:<line>) — confirmed by <lanes|evidence>
+                  NO   ->  You checked and could neither confirm nor refute it (refuted = rejected).
+                           Triage it as a WARNING (rule below) and say so:
+                           Output: [CRITICAL→WARNING single-lane] <description> (<file>:<line>)
 
   WARNING   ->  Is the fix < 10 lines AND localized (same file, no cross-file impact)?
                   YES  ->  Fix immediately
@@ -336,11 +349,28 @@ repository the review ran in (the ledger keys a verdict on project + fingerprint
 The result, per model — findings raised, CRITICALs, precision = (fixed + deferred) / judged — is
 printed by `~/.zuvo/adversarial-review --effectiveness`.
 
-### Step 5: Validation re-run (max 1)
+### Step 5: Validation re-run — HARD CAP: 3 passes per change, never more
 
-If Step 4 fixed any CRITICAL or WARNING:
+Pass 1 is Step 2. **Pass 2** runs only if Step 4 fixed a CONFIRMED CRITICAL or a WARNING that changed
+behaviour — not for wording, comments, renames or test-only edits — and it reviews the **fix delta
+only**. **Pass 3** runs only if pass 2 found a NEW CONFIRMED CRITICAL and you fixed it; it reviews that
+fix delta. There is no pass 4: a confirmed CRITICAL that pass 3 raises is fixed and proven by a
+regression test that fails before the fix and passes after it — never by another pass — and
+everything else still open is a known concern (Step 6 wording). INFO, NIT and robustness-only
+residuals never trigger a pass. No skill may raise this cap. The driver enforces it as far as it can
+see a "change": it refuses a pass when three earlier passes in the last 3 h, in this repository on
+this branch, covered every file under review now (exit 7, `PASS CAP:`). Spacing passes out or
+renaming a branch to get round it is still a fourth pass.
 
-1. Re-build the patch by RE-RUNNING the **same helper invocation** as Step 2 — identical `PATH` args, identical flags. The fixes are already in the working tree, so the fresh patch contains them; there is nothing to stage and nothing to prepare. (If the helper now returns exit 3, the "fixes" changed nothing — investigate, do not report a clean second pass.)
+**The fix delta, concretely.** Print `git rev-parse HEAD` right after the pass, commit the fixes, and
+build the next pass's input with `build-review-patch --base <that sha>`: the fix commits, anything
+still uncommitted, and new files (a regression test) — `git diff <sha>` would drop untracked ones.
+When the reviewed state was never committed: `build-review-patch` with only the files the fixes
+touched as `PATH` args — more than the fixes, far less than the first pass.
+
+For pass 2 (and 3), when the trigger above holds:
+
+1. Re-build the patch as the FIX DELTA above — `build-review-patch --base <sha printed after the pass>`, or the helper with only the files the fixes touched — never Step 2's whole scope again. The fixes are in the working tree, so the fresh patch contains them; there is nothing to stage. (If the helper now returns exit 3, the "fixes" changed nothing — investigate, do not report a clean second pass.)
 
    **Do NOT reuse `$_patch` from Step 2.** Each agent Bash call runs in a FRESH SHELL: `$_patch` is empty here, `printf '%s\n' "$_patch"` would pipe an empty string, and `adversarial-review` would exit 2 on empty input — a silently failed validation run at the exact moment it matters most. Re-invoke the helper.
 
@@ -351,7 +381,7 @@ If Step 4 fixed any CRITICAL or WARNING:
    # copied with this list's indent would never terminate. A quoted string does not care.
    _ctx='VERIFIED CONTEXT (checked this session — cite contradicting code to reopen):
    - schema: orders.tenant_id is NOT NULL + FK (migrations/0042_orders.sql:14)'
-   _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<same PATH args as Step 2>") || _prc=$?
+   _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<only the files the fixes touched>") || _prc=$?
    if [ "$_prc" -eq 3 ]; then echo "BLOCKED: validation re-run produced an empty patch. Exit 3 means the paths resolved and nothing in them changed — so the Step 4 fixes are NOT on disk. Do NOT report this skill complete" >&2; false
    elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
    else printf '%s\n\n%s\n' "$_ctx" "$_patch" | ~/.zuvo/adversarial-review --json --mode "$_ADV_MODE"; fi
@@ -381,11 +411,13 @@ If Step 4 fixed any CRITICAL or WARNING:
      dispose `[POST-CAP: FIXED] false-re-raise — <file:line>, verified by <test/evidence>` and STOP
      cleanly. Do NOT count it toward the retry cap, do NOT re-fix, do NOT flip the verdict to BLOCKED.
      A provider re-stating an already-fixed finding is noise; the test is ground truth.
-   - New CRITICAL (genuinely distinct from what you fixed) → add to known concerns, STOP. Do NOT attempt another fix.
+   - New CRITICAL (genuinely distinct from what you fixed) → CONFIRM it (Step 4 rule). Confirmed and this
+     was pass 2 → fix it and run pass 3 on that fix delta. Confirmed on pass 3 → fix it with a
+     red-then-green regression test, no further pass. Unconfirmed → known concerns, STOP.
    - New WARNING caused by previous fix → add to known concerns, STOP.
    - Only INFO → add to known concerns, proceed.
 
-**Hard limit: 2 total adversarial calls per task.** No third run.
+**Hard limit: 3 total adversarial passes per change** (a chunked pass is one pass). No fourth run.
 
 ### Step 6: Present to user
 
@@ -451,10 +483,9 @@ Each skill adds the adversarial loop at a specific phase. The loop is **MANDATOR
 
 - **Not a replacement for zuvo:review** — this is a quick multi-provider check during writing. zuvo:review is a full multi-pass audit with confidence scoring.
 - **Not a quality gate** — does not block completion (except: unresolved CRITICAL changes wording).
-- **Not recursive** — max 2 calls by default. Third opinion is zuvo:review's job.
-  A calling skill may raise this **only** when it defines its own larger, risk-based cap
-  (`zuvo:refactor` sizes passes by diff); in that case the caller's explicit cap wins and this
-  default does not override it. Absent such a cap, 2 is the ceiling — "the last pass found
-  something so I ran another" is not a risk-based cap, it is an unbounded loop.
+- **Not recursive** — at most 3 passes per change (Step 5), and no caller may raise it: the
+  per-skill larger caps (`zuvo:refactor`'s 4 for big diffs, "one verification pass beyond the cap")
+  were removed on 2026-10-15 and the driver enforces the limit (exit 7). "The last pass found
+  something so I ran another" is an unbounded loop, not a cap.
 - **Not proof of correctness** — "clean pass" means one model found nothing. Different model = potentially different findings.
 - **Not optional** — if referenced by a skill, it runs. The agent does not skip it.

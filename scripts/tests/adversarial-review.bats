@@ -129,12 +129,12 @@ isolated_path() {
 
 # ─── Help & usage ─────────────────────────────────────────────
 
-@test "--list-providers: ZUVO_ADV_OPENROUTER=1 + a key adds openrouter-alt, -3 and -4, not openrouter" {
+@test "--list-providers: ZUVO_ADV_OPENROUTER=1 + a key adds openrouter-alt and -3; gpt-oss (-4) and openrouter stay out" {
   run env -u ZUVO_ADV_OPENROUTER_LANES ZUVO_ADV_OPENROUTER=1 OPENROUTER_API_KEY=sk-test "$SCRIPT" --list-providers
   [ "$status" -eq 0 ]
   [[ "$output" == *"openrouter-alt"* ]] || false
   [[ "$output" == *"openrouter-3"* ]] || false
-  [[ "$output" == *"openrouter-4"* ]] || false
+  if printf '%s\n' "$output" | grep -qx openrouter-4; then false; fi
   ! printf '%s\n' "$output" | grep -qx openrouter
 }
 

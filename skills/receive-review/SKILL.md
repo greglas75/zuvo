@@ -231,7 +231,7 @@ Exceptions (user authority wins over MANDATORY):
 If the review output reports truncation (diff exceeds the reviewer input cap), split the diff on file boundaries, review each chunk, and aggregate findings — a truncated review is NOT full coverage.
 
 Wait for complete output. Handle findings by severity:
-- **CRITICAL** — fix immediately, regardless of confidence. If confidence is low, verify first (check the code), then fix if confirmed.
+- **CRITICAL** — confirm it first: two or more lanes in its `.agreement` group, or your own check (a failing test, a reproduced input, the cited code read and the defect traced). Confirmed → fix immediately. A single-lane CRITICAL you cannot confirm is triaged as a WARNING and reported as `[CRITICAL→WARNING single-lane]` (`adversarial-loop.md` Step 4).
 - **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
 - **INFO** — known concerns (max 3, one line each).
 

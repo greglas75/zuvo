@@ -181,10 +181,12 @@ if [ -f "$LOOP" ]; then
     else
       pass "adversarial-loop.md Step 5 contains no staging instruction"
     fi
-    if printf '%s\n' "$step5" | grep -qF 'same helper invocation'; then
-      pass "adversarial-loop.md Step 5 re-runs the 'same helper invocation'"
+    # Passes 2 and 3 review the FIX DELTA (build-review-patch --base <sha>), never Step 2's whole scope
+    # again: re-reviewing the unchanged scope mostly re-derived the first pass's false positives.
+    if printf '%s\n' "$step5" | grep -qF 'build-review-patch --base'; then
+      pass "adversarial-loop.md Step 5 builds the fix delta with build-review-patch --base"
     else
-      bad "adversarial-loop.md Step 5 does not say 'same helper invocation'"
+      bad "adversarial-loop.md Step 5 does not build the fix delta with build-review-patch --base"
     fi
     # Step 5 must RE-INVOKE the helper, not reuse $_patch from Step 2: agent Bash
     # calls run in fresh shells, so the variable is empty there and the reviewer

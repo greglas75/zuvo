@@ -350,7 +350,9 @@ else
   ck_ts_file "$CK_MIX/fast2.ts" MARKER-TWO 220
   ck_ts_file "$CK_MIX/fast3.ts" MARKER-THREE 220
   ck20_dl=$(( ck_min + 2 ))
-  ck20_json=$(PATH="$CK_TMP/bin:$PATH" ZUVO_RUN_DEADLINE="$ck20_dl" ZUVO_REVIEW_TEST_PROVIDERS="mock-chunkfate" \
+  # One part at a time (ZUVO_ADV_CHUNK_PARALLEL=1): the deadline is what is left when a part STARTS, so only a
+  # part waiting behind a slow one can find it spent. In parallel, parts 2 and 3 start with part 1.
+  ck20_json=$(PATH="$CK_TMP/bin:$PATH" ZUVO_ADV_CHUNK_PARALLEL=1 ZUVO_RUN_DEADLINE="$ck20_dl" ZUVO_REVIEW_TEST_PROVIDERS="mock-chunkfate" \
     bash "$ADV" --single --json --files "$CK_MIX/slow1.ts
 $CK_MIX/fast2.ts
 $CK_MIX/fast3.ts" 2>"$CK_MIX/err20"); rc=$?
@@ -448,7 +450,7 @@ chmod +x "$CK_TMP/bin/mock-deadline-seen"
 ck_ts_file "$CK_MIX/dl-slow1.ts" MARKER-SLOW 220
 ck_ts_file "$CK_MIX/dl-fast2.ts" MARKER-TWO 220
 : > "$CK_MIX/dl24.log"
-CK_DL_LOG="$CK_MIX/dl24.log" PATH="$CK_TMP/bin:$PATH" ZUVO_RUN_DEADLINE=600 ZUVO_REVIEW_TEST_PROVIDERS="mock-deadline-seen" \
+CK_DL_LOG="$CK_MIX/dl24.log" PATH="$CK_TMP/bin:$PATH" ZUVO_ADV_CHUNK_PARALLEL=1 ZUVO_RUN_DEADLINE=600 ZUVO_REVIEW_TEST_PROVIDERS="mock-deadline-seen" \
   bash "$ADV" --single --files "$CK_MIX/dl-slow1.ts
 $CK_MIX/dl-fast2.ts" >/dev/null 2>"$CK_MIX/err24"; rc=$?
 assert_exit_code "0" "$rc" "both parts reviewed: exit 0"
@@ -541,15 +543,14 @@ ck_headerless_parts() {
   done
   echo "$out"
 }
-# ck_part_notes <case> — each prompt's hunk note (the "hunks a-b of N of <path>" its Context line names), in call
-# order, joined by "|"; a prompt with no such note contributes an empty field.
+# ck_part_notes <case> — each prompt's hunk note (the "hunks a-b of N of <path>" its Context line names), sorted —
+# parts run at once, so arrival order is not part order — joined by "|"; a prompt with no such note adds nothing.
 ck_part_notes() {
-  local n=1 out="" sep=""
+  local n=1
   while [[ -f "$CK_HK/parts-$1/$n.in" ]]; do
-    out="$out$sep$(sed -n 's/^Context: .*\(hunks [0-9]*-[0-9]* of [0-9]* of [^];]*\).*$/\1/p' "$CK_HK/parts-$1/$n.in" | head -1)"
-    sep="|"; n=$((n + 1))
-  done
-  echo "$out"
+    sed -n 's/^Context: .*\(hunks [0-9]*-[0-9]* of [0-9]* of [^];]*\).*$/\1/p' "$CK_HK/parts-$1/$n.in" | head -1
+    n=$((n + 1))
+  done | LC_ALL=C sort -k2,2n | tr '\n' '|' | sed 's/|$//'
 }
 
 start_test "CK.26 one file over the cap with 3 hunks is split at its hunks, never cut"
@@ -729,3 +730,72 @@ assert_eq "4|1|0|cut|BIG-H1=1 BIG-H2=1 BIG-H3=0" "$(ck36_state 36a "$rc")" \
 ZUVO_ADV_NO_CHUNK=1 ck_run_parts 36b "$CK_HK/optout.diff"; rc=$?
 assert_eq "4|1|0|cut|BIG-H1=1 BIG-H2=1 BIG-H3=0" "$(ck36_state 36b "$rc")" \
   "ZUVO_ADV_NO_CHUNK=1: exit 4, one prompt, no split, the cut recorded, hunk 3 past the cap"
+
+# ─── 37-39: parts run concurrently, results stay in part order ───
+# mock-parstart records when its part started (one line per part, "<epoch> <marker>") and holds the part
+# whose input carries MARKER-FILE-1 for 4 s, so part 1 is the LAST to finish whenever parts overlap.
+cat > "$CK_TMP/bin/mock-parstart" <<'MOCK'
+#!/usr/bin/env bash
+p="$(cat)"
+m="$(printf '%s\n' "$p" | sed -n 's#^// \(MARKER-FILE-[0-9]*\).*#\1#p' | head -1)"
+printf '%s %s\n' "$(date +%s)" "$m" >> "$CK_PAR_LOG"
+case "$p" in *MARKER-FILE-1*) sleep 4 ;; esac
+echo "SEEN FILES:"
+printf '%s\n' "$p" | sed -n -E 's/^=== FILE: (.*) ===$/\1/p'
+exit 0
+MOCK
+chmod +x "$CK_TMP/bin/mock-parstart"
+# ck_par_spread <log> — seconds between the first and the last part's start.
+ck_par_spread() { awk 'NR == 1 { lo = hi = $1 } { if ($1 < lo) lo = $1; if ($1 > hi) hi = $1 } END { print hi - lo }' "$1"; }
+
+start_test "CK.37 the parts of a chunked run are reviewed at the same time, not one after another"
+# Three parts, default ZUVO_ADV_CHUNK_PARALLEL (3): all three start before part 1's 4 s are over. Run one at a
+# time (the control), part 2 cannot start until part 1 has finished.
+: > "$CK_TMP/par37.log"
+ck37_out=$(CK_PAR_LOG="$CK_TMP/par37.log" PATH="$CK_TMP/bin:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-parstart" \
+  bash "$ADV" --single --files "$FILE_LIST" --artifact "$CK_TMP/art37" 2>"$CK_TMP/err37"); rc=$?
+assert_exit_code "0" "$rc" "three parts reviewed: exit 0"
+assert_eq "3" "$(wc -l < "$CK_TMP/par37.log" | tr -d ' ')" "premise: three parts started"
+ck37_spread=$(ck_par_spread "$CK_TMP/par37.log")
+if [[ "$ck37_spread" -le 2 ]]; then pass "all three parts started within ${ck37_spread}s — before part 1 finished"
+else fail "all three parts started before part 1 finished" "their starts span ${ck37_spread}s"; fi
+: > "$CK_TMP/par37b.log"
+CK_PAR_LOG="$CK_TMP/par37b.log" PATH="$CK_TMP/bin:$PATH" ZUVO_ADV_CHUNK_PARALLEL=1 ZUVO_REVIEW_TEST_PROVIDERS="mock-parstart" \
+  bash "$ADV" --single --files "$FILE_LIST" >/dev/null 2>&1
+ck37b_spread=$(ck_par_spread "$CK_TMP/par37b.log")
+if [[ "$ck37b_spread" -ge 4 ]]; then pass "control: ZUVO_ADV_CHUNK_PARALLEL=1 starts part 2 only after part 1's 4 s"
+else fail "control: ZUVO_ADV_CHUNK_PARALLEL=1 runs the parts one after another" "starts span ${ck37b_spread}s"; fi
+
+start_test "CK.38 a part that finishes LAST is still reported FIRST: output and artifact keep part order"
+# Part 1 finished last in CK.37. Its banner and its review still come first on stdout, and the artifact holds
+# the three passes in part order — module-1 (part 1) before module-5 (part 3) — with one REVIEW BY each.
+assert_eq "=== ADVERSARIAL CHUNK 1/3 ===|=== ADVERSARIAL CHUNK 2/3 ===|=== ADVERSARIAL CHUNK 3/3 ===" \
+  "$(printf '%s\n' "$ck37_out" | grep '^=== ADVERSARIAL CHUNK ' | tr '\n' '|' | sed 's/|$//')" "stdout banners in part order"
+assert_eq "module-1.ts" "$(printf '%s\n' "$ck37_out" | grep -m1 -E '^module-[0-9]\.ts$')" "the first review printed is part 1's"
+assert_eq "3" "$(grep -c '^REVIEW BY: ' "$CK_TMP/art37")" "the artifact holds one REVIEW BY per part"
+assert_eq "module-1.ts module-2.ts module-3.ts module-4.ts module-5.ts" \
+  "$(grep -E '^module-[0-9]\.ts$' "$CK_TMP/art37" | tr '\n' ' ' | sed 's/ $//')" "the artifact's passes are in part order"
+assert_eq "2" "$(grep -c '^=== APPENDED PASS ' "$CK_TMP/art37")" "parts 2 and 3 are appended passes after part 1"
+
+start_test "CK.39 --append-artifact keeps what the artifact already held, ahead of every part"
+printf 'EARLIER-PASS-SENTINEL\n' > "$CK_TMP/art39"
+: > "$CK_TMP/par39.log"
+CK_PAR_LOG="$CK_TMP/par39.log" PATH="$CK_TMP/bin:$PATH" ZUVO_REVIEW_TEST_PROVIDERS="mock-parstart" \
+  bash "$ADV" --single --files "$FILE_LIST" --artifact "$CK_TMP/art39" --append-artifact >/dev/null 2>&1; rc=$?
+assert_exit_code "0" "$rc" "appended run: exit 0"
+assert_eq "EARLIER-PASS-SENTINEL" "$(head -1 "$CK_TMP/art39")" "the earlier pass is still the artifact's first line"
+assert_eq "3|3" "$(grep -c '^REVIEW BY: ' "$CK_TMP/art39")|$(grep -c '^=== APPENDED PASS ' "$CK_TMP/art39")" \
+  "three parts appended after it, each as its own pass"
+
+
+start_test "CK.40 a slow part never holds a free slot: part 3 starts when part 2 ends, not when part 1 does"
+# Two slots, part 1 takes 4 s and part 2 none: part 3 must take part 2's slot at once. Waiting for the
+# oldest part first would start it only after part 1's 4 s.
+: > "$CK_TMP/par40.log"
+CK_PAR_LOG="$CK_TMP/par40.log" PATH="$CK_TMP/bin:$PATH" ZUVO_ADV_CHUNK_PARALLEL=2 ZUVO_REVIEW_TEST_PROVIDERS="mock-parstart" \
+  bash "$ADV" --single --files "$FILE_LIST" >/dev/null 2>&1; rc=$?
+assert_exit_code "0" "$rc" "three parts reviewed: exit 0"
+assert_eq "3" "$(wc -l < "$CK_TMP/par40.log" | tr -d ' ')" "premise: three parts started"
+ck40_spread=$(ck_par_spread "$CK_TMP/par40.log")
+if [[ "$ck40_spread" -le 2 ]]; then pass "part 3 started ${ck40_spread}s after the first part — inside part 1's 4 s"
+else fail "part 3 starts in the slot part 2 freed" "starts span ${ck40_spread}s"; fi

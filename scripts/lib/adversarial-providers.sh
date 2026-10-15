@@ -319,7 +319,8 @@ detect_providers() {
   # A key file on disk is not consent to spend on every review: this one exists because of a
   # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
   # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
-  # Default roster: openrouter-alt (mimo-v2.6-flash), openrouter-3 (mercury), openrouter-4 (gpt-oss) — models from model-registry.sh.
+  # Default roster: openrouter-alt (mimo-v2.6-flash) and openrouter-3 (deepseek-v4.1-flash) — models from
+  # model-registry.sh. openrouter-4 (gpt-oss) is out of it (the note at the end of this block).
   # glm-5.3 is in NEITHER — it is reachable only by ZUVO_MODEL_OPENROUTER_ALT=z-ai/glm-5.3
   # with an explicit --provider. It cost $0.134 per call against muse's $0.035 and, at 363s
   # against the ceiling, 36% of those calls were metered and returned nothing.
@@ -353,9 +354,14 @@ detect_providers() {
   # 2026-10-07: openrouter-alt is back in the default roster with a NEW model, xiaomi/mimo-v2.6-flash —
   # +17 defects over the production lineup at ~$0.0063 per review (benchmark 2026-10-04/05, 92%/83%
   # precision). The two ultra-cheap lanes stay: they are coverage, and a third lane does not replace them.
+  # The cheap high-noise lanes (gpt-oss as openrouter-4, mercury as openrouter-3) are OUT, by the owner's
+  # decision: "a false positive dies in triage" did not hold — each lane-reported CRITICAL sends an agent into
+  # a fix and another pass. openrouter-4 is reachable by --provider or ZUVO_ADV_OPENROUTER_LANES; mercury by
+  # ZUVO_MODEL_OPENROUTER_3. openrouter-3 runs deepseek-v4.1-flash, which answers within 300 s only part of
+  # the time: watch its timeout rate in `adversarial-stats` first if the lane disappoints.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3 openrouter-4}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
@@ -591,7 +597,7 @@ lane_model() {
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}" ;;
-    openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}" ;;
+    openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-deepseek/deepseek-v4.1-flash}" ;;
     openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
