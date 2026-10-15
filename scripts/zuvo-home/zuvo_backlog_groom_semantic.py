@@ -61,8 +61,10 @@ class Skipped(Exception):
 
 
 def _max_calls() -> int:
-    raw = os.environ.get("ZUVO_GROOM_RERANK_MAX") or str(DEFAULT_MAX)
-    return max(0, int(raw)) if raw.lstrip("-").isdigit() else DEFAULT_MAX
+    try:  # not str.isdigit(): "²" and "--5" pass it, and int() then raises outside report's guard
+        return max(0, int(os.environ.get("ZUVO_GROOM_RERANK_MAX") or DEFAULT_MAX))
+    except ValueError:
+        return DEFAULT_MAX
 
 
 def _client(max_calls: int) -> tuple[ModuleType, ModuleType]:

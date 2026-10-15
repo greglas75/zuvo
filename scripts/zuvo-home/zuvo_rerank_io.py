@@ -83,9 +83,10 @@ def log(caller: str, model: str, n: int, t0: float, cost: float | None, outcome:
     who, what = ("".join(c if c.isprintable() else " " for c in str(x)) or "-" for x in (caller, model))
     fields = (ts, who, what, str(n), str(ms), "-" if cost is None else f"{cost:g}", outcome)
     line = ("\t".join(fields) + "\n").encode("utf-8", "backslashreplace")
-    path = Path(os.environ.get("ZUVO_HOME") or Path.home() / ".zuvo") / "rerank.log"
     with LOG_LOCK:
         try:
+            # inside the try: Path.home() raises RuntimeError when HOME is unset and no passwd entry exists
+            path = Path(os.environ.get("ZUVO_HOME") or Path.home() / ".zuvo") / "rerank.log"
             if path.is_symlink():
                 return
             old = path.with_name("rerank.log.1")
@@ -96,5 +97,5 @@ def log(caller: str, model: str, n: int, t0: float, cost: float | None, outcome:
                 os.write(fd, line)
             finally:
                 os.close(fd)
-        except OSError:
+        except (OSError, RuntimeError):
             pass

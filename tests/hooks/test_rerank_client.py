@@ -388,6 +388,13 @@ class ClientTest(Base):
         self.assertEqual((len(fields), fields[3], fields[5], fields[6]), (7, "3", "0.001", "ok"))
         self.assertNotIn(KEY, (self.zhome / "rerank.log").read_text())
 
+    def test_log_never_raises_when_the_home_directory_cannot_be_found(self) -> None:
+        # Path.home() raises RuntimeError with HOME unset and no passwd entry; rerank's own error path
+        # calls log, so an unguarded lookup turns "never fatal" into a crash.
+        del os.environ["ZUVO_HOME"]
+        with mock.patch.object(Path, "home", side_effect=RuntimeError("no home")):
+            self.assertIsNone(rio.log("t", MODEL, 1, time.monotonic(), None, "error"))
+
     def test_log_sanitises_every_non_printable_character(self) -> None:
         # \v, \f, \x1c-\x1e, \x85, U+2028/9 split lines for splitlines(); ESC drives a terminal.
         self.stub()

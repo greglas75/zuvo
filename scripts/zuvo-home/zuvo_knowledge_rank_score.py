@@ -86,6 +86,9 @@ def glob_hit(entry: Entry, files: list[str]) -> bool:
 
 def _match(pattern: str, path: str) -> bool:
     pattern = pattern.removeprefix("./")
+    if pattern.startswith("/"):  # gitignore: a leading slash anchors at the root (paths are root-relative)
+        pattern = pattern.lstrip("/")
+        return _glob(pattern + ("**" if pattern.endswith("/") else "")).match(path) is not None
     if pattern.endswith("/"):
         pattern = ("" if "/" in pattern[:-1] else "**/") + pattern + "**"
     target = path if "/" in pattern else path.rsplit("/", 1)[-1]

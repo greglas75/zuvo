@@ -99,7 +99,8 @@ def _relevance(entries: list[Entry], keywords: list[str], files: list[str]
                                     caller="knowledge-rank")
     for j, i in enumerate(pool):
         scores[i] = reranked[j] if reranked is not None and len(reranked) == len(pool) else lexical[i]
-    boost = GLOB_BOOST * (max(scores) or 1.0)
+    best = max(scores)
+    boost = GLOB_BOOST * (best if best > 0 else 1.0)  # a best of 0 or below would cancel or invert it
     for i in pool:
         scores[i] += boost if hits[i] else 0.0
     return scores, pool

@@ -334,6 +334,15 @@ class KnowledgeRankTest(unittest.TestCase):
         rows, _ = self.run_cli("widget", "src/x.ts")
         self.assertEqual([(r["id"], r["score"]) for r in rows], [("fact-glob", 0.1), ("fact-other", 0.0)])
 
+    def test_all_negative_rerank_scores_still_let_the_glob_match_lead(self) -> None:
+        # Catches the boost scaling by a negative best score: the affected-files match would sink instead.
+        self.write_store("codebase-facts.jsonl", [
+            {"id": "fact-other", "type": "codebase-fact", "fact": "alpha widget"},
+            {"id": "fact-glob", "type": "codebase-fact", "fact": "beta widget", "affectedFiles": ["src/**"]}])
+        self.stub({"alpha": -0.5, "beta": -0.5})
+        rows, _ = self.run_cli("widget", "src/x.ts")
+        self.assertEqual(self.ids(rows), ["fact-glob", "fact-other"])
+
     def test_negative_rerank_score_in_the_pool_is_kept_last(self) -> None:
         # Catches eligibility read off "score > 0": a pool member scored below 0 is still a match.
         self.write_store("codebase-facts.jsonl", [
@@ -400,7 +409,7 @@ class KnowledgeRankTest(unittest.TestCase):
                  ("src/x.ts", "./src/x.ts", True), ("src/a?.ts", "src/a/.ts", False),
                  ("*.test.ts", "src/a/x.test.ts", True), ("Makefile", "a/Makefile", True),
                  ("*.ts", "src/x.tsx", False), ("src/", "src/a/b.ts", True), ("src/", "srcx/a.ts", False),
-                 ("docs/", "a/docs/x.md", True)]
+                 ("docs/", "a/docs/x.md", True), ("/src/x.ts", "src/x.ts", True), ("/x.ts", "a/x.ts", False)]
         for glob, path, expected in cases:
             with self.subTest(glob=glob, path=path):
                 self.assertEqual(krs.glob_hit({"affectedFiles": [glob]}, [path]), expected)

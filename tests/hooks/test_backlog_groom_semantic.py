@@ -202,11 +202,14 @@ class PairTests(SemanticCase):
         self.assertEqual(stub.requests, 2)
 
     def test_a_non_number_cap_falls_back_to_the_default_not_to_zero(self) -> None:
-        # Defect: a typo in ZUVO_GROOM_RERANK_MAX raises out of the plan or silently disables the pass.
-        stub = self.stub()
-        os.environ.update(ZUVO_RERANK_BASE_URL=stub.base_url, ZUVO_GROOM_RERANK_MAX="lots")
-        self.assertEqual(semantic_lines(self.report("## Open\n" + CACHE + RELOAD))[-2:],
-                         ["SEMANTIC_CHECKED=2/2", "SEMANTIC_DUPLICATES=1"])
+        # Defect: a typo in ZUVO_GROOM_RERANK_MAX raises out of the plan or silently disables the pass;
+        # "--5" and "²" pass a str.isdigit() guard that int() then rejects.
+        for raw in ("lots", "--5", "²"):
+            with self.subTest(raw=raw):
+                stub = self.stub()
+                os.environ.update(ZUVO_RERANK_BASE_URL=stub.base_url, ZUVO_GROOM_RERANK_MAX=raw)
+                self.assertEqual(semantic_lines(self.report("## Open\n" + CACHE + RELOAD))[-2:],
+                                 ["SEMANTIC_CHECKED=2/2", "SEMANTIC_DUPLICATES=1"])
 
     def test_an_empty_backlog_is_a_complete_check_of_nothing(self) -> None:
         # Defect: no open entry divides by zero building the index, or reads as a skip.
