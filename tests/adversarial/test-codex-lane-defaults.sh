@@ -136,10 +136,12 @@ EOF
 chmod +x "$CLTMP/spy/codex"
 printf 'diff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-const a = 1\n+const a = 2\n' > "$CLTMP/diff"
 # spy_run <driver> <lane> [VAR=value...] — one review by <lane> through the spy; status = the driver's.
+# ZUVO_ADVERSARIAL_TEST_HARNESS survives `env -i`: the cases review the same diff far more than 3 times, and
+# outside the harness the driver's pass cap would refuse the fourth.
 spy_run() {
   local drv="$1" lane="$2"; shift 2
   rm -f "$CLTMP/spy.out"
-  env -i HOME="$CLTMP/spyhome" CODEX_HOME="$CLTMP/spyhome/.codex" ZUVO_HOME="$CLTMP/spyhome/.zuvo" \
+  env -i ZUVO_ADVERSARIAL_TEST_HARNESS=1 HOME="$CLTMP/spyhome" CODEX_HOME="$CLTMP/spyhome/.codex" ZUVO_HOME="$CLTMP/spyhome/.zuvo" \
     TMPDIR="$CLTMP/tmp" PATH="$PATH" LANG=C ZUVO_NO_CAFFEINATE=1 ZUVO_PROVIDER_BENCH=0 \
     ZUVO_CODEX_BIN="$CLTMP/spy/codex" ZUVO_CODEX_APP_BIN=/nonexistent SPY_OUT="$CLTMP/spy.out" "$@" \
     bash "$drv" --provider "$lane" --mode code < "$CLTMP/diff" > /dev/null 2> "$CLTMP/effort.err"

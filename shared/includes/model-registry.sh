@@ -254,12 +254,11 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 #
 # Lane jest wlaczany flaga ZUVO_ADV_OPENROUTER=1 (platny, wiec nigdy sama obecnoscia klucza).
 ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}"
-# openrouter-alt = xiaomi/mimo-v2.6-flash since 2026-10-07, back in the default roster as a THIRD cheap lane
-# (mercury and gpt-oss stay). Benchmarked 2026-10-04/05: +23 / 92% and r2 +17 / 83%, ~319 s per diff, ~$0.0063
-# per review; over the production lineup it adds +17 defects (+12 if it had replaced mercury). Slow: it fits
-# the lane timeout (0/20 timeouts in both runs) but is the slowest OpenRouter lane.
+# openrouter-alt = xiaomi/mimo-v2.6-flash: +17 defects over the production lineup at ~$0.0063 per review
+# (docs/runbook/model-benchmark.md). Slow: its benchmark mean (~319 s) is above the 300 s lane ceiling.
 ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}"
-ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inception/mercury-2.5-preview}"
+# openrouter-3 = deepseek-v4.1-flash (owner's pick); gpt-oss (openrouter-4) is out of the default roster.
+ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-deepseek/deepseek-v4.1-flash}"
 ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}"
 
 # ── BytePlus ModelArk Coding Plan (prepaid, opt-in via ZUVO_ADV_BYTEPLUS=1) ──

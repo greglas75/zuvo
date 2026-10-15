@@ -337,9 +337,9 @@ ar_set_input_cap() {
 # per kilobyte, and this column counts findings, not judged-real ones.)
 #
 # Two hard constraints back it up. The panel is bounded by its SMALLEST-context member, not its
-# largest. And PROVIDER_TIMEOUT is 500s while qwen already averaged 336s at ~30k input — ten
-# times the payload would cross the ceiling, which is exactly how the openrouter lane collected
-# four 500s timeouts and got benched.
+# largest. And the lane ceiling (PROVIDER_TIMEOUT, 300s) is already below qwen's 336s average at
+# ~30k input: a bigger payload only cuts off more lanes, which is how the openrouter lane collected
+# four timeouts and got benched.
 #
 # ZUVO_ADV_MAX_CHARS overrides it, which is what makes "is 30,000 the right number?" an
 # experiment rather than an opinion.
@@ -605,17 +605,52 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
       && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" \
       && ( "${_chunk_headers:-0}" -ge 2 || ( "$_ck_fence" -eq 0 && "${_chunk_hunks:-0}" -ge 2 ) ) ]]; then
   _ck_dir=$(mktemp -d "${TMPDIR:-/tmp}/zuvo-adv-chunks.XXXXXX")
-  # Each chunk's review is a child run, started in the background and waited for, so an INT or TERM reaches
-  # these traps at once and stops the child (its traps stop its lanes) before its chunk dir is removed.
-  _ck_pid=""
-  # A signal can land between `… &` and `_ck_pid=$!` (bash runs a trap between two commands): with no pid saved
-  # yet, the child just started is the last background job, so it is stopped all the same.
+  # Each chunk's review is a child run, started in the background (several at once), so an INT or TERM
+  # reaches these traps at once and stops EVERY running child (their traps stop their lanes) before the chunk
+  # dir is removed. `jobs -p` rather than the saved pids: a signal can land between `… &` and `pids[i]=$!`
+  # (bash runs a trap between two commands), and the child just started is a job all the same.
   _ck_stop() {
-    local p="$_ck_pid"
-    [[ -n "$p" ]] || p="$(jobs -p 2>/dev/null | tail -1)"
-    [[ -n "$p" ]] || return 0
-    kill -TERM "$p" 2>/dev/null || true
-    wait "$p" 2>/dev/null || true
+    local p ps
+    ps="$(jobs -p 2>/dev/null)"
+    [[ -n "$ps" ]] || return 0
+    for p in $ps; do kill -TERM "$p" 2>/dev/null || true; done
+    for p in $ps; do wait "$p" 2>/dev/null || true; done
+  }
+  # _ck_merge_artifacts — the parts' own artifacts (art-<i>) into --artifact, in part order: the first
+  # replaces the file unless the caller asked to append, every later one goes in as an APPENDED PASS — the
+  # layout the sequential children produced, so gates counting `REVIEW BY:` lines read it unchanged. Under
+  # the artifact's lock (another run may append to the same file); a merge that cannot land is kept beside it.
+  _ck_merge_artifacts() {
+    local j part first=1 lk=0 merged="$_ck_dir/art-merged"
+    : > "$merged" || return 1
+    # The parts merged among themselves first, so a merge that cannot land still has one file to keep
+    # beside the artifact — the chunk dir, where the parts live, is removed when this run exits.
+    for (( j = 1; j <= _ck_i; j++ )); do
+      part="$_ck_dir/art-${j}"
+      [[ -s "$part" ]] || continue
+      if [[ "$first" -eq 1 ]]; then cat "$part" >> "$merged"; first=0
+      else { printf '\n=== APPENDED PASS %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "$part"; } >> "$merged"; fi
+    done
+    [[ "$first" -eq 0 ]] || return 0   # no part wrote an artifact: each said why on its own stderr
+    _ar_lock "$ARTIFACT_PATH.lock" "$(ar_env_int ZUVO_ARTIFACT_LOCK_WAIT 30 1)" || lk=$?
+    if [[ "$lk" -ne 0 ]]; then
+      _ar_keep_pass "$ARTIFACT_PATH" "$merged" "could not be locked"
+      return 1
+    fi
+    if [[ "$APPEND_ARTIFACT" == true && -s "$ARTIFACT_PATH" ]]; then
+      if ! { { cat "$ARTIFACT_PATH" && printf '\n=== APPENDED PASS %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+               && cat "$merged"; } > "$merged.all" && mv -f "$merged.all" "$merged"; }; then
+        _ar_keep_pass "$ARTIFACT_PATH" "$merged" "could not be read and appended to"
+        _ar_unlock "$ARTIFACT_PATH.lock"; return 1
+      fi
+    fi
+    # Staged beside the artifact first: the chunk dir may be on another filesystem, where mv is not atomic.
+    if ! { cp -f "$merged" "$ARTIFACT_PATH.merge.$$" 2>/dev/null && mv -f "$ARTIFACT_PATH.merge.$$" "$ARTIFACT_PATH" 2>/dev/null; }; then
+      rm -f "$ARTIFACT_PATH.merge.$$" 2>/dev/null
+      _ar_keep_pass "$ARTIFACT_PATH" "$merged" "could not be replaced"
+      _ar_unlock "$ARTIFACT_PATH.lock"; return 1
+    fi
+    _ar_unlock "$ARTIFACT_PATH.lock"
   }
   trap 'rm -rf "$_ck_dir"' EXIT
   trap '_ck_stop; exit 130' INT
@@ -708,8 +743,59 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   fi
   _ck_t0=$SECONDS
   _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_cut=0; _ck_nomat=0; _ck_late=0; _ck_i=0
+  # Parts start as soon as ANY slot frees and are collected in part order. Each writes its OWN artifact: a
+  # shared --artifact races, and part 1 (which replaces the file) finishing last would erase the others.
+  _ck_par="$(ar_env_int ZUVO_ADV_CHUNK_PARALLEL 3 1)"
+  _ck_pids=(); _ck_next=1
+  # _ck_collect — wait for the oldest uncollected part, print it, count its exit code.
+  _ck_collect() {
+    local j=$_ck_next p="${_ck_pids[$_ck_next]:-}" crc=0
+    _ck_next=$((_ck_next + 1))
+    [[ -n "$p" ]] || return 0   # not started (deadline): already counted
+    wait "$p" || crc=$?
+    _ck_pids[$j]=""
+    sed "s|^|  [chunk ${j}/${_ck_n}] |" "$_ck_dir/err-${j}" >&2 || true
+    if [[ "$crc" -eq 130 || "$crc" -eq 143 ]]; then
+      echo "CHUNKED: interrupted at chunk ${j}/${_ck_n}" >&2
+      _ck_stop
+      exit "$crc"
+    fi
+    # rc 5 (no material) is neither ok nor a failure: it means that part was never judged. It is
+    # counted on its own so the CHUNKED line cannot imply coverage, and it does NOT become the
+    # aggregate — one empty tail part must not mask the real verdict of the parts that WERE
+    # reviewed, and must not report them as unreviewed either.
+    if [[ "$crc" -eq 5 ]]; then
+      _ck_nomat=$((_ck_nomat + 1))
+    elif [[ "$crc" -eq 0 ]]; then
+      _ck_ok=$((_ck_ok + 1))
+    elif [[ "$crc" -eq 4 ]]; then
+      # Reviewed with part of its input cut: not a failure. Its 4 is the aggregate unless a part FAILED.
+      _ck_cut=$((_ck_cut + 1))
+    else
+      _ck_fail=$((_ck_fail + 1))
+      [[ "$crc" -gt "$_ck_rc" ]] && _ck_rc=$crc
+    fi
+    if [[ "$OUTPUT_FORMAT" != "json" ]]; then
+      printf '=== ADVERSARIAL CHUNK %d/%d ===\n' "$j" "$_ck_n"
+      cat "$_ck_dir/out-${j}"
+      printf '\n'
+    fi
+  }
+  # _ck_running — how many started parts are still running (`jobs -r` drops a part the moment it ends;
+  # `kill -0` would not, as an unreaped child still has its pid). bash 3.2 has no `wait -n`.
+  _ck_running() {
+    local run p j c=0
+    run=" $(jobs -rp 2>/dev/null | tr '\n' ' ')"
+    for (( j = 1; j <= _ck_i; j++ )); do
+      p="${_ck_pids[$j]:-}"
+      [[ -n "$p" && "$run" == *" $p "* ]] && c=$((c + 1))
+    done
+    echo "$c"
+  }
   for _ck in "$_ck_dir"/chunk-*; do
     _ck_i=$((_ck_i + 1))
+    while [[ "$(_ck_running)" -ge "$_ck_par" ]]; do sleep 1; done
+    _ck_pids[$_ck_i]=""
     _ck_env=()
     if [[ -n "$_ck_deadline" ]]; then
       _ck_left=$(( _ck_deadline - (SECONDS - _ck_t0) ))
@@ -724,46 +810,13 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     _ck_args=("${_ck_base_args[@]}")
     _ck_note=$(_ck_build_chunk_note "$_ck_fence" "$_ck_i" "$_ck_n" "$_ck_dir/cnote-${_ck##*/chunk-}")
     _ck_args+=(--context "${CONTEXT_HINT:+$CONTEXT_HINT }${_ck_note}")
-    if [[ -n "$ARTIFACT_PATH" ]]; then
-      _ck_args+=(--artifact "$ARTIFACT_PATH")
-      # chunk 1 respects the caller's append choice; later chunks always append
-      # so one artifact accumulates every chunk's REVIEW BY evidence.
-      if [[ "$_ck_i" -gt 1 || "$APPEND_ARTIFACT" == "true" ]]; then
-        _ck_args+=(--append-artifact)
-      fi
-    fi
-    _ck_child_rc=0
+    [[ -z "$ARTIFACT_PATH" ]] || _ck_args+=(--artifact "$_ck_dir/art-${_ck_i}")
     env ${_ck_env[@]+"${_ck_env[@]}"} ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
       < "$_ck" > "$_ck_dir/out-${_ck_i}" 2> "$_ck_dir/err-${_ck_i}" &
-    _ck_pid=$!
-    wait "$_ck_pid" || _ck_child_rc=$?
-    _ck_pid=""
-    sed "s|^|  [chunk ${_ck_i}/${_ck_n}] |" "$_ck_dir/err-${_ck_i}" >&2 || true
-    if [[ "$_ck_child_rc" -eq 130 || "$_ck_child_rc" -eq 143 ]]; then
-      echo "CHUNKED: interrupted at chunk ${_ck_i}/${_ck_n}" >&2
-      exit "$_ck_child_rc"
-    fi
-    # rc 5 (no material) is neither ok nor a failure: it means that part was never judged. It is
-    # counted on its own so the CHUNKED line cannot imply coverage, and it does NOT become the
-    # aggregate — one empty tail part must not mask the real verdict of the parts that WERE
-    # reviewed, and must not report them as unreviewed either.
-    if [[ "$_ck_child_rc" -eq 5 ]]; then
-      _ck_nomat=$((_ck_nomat + 1))
-    elif [[ "$_ck_child_rc" -eq 0 ]]; then
-      _ck_ok=$((_ck_ok + 1))
-    elif [[ "$_ck_child_rc" -eq 4 ]]; then
-      # Reviewed with part of its input cut: not a failure. Its 4 is the aggregate unless a part FAILED.
-      _ck_cut=$((_ck_cut + 1))
-    else
-      _ck_fail=$((_ck_fail + 1))
-      [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
-    fi
-    if [[ "$OUTPUT_FORMAT" != "json" ]]; then
-      printf '=== ADVERSARIAL CHUNK %d/%d ===\n' "$_ck_i" "$_ck_n"
-      cat "$_ck_dir/out-${_ck_i}"
-      printf '\n'
-    fi
+    _ck_pids[$_ck_i]=$!
   done
+  while [[ "$_ck_next" -le "$_ck_i" ]]; do _ck_collect; done
+  [[ -z "$ARTIFACT_PATH" ]] || _ck_merge_artifacts || exit 2
   # The aggregate: a part that FAILED (1, 2, 3, 124, 125 — no review of it at all) outranks a part reviewed
   # with its input cut (4): "completed over truncated input" must not hide a failed part.
   [[ "$_ck_fail" -gt 0 || "$_ck_cut" -eq 0 ]] || _ck_rc=4

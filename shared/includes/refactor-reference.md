@@ -365,7 +365,7 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 2. **Test handling:** Write/verify tests per test mode routing
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
 4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ40 AFTER (all 40 gates).
-5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size.
+5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size, at most 3 (`adversarial-loop.md` Step 5).
 6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs surfaced, fix them + update/add tests and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
 7. **Queue update:** Update line with CQ before/after and commit hash(es).
 8. **Backlog:** Persist ONLY out-of-scope-fence items and declined decisions — NOT mechanical bugs (those were fixed in step 6).

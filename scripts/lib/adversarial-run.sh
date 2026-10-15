@@ -149,7 +149,10 @@ command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install j
 # at 212s and 229s, just under the ceiling, and half the 20 kB+ cells timed out. The fleet log
 # agrees — in the 15-30 kB band, which is 54% of all runs, agy failed to answer 52% of the time.
 # A timeout is supposed to catch a wedged provider, not to cut off a working one mid-answer.
-DEFAULT_TIMEOUT=500
+DEFAULT_TIMEOUT=300
+# 300, the owner's ceiling: a pass waits for its slowest lane, and holding every answered lane for one
+# that rarely answers is paid on every pass of every agent. The 500s reasoning below is kept because it
+# names the lanes 300 now cuts short.
 # Flat, with no heavy-mode bump on top. The bump used to take those modes to 360 — below the
 # base — and raising it proportionally would put the inner timeout ABOVE the outer `timeout`
 # wrappers those very modes are invoked with, so the outer kill would fire first and the run

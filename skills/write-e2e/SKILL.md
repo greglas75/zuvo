@@ -199,8 +199,9 @@ authorization within that policy; session restrictions take precedence. Run each
 and report its actual independence or an unmet requirement.
 
 Not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release). Wait for complete
-output, then act on findings: **CRITICAL** — fix immediately regardless of confidence, verifying against the code
-first when confidence is low; **WARNING** — fix if localized (< 10 lines), else backlog with file:line; **INFO** —
+output, then act on findings: **CRITICAL** — confirm first (two or more lanes in its `.agreement`
+group, or your own check against the code), then fix immediately; an unconfirmed single-lane CRITICAL is triaged as a
+WARNING (`adversarial-loop.md` Step 4); **WARNING** — fix if localized (< 10 lines), else backlog with file:line; **INFO** —
 record, max 3. Confidence measures how sure the reviewer is, not how important the issue is, and "pre-existing" is no
 reason to skip a finding in a file this run is already editing.
 

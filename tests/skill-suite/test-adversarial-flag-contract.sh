@@ -450,9 +450,9 @@ case "$_canary_msgs" in *"canary.md:2"*) bad "(d) canary: the canonical pair (li
   *) pass "(d) canary: the canonical pair passes" ;; esac
 
 check_appends d_bad "$ROOT"/skills/*/SKILL.md "$ROOT"/skills/*/agents/*.md "$ROOT"/shared/includes/*.md
-# Today's docs hold 4 such lines; a scan that finds none is broken, not clean.
-if [ "$_d_lines" -lt 3 ]; then
-  bad "(d) saw only $_d_lines documented --append-artifact lines (floor 3) — the scan is broken, not the docs"
+# Today's docs hold 2 such lines (zuvo:review's fix-delta passes); a scan that finds none is broken, not clean.
+if [ "$_d_lines" -lt 2 ]; then
+  bad "(d) saw only $_d_lines documented --append-artifact lines (floor 2) — the scan is broken, not the docs"
 elif [ "$_d_fails" -eq 0 ]; then
   pass "(d) all $_d_lines documented appends pass --artifact alongside it"
 fi

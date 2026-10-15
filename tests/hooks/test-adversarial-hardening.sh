@@ -1275,7 +1275,9 @@ same "F28 …while a lane that failed fast still hands over to the next (exit 0)
     i=1; while [ "$i" -le 40 ]; do printf '+const %s_%d = %d;\n' "$f" "$i" "$i"; i=$((i + 1)); done
   done; } > "$T/f28-three.diff"
 mock mock-ten 'sleep 10; printf "%s\n" "{\"findings\": []}"'
-rc="$(LANES=mock-ten STDIN_FILE="$T/f28-three.diff" drive f28-chunk ZUVO_ADV_MAX_CHARS=2000 ZUVO_RUN_DEADLINE=35 -- --single)"
+# One part at a time: a part is handed what is left of the deadline when it STARTS, so only a part queued
+# behind others can find it spent (in parallel, the first wave starts together).
+rc="$(LANES=mock-ten STDIN_FILE="$T/f28-three.diff" drive f28-chunk ZUVO_ADV_MAX_CHARS=2000 ZUVO_ADV_CHUNK_PARALLEL=1 ZUVO_RUN_DEADLINE=35 -- --single)"
 same "F28 a chunked run under ZUVO_RUN_DEADLINE=35 with 10 s parts: partial coverage (exit 4)" "4" "$rc"
 has "F28 …the parts past the budget are not started, and said" "not started" "$(err f28-chunk)"
 
@@ -1561,7 +1563,7 @@ fi
 # --help said the per-provider timeout defaults to 400; it is 500.
 rc="$(drive f35-help -- --help)"
 same "F35 --help exits 0" "0" "$rc"
-has "F35 --help states the real default timeout" "Per-provider timeout in seconds (default: 500" "$(out f35-help)"
+has "F35 --help states the real default timeout" "Per-provider timeout in seconds (default: 300" "$(out f35-help)"
 # A model name read back from the lane's file went out unvalidated: a tab or newline in it splits the
 # ledgers' tab-separated rows. It falls back to the configured model instead.
 f35_out="$(bash -c '. "$1/adversarial-providers.sh" || exit 9; JSON_TMPDIR="$(mktemp -d)"
@@ -2071,7 +2073,8 @@ fi
 if only F54; then
 echo "=== F54 a chunk's child review killed by TERM stops the chunked review there (mutation) ==="
 # A part whose child died of TERM (an orchestrator stopping it, a process group reaped) is an interruption, not a
-# failed part: the parent says where and exits 143, and the next part is never started. The driver runs through
+# failed part: the parent says where and exits 143, and a part waiting for a slot is never started (one slot
+# here, ZUVO_ADV_CHUNK_PARALLEL=1; with more, parts already running are stopped by _ck_stop). The driver runs through
 # a wrapper that sources it, so the wrapper is the "$0" each part starts as; as a part it records which one it
 # is, and part 1 kills itself with TERM.
 F54W="$T/f54/adversarial-review.sh"; mkdir -p "$T/f54"; : > "$T/f54-parts.log"
@@ -2089,11 +2092,16 @@ chmod +x "$F54W"
     printf 'diff --git a/%s.js b/%s.js\n--- a/%s.js\n+++ b/%s.js\n@@ -1,40 +1,40 @@\n' "$n" "$n" "$n" "$n"
     for i in $(seq 1 40); do printf '+const %s_%d = %d; // a line long enough to fill the cap\n' "$n" "$i" "$i"; done
   done; } > "$T/f54-chunks.txt"
-rc="$(DRIVE_AR="$F54W" STDIN_FILE="$T/f54-chunks.txt" drive f54 ZUVO_ADV_MAX_CHARS=2000 -- --single)"
+rc="$(DRIVE_AR="$F54W" STDIN_FILE="$T/f54-chunks.txt" drive f54 ZUVO_ADV_MAX_CHARS=2000 ZUVO_ADV_CHUNK_PARALLEL=1 -- --single)"
 has "F54 premise: the review was chunked" "CHUNKED INPUT" "$(err f54)"
 same "F54 part 1's child died of TERM: the run exits 143" "143" "$rc"
 has "F54 …saying where it stopped" "CHUNKED: interrupted at chunk 1/2" "$(err f54)"
 same "F54 …and part 2 is never started" "1/2" "$(tr '\n' ' ' < "$T/f54-parts.log" | sed 's/ $//')"
+# Parallel (the default): both parts start together; part 1's TERM still ends the run with 143, said.
+: > "$T/f54-parts.log"
+rc="$(DRIVE_AR="$F54W" STDIN_FILE="$T/f54-chunks.txt" drive f54p ZUVO_ADV_MAX_CHARS=2000 -- --single)"
+same "F54 in parallel: part 1's TERM still ends the run with 143" "143" "$rc"
+has "F54 in parallel: …saying where it stopped" "CHUNKED: interrupted at chunk 1/2" "$(err f54p)"
 fi
 
 if only F55; then
