@@ -845,11 +845,14 @@ LIST
    - **MUST-FIX** → fix it in this run, as a separate commit ahead of the release commit, then
      re-run the adversarial pass (step 4) so the proof covers the fixed blobs. Content-keyed
      coverage is per-blob: a fix after the pass leaves the pushed content unreviewed.
-   - **RECOMMENDED** → fix if it is inside this release's fence; otherwise record it with
-     `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source ship --file "$F" --line <n> [--anchor "$A"] --title "$T"`
-     (`backlog-protocol.md` "Filing from a skill", **Generic write**; `<C>` is `CQ`, or `BUG` only when
-     it names the input and the wrong output; pass `--anchor "$A"` only for a BUG, copied from the cited
-     line ("The location rule"), and assign `"$A"` only when you pass `--anchor`), and say which you did.
+   - **RECOMMENDED** → fix if it is inside this release's fence; otherwise, outside the fence, record it with
+     `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:ship --file "$F" --line <n> [--anchor "$A"] --title "$T"`
+     (`backlog-protocol.md` "Filing from a skill", a finding in a file the run is not editing;
+     `drive-by-findings.md`), and say which you did. `<C>` is its drive-by tag (SEC, BUG, SIZE, DUP,
+     CPLX, PERF, DEAD or READ); one with no tag is reported, not recorded. An in-fence finding ship
+     records (the NIT below) is `CQ`, or `BUG` only when it names the input and the wrong output.
+     Pass `--anchor "$A"` only for a SEC or BUG, copied from the cited line ("The location rule"), and
+     assign `"$A"` only when you pass `--anchor`.
    - **NIT** → every NIT above confidence 25 is recorded, never ignored silently: `~/.zuvo/backlog-add --repo "$R" --class CQ --conf <N> --source ship --file "$F" --line <n> --title "$T"`
      (the protocol table's NIT row; the findings ledger keeps it). A NIT at 0-25 is discarded, as
      review's Phase 2 disposition says.
@@ -1215,7 +1218,19 @@ the gate is content-keyed on the production files, which already sit at their fi
 
 ### Step 1: Stage files
 
-Stage **only** files that were actually generated or modified:
+**Before staging the release files: the closing commit for `backlog-add`'s writes.** Do this first,
+before any `git add` below. The run's last `backlog-add` call is behind it (Phase 1 triage, the
+Phase 2 dispositions and the review ship dispatched), so make the one closing commit
+`chore(backlog): record findings of ship run` now, as `backlog-protocol.md` "Filing from a skill",
+**Committing what backlog-add wrote** says, against the snapshot from Phase 0 step 5 ("Backlog
+snapshot"). Its paths are the `wrote=` paths this run printed PLUS every path on the dispatched
+review's `Backlog writes:` line (a review invoked by ship stages nothing itself). It commits with a
+pathspec, `R='<absolute repo root>'; git -C "$R" add -- <path> … && git -C "$R" commit -m "chore(backlog): record findings of ship run" -- <path> …`,
+so it carries those paths only and never a staged release file. It comes before the release commit,
+so the release tag names the release commit and the push carries both. On PR flow, where there is no
+release commit or tag, it lands on the branch the same way, before Step 4 pushes the branch for the PR.
+
+Then stage **only** files that were actually generated or modified:
 
 ```bash
 # Only if bump was performed (NOT --no-bump AND NOT PR flow — see Phase 3 skip gate):
@@ -1231,16 +1246,6 @@ git add CHANGELOG.md
 ```
 
 **NEVER** use `git add -A` or `git add .`.
-
-**Before staging the release files: the closing commit for `backlog-add`'s writes.** The run's last
-`backlog-add` call is behind it (Phase 1 triage, the Phase 2 dispositions and the review ship
-dispatched), so make the one closing commit `chore(backlog): record findings of ship run` now, as
-`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says, against the
-snapshot from Phase 0 step 5 ("Backlog snapshot"). Its paths are the `wrote=` paths this run printed
-PLUS every path on the dispatched review's `Backlog writes:` line (a review invoked by ship stages
-nothing itself). It comes before the release commit, so the release tag names the release commit and
-the push carries both. On PR flow, where there is no release commit or tag, it lands on the branch the
-same way, before Step 4 pushes the branch for the PR.
 
 ### Step 2: Commit
 

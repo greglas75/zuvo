@@ -117,8 +117,10 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                "All backlog writes happen AFTER Phase 4",
                                "<B-id> NO_VALID_DEFER_REASON",
                                "Record applied vs deferred (backlog IDs)"],
-    # ship let a NIT be dropped silently (D7), and its report line counted hand-backlogged findings
-    "skills/ship/SKILL.md": ["silently is fine", "<n> backlogged"],
+    # ship let a NIT be dropped silently (D7), wrote carried failures and RECOMMENDED by hand, and its report
+    # line counted hand-backlogged findings
+    "skills/ship/SKILL.md": ["<n> backlogged", "backlog or ignore", "record it in `memory/backlog.md`",
+                             "silently is fine", "write them to `memory/backlog.md`"],
 }
 
 # {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
