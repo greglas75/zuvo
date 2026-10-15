@@ -62,7 +62,10 @@ def reset_budget() -> None:
 
 
 def available() -> str | None:
-    """Why rerank() would send nothing before reaching the cache: "disabled", "no-key" or None."""
+    """The refusal rerank() logs before its cache: "disabled", "no-key", or None to go on.
+
+    Budget, call-cap and URL refusals are per call and stay inside rerank(); None is not a promise to send.
+    """
     if os.environ.get("ZUVO_RERANK") == "0":
         return "disabled"
     return "no-key" if rio.key() is None else None

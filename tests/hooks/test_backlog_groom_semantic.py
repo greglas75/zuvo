@@ -297,6 +297,23 @@ class PairTests(SemanticCase):
         self.assertEqual(err.getvalue(), "backlog-groom: semantic pass has no client: SyntaxError\n")
         self.assertEqual(stub.requests, 0)
 
+    def test_an_older_client_without_available_is_a_no_client_skip(self) -> None:
+        # Defect: ~/.zuvo holding a pre-available() zuvo_rerank.py beside a new groom raised AttributeError
+        # outside the client guard instead of skipping the pass.
+        old = tempfile.mkdtemp(prefix="groom-old-")
+        self.addCleanup(shutil.rmtree, old, True)
+        Path(old, "zuvo_rerank.py").write_text("def rerank(*a, **k):\n    return None\n", encoding="utf-8")
+        stub = self.stub()
+        os.environ["ZUVO_RERANK_BASE_URL"] = stub.base_url
+        err = io.StringIO()
+        with mock.patch.dict(sys.modules), mock.patch.object(sys, "path", [old, *sys.path]), \
+                contextlib.redirect_stderr(err):
+            sys.modules.pop("zuvo_rerank", None)
+            out = self.report(BACKLOG)
+        self.assertEqual(semantic_lines(out), ["SEMANTIC_DUPLICATES=skipped:no-client"])
+        self.assertEqual(err.getvalue(), "backlog-groom: semantic pass has no client: AttributeError\n")
+        self.assertEqual(stub.requests, 0)
+
     def test_a_failing_api_is_a_skip_and_stops_after_breaker_requests(self) -> None:
         # Defect: every request fails and the report says "no duplicates"; or a dead API still costs one
         # timed-out request per entry, or every worker already in flight, instead of tripping the breaker.

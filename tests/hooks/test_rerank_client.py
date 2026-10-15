@@ -329,15 +329,19 @@ class ClientTest(Base):
         self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
         self.assertEqual((stub.requests, self.last_outcome()), (0, "disabled"))
 
-    def test_available_names_the_refusal_rerank_would_log(self) -> None:
-        # Groom skips on available(); drift from rerank()'s own checks would send or skip wrongly.
-        cases = [("key present", {}, None),
-                 ("no key", {"OPENROUTER_API_KEY": ""}, "no-key"),
+    def test_available_names_the_refusal_rerank_logs(self) -> None:
+        # Groom skips on available(); a refusal named unlike rerank()'s log would skip or send wrongly.
+        cases = [("no key", {"OPENROUTER_API_KEY": ""}, "no-key"),
                  ("kill switch beats a key", {"ZUVO_RERANK": "0"}, "disabled"),
                  ("kill switch without a key", {"ZUVO_RERANK": "0", "OPENROUTER_API_KEY": ""}, "disabled")]
         for name, env, expected in cases:
             with self.subTest(name), mock.patch.dict(os.environ, env):
-                self.assertEqual(rr.available(), expected)
+                self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
+                self.assertEqual((rr.available(), self.last_outcome()), (expected, expected))
+
+    def test_available_lets_a_keyed_caller_go_on(self) -> None:
+        # Catches available() refusing a configured caller, which would silently switch groom's pass off.
+        self.assertIsNone(rr.available())
 
     def test_spent_budget_stops_further_calls(self) -> None:
         # Without the budget a runaway groom pass bills every entry pair.
