@@ -21,7 +21,7 @@
 > CRITICALs count as confirmed (≥2 lanes in a group): fewer unrelated findings will falsely confirm one,
 > and more reworded ones will truly confirm one.
 >
-> **Owner decision D3 (now only egress):** issue text (which can quote client code) goes to OpenRouter →
+> **Owner decision D3 (resolved 2026-10-15: on wherever a key is present, TGM repos included):** issue text (which can quote client code) goes to OpenRouter →
 > Voyage when a key is present; `ZUVO_RERANK=0` opts out.
 >
 > **Tests:** the driver's hook suites run locally (`bash tests/hooks/<suite>.sh`; runbook §5 — farm
