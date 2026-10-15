@@ -184,7 +184,9 @@ QUOTE_ONLY_VERB = re.compile(r"(?i)\s*(?:%s|%s)\w*\s*" % (VERB_PATH, VERB_DEST))
 MASK = re.compile(r"\x00(\d+)\x00")
 ITEM_START = re.compile(r"^(?:[-*+]|\d+[a-z]?[.)]|\|)")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-FENCE_OPEN = re.compile(r"^(```|~~~)")
+# The whole opening run: a ```` fence is not closed by a ```python line inside it.
+FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})")
+FENCE_OPEN_PREFIX = re.compile(r"^(```|~~~)")  # the retired reading, kept for its mutant only
 TABLE_SEP = re.compile(r"^\s*\|[\s:|-]+\|?\s*$")
 SENTENCE_END = re.compile(r"[.!?](?=\s)|\s\|\s")
 # An abbreviation's full stop ends no sentence: "Add the finding (e.g. src/x.py) to the backlog." is one.
@@ -196,6 +198,19 @@ SOURCE_TOKEN = re.compile(r"--source(?![-\w])(?:=|\s+)(?:\"([^\"\n]*)\"|'([^'\n]
 SOURCE_OK = re.compile(r"(?:drive-by:)?[a-z0-9-]+")
 SOURCE_PLACEHOLDERS = {"<skill>", "drive-by:<skill>", "<src>"}
 LEGACY_SOURCE = re.compile(r"(?i)--source zuvo:|source:\**\s*`?test-audit/|source:\**\s*`manual`|formerly `debug/")
+
+
+def fence_opening(s: str, prefix: bool = False) -> Optional[str]:
+    """The opening run of a fence line (stripped), or None."""
+    m = (FENCE_OPEN_PREFIX if prefix else FENCE_OPEN).match(s)
+    return m.group(1) if m else None
+
+
+def fence_closes(s: str, fence: str, prefix: bool = False) -> bool:
+    """A fence closes only on its own character, at least as long as its opener, with nothing after it."""
+    if prefix:
+        return s.startswith(fence)
+    return re.fullmatch(r"%s{%d,}\s*" % (re.escape(fence[0]), len(fence)), s) is not None
 
 
 @dataclass(frozen=True)
@@ -223,6 +238,7 @@ class Cfg:
     quote_mode: str = "line"
     cite_tier_a: bool = False
     allow_unit_wide: bool = False
+    fence_prefix: bool = False
 
 
 @dataclass(frozen=True)
@@ -333,14 +349,14 @@ def split_units(text: str, cfg: Cfg) -> List[Unit]:
         s = line.strip()
         if fence is not None:
             cur.append((n, line))
-            if s.startswith(fence):
+            if fence_closes(s, fence, cfg.fence_prefix):
                 flush(True)
                 fence = None
             continue
-        m = FENCE_OPEN.match(s)
-        if m:
+        opener = fence_opening(s, cfg.fence_prefix)
+        if opener:
             flush()
-            fence = m.group(1)
+            fence = opener
             cur.append((n, line))
             continue
         if not s:
@@ -485,19 +501,20 @@ def scan_text(text: str, cfg: Cfg) -> Tuple[List[Unit], List[Flag]]:
 
 def sections(text: str) -> Dict[str, Tuple[int, int]]:
     """Each heading's text -> (first line, last line) up to the next heading of the same or higher level.
-    A fence closes only on its own opener, so a ~~~ inside a ``` block toggles nothing."""
+    A fence closes only on its own opening run, so a ~~~ inside a ``` block and a ```python inside a ````
+    block toggle nothing."""
     lines = text.split("\n")
     heads: List[Tuple[int, int, str]] = []
     fence: Optional[str] = None
     for n, ln in enumerate(lines, 1):
         s = ln.strip()
         if fence is not None:
-            if s.startswith(fence):
+            if fence_closes(s, fence):
                 fence = None
             continue
-        opener = FENCE_OPEN.match(s)
+        opener = fence_opening(s)
         if opener:
-            fence = opener.group(1)
+            fence = opener
             continue
         m = HEADING.match(ln)
         if m:
@@ -712,7 +729,18 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
      "```\n~/.zuvo/backlog-add --class CQ --conf 60 --file a.py --line 1 --title t --source \"Zuvo Review\"\n```",
      "G6:bad-source"),
     ("a legacy source token", "Source: `manual`", "G6:legacy-source"),
+    ("a ```python line inside a ```` fence closes it early, so the prose after the real close is read as "
+     "fenced (one sentence per line) and the hand write after a citation goes unflagged",
+     "````md\n```python\nx = 1\n````\nCall `backlog-add` for BUG. Otherwise add it to backlog by hand.",
+     "B:verb-to-backlog"),
+    ("a ```python line inside a ```` fence closes it early, so a citation on another line of the fence "
+     "excuses the fenced hand write",
+     "````md\n```python\n~/.zuvo/backlog-add --class CQ --conf 60 --source review --file a.py --line 1 "
+     "--title t\nthen append the row to memory/backlog.md by hand\n```\n````", "B:verb-before-backlog-md"),
     # True negatives, each named by the false positive it would be.
+    ("a ```python line inside a ```` fence closing it early, so its one-line citation no longer excuses "
+     "the sentence on that line",
+     "````md\n```python\nx = 1\nCall `backlog-add` for BUG. Otherwise add it to backlog.\n```\n````", None),
     ("the pinned 'no backlog' phrase flagged as a hand write", "no cap, no backlog", None),
     ("a negation right before the verb flagged as a hand write", "never backlog it", None),
     ("a negated noun phrase flagged as a hand write", "Never a silent backlog row.", None),
@@ -799,6 +827,7 @@ STRUCTURAL: List[Tuple[str, Cfg]] = [
     ("citation-exempts-tier-a", replace(REAL, cite_tier_a=True)),
     ("table-header-case-sensitive", replace(REAL, table_icase=False)),
     ("g6-reads-quote-stripped-text", replace(REAL, g6_raw=False)),
+    ("fence-closes-on-any-prefix", replace(REAL, fence_prefix=True)),
 ]
 
 
@@ -904,6 +933,8 @@ def verdict_logic_checks() -> None:
         (ok if got == want else no)(f"(G2u) {why}: {got} FAIL(s), expected {want}")
     heads = set(sections("```\n~~~\n# not a heading\n~~~\n```\n# Real\n"))
     (ok if heads == {"Real"} else no)(f"(G2u) a ~~~ inside a ``` fence toggles nothing: headings {sorted(heads)}")
+    nested = set(sections("````\n```python\n# not a heading\n```\n````\n# Real\n"))
+    (ok if nested == {"Real"} else no)(f"(G2u) a ```python inside a ```` fence closes it not: {sorted(nested)}")
     n_units = len(split_units("+ one\n+ two\n1) three\n2) four", REAL))
     (ok if n_units == 4 else no)(f"(G2u) `+` and `N)` items each start a unit: {n_units} of 4")
 
