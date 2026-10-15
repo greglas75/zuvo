@@ -46,4 +46,9 @@ fi
 
 # zuvo work-gate — ALWAYS; fail-open when absent.
 [ -x "$D/refactor-safety-gate.sh" ] && { "$D/refactor-safety-gate.sh" pre-commit </dev/null || rc=1; }
+
+# Backlog hand-append WARNING — last, and its exit status is deliberately discarded: it prints and
+# must never decide whether a commit happens (it would otherwise be the only non-gate on this path
+# able to fail a commit, over a backlog line). A missing script is a no-op like every gate above.
+[ -x "$D/backlog-hand-append-warn.sh" ] && "$D/backlog-hand-append-warn.sh" </dev/null || true
 exit $rc

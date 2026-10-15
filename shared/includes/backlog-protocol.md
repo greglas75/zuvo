@@ -311,6 +311,7 @@ For each finding that should be tracked:
    | `OPEN <key> <id> backlog.md:<line>` | 10 | Update THAT entry in place — bump `Seen`/`conf:`, update the date, raise the severity if the new evidence is worse, add the new source. Never a second entry. |
    | `ARCHIVED <key> <id> backlog-done.md:<line> section="<heading>"` | 11 | **REGRESSION, not a new finding.** Re-open under the SAME id with the back-link (form below). Never mint a new id. |
    | `ABSENT <key>` | 0 | Genuinely new. Append one entry with a fresh id. |
+   | `NO-SIGNATURE <query>` | 13 | The candidate has no words to key on — it is empty, or everything in it was stripped as a resolution marker (`**Closed:** 2026-08-18.`). Nothing was looked up. Fix the candidate text, or pass the B-id. Filing it as new would create an entry the next lookup cannot find either. |
 
    If `~/.zuvo/` is absent (only the Claude Code install ships it), there is no `backlog-add` either,
    so a finding is reported as not persisted rather than appended. The question "is this already

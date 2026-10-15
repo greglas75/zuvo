@@ -248,6 +248,9 @@ When adding (interactive or from description):
    - `ARCHIVED` (exit 11): **REGRESSION.** Re-open under the SAME id with the back-link the protocol
      defines. Never mint a new id; never file it as a fresh finding.
    - `ABSENT` (exit 0): append a new entry with a fresh id.
+   - `NO-SIGNATURE` (exit 13): the candidate keys on nothing — empty, or stripped to nothing as
+     resolution markers. Not a verdict about the backlog: nothing was looked up. Rewrite the
+     candidate so it names the file and the defect, then run the lookup again.
    Checking only `backlog.md` is not a check — an entry that exists solely in `backlog-done.md`
    reads as ABSENT and comes back as new work.
 6. Confirm what was added

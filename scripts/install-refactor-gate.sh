@@ -18,7 +18,7 @@ import tempfile
 # tests exercise those actual files. Keep identities here because installed copies
 # of this helper do not carry the source tree.
 DISPATCHERS = {
-    "pre-commit": "8f25f773333a7260941ed570c563fd84ebf4d766e92fc8d59bdd8dcd14270128",
+    "pre-commit": "2f4e9512e11d9558bf56df3535e23eb968a4a76dac6f7a6ed47d22f50f805f43",
     "pre-push": "b6c1d00a0f9f16e300e9d9750a09df109ec42977cd00b669f59264b2d2be5416",
 }
 

@@ -5049,7 +5049,7 @@ confidence:98 source:self-account of the first live verify run 2026-10-06
 - B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
   collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
 
-- [ ] B-20261009-DEDUP-SIGNATURE-ONLY [P2][process][conf 95]
+- [x] B-20261009-DEDUP-SIGNATURE-ONLY [OBSOLETE 2026-10-15] [P2][process][conf 95]
 **Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|signature-match-only
 **Source:** owner's question 2026-10-09 — "czy agent przed dodaniem wpisu sprawdza czy podobny nie istnieje?"
 **What:** `skills/backlog/SKILL.md` "Adding Items" step 5 mandates `backlog-archive.py lookup` before an add, but the
@@ -5065,8 +5065,69 @@ symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone
 **Fix:** add a similarity tier under the exact signature — same cited path (any basename match) plus a token-overlap or
 embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
 agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
+**Resolution 2026-10-15 — NOT the similarity tier this asked for; the write path stopped needing one.** `backlog-add`
+(landed 2026-10-14) keys a finding on `CLASS | file | anchor`, where the anchor is text copied from the cited line, so
+"paraphrased titles collapse" by construction instead of by scoring. Probed on a scratch repo, two sessions filing the
+same defect in completely different words:
+  - same `--anchor`, titles sharing no content word -> `BUMPED … seen=2`, sources merged into the one entry
+  - same `--anchor`, `--line` off by one            -> `BUMPED … seen=3` (the anchor is the identity, not the line)
+  - DIFFERENT `--anchor` line, both legitimately within the ±3 the command allows -> `ACCEPTED` a second entry
+So the filed symptom ("dedup misses the same problem described by another session — the normal case") is gone for
+everything written through `backlog-add`, and adding a token-overlap tier now would introduce a SECOND notion of
+identity next to the structural one. What is left is narrower than what was filed and is tracked separately as
+B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS. The free-text `lookup` keeps its exact-signature behaviour, which is correct for
+what it is now: the resolver for legacy and hand-written entries, where there is no anchor to key on.
 
-- [ ] B-20261009-DEDUP-EMPTY-QUERY-OPEN [P2][correctness][conf 95]
+- [ ] B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS [P4][process][conf 85]
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_admit.py|fingerprint|anchor-choice-splits-identity
+**Source:** probing `backlog-add` while closing B-20261009-DEDUP-SIGNATURE-ONLY, 2026-10-15.
+**What:** `fingerprint` is `CLASS | file | anchor`, and the anchor is free choice within ±3 lines of `--line`. Two
+sessions that pick DIFFERENT lines of the same defect therefore file two entries. Measured on a scratch repo: anchor
+`if (sum > limit) {` -> `B-cart-BUG-37093f54`; anchor `return 0;` three lines down, same defect, same class, same file
+-> `ACCEPTED B-cart-BUG-021ef39e`. Much narrower than the wording problem it replaces (same wording no longer splits,
+same line no longer has to match), and it needs a measurement before a fix: how often two sightings of one defect pick
+different anchors is unknown, and the ledger now records enough to answer it.
+**Measured 2026-10-15 (owner asked for the decision-model route).** OpenRouter's Decisions API answers exactly this
+question and returns a PROBABILITY, not a label: `{"choice":"DUP","probabilities":{"DUP":0.76,...},"confidence":0.52}`,
+input-priced with output free. It is NOT reachable through `chat/completions` (the API says so and refuses); the call is
+`POST /api/alpha/decisions` with `{model, state, questions:{<name>:{type:"choice", instructions, criteria}}}`. Eleven
+models answer there today (openrouter.ai/rankings/decisions). Scored over `tests/lib/dedup-corpus.py` — positives: two
+revisions of ONE B-id with the id stripped from both sides, negatives: two different ids citing the same file:
+
+    model                              AUC    bal.acc@0.5   best        $/108 pairs   median
+    perplexity/pplx-decider-v1.1-27b   0.919      0.844      0.856@0.55    0.00053      339ms
+    ~typesafe/jev-latest               0.854      0.739      0.789@0.35    0.00214      281ms
+    nace-ai/drex-v2.0                  0.831      0.722      0.778@0.40    0.00117      566ms
+    inception/mercury-decide           0.825      0.683      0.756@0.30    0.00047      330ms   (:free variant exists)
+    microsoft/microsoft-decision-1     0.808      0.722      0.772@0.90    0.00087      328ms
+    openai/gpt-6-luna-decisions        0.765      0.656      0.722@0.15    0.00285      191ms
+
+pplx-decider held across three corpus versions (0.923, 0.913, 0.919), which is the only reason it is named as the pick;
+on the first two draws typesafe/jev-1.13 scored 0.837 and clef / drex-v1.5 / clef-flash came in at 0.767 / 0.765 / 0.713.
+For scale, the words-half this fleet retired scored AUC 0.632 on its own corpus. The TRIVIAL baseline is printed by the
+harness rather than asserted: only 3 of 18 positives share a cited path while every negative does by construction, so
+"same path => duplicate" scores 0.083 here — a model earns its number against that, not against a coin flip.
+LIMITS, binding: 18 positives, they are REVISIONS of one entry rather than two independent filings, and the similarity
+ceiling keeps only low-overlap pairs, so this is a hard subset and a lower bound. The ledger's `seen>1` will give real
+pairs once entries accumulate.
+The first version of these numbers was WRONG in four ways the cross-model review of this branch caught, and they are
+listed because the corrected table is only trustworthy if the corrections are: ordinal ids (`B-70` is a position, not an
+identity) manufactured positives; `git log` is newest-first, so the "newest revision" the negatives were built from was
+the oldest draft; negatives were grouped by BASENAME, pairing `src/index.ts` with `tests/index.ts`; and a pair whose own
+text says "dup of B-…" shipped as a NEGATIVE because `deident` had already erased the evidence.
+**Fix — staged, and nothing changes behaviour before stage 3.**
+1. ADVISORY ONLY: when the structural key MISSES, `backlog-add` asks `perplexity/pplx-decider-v1.1-27b` about the
+   candidate against same-file, same-class findings from the ledger and prints `SIMILAR F-… p=0.87` on stderr. Writes
+   nothing, decides nothing. Off unless `ZUVO_BACKLOG_SIMILAR=1` and a key is present; fail-open on any error, with the
+   call made BEFORE the lock is taken (the lock budget is 30 s and a network call must never sit inside it).
+2. MEASURE IN THE WILD: record each verdict and what the caller did next, so precision is computed on real pairs
+   instead of this proxy corpus.
+3. ACT, only if stage 2 supports it: at p above the measured threshold, BUMP instead of filing, recording
+   `dedup: <model> p=…` on the entry so it is auditable and reversible.
+   The deterministic `CLASS | file | anchor` key stays the identity throughout: the model is consulted only on a miss,
+   and never gets to overrule a structural match. | severity: low | category: Tooling | conf: 85
+
+- [x] B-20261009-DEDUP-EMPTY-QUERY-OPEN [FIXED 4505da07] [P2][correctness][conf 95]
 **Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
 **Source:** probing the dedup path for the question above, 2026-10-09.
 **What:** an empty or whitespace-only query returns a false positive pointing at an unrelated, already-DONE section:
@@ -5079,8 +5140,21 @@ overwrite a closed, unrelated entry. Any candidate that is only a path, only pun
 `strip_resolution_markers` lands here.
 **Fix:** `lookup` refuses an empty normalized signature with its own exit code (not 0/10) and a message naming what was
 stripped; a test seeds "", "   ", a path-only query and a markers-only query and asserts none of them returns OPEN.
+**Resolution 4505da07:** both halves, because the filed symptom was one key rather than one command. `normalize_signature`
+returns `"|"` for anything that strips to nothing, so EVERY such line hashed to `fp:3eb416223e9e` — measured across
+`~/DEV` 2026-10-13: 11 of 58043 entries, 8 of them in ONE archive (tgm-survey-platform). A fixture of two unrelated
+resolution lines, one per file, also makes `verify` report a namespace VIOLATION, and `append-runlog` runs `verify` as a
+BLOCKING gate, so the collision cost more than the reported lookup did. `entry_key` now keys a no-content signature off
+the raw line (same line = same entry, so archiving stays idempotent; two different lines stop being one), and `lookup`
+refuses such a candidate before reading the files: verdict `NO-SIGNATURE`, exit **13** (12 is `status`'s OVERDUE), naming
+what was stripped. Documented in `backlog-protocol.md`, `skills/backlog/SKILL.md` and `drive-by-findings.md`, with a test
+that fails if the code answers something the contract does not carry. Tests written first and seen red (12 FAIL).
+H10 blocked the key rotation, as designed: rather than refreshing the frozen snapshot, its oracle gained a PREDICATE for
+exactly this case (identical in every other field, frozen side keyed on nothing, new keys distinct), proven narrow
+against a mutant that rotates every key — real module `OK 878 (1 no-signature key(s) rotated)`, mutant still FAILS.
+Also removed `[--json]` from the usage header: argparse rejects it (`unrecognized arguments: --json`).
 
-- [ ] B-20261009-DEDUP-ADD-MODE-ONLY [P3][process][conf 85]
+- [x] B-20261009-DEDUP-ADD-MODE-ONLY [FIXED 55d4b354] [P3][process][conf 85]
 **Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
 **Source:** owner's question 2026-10-09, same probe.
 **What:** the dedup check lives only in the SKILL's `add` mode. The actual practice — every `docs(backlog):` commit in this
@@ -5091,6 +5165,17 @@ mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-c
 `memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
 a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
 B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
+**Resolution 55d4b354:** `hooks/backlog-hand-append-warn.sh`, chained from the global `git-dispatch/pre-commit`. Both
+stated dependencies were met first: the false OPEN is fixed (B-20261009-DEDUP-EMPTY-QUERY-OPEN), and the similarity tier
+turned out not to be needed, because `backlog-add` keys on `CLASS | file | anchor` (B-20261009-DEDUP-SIGNATURE-ONLY,
+OBSOLETE). WARNS, NEVER BLOCKS — the dispatcher discards its status with `|| true`, so a future non-zero cannot start
+failing commits over a backlog line. It does NOT re-run `lookup`: the signal is the `ledger: F-<hex>` link only
+`backlog-add` can write, which makes the check a substring test on the staged lines (no python, no repo read, no lock).
+Silent on the hand edits the protocol MANDATES — `- [x]` and `[REGRESSION`. Test 17/0: exit 0 on every path, the count
+and its three-line cap, and an unborn HEAD, where `git diff --cached HEAD` would otherwise print a fatal on a repo's
+first commit. Refreshing the pinned dispatcher identity in `install-refactor-gate.sh` is part of the same commit; the
+nine failures skipping it caused are in that commit's message. NOT measured: how often entries still arrive by hand now
+that `backlog-add` exists — since it landed (2026-10-14) no open entry has been added at all, historically 990 of 1000.
 
 
 

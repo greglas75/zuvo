@@ -881,11 +881,33 @@ if what == "rows":
     b = [(e.lineno, e.raw, e.body, e.status, e.ident, e.key, e.section) for e in new]
     nonempty(len(a), "rows (frozen side)")
     nonempty(len(b), "rows (working tree)")
-    if a != b:
-        diff = [(x, y) for x, y in zip(a, b) if x != y][:2]
-        print("MISMATCH len %d/%d %r" % (len(a), len(b), diff))
+    if len(a) != len(b):
+        print("MISMATCH len %d/%d — the selection itself moved" % (len(a), len(b)))
         sys.exit(1)
-    print("OK %d" % len(a))
+    # ONE movement is allowed, and only one: the key of an entry whose signature carries no content.
+    # The frozen parser hashed every such line to ONE key (`normalize_signature` returns "|" for
+    # anything that strips to nothing), so `**Closed:** 2026-08-18.` here and `2026-10-04: PR #1692
+    # (…).` in another repo's archive were the same entry to `verify`, which then reported a
+    # namespace VIOLATION between two unrelated resolution lines and blocked append-runlog. Keying
+    # those off the raw line instead rotates exactly those keys — 1 in this file, 11 of 58043 across
+    # ~/DEV on 2026-10-13 — and nothing else. The exception is written as a PREDICATE, not a count or
+    # a line number: any other row that moves, any other field that moves, and any new key that
+    # collides with another still fail, so the invariance this oracle exists for is intact.
+    empty_sig_key = old_zb.entry_key("")
+    def only_the_empty_signature_key(x, y):
+        return (x[:5] == y[:5] and x[6] == y[6]          # every field except the key is identical
+                and x[5] == empty_sig_key                # and the frozen side keyed it on nothing
+                and y[5] != empty_sig_key)
+    moved = [(x, y) for x, y in zip(a, b) if x != y]
+    unexpected = [p for p in moved if not only_the_empty_signature_key(*p)]
+    if unexpected:
+        print("MISMATCH len %d/%d %r" % (len(a), len(b), unexpected[:2]))
+        sys.exit(1)
+    rotated = [y[5] for _, y in moved]
+    if len(set(rotated)) != len(rotated):
+        print("MISMATCH the rotated no-signature keys collide with each other: %r" % (rotated,))
+        sys.exit(1)
+    print("OK %d (%d no-signature key(s) rotated)" % (len(a), len(moved)))
 elif what == "fingerprints":
     a = [hashlib.sha1(e.body[:200].encode()).hexdigest()[:12] for e in old]
     b = [x["fingerprint"] for x in zb.parse_backlog(sys.argv[2], text)]
