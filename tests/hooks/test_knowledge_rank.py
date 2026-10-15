@@ -417,9 +417,9 @@ class KnowledgeRankTest(unittest.TestCase):
                               capture_output=True, text=True, timeout=60)
 
     def test_step3_command_in_knowledge_prime_runs_against_the_helper(self) -> None:
-        # Catches the doc's command drifting from the helper (a renamed flag, a wrong path), and a Step 3 block
-        # that leans on $MAIN_ROOT set elsewhere: each Bash call is a fresh shell, so --root "" would make the
-        # helper read the CWD's knowledge/ (none, from a subdirectory), exit 0 and never fall back.
+        # Catches the doc's command drifting from the helper (a renamed flag, a wrong path), and a Step 3
+        # block that leans on $MAIN_ROOT set elsewhere: each Bash call is a fresh shell, so --root "" would
+        # make the helper read the CWD's knowledge/ (none, from a subdirectory), exit 0 and never fall back.
         stub = self.stub({"eval": 0.95, "": 0.5})
         proc = self.run_step3_block(EVERY, "src/cache/ttl.ts")
         self.assertEqual(proc.returncode, 0, proc.stderr)
