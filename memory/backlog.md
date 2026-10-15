@@ -5121,7 +5121,21 @@ text says "dup of B-…" shipped as a NEGATIVE because `deident` had already era
    nothing, decides nothing. Off unless `ZUVO_BACKLOG_SIMILAR=1` and a key is present; fail-open on any error, with the
    call made BEFORE the lock is taken (the lock budget is 30 s and a network call must never sit inside it).
 2. MEASURE IN THE WILD: record each verdict and what the caller did next, so precision is computed on real pairs
-   instead of this proxy corpus.
+   instead of this proxy corpus. **Already being produced elsewhere — do not build a second recording path.**
+   Task 5's acceptance report (`feat/rerank-knowledge-backlog`) counts how many `possible-dup-of` flags land
+   on entries carrying a DIFFERENT `F-`, which is this measurement seen from the flag's side. An offline
+   denominator was considered and dropped for a good reason: `CLASS` and the anchor are arguments of the
+   `backlog-add` CALL, not properties of an entry's text, so recomputing `F-` over an archive of 18820
+   pre-`backlog-add` entries would measure the guesses, not the key. What that report gives is recall; the
+   field that gives PRECISION is what the caller did after the flag (merged / ignored / filed separately),
+   and precision is what decides whether stage 3 is defensible at all.
+   That session will take precision from what groom/verifier already records — whether a flagged entry was
+   later closed as a duplicate or still lives on its own — rather than adding a ledger field mid-execution.
+   ONE TRAP in that proxy, worth stating before the number exists: groom's own semantic pass runs through the
+   SAME rerank client as the flag it is being used to score. A closure whose evidence was that report measures
+   the model against its own echo, so the count has to separate closures reached independently (the exact key,
+   a human reading the entries) from closures that followed the semantic report — otherwise precision looks
+   good for the same reason the discarded "same file => duplicate" baseline did.
 3. ACT, only if stage 2 supports it: at p above the measured threshold, BUMP instead of filing, recording
    `dedup: <model> p=…` on the entry so it is auditable and reversible.
    The deterministic `CLASS | file | anchor` key stays the identity throughout: the model is consulted only on a miss,
