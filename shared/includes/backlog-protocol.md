@@ -245,7 +245,7 @@ How a skill turns each situation into one `backlog-add` call. The bars, the dedu
 exit handling are the ones in "Persisting a finding: backlog-add"; this table only says which class,
 source and location a skill passes. `<skill>` is the skill's own name (`review`, not `zuvo:review`).
 Every call carries `--repo "$PWD"`. Every free-text or externally sourced value is a double-quoted
-variable assigned before the call (`"$T"`, `"$A"`, `"$E"`, `"$U"`, `"$F"`: "Free text goes through a
+variable assigned before the call (`"$T"`, `"$A"`, `"$E"`, `"$U"`, `"$F"`, `"$M"`: "Free text goes through a
 variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers the skill fills in.
 
 | Situation | Class | Source | Location |
@@ -295,7 +295,7 @@ ZUVO_TXT
 ```
 
 `read` drops leading and trailing whitespace and keeps everything else byte for byte; `|| true`
-because `read -d ''` returns 1 at the end of the heredoc. The same two lines set `E`, `U` and `F`.
+because `read -d ''` returns 1 at the end of the heredoc. The same two lines set `E`, `U`, `F` and `M` (the assertion the tests lack, for `--missing-assertion`).
 The text must not hold a line that is exactly `ZUVO_TXT`.
 
 **A process item keeps its first title.** Its identity is the class, the `subject:` target and the

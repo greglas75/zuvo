@@ -11,7 +11,7 @@ approaches for later — append ONE line each to `memory/ideas.md` **at the MAIN
 - [YYYY-MM-DD] [<skill>] <idea> — <one-line context>
 ```
 
-Ideas ONLY: debt / findings go to backlog, never here. This file is read by `knowledge-prime`
+Ideas ONLY: debt and findings go through `backlog-add` (`backlog-protocol.md` "Filing from a skill"), never here. This file is read by `knowledge-prime`
 so future sessions see it.
 
 **Then, whether or not anything surfaced, record the receipt — this is the one non-optional

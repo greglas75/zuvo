@@ -131,9 +131,10 @@ METAVARS: Dict[str, Dict[str, Dict[str, str]]] = {
 TITLE = "the limit check accepts a total equal to the limit"
 EVIDENCE = "limit=100 and total=100 pass the check"
 FIX = "compare with >="
-# The only variables a command may use: the protocol's `"$F"`, `"$A"`, `"$U"`, `"$T"`, `"$E"`, the backlog
+# The only variables a command may use: the protocol's `"$F"`, `"$A"`, `"$U"`, `"$T"`, `"$E"`, `"$M"`, the backlog
 # skill's slug `"$S"`, and `"$PWD"` (the repo). Any other is a problem: the shell expands it to nothing.
-VARIABLES = {"F": DEFAULT_FILE, "A": DEFAULT_ANCHOR, "U": URL, "T": TITLE, "E": EVIDENCE, "S": "slug"}
+VARIABLES = {"F": DEFAULT_FILE, "A": DEFAULT_ANCHOR, "U": URL, "T": TITLE, "E": EVIDENCE, "S": "slug",
+             "M": "the check never compares the total with the limit"}
 # Placeholders a free-text value may keep: the pentest title prefix, which the agent completes.
 FREE_TEXT_ALLOWED = re.compile(r"PT<n>:")
 TEMPLATE = """# Tech Debt Backlog

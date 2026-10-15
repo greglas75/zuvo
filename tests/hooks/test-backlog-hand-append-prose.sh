@@ -75,21 +75,15 @@ ALLOWLIST: List[Allow] = [
 ]
 
 # {path: [quote, ...]}: sentences a batch retired. A quote back in its file is a FAIL, permanently.
-RETIRED_QUOTES: Dict[str, List[str]] = {}
+RETIRED_QUOTES: Dict[str, List[str]] = {
+    # POLICY with no write verb, so the patterns never flagged it: the path wraps onto the next line
+    "shared/includes/test-bugfix-protocol.md": ["user-declined items remain in"],
+}
 
 # {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
 # batches and then deleted with its code.
 PENDING: Dict[str, int] = {
-    "shared/includes/blind-coverage-audit.md": 1,
-    "shared/includes/followup-ideas.md": 1,
-    "shared/includes/no-pause-protocol.md": 1,
-    "shared/includes/quality-gates.md": 1,
     "shared/includes/refactor-reference.md": 2,
-    "shared/includes/severity-vocabulary.md": 1,
-    "shared/includes/test-blocklist.md": 2,
-    "shared/includes/test-bugfix-protocol.md": 1,
-    "shared/includes/test-code-types-core.md": 1,
-    "shared/includes/test-quality-gate.md": 2,
     "skills/a11y-audit/SKILL.md": 3,
     "skills/api-audit/SKILL.md": 4,
     "skills/architecture/SKILL.md": 1,
@@ -239,6 +233,7 @@ class Cfg:
     cite_tier_a: bool = False
     allow_unit_wide: bool = False
     fence_prefix: bool = False
+    retired_norm: bool = True
 
 
 @dataclass(frozen=True)
@@ -828,7 +823,21 @@ STRUCTURAL: List[Tuple[str, Cfg]] = [
     ("table-header-case-sensitive", replace(REAL, table_icase=False)),
     ("g6-reads-quote-stripped-text", replace(REAL, g6_raw=False)),
     ("fence-closes-on-any-prefix", replace(REAL, fence_prefix=True)),
+    ("retired-quote-wrap-sensitive", replace(REAL, retired_norm=False)),
 ]
+
+# (the defect it catches, text, retired quote, back in the text?): a reflow must not let a retired sentence in.
+RETIRED_FIXTURES: List[Tuple[str, str, str, bool]] = [
+    ("a retired quote wrapped across a line break is still back", "user-declined items remain\n  in `x`",
+     "user-declined items remain in", True),
+    ("a retired quote reworded is gone", "user-declined items are recorded", "user-declined items remain in", False),
+]
+
+
+def retired_present(text: str, quote: str, cfg: Cfg) -> bool:
+    if cfg.retired_norm:
+        text, quote = " ".join(text.split()), " ".join(quote.split())
+    return quote in text
 
 
 def fixture_names(doc: str, cfg: Cfg) -> Set[str]:
@@ -848,6 +857,7 @@ def allow_fixture_holds(doc: str, key: str, expect: Optional[str], cfg: Cfg) -> 
 
 def all_fixtures_hold(cfg: Cfg) -> bool:
     return (all(fixture_holds(doc, e, cfg) for _, doc, e in FIXTURES)
+            and all(retired_present(t, q, cfg) == back for _, t, q, back in RETIRED_FIXTURES)
             and all(allow_fixture_holds(doc, k, e, cfg) for _, doc, k, e in ALLOW_FIXTURES))
 
 
@@ -872,6 +882,8 @@ def self_test() -> None:
         verdict = "TP" if expect else "TN"
         (ok if allow_fixture_holds(doc, key, expect, REAL) else no)(
             f"(G2) allowlist {verdict} {expect or 'clean'}: {why}")
+    for why, text, quote, back in RETIRED_FIXTURES:
+        (ok if retired_present(text, quote, REAL) == back else no)(f"(G2) retired quote: {why}")
     caught = 0
     for rule in ALL_RULES:
         label = f"{rule[0]}:{rule[1]}"
@@ -925,6 +937,8 @@ def verdict_logic_checks() -> None:
          lambda: check_allowlist_rot(rel, "# Other\n", synthetic(1), [(rel, "section", "Gone", "r")]), 1),
         ("a retired quote back in its file fails",
          lambda: check_retired(rel, "then add it to backlog", {rel: ["add it to backlog"]}), 1),
+        ("a retired quote wrapped across a line break still fails",
+         lambda: check_retired(rel, "then add it\n  to backlog", {rel: ["add it to backlog"]}), 1),
         ("a retired quote that stays gone passes",
          lambda: check_retired(rel, "record it with backlog-add", {rel: ["add it to backlog"]}), 0),
     ]
@@ -1055,7 +1069,7 @@ def check_allowlist_rot(rel: str, text: str, scan: FileScan, allowlist: Sequence
 
 def check_retired(rel: str, text: str, retired: Dict[str, List[str]]) -> None:
     for quote in retired.get(rel, []):
-        if quote in text:
+        if retired_present(text, quote, REAL):
             no(f"(G5) retired quote back in {rel}: {quote!r}")
         else:
             ok(f"(G5) retired quote absent from {rel}: {quote[:60]!r}")
