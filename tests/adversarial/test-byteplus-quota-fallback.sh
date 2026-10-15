@@ -17,7 +17,8 @@ KEYFILE="$QTMP/byteplus.key"
 ( umask 077; printf 'fake-plan-key' > "$KEYFILE" )
 
 # Fake curl: records each request's URL (curl.urls) and model (curl.models). The plan's host answers the body in
-# $BPQ_BODY with HTTP 429 when one is set, else a review; every other host answers a review.
+# $BPQ_BODY with HTTP 429 when one is set (after $BPQ_SLOW seconds, when set), else a review; every other host
+# answers a review.
 cat > "$QTMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 prev="" url=""
@@ -27,7 +28,8 @@ for a in "$@"; do
   prev="$a"
 done
 case "$url" in
-  *bytepluses.com*) [ -n "${BPQ_BODY:-}" ] && { printf '%s\n%s' "$BPQ_BODY" 429; exit 0; } ;;
+  *bytepluses.com*) [ -n "${BPQ_SLOW:-}" ] && sleep "$BPQ_SLOW"
+                    [ -n "${BPQ_BODY:-}" ] && { printf '%s\n%s' "$BPQ_BODY" 429; exit 0; } ;;
 esac
 printf '%s\n%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}]}' 200
 EOF
@@ -45,7 +47,7 @@ run_q() {
   mkdir -p "$home/.zuvo"
   ( umask 077; printf 'fake-or-key' > "$home/.zuvo/openrouter.key" )
   env -u ZUVO_BYTEPLUS_BASE_URL -u ZUVO_OPENROUTER_BASE_URL -u OPENROUTER_API_KEY -u BPQ_BODY \
-    -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS_3 \
+    -u BPQ_SLOW -u ZUVO_MODEL_BYTEPLUS -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS_3 \
     PATH="$QTMP/bin:$PATH" BPQ_REC="$home" ZUVO_BYTEPLUS_KEY_FILE="$KEYFILE" HOME="$home" ZUVO_HOME="$home" \
     ZUVO_BYTEPLUS_QUOTA_FILE="$home/quota" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
     ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 "$@" \
@@ -131,3 +133,52 @@ mkdir -p "$QTMP/c8"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c8/quota"
 out=$(run_q c8 byteplus ZUVO_ADV_OPENROUTER=0)
 assert_eq "" "$(urls c8)" "no request at all"
 assert_contains "$out" "OpenRouter not enabled" "the lane says why"
+
+# Bug caught: a nonempty override ignored, or a lane moved to another model inheriting the old model's stand-in.
+start_test "q.9 the stand-in follows the override and the lane's model"
+mkdir -p "$QTMP/c9" "$QTMP/c9b"
+printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c9/quota"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c9b/quota"
+run_q c9 byteplus ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS=vendor/stand-in >/dev/null
+assert_eq "vendor/stand-in" "$(models c9)" "an override names the OpenRouter model"
+run_q c9b byteplus ZUVO_MODEL_BYTEPLUS=other-model >/dev/null
+assert_eq "" "$(urls c9b)" "a lane on a model with no stand-in is left out"
+
+# Bug caught: an ordinary throttling 429 from the plan taken for a spent quota — the plan shut out for an hour.
+start_test "q.10 a 429 that is not a quota stop is retried and records nothing"
+run_q c10 byteplus BPQ_BODY='{"error":{"code":"RateLimitExceeded","message":"slow down"}}' >/dev/null
+assert_eq "3" "$(urls c10 | awk '/bytepluses/' | wc -l | tr -d ' ')" "the plan is asked again (three attempts)"
+assert_eq "" "$(until_of c10)" "no quota stop is recorded"
+
+# Bug caught: the stand-in started with no time left, or a quota stop lost without saying so.
+start_test "q.11 a quota answer that leaves too little of the budget starts no stand-in"
+run_q c11 byteplus BPQ_SLOW=16 ZUVO_REVIEW_TIMEOUT=20 \
+  BPQ_BODY="$(quota_body "You have exceeded the monthly usage quota. It will reset at $(epoch_fmt "$RESET") +0000 CST.")" >/dev/null
+assert_eq "https://ark.ap-southeast.bytepluses.com/api/coding/v3/chat/completions" "$(urls c11)" "only the plan request"
+assert_eq "$RESET" "$(until_of c11)" "…and the stop is still recorded for the next run"
+
+# Bug caught: an implausible or unreadable stop shutting the plan out (a month, forever) or crashing the lane.
+start_test "q.12 implausible resets and unreadable stop files"
+( source "$ROOT/scripts/lib/adversarial-lanes-http.sh"
+  now=$(date +%s)
+  for when in "$(epoch_fmt $(( now + 60 * 86400 )))" "$(epoch_fmt $(( now - 86400 )))"; do
+    e=$(_byteplus_reset_epoch "It will reset at $when +0000 CST.")
+    (( e >= now + 3600 && e <= $(date +%s) + 3600 )) && echo hour || echo "other:$e"
+  done
+  printf 'not-a-number\tbyteplus\n' > "$QTMP/q12.quota"
+  ZUVO_BYTEPLUS_QUOTA_FILE="$QTMP/q12.quota" byteplus_quota_until && echo stopped || echo open
+) > "$QTMP/q12.out" 2>&1
+assert_eq "hour
+hour
+open" "$(cat "$QTMP/q12.out")" "60 days ahead and yesterday are taken as an hour; a garbage file stops nothing"
+
+# Bug caught: a stop that could not be written passing silently, or a lock left by a killed run blocking it forever.
+start_test "q.13 a failed write says so, and a stale lock is waited out"
+mkdir -p "$QTMP/c13/ro" "$QTMP/c13/quota.lock"; chmod 500 "$QTMP/c13/ro"
+( source "$ROOT/scripts/lib/adversarial-lanes-http.sh"
+  body=$(quota_body "You have exceeded the monthly usage quota. It will reset at $(epoch_fmt "$RESET") +0000 CST.")
+  ZUVO_BYTEPLUS_QUOTA_FILE="$QTMP/c13/ro/quota" byteplus_quota_record byteplus "$body" 2>&1 >/dev/null | awk '/could not be written/' | wc -l | tr -d ' '
+  ZUVO_BYTEPLUS_QUOTA_FILE="$QTMP/c13/quota" byteplus_quota_record byteplus "$body" 2>/dev/null
+) > "$QTMP/c13/out"
+chmod 700 "$QTMP/c13/ro"
+assert_eq "1" "$(head -1 "$QTMP/c13/out")" "the unwritable stop is reported"
+assert_eq "$RESET" "$(until_of c13)" "a stale lock delays the write, never stops it"
