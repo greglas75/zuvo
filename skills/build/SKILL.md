@@ -202,7 +202,7 @@ BUILD TIER: STANDARD (3 files, 1 risk signal: shared utility)
 2. Detect the tech stack from config files (`package.json`, `tsconfig.json`, `pyproject.toml`, etc.)
 3. If the stack triggers a conditional rule file (TypeScript, React, NestJS, Python), read it from `../../rules/`
 4. Read `memory/backlog.md` if it exists — check for open items related to the feature area.
-   Before any `backlog-add` call, record the snapshot `git -C "$R" status --porcelain -- memory/` (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+   Before any `backlog-add` call, once, at the run's original start, take the snapshot `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/` (`R` assigned in the same shell call) and keep its output; Phase 2 writes it into the plan block as `backlog-snapshot:`, and a resumed run reuses it and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 5. **Knowledge Prime:** Run the knowledge prime protocol from `knowledge-prime.md`:
    ```
    WORK_TYPE = "implementation"
@@ -351,6 +351,7 @@ PLAN (LIGHT)
   Files: [list]
   Changes: [1-2 sentences per file]
   Tests: [which test files to create/modify]
+  backlog-snapshot: [the Phase 0 snapshot output, or "clean"]
 ```
 
 Proceed unless the user objects (or `--auto` is set).
@@ -404,9 +405,11 @@ FORBIDDEN: files outside these lists, unrelated improvements, opportunistic refa
 
 ## 10. Open Questions
 [Genuine uncertainties. Empty if none.]
+
+backlog-snapshot: [the Phase 0 snapshot output, or "clean"]
 ```
 
-If section 10 is non-empty — **interactive:** ask the user (max 4 questions), wait for answers, update plan. **Non-interactive/batch (Codex, Cursor, --auto):** do NOT stall the pipeline on questions nobody can answer — apply the Autonomous Disposition from `no-pause-protocol.md` per question: derive the safest defensible answer from the spec + codebase evidence, log it as `[AUTO-DECISION] <question> → <choice> — <why>`, update the plan, proceed. A genuinely undecidable product question → implement the smallest reversible interpretation, log it FIRST as `[AUTO-DECISION] [slug: <slug>] <question> → <choice> — <why>`, then record the question as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source build --target subject:build-decision-<slug> --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**; `T` is the question, `E` holds both interpretations; `<slug>` names the question's subject in 3 to 6 words, ASCII `[a-z0-9-]`: choose it once and print it in that `[AUTO-DECISION]` line before the call, so a resumed run reuses it from the line, and give two questions different slugs; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the BUILD COMPLETE block, since the findings ledger that keeps it is not where a human triages yet; never hang, never guess silently.
+If section 10 is non-empty — **interactive:** ask the user (max 4 questions), wait for answers, update plan. **Non-interactive/batch (Codex, Cursor, --auto):** do NOT stall the pipeline on questions nobody can answer — apply the Autonomous Disposition from `no-pause-protocol.md` per question: derive the safest defensible answer from the spec + codebase evidence, log it as `[AUTO-DECISION] <question> → <choice> — <why>`, update the plan, proceed. A genuinely undecidable product question → implement the smallest reversible interpretation, log it FIRST as `[AUTO-DECISION] [slug: <slug>] <question> → <choice> — <why>`, then record the question as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source build --target subject:build-decision-<slug> --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**; `T` is the question, `E` holds both interpretations; `<slug>` names the question's subject in 3 to 6 words joined by hyphens, ASCII `[a-z0-9-]`: choose it once and print it in that `[AUTO-DECISION]` line before the call, so a resumed run reuses it from the line, and give two questions different slugs; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the BUILD COMPLETE block, since the findings ledger that keeps it is not where a human triages yet; never hang, never guess silently.
 
 ---
 
@@ -441,7 +444,7 @@ The contract prevents the most common CQ failures (CQ3, CQ8, CQ10, CQ22, CQ25) b
 **LIGHT tier:** Skip the formal contract. Critical CQ gates still apply at self-eval time.
 
 Rules:
-- Touch only files in the scope fence. If a dependency forces a change outside, log the expansion with justification. Structural splits (file-limits.md thresholds) may auto-expand up to +2 production files; beyond +2 — **interactive:** ask the user; **non-interactive/batch:** do NOT expand and do NOT hang: complete the in-fence portion, print `[SCOPE] expansion needed [slug: <slug>]: <files> — <reason>`, then record the blocked dependency as a process item, and cap the run verdict at WARN. The item is `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source build --target subject:build-decision-<slug> --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**: follow-up work the run will not do; `T` asks whether to expand the fence to the blocked files, `E` holds the reason and both options, expanding in a follow-up run or leaving the dependency as it is; `<slug>` names the dependency in 3 to 6 words, ASCII `[a-z0-9-]`: choose it once and print it in the `[SCOPE]` line before the call, so a resumed run reuses it from the line, and give two blocked dependencies different slugs; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the BUILD COMPLETE block. Any non-structural expansion follows the same split: interactive asks, batch declines-loudly-and-continues, with the same `[SCOPE]` line and the same process item for the dependency it leaves blocked. Silent expansion is never an option in either mode.
+- Touch only files in the scope fence. If a dependency forces a change outside, log the expansion with justification. Structural splits (file-limits.md thresholds) may auto-expand up to +2 production files; beyond +2 — **interactive:** ask the user; **non-interactive/batch:** do NOT expand and do NOT hang: complete the in-fence portion, print `[SCOPE] expansion needed [slug: <slug>]: <files> — <reason>`, then record the blocked dependency as a process item, and cap the run verdict at WARN. The item is `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source build --target subject:build-decision-<slug> --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**: follow-up work the run will not do; `T` asks whether to expand the fence to the blocked files, `E` holds the reason and both options, expanding in a follow-up run or leaving the dependency as it is; `<slug>` names the dependency in 3 to 6 words joined by hyphens, ASCII `[a-z0-9-]`: choose it once and print it in the `[SCOPE]` line before the call, so a resumed run reuses it from the line, and give two blocked dependencies different slugs; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the BUILD COMPLETE block. Any non-structural expansion follows the same split: interactive asks, batch declines-loudly-and-continues, with the same `[SCOPE]` line and the same process item for the dependency it leaves blocked. Silent expansion is never an option in either mode.
 - Follow project conventions from CLAUDE.md and rules directory.
 - After each file, check line count against limits. Split immediately if approaching threshold.
 
@@ -774,7 +777,7 @@ The counts include the pre-existing adversarial findings 4.4 filed with `--sourc
 
 ### Closing commit for backlog-add's writes
 
-This comes after the drive-by step, the run's last `backlog-add` call. If 4.6 committed, make the one closing commit `chore(backlog): record findings of build run` with exactly the `wrote=` paths the run printed, as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says (its snapshot from Phase 0). If 4.6 did not commit, stage nothing and list the paths in BUILD COMPLETE.
+This comes after the drive-by step, the run's last `backlog-add` call. If 4.6 committed, make the one closing commit `chore(backlog): record findings of build run` with exactly the `wrote=` paths the run printed, as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says (its snapshot from Phase 0, kept in the plan block). With no path left there is no commit: BUILD COMPLETE reads `none: nothing to stage`. If 4.6 did not commit, stage nothing and list the paths in BUILD COMPLETE.
 
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 
@@ -846,7 +849,7 @@ COMPLETION GATE CHECK
 [ ] Documentation created/updated (per documentation-mandate.md) or explicit [DOC: N/A — <reason>]
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/adversarial: header — the adversarial: field points at the saved `--artifact` output (≥2 providers); an artifact without a real proof no longer grants coverage (on success only)
 [ ] Retrospective ran (no "trivial session" opt-out)
-[ ] Deferred findings recorded through backlog-add (4.4, 4.5), each B- or F-id reported or named under NOT PERSISTED (reason), or "none"; their wrote= paths in the closing commit, or listed
+[ ] Deferred findings recorded through backlog-add (4.4, 4.5), each B- or F-id reported or named under NOT PERSISTED (reason), or "none"; their wrote= paths in the closing commit, or listed, or none: nothing to stage
 [ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
@@ -864,7 +867,7 @@ Verification: tests PASS [| types PASS] [| lint PASS]
 CQ: [critical gates PASS | score/applicable on N files]
 Q: [critical gates PASS | score/applicable on N test files]
 Recorded: [N (backlog: a, ledger: b) | "none"] [plus each NOT PERSISTED (<reason>) by name]
-Backlog commit: [hash | "none"] [paths left out or listed: <path> (<reason>)]
+Backlog commit: [hash | none: nothing to stage | not committed, paths listed] [paths left out or listed: <path> (<reason>)]
 [Process items: <F-id> <question or blocked dependency> — one line each]
 Drive-by: [N recorded (SEC:a BUG:b SIZE:c DUP:d CPLX:e PERF:f DEAD:g READ:h) | 0 recorded]
 [⚠ SECURITY (drive-by) <path>:<line> — <defect> [<severity>]   — one line per SEC finding]

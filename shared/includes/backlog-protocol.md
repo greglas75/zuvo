@@ -172,6 +172,10 @@ One line on stdout; `--json` prints the same fields as one object, and `--dry-ru
 A dry run writes nothing, so every verdict that carries `wrote=` shows `wrote=-`; `DISCARDED` and
 `REFUSED` carry no `wrote=` at all.
 
+The exit table below, and `NOT PERSISTED (<reason>)` for a call that still fails, apply to EVERY call a
+skill makes, a process item's included: a call that ends without a B- or F-id is named in the report
+under `NOT PERSISTED (<reason>)`, never dropped.
+
 | Verdict | Exit | What you do |
 |---------|------|-------------|
 | `ACCEPTED backlog <B> ledger=<F> wrote=<paths>` | 0 | Report it as filed under `<B>`. |
@@ -184,13 +188,14 @@ A dry run writes nothing, so every verdict that carries `wrote=` shows `wrote=-`
 
 | Exit | Means | What you do |
 |------|-------|-------------|
-| 0 | one of the six verdicts above `REFUSED` | Stage what `wrote=` lists. |
+| 0 | one of the six verdicts above `REFUSED` | Keep the `wrote=` paths for the run's closing commit ("Committing what backlog-add wrote" in "Filing from a skill"). |
 | 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | If stderr says `failed after writing: wrote=<paths>`, the backlog entry exists and only its ledger record is missing: do not retry (a retry counts a second sighting); report it as filed, stage the listed paths, and the next sighting writes the record. Otherwise retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
 | 2 | usage error: the call itself is malformed, or `--repo` is not a directory inside a git work tree | Fix the call. If you cannot, `NOT PERSISTED (backlog-add exit 2)`. |
 | 3 | `REFUSED <reason>`: the input does not conform, and resubmitting it unchanged cannot help | An input mistake: correct it and resubmit once, otherwise list it under `NOT PERSISTED (REFUSED <reason>)`. Some refusals are not input mistakes, and the refusal table says what to do instead: `anchor-not-at-line` and `file-not-in-worktree` after a re-read, and the repository's visibility refusals. |
 
 **`wrote=`** lists the repo-relative paths written that git does not ignore. A skill that commits
-stages exactly those (`git add -- <paths>`); `wrote=-` means nothing to stage, as in a repo that
+stages exactly those, in its one closing commit ("Committing what backlog-add wrote" in "Filing from
+a skill"); `wrote=-` means nothing to stage, as in a repo that
 ignores `memory/`. Staging a path the verdict does not list is how an ignored file gets committed.
 
 **The helper is missing** (only the Claude Code install ships `~/.zuvo/`): list every finding in the
@@ -278,6 +283,12 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
 - A **file** record takes `--file` and `--line`. `--anchor` is required on a BUG, SEC or DATA file
   record (at least 8 non-space characters, refused `missing-field:anchor` otherwise); on any class,
   an anchor that is given must appear within ±3 lines of `--line`.
+- **The anchor is copied, never invented.** A BUG, SEC or DATA record cites the line that shows the
+  defect, which holds code, and its anchor is text copied from that line. If that line has fewer than
+  8 non-space characters, copy the anchor from the nearest line within ±3 of it that has them (the
+  helper compares the anchor, whitespace removed, with lines `--line`−3 to `--line`+3). If no line
+  within ±3 qualifies, the finding is listed under `NOT PERSISTED (no anchor within ±3 lines)`; it is
+  never filed under another class to avoid the anchor.
 - A **whole-file** finding (a below-A test file, a skipped or blocklisted file, a file-wide CQ or Q
   violation, a file over its size limit, a missing test file for a source file) is a file record that
   cites `--line 1`, and its title starts "Whole file: …". Line 1 is the convention for "the whole
@@ -331,23 +342,34 @@ none). They are always under `memory/`: the backlog `memory/backlog.md`, its arc
 `memory/backlog-done.md`, and the findings ledger `memory/findings/` (one JSONL segment per day, branch
 and host, beside the real backlog). A backlog reached through a symlink, or kept in the main checkout
 while the run works in a linked worktree, is outside the checkout and never listed. So a snapshot of
-`memory/` sees every path `wrote=` can name.
+`memory/` sees every path `wrote=` can name. Every git command below assigns `R` in the same shell
+call first, as "The repository root" says: `R='/abs/path/of/repo'; git -C "$R" …`.
 
-- **The snapshot.** At its start, before its first `backlog-add` call, the run records
-  `git -C "$R" status --porcelain -- memory/`. A path that snapshot shows modified holds someone else's
-  edits.
+- **The snapshot.** Once, at the run's ORIGINAL start, before its first `backlog-add` call:
+  `R='/abs/path/of/repo'; git -C "$R" status --porcelain -uall -- memory/`. The run saves the output in
+  its own state (execute: `execution-state.md`; refactor: its CONTRACT or batch queue file; build: its
+  plan block), and a resumed run reuses the saved snapshot and never takes it again, so its own earlier
+  writes are not mistaken for someone else's. Every path the snapshot LISTED, whatever its status
+  (modified, added, untracked `??`), holds someone else's edits. If the snapshot command fails, the run
+  stages nothing at the end and lists its `wrote=` paths instead.
 - **No per-step commit.** A per-task, per-file or per-step commit never stages a `wrote=` path. Every task
   and every parallel run writes the same backlog and ledger segment, and a task that ends BLOCKED never
   reaches its commit.
 - **One closing commit.** A skill that commits makes ONE closing commit,
   `chore(backlog): record findings of <skill> run`, after its LAST `backlog-add` call. That includes the
   calls of a review it runs and of steps after its own commits (the test-quality gate, drive-by findings).
-  It stages exactly the union of the `wrote=` paths the run printed, with `git -C "$R" add -- <path> …`,
-  minus three kinds: `wrote=-`; any path for which `git -C "$R" check-ignore -q -- <path>` succeeds; and
-  any path the snapshot showed modified. With no path left there is no closing commit. The final summary
-  names each path left out, with its reason.
+  It stages exactly the union of the `wrote=` paths the run printed, minus three kinds: `wrote=-`; any path
+  for which `R='/abs/path/of/repo'; git -C "$R" check-ignore -q -- <path>` succeeds; and any path the
+  snapshot listed. Then `R='/abs/path/of/repo'; git -C "$R" add -- <path> … && git -C "$R" commit -m "chore(backlog): record findings of <skill> run" -- <path> …`:
+  the pathspec on `commit` commits those paths only, never anything else already staged. The final
+  summary names each path left out, with its reason.
+- **Nothing to stage, no commit.** When no `wrote=` path remains (none printed, every one `wrote=-`, or
+  every one excluded), there is no closing commit, and every gate or summary line that asks for it reads
+  `none: nothing to stage`.
+- **A skill run inside another skill** (review inside execute or refactor) makes no closing commit of its
+  own. It lists its `wrote=` paths in its report on one line, `Backlog writes: <path>, …` (or
+  `Backlog writes: none`), and the outer skill's closing commit carries them.
 - **A skill that does not commit** stages nothing and lists the `wrote=` paths in its final summary.
-- Every git call names the repository: `git -C "$R"`, never the shell's current directory.
 
 The sentences below are the text skills cite, `<skill>` replaced by the skill's name. Each command is
 one code span, so it can be run as written once the variables are assigned and the placeholders
