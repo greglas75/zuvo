@@ -5,7 +5,7 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief
 **plan_revision:** 6
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-10-15
 **Tasks:** 6
 **Estimated complexity:** 1 standard, 5 complex
@@ -23,7 +23,8 @@
 > `tests/hooks/*` suites run **locally** (`bash tests/hooks/<suite>.sh`): the farm mirror has no `.git`,
 > `~/.zuvo` or `memory/reviews/`, and docs/runbook/testing.md §5 documents them as false reds there.
 >
-> **Owner decisions this plan assumes (confirm at approval):**
+> **Owner decisions (2026-10-15): D1 confirmed — flag only, bump opt-in. D2 (egress default) pending
+> the owner's answer; until then the plan's default stands: on when a key is present, `ZUVO_RERANK=0` off.**
 > - **D1 — no auto-merge at add time.** The brief said "≥0.72 → bump". This plan appends the entry
 >   with `possible-dup-of: B-x (strong)` and lets groom report it; a bump happens only with
 >   `ZUVO_BACKLOG_DEDUP_BUMP=1`. Why: at LOO-F1 0.89 roughly one strong match in ten is wrong, a wrong
@@ -201,7 +202,7 @@ graph TD
     "exit 0 theater" (`python -m unittest` exits non-zero on failure and on zero tests run).
   - accepted as notes (stop rule, no re-split): Task 5/6 bundling (boundary justifications recorded);
     D1/D2 are resolved by the owner at approval and written into the header before execution.
-- Status gate: Reviewed
+- Status gate: Approved (owner, 2026-10-15)
 
 ## Task Breakdown
 

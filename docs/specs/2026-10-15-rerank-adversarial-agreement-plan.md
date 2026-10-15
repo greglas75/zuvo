@@ -5,7 +5,7 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief
 **plan_revision:** 5
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-10-15
 **Tasks:** 5
 **Estimated complexity:** 1 standard, 4 complex
@@ -169,7 +169,7 @@ graph TD
   1 LOW: mock-only override knob named) → applied in revision 5; stop rule reached, no further loop
 - Cross-model validation (rev 4): not re-run — the restructure was reviewed by the plan reviewer; one
   cross-model pass per plan (rev 2) per the stop rule
-- Status gate: Reviewed
+- Status gate: Approved (owner, 2026-10-15)
 
 ## Task Breakdown
 
