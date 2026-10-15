@@ -155,6 +155,7 @@ def _candidates(entries: Sequence[zb.Entry], query: str) -> Optional[Candidate]:
     import zuvo_bm25 as bm25
     import zuvo_rerank as rr
     docs = [e.body[:DOC_CAP] for e in entries]
+    query = query[:DOC_CAP]   # a pasted log in the evidence is billed by length, or overruns the model
     lexical = bm25.scores(query, docs)
     top = sorted((i for i, s in enumerate(lexical) if s > 0), key=lambda i: -lexical[i])[:POOL]
     scores = rr.rerank(MODEL, query, [docs[i] for i in top], timeout=TIMEOUT_S, caller="backlog-add") \

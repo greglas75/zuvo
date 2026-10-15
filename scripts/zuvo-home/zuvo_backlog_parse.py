@@ -211,6 +211,10 @@ def _last_match_start(pattern: "re.Pattern[str]", text: str) -> int:
     return last
 
 
+# backlog-add's `possible-dup-of: B-…` field names ANOTHER entry; its id may hold FIXED/DONE/STALE.
+_DUP_FIELD_RE = re.compile(r"\| possible-dup-of: B-[\w.-]+ \((?:strong|weak)\)")
+
+
 def resolution_marker_pos(body: str) -> int:
     """Rightmost start offset of any resolution marker in `body`, or -1 when there is none.
 
@@ -219,6 +223,7 @@ def resolution_marker_pos(body: str) -> int:
     closed, re-opened, and then genuinely closed again ("— DONE [REGRESSION …] — DONE again") records
     all three facts on one line, and only the offsets say which one is current.
     """
+    body = _DUP_FIELD_RE.sub(lambda m: " " * len(m.group()), body)  # blanked, so offsets stay put
     return max(_last_match_start(p, body) for p in
                (_WRAPPED_MARKER_RE, _WRAPPED_VERDICT_RE, _WRAPPED_PHRASE_RE, _BARE_MARKER_RE))
 

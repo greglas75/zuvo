@@ -314,6 +314,13 @@ class CandidateTests(FixtureCase):
         self.assertIsNone(dd.candidates(self.entries, QUERY))
         self.assertEqual(stub.requests, 0)
 
+    def test_the_query_is_cut_to_the_doc_cap(self) -> None:
+        # Bug caught: a finding with a pasted log as evidence sends the whole blob as the query, billed by
+        # length, or fails the call for being over the model's limit.
+        stub = self.stub({"f-string model": 0.81})
+        dd.candidates(self.entries, QUERY + " padding" * 1000)
+        self.assertEqual(len(stub.bodies[0]["query"]), dd.DOC_CAP)
+
     def test_each_document_is_cut_to_the_doc_cap(self) -> None:
         # Bug caught: one long entry (pasted logs) sends megabytes per add and is billed by length.
         stub = self.stub({"f-string model": 0.81})
@@ -408,6 +415,14 @@ class RenderFieldTests(unittest.TestCase):
         self.assertEqual((own.dup, own.f_id, own.date, own.tag) if own else None,
                          ("B-x-1 (strong)", self.FID, "2026-10-15", "[pr:7]"))
         self.assertTrue(ent.self_check(line, "B-a-BUG-01234567"))
+
+    def test_a_candidate_id_holding_a_marker_word_does_not_resolve_the_entry(self) -> None:
+        # Bug caught: `possible-dup-of: B-CACHE-FIXED-TTL` reads as "FIXED", so groom classifies a fresh
+        # open finding as closed in its own words and archive treats it as resolved.
+        for cand in ("B-CACHE-FIXED-TTL (weak)", "B-x-DONE (strong)", "B-STALE-INDEX (weak)"):
+            with self.subTest(cand=cand):
+                self.assertEqual(zb.resolution_marker_pos(self.line(cand)), -1)
+        self.assertGreater(zb.resolution_marker_pos(self.line("B-x-1 (weak)") + " — FIXED"), 0)
 
     def test_field_does_not_change_the_entry_identity(self) -> None:
         # Bug caught: the flag rotates the entry's fp: key, so groom and lookup see a different entry.

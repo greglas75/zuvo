@@ -371,6 +371,16 @@ class KnowledgeRankTest(unittest.TestCase):
         rows, _ = self.run_cli("widget")
         self.assertEqual(self.ids(rows), ["fact-bom"])
 
+    def test_an_entry_with_no_text_is_sent_as_its_id_not_an_empty_document(self) -> None:
+        # Catches an empty document in the request: the API may reject the whole call for it, and the
+        # store then falls back to BM25 on every task that touches the file.
+        self.write_store("codebase-facts.jsonl", [
+            {"id": "fact-bare", "type": "codebase-fact", "affectedFiles": ["src/**"]},
+            {"id": "fact-text", "type": "codebase-fact", "fact": "widget text"}])
+        stub = self.stub({"": 0.5})
+        self.run_cli("widget", "src/x.ts")
+        self.assertNotIn("", stub.bodies[0]["documents"])
+
     def test_rerank_payload_is_truncated(self) -> None:
         # Catches an oversized entry or keyword list being sent (and billed) whole.
         self.write_store("codebase-facts.jsonl", [

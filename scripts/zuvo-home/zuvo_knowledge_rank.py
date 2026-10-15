@@ -95,8 +95,8 @@ def _relevance(entries: list[Entry], keywords: list[str], files: list[str]
     if not pool:
         return scores, pool
     model = os.environ.get("ZUVO_KNOWLEDGE_RERANK_MODEL") or DEFAULT_MODEL
-    reranked = rerank_client.rerank(model, query[:MAX_QUERY_CHARS], [docs[i][:MAX_DOC_CHARS] for i in pool],
-                                    caller="knowledge-rank")
+    sent = [(docs[i] or str(entries[i]["id"]))[:MAX_DOC_CHARS] for i in pool]  # no empty document
+    reranked = rerank_client.rerank(model, query[:MAX_QUERY_CHARS], sent, caller="knowledge-rank")
     for j, i in enumerate(pool):
         scores[i] = reranked[j] if reranked is not None and len(reranked) == len(pool) else lexical[i]
     best = max(scores)
