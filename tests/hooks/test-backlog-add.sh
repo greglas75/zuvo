@@ -15,6 +15,8 @@ REQUIRED=(
   tests/hooks/test_backlog_entry.py
   tests/hooks/test_backlog_lookup.py
   tests/hooks/test_backlog_add.py
+  tests/hooks/test_backlog_dedup.py
+  tests/hooks/test_backlog_dedup_signature.py
 )
 missing=()
 for f in "${REQUIRED[@]}"; do

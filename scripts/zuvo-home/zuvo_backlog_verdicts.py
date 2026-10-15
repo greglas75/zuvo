@@ -46,6 +46,7 @@ import os
 import re
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
+import zuvo_backlog_dedup as zd
 import zuvo_backlog_io as zio
 import zuvo_backlog_ledger as zl
 import zuvo_backlog_parse as zb
@@ -195,7 +196,8 @@ def archive_index(archived: Sequence[zb.Entry]) -> Dict[str, zb.Entry]:
     return out
 
 
-def duplicate_anchors(entries: Sequence[zb.Entry]) -> Dict[int, Tuple[str, zb.Entry]]:
+def duplicate_anchors(entries: Sequence[zb.Entry],
+                      sigs: Optional[Dict[int, str]] = None) -> Dict[int, Tuple[str, zb.Entry]]:
     """lineno -> (the shared key, the FIRST entry carrying it) for every entry that is not the first.
 
     Keyed off `keys_for` and not `key`: once the pre-pass mints an id, `entry_key` prefers `id:` and
@@ -203,16 +205,37 @@ def duplicate_anchors(entries: Sequence[zb.Entry]) -> Dict[int, Tuple[str, zb.En
     the moment the ids were written. `keys_for` keeps the pre-mint `fp:` key, which is what still sees
     them. Only the entries AFTER the first are marked, because `DUPLICATE-OF` is a report and the
     anchor is the entry it reports against — marking all N would leave no entry to point at.
+
+    Anchors are per (key, `_scoped` signature): a table row's `fp:` may be metadata only.
     """
-    first: Dict[str, zb.Entry] = {}
+    sigs = _signatures(entries) if sigs is None else sigs
+    anchors: Dict[Tuple[str, str], zb.Entry] = {}
     out: Dict[int, Tuple[str, zb.Entry]] = {}
     for e in entries:
         for key in sorted(zb.keys_for(e.body, e.ident)):
-            anchor = first.get(key)
-            if anchor is None:
-                first[key] = e
-            elif e.lineno not in out:
+            anchor = anchors.setdefault((key, _scoped(key, sigs[e.lineno])), e)
+            if anchor is not e and e.lineno not in out:
                 out[e.lineno] = (key, anchor)
+    return out
+
+
+def _signatures(entries: Sequence[zb.Entry]) -> Dict[int, str]:
+    return {e.lineno: zd.group_signature(e) for e in entries}
+
+
+def _scoped(key: str, sig: str) -> str:
+    """Only a content-derived `fp:` key needs the signature; an `id:` key is an identity."""
+    return sig if key.startswith("fp:") else ""
+
+
+def _scoped_archive_index(archived: Sequence[zb.Entry]) -> Dict[Tuple[str, str], zb.Entry]:
+    """(key, scoped signature) -> the first archived entry with that pair, so a different row sharing
+    the key cannot hide a later twin. Every pair's key is one `archive_index` holds."""
+    out: Dict[Tuple[str, str], zb.Entry] = {}
+    for e in archived:
+        sig = zd.group_signature(e)
+        for key in zb.keys_for(e.body, e.ident):
+            out.setdefault((key, _scoped(key, sig)), e)
     return out
 
 
@@ -264,12 +287,13 @@ def classify(entries: Sequence[zb.Entry], tree: Tree,
     An entry that matches nothing is absent from the result: it is the MODEL's work, and inventing a
     `NOT-VERIFIABLE` for it here would make the coverage count read full while nobody had looked.
     """
-    ix = archive_index(archived)
-    dups = duplicate_anchors(entries)
+    ix = _scoped_archive_index(archived)
+    sigs = _signatures(entries)
+    dups = duplicate_anchors(entries, sigs)
     out: List[Verdict] = []
     refused: List[str] = []
     for e in entries:
-        v = _classify_one(e, tree, ix, dups)
+        v = _classify_one(e, tree, _archive_hit(e, sigs[e.lineno], ix), dups)
         if v is None:
             continue
         bad = unresolvable(v.evidence, tree)
@@ -281,13 +305,22 @@ def classify(entries: Sequence[zb.Entry], tree: Tree,
     return out, refused
 
 
-def _classify_one(e: zb.Entry, tree: Tree, ix: Dict[str, zb.Entry],
+def _archive_hit(e: zb.Entry, sig: str,
+                 ix: Dict[Tuple[str, str], zb.Entry]) -> Optional[Tuple[str, zb.Entry]]:
+    for key in sorted(zb.keys_for(e.body, e.ident)):
+        other = ix.get((key, _scoped(key, sig)))
+        if other is not None:
+            return key, other
+    return None
+
+
+def _classify_one(e: zb.Entry, tree: Tree, hit: Optional[Tuple[str, zb.Entry]],
                   dups: Dict[int, Tuple[str, zb.Entry]]) -> Optional[Verdict]:
-    """The four classes for ONE entry, in precedence order. See `classify` for why that order."""
+    """The four classes for ONE entry, in precedence order. See `classify` for why that order.
+    `hit` is the archive match, precomputed by `_archive_hit` so signatures are computed once."""
     pos = marker_pos(e)
     if pos >= 0:
         return _marker_verdict(e, pos, tree)
-    hit = next(((k, ix[k]) for k in sorted(zb.keys_for(e.body, e.ident)) if k in ix), None)
     if hit is not None:
         return _archived_verdict(e, hit[0], hit[1], tree)
     if e.lineno in dups:
