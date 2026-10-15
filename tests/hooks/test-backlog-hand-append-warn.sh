@@ -33,6 +33,12 @@ repo(){            # a fresh git repo with a backlog, nothing staged
   printf '# Backlog\n\n' > "$FIX/r/memory/backlog.md"
   git -C "$FIX/r" add -A >/dev/null 2>&1
   git -C "$FIX/r" -c user.email=t@t -c user.name=t commit -qm init >/dev/null 2>&1
+  # PROVE the baseline commit exists. A silenced setup failure here would quietly turn W1-W5 into
+  # repeats of W6: with no HEAD the hook takes its unborn-HEAD branch, the committed-baseline path
+  # is never exercised, and the suite still prints PASS. A cross-model reviewer read the redirect
+  # and claimed exactly this had happened; it had not, and the assertion is what settles it either way.
+  git -C "$FIX/r" rev-parse --verify -q HEAD >/dev/null 2>&1 \
+    || { no "(W0) fixture has no HEAD — W1..W5 would silently test the unborn-HEAD path"; return 1; }
 }
 stage(){ printf '%s\n' "$1" >> "$FIX/r/memory/backlog.md"; git -C "$FIX/r" add memory/backlog.md; }
 run(){ ( cd "$FIX/r" && "$HOOK" 2>"$FIX/err" ); echo $?; }

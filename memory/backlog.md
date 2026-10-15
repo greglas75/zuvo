@@ -5094,21 +5094,27 @@ input-priced with output free. It is NOT reachable through `chat/completions` (t
 models answer there today (openrouter.ai/rankings/decisions). Scored over `tests/lib/dedup-corpus.py` — positives: two
 revisions of ONE B-id with the id stripped from both sides, negatives: two different ids citing the same file:
 
-    model                              AUC    bal.acc@0.5   best        $/109 pairs   median
-    perplexity/pplx-decider-v1.1-27b   0.923      0.861      0.878@0.55    0.00056      332ms
-    nace-ai/drex-v2.0                  0.865      0.767      0.788@0.35    0.00127      320ms
-    inception/mercury-decide           0.860      0.711      0.778@0.05    0.00051      364ms   (:free variant exists)
-    ~typesafe/jev-latest               0.850      0.756      0.773@0.70    0.00222      274ms
-    typesafe/jev-1.13                  0.837      0.739      0.767@0.60    0.00222      275ms
-    microsoft/microsoft-decision-1     0.814      0.698      0.734@0.85    0.00094      332ms
-    openai/gpt-6-luna-decisions        0.771      0.617      0.772@0.25    0.00302      205ms
-    cloudflare/clef                    0.767 · nace-ai/drex-v1.5 0.765 · cloudflare/clef-flash 0.713
+    model                              AUC    bal.acc@0.5   best        $/108 pairs   median
+    perplexity/pplx-decider-v1.1-27b   0.919      0.844      0.856@0.55    0.00053      339ms
+    ~typesafe/jev-latest               0.854      0.739      0.789@0.35    0.00214      281ms
+    nace-ai/drex-v2.0                  0.831      0.722      0.778@0.40    0.00117      566ms
+    inception/mercury-decide           0.825      0.683      0.756@0.30    0.00047      330ms   (:free variant exists)
+    microsoft/microsoft-decision-1     0.808      0.722      0.772@0.90    0.00087      328ms
+    openai/gpt-6-luna-decisions        0.765      0.656      0.722@0.15    0.00285      191ms
 
-A second corpus draw (seed 23, different commit step) keeps the order at the top: pplx-decider 0.913, mercury 0.868,
-drex-v2.0 0.838, jev 0.777 — jev is the least stable of the four. For scale, the words-half this fleet retired scored
-AUC 0.632 on its own corpus. LIMITS, binding: 19 positives (15 on the second draw), they are REVISIONS of one entry
-rather than two independent filings, and `--min-drift` keeps only low-overlap pairs, so these are a hard subset and a
-lower bound. The ledger's `seen>1` will give real pairs once entries accumulate.
+pplx-decider held across three corpus versions (0.923, 0.913, 0.919), which is the only reason it is named as the pick;
+on the first two draws typesafe/jev-1.13 scored 0.837 and clef / drex-v1.5 / clef-flash came in at 0.767 / 0.765 / 0.713.
+For scale, the words-half this fleet retired scored AUC 0.632 on its own corpus. The TRIVIAL baseline is printed by the
+harness rather than asserted: only 3 of 18 positives share a cited path while every negative does by construction, so
+"same path => duplicate" scores 0.083 here — a model earns its number against that, not against a coin flip.
+LIMITS, binding: 18 positives, they are REVISIONS of one entry rather than two independent filings, and the similarity
+ceiling keeps only low-overlap pairs, so this is a hard subset and a lower bound. The ledger's `seen>1` will give real
+pairs once entries accumulate.
+The first version of these numbers was WRONG in four ways the cross-model review of this branch caught, and they are
+listed because the corrected table is only trustworthy if the corrections are: ordinal ids (`B-70` is a position, not an
+identity) manufactured positives; `git log` is newest-first, so the "newest revision" the negatives were built from was
+the oldest draft; negatives were grouped by BASENAME, pairing `src/index.ts` with `tests/index.ts`; and a pair whose own
+text says "dup of B-…" shipped as a NEGATIVE because `deident` had already erased the evidence.
 **Fix — staged, and nothing changes behaviour before stage 3.**
 1. ADVISORY ONLY: when the structural key MISSES, `backlog-add` asks `perplexity/pplx-decider-v1.1-27b` about the
    candidate against same-file, same-class findings from the ledger and prints `SIMILAR F-… p=0.87` on stderr. Writes

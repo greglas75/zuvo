@@ -135,6 +135,12 @@ class RealArchiverContractTests(unittest.TestCase):
          lk.Verdict("absent", "id:b-none-bug-00000000", None, None, None, None)),
         ("OPEN with the ALSO ARCHIVED suffix", "B-both-BUG-11111111",
          lk.Verdict("open", "id:b-both-bug-11111111", "B-both-BUG-11111111", 4, None, 3)),
+        # Defect this one catches: the archiver grew exit 13 for a candidate whose signature is empty,
+        # and the wrapper's table knew only {0,10,11} — so a definite verdict arrived as LookupFailed
+        # and `backlog-add` died with "lookup failure: nothing was written" instead of filing. The
+        # refusal carries no key, which is why the Verdict's key is empty rather than `fp:…`.
+        ("NO-SIGNATURE", "**Closed:** 2026-08-18.",
+         lk.Verdict("no-signature", "", None, None, None, None)),
     ]
 
     def test_real_archiver_output_matches_the_verdict_grammar(self) -> None:

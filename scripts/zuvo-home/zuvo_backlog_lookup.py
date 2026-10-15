@@ -1,7 +1,7 @@
 """HOW `backlog-add` ASKS WHETHER AN ENTRY IS ALREADY KNOWN: a fail-closed wrapper over
 `backlog-archive.py lookup`, which answers over BOTH backlog files.
 
-LOOKUP FAILS CLOSED. Only exit 10/11/0 with a single verdict line of the matching keyword is an answer;
+LOOKUP FAILS CLOSED. Only exit 10/11/0/13 with a single verdict line of the matching keyword is an answer;
 anything else raises LookupFailed. Reading a failure as ABSENT writes a duplicate on every hiccup. The
 archiver's stderr tail travels in the message, so the traceback of a crashed lookup is not lost with it.
 
@@ -20,6 +20,12 @@ ARCHIVER_NAME = "backlog-archive.py"
 LOOKUP_TIMEOUT_S = 30.0
 STDERR_TAIL = 200
 LOOKUP_OPEN, LOOKUP_ARCHIVED, LOOKUP_ABSENT = "open", "archived", "absent"
+# The archiver refuses a candidate whose signature is empty (exit 13). That is an ANSWER, not a
+# hiccup — a text with no words keys on nothing, so no entry can match it — and the caller falls
+# through to filing a new entry exactly as it does for ABSENT. Leaving 13 out of the table made
+# `_parse_verdict` raise LookupFailed on it, which is fail-closed in the wrong direction: the
+# archiver gave a definite verdict and `backlog-add` would have died with "lookup failure".
+LOOKUP_NO_SIGNATURE = "no-signature"
 
 _KEY = r"(?P<key>(?:id|fp):\S+)"
 _VERDICT_RES = {
@@ -28,8 +34,11 @@ _VERDICT_RES = {
     11: re.compile(r"ARCHIVED " + _KEY + r" (?P<ident>\S+) backlog-done\.md:(?P<line>\d+)"
                    r' section="(?P<section>.*)"'),
     0: re.compile(r"ABSENT " + _KEY),
+    # No key group: the refusal happens BEFORE a key is computed, which is the whole point of it.
+    13: re.compile(r"NO-SIGNATURE .+"),
 }
-_VERDICT_STATUS = {10: LOOKUP_OPEN, 11: LOOKUP_ARCHIVED, 0: LOOKUP_ABSENT}
+_VERDICT_STATUS = {10: LOOKUP_OPEN, 11: LOOKUP_ARCHIVED, 0: LOOKUP_ABSENT,
+                   13: LOOKUP_NO_SIGNATURE}
 
 
 class LookupFailed(RuntimeError):
@@ -67,7 +76,10 @@ def _parse_verdict(rc: int, stdout: str, stderr: str) -> Verdict:
     groups = m.groupdict()
     ident = groups.get("ident")
     line_no, also = groups.get("line"), groups.get("also")
-    return Verdict(_VERDICT_STATUS[rc], m["key"], None if ident in (None, "-") else ident,
+    # `.get`, not `m["key"]`: the NO-SIGNATURE grammar has no key group, and indexing a group that the
+    # pattern does not define raises IndexError — a crash where the point was to stop crashing.
+    return Verdict(_VERDICT_STATUS[rc], groups.get("key") or "",
+                   None if ident in (None, "-") else ident,
                    int(line_no) if line_no else None, groups.get("section"),
                    int(also) if also else None)
 
@@ -75,7 +87,7 @@ def _parse_verdict(rc: int, stdout: str, stderr: str) -> Verdict:
 def lookup(repo: str, query: str, archiver: Optional[str] = None,
            timeout: float = LOOKUP_TIMEOUT_S) -> Verdict:
     """Ask `backlog-archive.py lookup` about a B-id or entry text, over BOTH backlog files. Raises
-    LookupFailed on a missing archiver, a timeout, an exit outside {0,10,11} or an unparseable answer."""
+    LookupFailed on a missing archiver, a timeout, an exit outside {0,10,11,13} or an unparseable answer."""
     path = archiver if archiver is not None else archiver_path()
     if path is None or not os.path.isfile(path):
         raise LookupFailed(f"{ARCHIVER_NAME} not found (install incomplete): {path}")
