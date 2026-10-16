@@ -111,6 +111,50 @@ _byteplus_quota_error() {
   printf '%s' "$1" | jq -e '(.error.code // "") | tostring | test("QuotaExceeded")' >/dev/null 2>&1
 }
 
+# _zai_plan_refusal <body> — status 0 when a 429 is the Z.ai plan refusing (spent window, no package, expired,
+# model outside the plan, Fair Usage, wrong key type): a retry within the lane's budget cannot change those.
+# 1302/1305 (rate limit, overload) stay retryable. Codes: https://docs.z.ai/api-reference/api-code
+_zai_plan_refusal() {
+  printf '%s' "$1" | jq -e '(.error.code // "") | tostring
+    | test("^(1113|1308|1309|1310|1311|1313|1314|1315|1316|1317|1318|1319|1320|1321)$")' >/dev/null 2>&1
+}
+
+# _plan_endpoint <lane> <base-url> — the plan (byteplus | zai) a request spends; nothing off those API hosts. A plan
+# host on any other path (BytePlus /api/v3, Z.ai /api/paas/v4: metered) WARNs, status 1. Host and path are parsed
+# and compared whole, never as substrings (api.xyz.ai is not Z.ai; `/api/v3?from=/api/coding` was once allowed).
+# A plan LANE fails closed: anything but https to its own vendor's API host is refused, so its key goes nowhere else.
+_plan_endpoint() {
+  local lane="$1" url="$2" rest host path="" plan="" want need=""
+  case "$lane" in byteplus*) need=byteplus ;; zai) need=zai ;; esac
+  case "$url" in *[[:space:][:cntrl:]]*)
+    echo "  WARN: $lane base URL holds whitespace or a control character — refusing" >&2; return 1 ;;
+  esac
+  local port=""
+  rest="${url#*://}"; host="${rest%%[/?#]*}"; host="${host##*@}"
+  [[ "$host" == *:* ]] && port="${host#*:}"; host="${host%%:*}"
+  host="$(printf '%s' "$host" | tr 'A-Z' 'a-z')"; host="${host%.}"
+  [[ -z "$port" || "$port" == 443 ]] || host=""   # another port on the host is another service
+  case "$host" in
+    *[%\\]*) ;;
+    ark.*.bytepluses.com|ark.*.volces.com) plan=byteplus want="/api/coding/v3" ;;
+    api.z.ai|open.bigmodel.cn)             plan=zai want="/api/coding/paas/v4" ;;
+  esac
+  if [[ -n "$need" && ( "$plan" != "$need" || "$url" != https://* ) ]]; then
+    echo "  WARN: $lane base URL '$url' is not https:// on the $need plan's host — refusing to send the plan key there" >&2
+    return 1
+  fi
+  [[ -n "$plan" ]] || return 0
+  rest="${rest%%[?#]*}"
+  [[ "$rest" == */* ]] && path="/${rest#*/}"
+  path="${path%/}"
+  case "$plan:$path" in
+    byteplus:/api/coding/v3|byteplus:/api/coding|zai:/api/coding/paas/v4)
+      printf '%s\n' "$plan"; return 0 ;;
+  esac
+  echo "  WARN: $lane base URL '$url' is not the Coding Plan path ($want) — refusing, it would bill the account balance instead of the plan" >&2
+  return 1
+}
+
 # _byteplus_reset_epoch <message> — the reset the message names ("reset at YYYY-MM-DD HH:MM:SS +ZZZZ"), as an
 # epoch; now + 1 h when it names none, cannot be parsed, is past or is over 40 days ahead.
 _byteplus_reset_epoch() {
@@ -332,27 +376,10 @@ run_openrouter() {
       return 1 ;;
   esac
 
-  # BYTEPLUS BILLING GUARD. ModelArk serves the same key on two base URLs: /api/coding consumes
-  # the prepaid Coding Plan, /api/v3 bills the account balance. The vendor's own doc says so:
-  # "Requests sent to this Base URL do not consume your Coding Plan quota and will instead incur
-  # additional charges." One wrong character in a base URL would therefore turn an included
-  # review into a metered one, silently and per chunk. Refuse rather than bill.
-  local _bp_path=""
-  if [[ "${ZUVO_OPENROUTER_BASE_URL:-}" == *bytepluses.com* || "${ZUVO_OPENROUTER_BASE_URL:-}" == *volces.com* ]]; then
-    # Compare the PATH, with the query and fragment cut off first. `*/api/coding` on the raw URL
-    # matches anything merely ENDING in those characters, so
-    #   https://ark.…/api/v3?from=/api/coding
-    # satisfied the allow-list and would have been billed. A guard whose whole job is to keep
-    # money off the wrong endpoint cannot be defeated by a query string.
-    _bp_path="${ZUVO_OPENROUTER_BASE_URL%%\?*}"
-    _bp_path="${_bp_path%%#*}"
-    _bp_path="${_bp_path%/}"
-    case "$_bp_path" in
-      */api/coding/v3|*/api/coding) ;;
-      *) echo "  WARN: $_lane base URL '${ZUVO_OPENROUTER_BASE_URL}' is not the Coding Plan path (/api/coding/v3) — refusing, it would bill the account balance instead of the plan" >&2
-         return 1 ;;
-    esac
-  fi
+  # Billing guard: one wrong character in a plan's base URL would meter every chunk in silence. Refuse instead.
+  # _plan = the plan this request spends (byteplus | zai), empty off any plan.
+  local _plan
+  _plan="$(_plan_endpoint "$_lane" "${ZUVO_OPENROUTER_BASE_URL:-}")" || return 1
 
   # Model id is attacker-adjacent only via env, but checked anyway: ids are vendor/name[:tag]. Rejected
   # when malformed, never repaired (lane_model_ok). The router sets ZUVO_OPENROUTER_MODEL for the other
@@ -369,12 +396,10 @@ run_openrouter() {
   local slug
   slug="$(printf '%s' "$_lane" | LC_ALL=C tr -c 'a-zA-Z0-9-' '_').$(printf '%s' "$model" | LC_ALL=C tr -c 'a-zA-Z0-9' '_')"
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
-  # STREAMING (ZUVO_OR_STREAM=1, set by the byteplus lanes only): the Coding Plan closes a non-streaming
-  # request after a minute without a byte, while a reasoning model on a real diff thinks for minutes.
-  # OpenRouter keeps the non-streaming path its keep-alive comments hold open. Tied to the lane too: an
-  # exported ZUVO_OR_STREAM=1 must not flip the OpenRouter lanes onto a path they were never measured on.
+  # STREAMING (byteplus and zai lanes only): a plan drops a request silent for a minute while a model reasons
+  # for several. Lane-tied so an exported ZUVO_OR_STREAM=1 leaves OpenRouter on its measured non-stream path.
   local _or_stream=0
-  [[ "${ZUVO_OR_STREAM:-0}" == "1" && "$_lane" == byteplus* ]] && _or_stream=1
+  [[ "${ZUVO_OR_STREAM:-0}" == "1" && ( "$_lane" == byteplus* || "$_lane" == zai ) ]] && _or_stream=1
   chat_payload "$payload_file" "$model" 0.2 "$_or_stream" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
   local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"
@@ -421,8 +446,13 @@ run_openrouter() {
 
     # A spent BytePlus plan is a 429 too, but asking again cannot help until its reset: recorded, never retried.
     # Keyed on the endpoint, not the lane label, which a stand-in on another endpoint keeps.
-    if [[ -n "$_bp_path" && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
+    if [[ "$_plan" == byteplus && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
       byteplus_quota_record "$_lane" "$response"
+      return 1
+    fi
+    # No stop file for Z.ai: no fallback reads one, and a chunk's one refused request costs nothing.
+    if [[ "$_plan" == zai && "$http_code" == 429 ]] && _zai_plan_refusal "$response"; then
+      echo "  WARN: $_lane: Z.ai GLM Coding Plan refused (code $(printf '%s' "$response" | jq -r '.error.code' 2>/dev/null)): $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS") — not retried" >&2
       return 1
     fi
 

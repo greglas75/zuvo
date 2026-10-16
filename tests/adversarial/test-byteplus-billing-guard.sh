@@ -136,7 +136,8 @@ bp_listed() { # bp_listed <ZUVO_ADV_BYTEPLUS value> -> the byteplus lanes detect
     ZUVO_ADV_BYTEPLUS="$1" bash "$ADV" --list-providers 2>/dev/null | awk '/^byteplus/' | tr '\n' ' ' | sed 's/ $//'
 }
 assert_eq "" "$(bp_listed 0)" "without ZUVO_ADV_BYTEPLUS=1 the lane is not detected"
-assert_eq "byteplus byteplus-alt byteplus-3" "$(bp_listed 1)" "anchor: with it (and the key), the three default lanes are"
+# byteplus (glm) is out of the default set: GLM runs on the zai lane (test-zai-lane.sh).
+assert_eq "byteplus-alt byteplus-3" "$(bp_listed 1)" "anchor: with it (and the key), the two default lanes are"
 
 # ─── 7. the plan's own key, never the OpenRouter one ──────────────────────
 # run_byteplus reuses the OpenRouter client, which reads OPENROUTER_API_KEY FIRST. A BytePlus lane must
@@ -195,3 +196,13 @@ case "$out" in *refusing*) fail "byteplus-3 was refused by the billing guard" "$
 sent_to c12 "$PLAN_URL"
 assert_eq "dola-seed-2.0-code" "$(jq -r '.model' "$BPTMP/c12/payload.json" 2>/dev/null)" "byteplus-3 asks for dola-seed-2.0-code"
 assert_contains "$(cat "$BPTMP/c12/curl.cfg" 2>/dev/null)" "fake-key-for-test" "…with the Coding Plan key"
+
+# ─── 13. the guard fails closed: a spelling it does not know is refused, not waved through ──
+# The trailing-dot FQDN is still BytePlus to DNS and bills the metered path; any other host would get the plan key.
+start_test "bp.13 a trailing-dot host on the metered path, or a non-BytePlus host, is refused"
+out=$(run_bp c13a "https://ark.ap-southeast.bytepluses.com./api/v3")
+assert_contains "$out" "refusing" "trailing-dot BytePlus host on /api/v3 refused"
+refused_without_request c13a
+out=$(run_bp c13b "https://ark.example.com/api/coding/v3")
+assert_contains "$out" "refusing" "a non-BytePlus host is refused for a BytePlus lane"
+refused_without_request c13b
