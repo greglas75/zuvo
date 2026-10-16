@@ -180,7 +180,8 @@ Exit codes:
   5    no reviewable material (nothing was sent to any provider — this is NOT a completed review)
   6    blind-audit: input too large (prompt over ZUVO_BLIND_AUDIT_MAX_BYTES; nothing was sent)
        (blind-audit: 0 = strict, >= 2 valid answers; 1 = no lane left after its exclusions)
-  7    pass cap — these files already had 3 adversarial passes on this branch in the last 3h
+  7    pass cap — 3 adversarial passes already reviewed (half or more of) these files on this branch
+       in the last 7 days (3 h on main/master/develop/trunk)
        (code/test/security/migrate modes; nothing was reviewed; no override)
   124  timeout — every ATTEMPTED lane timed out with none answering at all, even invalidly (all
        providers timed out, or the whole-run deadline fired)
