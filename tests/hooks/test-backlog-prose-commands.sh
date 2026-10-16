@@ -29,15 +29,19 @@
 #         runs once per class the location can carry (a file: every class; a target: its kind's set),
 #         narrowed by a list item's lead-in ("`BUG`, `SEC`, `DATA`:", "any other class ...:"), with a
 #         conf above every bar; no class left is a problem. Each run must exit 0, ACCEPTED or LEDGER.
-#       Counts are printed and held to floors (the counts of T4 round 3; later batches only add commands).
+#       Counts are printed and pinned exactly (SPAN_COUNT, RUN_COUNT).
 #   W   every `--repo` a command in the prose passes, whatever the helper (backlog-archive.py, backlog-groom.py,
 #       backlog-add …): naming the working directory (`$PWD`, `${PWD}`, `$(pwd)`) or a path relative to it
 #       (`.`, `./…`) is a problem outside CWD_REPO_OK, since the harness resets the cwd between calls and a
 #       relative path then resolves against the wrong checkout. A span that opens with `--repo` names the
 #       flag and runs nothing. A fixture runs first, so a reader that finds nothing cannot pass.
-#   F   flow: three canonical sentences of backlog-protocol.md "Filing from a skill" run for real in a
-#       repo on feat/x: BUG -> ACCEPTED with [branch:feat/x], CQ -> LEDGER class-report-only with the
-#       backlog byte-identical, the process item twice -> LEDGER then LEDGER-BUMPED seen=2.
+#   F   flow: the commands two skills print, extracted by file and an identifying sentence (FLOW), run for
+#       real in a repo on feat/x: code-audit's Generic write as BUG -> ACCEPTED with [branch:feat/x],
+#       review's Generic write as CQ -> LEDGER class-report-only with the backlog byte-identical, review's
+#       validity-gate process item twice -> LEDGER then LEDGER-BUMPED seen=2. A renamed or dropped command
+#       finds no span, and that is a FAIL. The protocol's own "Filing from a skill" commands are covered by C
+#       (every span run, its exit and verdict checked); F runs the code-audit and review commands on purpose
+#       (part-2 plan, Task 13), so the flow is proven on what the skills actually print.
 #
 # `~/.zuvo` is filled by the REAL `install_zuvo_home` into a temp HOME (the test-backlog-add-e2e.sh
 # pattern), so the CLI under test is the one the installer ships. Every run builds its own repos.
@@ -101,7 +105,6 @@ import zuvo_backlog_admit as adm
 
 CLI = os.path.join(ZUVO, "backlog-add")
 GUARD = os.path.join(ROOT, "tests/hooks/test-backlog-hand-append-prose.sh")
-PROTOCOL = "shared/includes/backlog-protocol.md"
 # Mirrors test-backlog-hand-append-prose.sh SCOPE_GLOBS (embedded Python there, so not importable);
 # check T fails when the two differ.
 SCOPE_GLOBS = ("skills/*/SKILL.md", "skills/*/agents/*.md", "skills/*/references/*.md",
@@ -109,10 +112,10 @@ SCOPE_GLOBS = ("skills/*/SKILL.md", "skills/*/agents/*.md", "skills/*/references
 # Files outside the prose scope that print a backlog-add command to an agent: the pre-commit warning
 # prints one to every agent that appended by hand. Read through its `printf` format strings.
 EXTRA_SOURCES = ("hooks/backlog-hand-append-warn.sh",)
-# The counts the tree yields at T4 round 3. Later batches add commands without editing this file, so the
-# check is `>=`; a splitter that stops splitting or a scope that loses a directory drops below.
-SPAN_FLOOR = 12
-RUN_FLOOR = 63
+# The exact counts the tree yields. Fewer: an extractor or a scope lost spans. More: a command was added,
+# and this pin must be raised with it.
+SPAN_COUNT = 101
+RUN_COUNT = 750
 OK_VERDICTS = ("ACCEPTED", "LEDGER")
 # {"<path>:<line>": reason}: a documented example whose finding the CLI is meant to discard. Empty: a
 # command the prose prints for filing a finding must not drop it.
@@ -793,6 +796,8 @@ SENTENCE_FIXTURE = "\n".join([
     "",
     f'3. **Process item.** Not `{Z} --class CQ --conf 60 --source x --file "$F" --line <n> --title "$T"` '
     f'but `{Z} --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`.',
+    f'**Twice.** `{Z} --class PROCESS --conf 90 --source <skill> --target subject:<skill>-a --title "$T"`.',
+    f'**Twice.** `{Z} --class PROCESS --conf 90 --source <skill> --target subject:<skill>-b --title "$T"`.',
 ])
 # (fixture id, ordinal, label naming the bug it catches, kind, expected). Kinds:
 #   problem  a problem at that span holds `expected`
@@ -905,10 +910,18 @@ def self_check() -> None:
     for line, ordinal, label, kind, want in SH_ROWS:
         judge(rep, SH_PATH, line, ordinal, label, kind, want)
     spans, _ = extract(SENTENCE_PATH, SENTENCE_FIXTURE)
-    picked = sentence(spans, SENTENCE_FIXTURE, "3. **Process item.**", is_process)
+    picked, _n = sentence(spans, SENTENCE_FIXTURE, "3. **Process item.**", is_process)
     (ok if picked is not None and picked.ordinal == 1 else no)(
         f"S {SENTENCE_PATH}:3 the flow picks the span its sentence means, not the first on the line "
         f"(picked {picked.key if picked else None})")
+    gone, n_gone = sentence(spans, SENTENCE_FIXTURE, "4. **Renamed item.**", is_process)
+    (ok if gone is None and n_gone == 0 else no)(
+        f"S {SENTENCE_PATH} a sentence the file no longer holds picks nothing, so the flow fails "
+        f"(picked {gone.key if gone else None}, {n_gone} line(s))")
+    twice, n_twice = sentence(spans, SENTENCE_FIXTURE, "**Twice.**", is_process)
+    (ok if twice is None and n_twice == 2 else no)(
+        f"S {SENTENCE_PATH} a marker on two lines is ambiguous and picks nothing, not the first match "
+        f"(picked {twice.key if twice else None}, {n_twice} line(s))")
 
 
 # ── T: scope mirror ───────────────────────────────────────────────────────────────────────────────
@@ -938,10 +951,12 @@ def tree_check() -> None:
             no(f"C {key}: {p}")
     else:
         ok("C every command's flags are the CLI's; every --class command runs to exit 0, ACCEPTED or LEDGER")
-    (ok if len(rep.spans) >= SPAN_FLOOR else no)(
-        f"C command count {len(rep.spans)} >= floor {SPAN_FLOOR} (an extractor that stopped finding spans)")
-    (ok if rep.executed >= RUN_FLOOR else no)(
-        f"C CLI run count {rep.executed} >= floor {RUN_FLOOR} (a run check that stopped running)")
+    (ok if len(rep.spans) == SPAN_COUNT else no)(
+        f"C command count {len(rep.spans)} == pinned {SPAN_COUNT} (fewer: the extractor or the scope lost a span; "
+        "more: a command was added without raising SPAN_COUNT)")
+    (ok if rep.executed == RUN_COUNT else no)(
+        f"C CLI run count {rep.executed} == pinned {RUN_COUNT} (fewer: the run check lost a span or a class; "
+        "more: a command or class was added without raising RUN_COUNT)")
 
 
 # ── W: every `--repo` in the prose, any helper ─────────────────────────────────────────────────────
@@ -993,7 +1008,7 @@ def repo_check() -> None:
         ok(f"W no command in {len(files)} files passes --repo naming the working directory")
 
 
-# ── F: the canonical flow ─────────────────────────────────────────────────────────────────────────
+# ── F: the flow, on the commands code-audit and review print ──────────────────────────────────────
 def is_generic(s: Span) -> bool:
     return value(s.args, "--class") == "<C>" and "--file" in s.flags
 
@@ -1002,36 +1017,65 @@ def is_process(s: Span) -> bool:
     return value(s.args, "--class") == "PROCESS" and "--target" in s.flags
 
 
-def sentence(spans: Sequence[Span], text: str, head: str, want: Callable[[Span], bool]) -> Optional[Span]:
-    """The one span on the "Filing from a skill" line starting with `head` that `want` accepts."""
-    lines = text.split("\n")
-    sec = next((k for k, ln in enumerate(lines) if ln.strip() == "## Filing from a skill"), None)
-    if sec is None:
-        return None
-    for k in range(sec + 1, len(lines)):
-        if lines[k].startswith("## "):
-            return None
-        if lines[k].lstrip().startswith(head):
-            hits = [s for s in spans if s.line == k + 1 and want(s)]
-            return hits[0] if len(hits) == 1 else None
-    return None
+def sentence(spans: Sequence[Span], text: str, marker: str, want: Callable[[Span], bool]
+             ) -> Tuple[Optional[Span], int]:
+    """(the one span `want` accepts on the one line holding `marker`, how many lines hold `marker`). The
+    span is None when that count is not 1, or that line holds no such span or several."""
+    rows = [k for k, ln in enumerate(text.split("\n"), 1) if marker in ln]
+    if len(rows) != 1:
+        return None, len(rows)
+    hits = [s for s in spans if s.line == rows[0] and want(s)]
+    return (hits[0] if len(hits) == 1 else None), 1
 
 
 def sha(path: str) -> str:
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
 
+# (name, file, a prose phrase copied from the skill that only the command's line holds, which span on that
+# line). The phrase only picks the line; the command itself is read from the skill, so a renamed or
+# dropped command fails the flow.
+FLOW: Tuple[Tuple[str, str, str, Callable[[Span], bool]], ...] = (
+    ("bug", "skills/code-audit/SKILL.md", "**How:** a **Generic write** per finding", is_generic),
+    ("cq", "skills/review/SKILL.md", "A finding of the reviewed diff", is_generic),
+    ("process", "skills/review/SKILL.md", "**Validity-gate process items.**", is_process),
+)
+FLOW_CLASS: Dict[str, Optional[str]] = {"bug": "BUG", "cq": "CQ", "process": None}
+
+
+def flow_spans() -> Dict[str, Span]:
+    """The FLOW spans found, by name; each one missing is a FAIL that says why."""
+    picked: Dict[str, Span] = {}
+    for name, path, marker, want in FLOW:
+        try:
+            text = open(os.path.join(ROOT, path), encoding="utf-8").read()
+        except OSError as exc:
+            no(f"F {name}: {path} unreadable ({type(exc).__name__}): its command cannot be run")
+            continue
+        spans, _ = extract(path, text)
+        span, n = sentence(spans, text, marker, want)
+        if span is not None:
+            print(f"  ... F {name}: {span.key}")
+            picked[name] = span
+        elif n == 0:
+            no(f"F {name}: no line of {path} holds {marker!r} (the command was renamed or dropped)")
+        elif n > 1:
+            no(f"F {name}: {marker!r} is on {n} lines of {path} (ambiguous: the flow cannot tell which to run)")
+        else:
+            no(f"F {name}: the line of {path} holding {marker!r} has no single such backlog-add command")
+    return picked
+
+
 def flow_check() -> None:
-    text = open(os.path.join(ROOT, PROTOCOL), encoding="utf-8").read()
-    spans, _ = extract(PROTOCOL, text)
-    generic = sentence(spans, text, "1. **Generic write.**", is_generic)
-    process = sentence(spans, text, "3. **Process item.**", is_process)
-    if generic is None or process is None:
-        no(f"F the protocol's sentences 1 and 3 hold one backlog-add command each ({generic=}, {process=})")
-        return
+    picked = flow_spans()
     repo = tempfile.mkdtemp(dir=WORK)
-    probe, _ = substitute(generic, repo, "BUG")
-    seed_repo(repo, seeds_of(probe), branch="feat/x")
+    seeds: Seeds = {}
+    for name, span in picked.items():
+        argv, _ = substitute(span, repo, FLOW_CLASS[name])
+        for path, seed in seeds_of(argv).items():
+            if seeds.setdefault(path, seed) != seed:
+                no(f"F {name}: seeds {path!r} as {seed}, another flow command as {seeds[path]}")
+    seed_repo(repo, seeds, branch="feat/x")
     backlog = os.path.join(repo, "memory/backlog.md")
 
     def run(label: str, span: Span, cls: Optional[str], conf: Optional[str]) -> str:
@@ -1042,26 +1086,29 @@ def flow_check() -> None:
             no(f"F {label}: exit {rc}; {problems}; stdout: {out}; stderr: {err[-300:]}")
         return out
 
-    out = run("BUG conf 85", generic, "BUG", "85")
-    bid = out.split()[2] if out.startswith("ACCEPTED backlog B-") else "<none>"
-    lines = open(backlog, encoding="utf-8").read().splitlines()
-    entry = [ln for ln in lines if ln.startswith(f"- [ ] {bid} ")]
-    (ok if bid != "<none>" and len(entry) == 1 and entry[0].endswith(" [branch:feat/x]") else no)(
-        f"F BUG -> 'ACCEPTED backlog B-', one entry ending [branch:feat/x] (a sentence that lands no entry, "
-        f"or untagged): {out} / {entry}")
+    if "bug" in picked:
+        out = run("BUG conf 85", picked["bug"], "BUG", "85")
+        bid = out.split()[2] if out.startswith("ACCEPTED backlog B-") else "<none>"
+        lines = open(backlog, encoding="utf-8").read().splitlines()
+        entry = [ln for ln in lines if ln.startswith(f"- [ ] {bid} ")]
+        (ok if bid != "<none>" and len(entry) == 1 and entry[0].endswith(" [branch:feat/x]") else no)(
+            f"F BUG -> 'ACCEPTED backlog B-', one entry ending [branch:feat/x] (a sentence that lands no entry, "
+            f"or untagged): {out} / {entry}")
 
-    before = sha(backlog)
-    out = run("CQ conf 90", generic, "CQ", "90")
-    (ok if out.startswith("LEDGER F-") and " reason=class-report-only " in f" {out} " else no)(
-        f"F CQ -> 'LEDGER F-' reason=class-report-only (a report-only class ticketed): {out}")
-    (ok if sha(backlog) == before else no)(
-        "F CQ leaves memory/backlog.md byte-identical (a ledger route that writes the backlog)")
+    if "cq" in picked:
+        before = sha(backlog)
+        out = run("CQ conf 90", picked["cq"], "CQ", "90")
+        (ok if out.startswith("LEDGER F-") and " reason=class-report-only " in f" {out} " else no)(
+            f"F CQ -> 'LEDGER F-' reason=class-report-only (a report-only class ticketed): {out}")
+        (ok if sha(backlog) == before else no)(
+            "F CQ leaves memory/backlog.md byte-identical (a ledger route that writes the backlog)")
 
-    first = run("PROCESS 1", process, None, None)
-    second = run("PROCESS 2", process, None, None)
-    (ok if first.startswith("LEDGER F-") else no)(f"F PROCESS first run -> 'LEDGER F-': {first}")
-    (ok if second.startswith("LEDGER-BUMPED ") and " seen=2 " in f" {second} " else no)(
-        f"F PROCESS repeat -> 'LEDGER-BUMPED' seen=2 (a fixed title that still splits the record): {second}")
+    if "process" in picked:
+        first = run("PROCESS 1", picked["process"], None, None)
+        second = run("PROCESS 2", picked["process"], None, None)
+        (ok if first.startswith("LEDGER F-") else no)(f"F PROCESS first run -> 'LEDGER F-': {first}")
+        (ok if second.startswith("LEDGER-BUMPED ") and " seen=2 " in f" {second} " else no)(
+            f"F PROCESS repeat -> 'LEDGER-BUMPED' seen=2 (a fixed title that still splits the record): {second}")
 
 
 def main() -> None:

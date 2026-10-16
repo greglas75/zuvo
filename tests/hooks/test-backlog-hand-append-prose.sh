@@ -10,7 +10,7 @@
 # Usage: bash tests/hooks/test-backlog-hand-append-prose.sh [--only PATH ...]
 # Exit 0 = PASS, 1 = any FAIL, 2 = usage error. The self-test (G2), the mutants (G2m), the verdict-logic
 # checks (G2u) and the tree-path mutation (G2t) run on every invocation, so a matcher that silently reads
-# nothing cannot pass. `--only` scans just the named files, strictly: PENDING does not excuse them.
+# nothing cannot pass. `--only` scans just the named files.
 #
 # Reads only files under the repo root: no git, no ~/.zuvo, no network, no subprocess.
 #
@@ -23,8 +23,8 @@
 #           `drive-by-findings.md` or the protocol sections.
 #   B:restated-verdict-table  a `| Verdict | Exit |` table outside the protocol (CQ14).
 #   G6      every `--source` in a `backlog-add` unit is valid, and the legacy source tokens are gone.
-# PENDING is an exact ratchet: a pending file must flag exactly its recorded count. More is a new hand
-# write; fewer means a rewire landed and the count must be lowered (zero: the entry removed).
+# Every flagged unit in any file is a FAIL. No PENDING list remains; the allowlist (G5) is the only
+# exemption, and it is checked for rot.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
@@ -237,10 +237,6 @@ RETIRED_QUOTES: Dict[str, List[str]] = {
                                     "sub-A files fixed (or WARN + backlog)",
                                     "Skip (already backlogged)"],
 }
-
-# {path: exact flagged units}: files whose rewire is owned by a later task. Temporary: emptied by the
-# batches and then deleted with its code.
-PENDING: Dict[str, int] = {}
 
 VERB_PATH = r"(?:persist|add|writ|wrote|record|append|push|emit|clean|remov|drop|delet)"
 VERB_DEST = r"(?:persist|add|writ|record|push|go|went|rout|defer|reach|stay)"
@@ -1079,13 +1075,8 @@ def verdict_logic_checks() -> None:
     """G2u: each verdict function, fed a synthetic scan, must move the FAIL counter exactly as stated."""
     rel = "skills/x/SKILL.md"
     cases: List[Tuple[str, Callable[[], None], int]] = [
-        ("a pending file over its count fails", lambda: judge_file(rel, synthetic(3), False, {rel: 2}), 1),
-        ("a pending file under its count fails (lower the max)",
-         lambda: judge_file(rel, synthetic(1), False, {rel: 2}), 1),
-        ("a pending file at zero fails (remove it)", lambda: judge_file(rel, synthetic(0), False, {rel: 2}), 1),
-        ("a pending file at exactly its count passes", lambda: judge_file(rel, synthetic(2), False, {rel: 2}), 0),
-        ("--only ignores PENDING: every flag fails", lambda: judge_file(rel, synthetic(2), True, {rel: 2}), 2),
-        ("a flag in a file outside PENDING fails", lambda: judge_file(rel, synthetic(1), False, {}), 1),
+        ("every flagged unit in a file is a FAIL of its own", lambda: judge_file(rel, synthetic(2)), 2),
+        ("a clean file adds no FAIL", lambda: judge_file(rel, synthetic(0)), 0),
         ("a unit allowlist key matching no unit is stale",
          lambda: check_allowlist_rot(rel, "x", synthetic(1), [(rel, "unit", "no such text", "r")]), 1),
         ("a unit allowlist key matching two units is stale",
@@ -1112,7 +1103,7 @@ def verdict_logic_checks() -> None:
     (ok if n_units == 4 else no)(f"(G2u) `+` and `N)` items each start a unit: {n_units} of 4")
 
 
-def check_config(expansion: Set[str]) -> None:
+def check_config() -> None:
     for tier, name, tok, pattern in REAL.rules:
         spelled = re.sub(r"\\(.)", r"\1", pattern)
         if tok not in spelled and not (tok.islower() and tok in spelled.lower()):
@@ -1124,9 +1115,6 @@ def check_config(expansion: Set[str]) -> None:
             no(f"(G5) file-scope allowlist is reserved for {FILE_SCOPE_ALLOWED}: {path}")
         if scope_name == "section" and key in FORBIDDEN_SECTIONS:
             no(f"(G5) section {key!r} may never be allowlisted: {path}")
-    for path in PENDING:
-        if path not in expansion:
-            no(f"(G4) PENDING names a file outside the scope: {path}")
 
 
 def check_anchors() -> None:
@@ -1181,22 +1169,7 @@ def read(rel: str) -> Optional[str]:
         return None
 
 
-def judge_file(rel: str, scan: FileScan, strict: bool, pending: Dict[str, int]) -> None:
-    n = len(scan.flags)
-    if rel in pending and not strict:
-        want = pending[rel]
-        if n > want:
-            no(f"(G4) new hand-write in a pending file: {rel} flagged={n} recorded={want}")
-            for f in scan.flags if OUT.echo else []:
-                print(f"       {rel}:{f.line} [{f.hits[0].tier}:{f.hits[0].name}] {f.text[:140]}")
-        elif n == 0:
-            no(f"(G4) pending file is clean: remove it from PENDING: {rel}")
-        elif n < want:
-            no(f"(G4) pending file flags fewer units than recorded: lower its count to {n}: {rel} "
-               f"recorded={want}")
-        else:
-            ok(f"(G4) pending {rel} flagged={n} == recorded")
-        return
+def judge_file(rel: str, scan: FileScan) -> None:
     for f in scan.flags:
         h = f.hits[0]
         no(f"{rel}:{f.line} [{h.tier}:{h.name}] {f.text[:140]}")
@@ -1238,7 +1211,7 @@ def tree_mutation(expansion: List[str], cache: Dict[str, FileScan], texts: Dict[
     allowlisted = {p for p, *_ in ALLOWLIST}
     line = "If fix is larger, add to backlog with specific file:line."
     for rel in expansion:
-        if rel in PENDING or rel in allowlisted:
+        if rel in allowlisted:
             continue
         text = texts.get(rel)
         if text is None:
@@ -1256,7 +1229,7 @@ def tree_mutation(expansion: List[str], cache: Dict[str, FileScan], texts: Dict[
         else:
             no(f"(G2t) tree mutation of {rel}: expected exactly one new flag, got {len(after.flags)}")
         return
-    no("(G2t) no clean, non-allowlisted, non-pending file to mutate")
+    no("(G2t) no clean, non-allowlisted file to mutate")
 
 
 def main() -> None:
@@ -1265,7 +1238,7 @@ def main() -> None:
     only = parse_only(exp_set)
     self_test()
     verdict_logic_checks()
-    check_config(exp_set)
+    check_config()
     check_anchors()
     targets = expansion if only is None else only
     cache: Dict[str, FileScan] = {}
@@ -1282,7 +1255,7 @@ def main() -> None:
         units_total += len(scan.units)
         if only is not None and not scan.units:
             no(f"(G3) --only path yields no unit: {rel}")
-        judge_file(rel, scan, only is not None, PENDING)
+        judge_file(rel, scan)
         check_allowlist_rot(rel, text, scan, ALLOWLIST)
         check_retired(rel, text, RETIRED_QUOTES)
         if scan.flags:
@@ -1305,8 +1278,7 @@ def main() -> None:
     print(f"  units scanned: {units_total} in {len(texts)} files")
     for rel in sorted(counts):
         print(f"  flagged-units {rel} {counts[rel]}")
-    print(f"  flagged total: {sum(counts.values())} units in {len(counts)} files; "
-          f"PENDING records {sum(PENDING.values())} units in {len(PENDING)} files")
+    print(f"  flagged total: {sum(counts.values())} units in {len(counts)} files")
     print(f"  runtime: {time.monotonic() - STARTED:.2f}s")
     print(f"RESULT: PASS={OUT.passed} FAIL={OUT.failed}")
     sys.exit(1 if OUT.failed else 0)
