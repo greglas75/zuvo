@@ -289,7 +289,8 @@ openrouter_review_text() {
 # reviews and the key spent $91 that day — benchmark prices had put it at a tenth of a cent a review, while real diffs
 # made the model think for ~60k output tokens a call. A per-call price is a guess; the day's spend is a fact.
 # One GET to /api/v1/key, shared by every lane, chunk and run for ZUVO_OPENROUTER_USAGE_TTL seconds (default 120)
-# through $ZUVO_HOME/openrouter-usage. Fails CLOSED: this is a money check. The test harness skips it unless the
+# through $ZUVO_HOME/openrouter-usage. Fails CLOSED: this is a money check. A soft cap: lanes already in flight when
+# the day crosses it finish, so the overshoot is bounded by one round of calls, not a reservation. The test harness skips it unless the
 # cap is set explicitly — its fake curls answer every URL with a review.
 openrouter_budget_ok() {
   local lane="$1" key="$2" cap="${ZUVO_OPENROUTER_DAILY_USD-5}" f ttl now at="" used="" cfg body
@@ -297,10 +298,14 @@ openrouter_budget_ok() {
   [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENROUTER_DAILY_USD+x}" ]] && return 0
   [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "  WARN: ZUVO_OPENROUTER_DAILY_USD='$cap' is not a number — using 5" >&2; cap=5; }
   f="${ZUVO_OPENROUTER_USAGE_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/openrouter-usage}"
-  ttl="$(ar_decimal "${ZUVO_OPENROUTER_USAGE_TTL:-120}" 120)"
+  ttl="${ZUVO_OPENROUTER_USAGE_TTL:-120}"
+  [[ "$ttl" =~ ^[0-9]{1,6}$ ]] || ttl=120
   now=$(date +%s)
   { read -r at used _ < "$f"; } 2>/dev/null || true
-  if ! [[ "$at" =~ ^[0-9]+$ && "$used" =~ ^[0-9]+(\.[0-9]+)?$ ]] || (( now - at > ttl )); then
+  # Stale: unreadable, older than the TTL, from the future (clock skew), or from another UTC day — usage_daily
+  # restarts at UTC midnight, so yesterday's spend must not stop today's first reviews (nor today's be missed).
+  if ! [[ "$at" =~ ^[0-9]{1,12}$ && "$used" =~ ^[0-9]+(\.[0-9]+)?$ ]] || (( now - at > ttl || at > now )) \
+     || (( at / 86400 != now / 86400 )); then
     cfg="$JSON_TMPDIR/openrouter_budget_${lane//[^a-zA-Z0-9-]/_}.cfg"
     curl_auth_config "$cfg" "$lane" "$key" || return 1
     body=$(curl -sS --max-time 10 -K "$cfg" "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/key" 2>/dev/null) || body=""

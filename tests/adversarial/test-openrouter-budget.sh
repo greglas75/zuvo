@@ -83,3 +83,10 @@ run_b c5 openrouter-alt ZUVO_OPENROUTER_DAILY_USD=off ORB_USED=500 >/dev/null
 assert_eq "0 1" "$(keys c5) $(chats c5)" "off: no /key request, the review runs"
 run_b c5b byteplus ZUVO_ADV_BYTEPLUS=1 ORB_USED=500 >/dev/null
 assert_eq "0 1" "$(keys c5b) $(chats c5b)" "byteplus: no /key request, the review runs"
+
+# Bug caught: yesterday's spend, cached minutes before UTC midnight, stopping today's first reviews.
+start_test "b.6 a spend cached on another UTC day is read again"
+mkdir -p "$BTMP/c6"
+printf '%s 9.0\n' "$(( ($(date +%s) / 86400) * 86400 - 30 ))" > "$BTMP/c6/openrouter-usage"
+run_b c6 openrouter-alt ORB_USED=0.1 ZUVO_OPENROUTER_USAGE_TTL=999999 >/dev/null
+assert_eq "1 1" "$(keys c6) $(chats c6)" "yesterday's \$9 is not trusted today; \$0.10 runs"
