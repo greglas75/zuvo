@@ -126,8 +126,8 @@ For each path in `modules_created`:
 
 1. Does a test file exercise it **directly** (imports the module, not only the facade)? Search by
    import, not by filename convention — a module covered from a differently-named spec is covered.
-2. **Uncovered modules get tests IN THIS RUN.** Dispatch `Skill(zuvo:write-tests <module>)` per
-   uncovered module, commit as `test(<scope>):`. This is the same in-run fix rule Phase 3.5 applies
+2. **Uncovered modules get tests IN THIS RUN.** Dispatch `Skill(zuvo:write-tests <module> --invoked-by refactor)` per
+   uncovered module (the flag makes it list its `Backlog writes:` for refactor's closing commit instead of committing them), commit as `test(<scope>):`. This is the same in-run fix rule Phase 3.5 applies
    to bugs: a gap you surfaced and parked is not dispositioned, it is deferred onto the user, who
    finds it two weeks later on a "files without tests" list.
 3. Only these defer, and only **named**: a module whose test needs files outside the scope fence, or

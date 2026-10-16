@@ -87,7 +87,7 @@ R='/abs/path/of/the/repository/root'   # same shell call as the command; "Filing
 | `--also PATH:LINE` | no, repeatable | another site of the same finding (DUP) |
 | `--pr N` | no | the PR to tag with (1–6 digits); `ZUVO_BACKLOG_PR` does the same |
 | `--dry-run`, `--json` | no | write nothing and print the verdict it would give, with ` dry-run` appended (and `wrote=-` on the verdicts that carry `wrote=`); print the verdict as one JSON object |
-| `--repo` | no, but a skill always passes `"$R"` | the checkout to file in; an existing directory inside a git work tree, resolved to that work tree's top level (a subdirectory works). Left out, it is the current directory, which the harness resets between Bash calls ("Filing from a skill") |
+| `--repo` | no, but a skill always passes `"$R"` | the checkout to file in; an existing directory inside a git work tree, resolved to that work tree's top level (the helper accepts a subdirectory; a skill passes the root, "The repository root"). Left out, it is the current directory, which the harness resets between Bash calls ("Filing from a skill") |
 
 **The cited code must hold now.** "Holds" means the file exists in the work tree and the anchor is at
 the line. Files the run created count, because skills write before they commit. A deleted file is
@@ -174,7 +174,15 @@ A dry run writes nothing, so every verdict that carries `wrote=` shows `wrote=-`
 
 The exit table below, and `NOT PERSISTED (<reason>)` for a call that still fails, apply to EVERY call a
 skill makes, a process item's included: a call that ends without a B- or F-id is named in the report
-under `NOT PERSISTED (<reason>)`, never dropped.
+under `NOT PERSISTED (<reason>)`, never dropped. Three outcomes carry no id and are not failures:
+`DISCARDED below-floor` (not a finding), a refusal a re-read resolves (`file-not-in-worktree` or
+`anchor-not-at-line` once the code is confirmed gone or changed: "The cited code must hold now"), and the
+exit-1 partial write, which is reported as filed under its B-id.
+
+**The report line.** A run's report sums its calls on one line, `Recorded: N (backlog: a, ledger: b)`: `N` the
+calls that ended with a B- or F-id, `a` those whose verdict names a backlog entry (`ACCEPTED`, `BUMPED`,
+`REOPENED`, an exit-1 partial write), `b` those kept in the ledger only (`LEDGER`, `LEDGER-BUMPED`), so
+`N = a + b`; each `NOT PERSISTED (<reason>)` follows by name.
 
 | Verdict | Exit | What you do |
 |---------|------|-------------|
@@ -189,7 +197,7 @@ under `NOT PERSISTED (<reason>)`, never dropped.
 | Exit | Means | What you do |
 |------|-------|-------------|
 | 0 | one of the six verdicts above `REFUSED` | Keep the `wrote=` paths for the run's closing commit ("Committing what backlog-add wrote" in "Filing from a skill"). |
-| 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | If stderr says `failed after writing: wrote=<paths>`, the backlog entry exists and only its ledger record is missing: do not retry (a retry counts a second sighting); report it as filed, stage the listed paths, and the next sighting writes the record. Otherwise retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
+| 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | If stderr says `failed after writing: wrote=<paths>`, the backlog entry exists and only its ledger record is missing: do not retry (a retry counts a second sighting); report it as filed, keep the listed paths for the run's closing commit (as for exit 0), and the next sighting writes the record. Otherwise retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
 | 2 | usage error: the call itself is malformed, or `--repo` is not a directory inside a git work tree | Fix the call. If you cannot, `NOT PERSISTED (backlog-add exit 2)`. |
 | 3 | `REFUSED <reason>`: the input does not conform, and resubmitting it unchanged cannot help | An input mistake: correct it and resubmit once, otherwise list it under `NOT PERSISTED (REFUSED <reason>)`. Some refusals are not input mistakes, and the refusal table says what to do instead: `anchor-not-at-line` and `file-not-in-worktree` after a re-read, and the repository's visibility refusals. |
 
@@ -262,7 +270,7 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
 | Situation | Class | Source | Location |
 |-----------|-------|--------|----------|
 | A finding in a file the run is editing, which the run defers | its class: `BUG` only when it names the input and the wrong output, else `CQ` or the class the finding is | `<skill>` | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
-| A finding in a file the run is not editing | its class | `drive-by:<skill>` (`drive-by-findings.md`) | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
+| A finding in a file the run is not editing | its drive-by tag (`SEC`, `BUG`, `SIZE`, `DUP`, `CPLX`, `PERF`, `DEAD` or `READ`); one that meets no tag's condition is reported, not recorded (`drive-by-findings.md` "Categories and what qualifies") | `drive-by:<skill>` (`drive-by-findings.md`) | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
 | A finding on a live page or host, with no repository file causing it | any class; the bars still route it, so a report-only class stays in the ledger | `<skill>` | `--target "$U" --evidence "$E"`, `U` a URL or a host (the location rule below) |
 | A validity-gate item: an incomplete run, a skipped tier, an escape hatch taken | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-<gate>`, with no date in it and the gate's fixed title on every run, so a repeat bumps the one record (`LEDGER-BUMPED seen=N`); kept in the ledger only |
 | A deferred decision, or follow-up work the run will not do | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-decision-<slug>`; the question as the title, both options in `--evidence "$E"` |
@@ -348,8 +356,9 @@ path of the repository root the run works in (`R='/abs/path/of/repo'`; a linked 
 that holds a `'` uses the heredoc form above) or as `R=$(git -C '/abs/path/of/repo' rev-parse --show-toplevel)`.
 Never `$PWD`, `$(pwd)` or the shell's current directory: it can be reset between calls, and a value assigned
 in an earlier call is gone. The helper checks `--repo` is an existing directory inside a git work tree
-(otherwise exit 2) and resolves it to that work tree's top level itself, so a subdirectory of the root
-also works; the branch tag, the backlog and the ledger are those of that checkout. Without `--repo` it
+(otherwise exit 2) and resolves it to that work tree's top level itself; the branch tag, the backlog and
+the ledger are those of that checkout. `R` is still the root itself, never a subdirectory: the closing
+commit runs `git -C "$R" add` with the repo-relative `wrote=` paths, which a subdirectory would misresolve. Without `--repo` it
 files into whatever the current directory is, the very trap above.
 
 **A process item keeps its first title.** Its identity is the class, the `subject:` target and the
@@ -384,7 +393,8 @@ call first, as "The repository root" says: `R='/abs/path/of/repo'; git -C "$R" �
   for which `R='/abs/path/of/repo'; git -C "$R" check-ignore -q -- <path>` succeeds; and any path the
   snapshot listed. Then `R='/abs/path/of/repo'; git -C "$R" add -- <path> … && git -C "$R" commit -m "chore(backlog): record findings of <skill> run" -- <path> …`:
   the pathspec on `commit` commits those paths only, never anything else already staged. The final
-  summary names each path left out, with its reason.
+  summary reports it on one line, `Backlog commit: <sha7> | none: nothing to stage | not committed: <path>, …`,
+  followed by `left out: <path> (<reason>)` for each path left out.
 - **Nothing to stage, no commit.** When no `wrote=` path remains (none printed, every one `wrote=-`, or
   every one excluded), there is no closing commit, and every gate or summary line that asks for it reads
   `none: nothing to stage`.
@@ -401,7 +411,7 @@ filled.
 2. **Adversarial review.**
    - **WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` "Persisting a finding").
    - "Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:<skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: don't dismiss it just because it existed before your changes.
-3. **Process item.** Record it as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`, with `T` the gate's fixed title, the same words on every run (`backlog-protocol.md` "Filing from a skill"). It is kept in the findings ledger, not ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options in `--evidence "$E"`.
+3. **Process item.** Record it as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`, with `T` the gate's fixed title, the same words on every run (`backlog-protocol.md` "Filing from a skill"). It is kept in the findings ledger, not ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options in `--evidence "$E"`. **The decision slug:** `<slug>` names the decision's subject in 3 to 6 words joined by hyphens, ASCII `[a-z0-9-]`; it is chosen once and written where the skill records the decision (its report entry, or the line it prints before the call), so a resumed run or a sub-agent reuses it from there and never re-derives it, and two different decisions get different slugs.
 4. **Closing, not removing.** Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is closed, never removed: tick it and append its resolution marker (`[FIXED <sha7>]`) as `backlog-protocol.md` "How to Persist Findings" step 3 says; the archive helper moves it ("Archiving is done by the helper, never by hand"). For an audit's tier score: a Tier A score does not prove any one defect is gone: close only an entry whose cited code this run re-read and found fixed.
 
 ## Backlog Table Format

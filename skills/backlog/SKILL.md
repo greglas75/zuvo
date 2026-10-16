@@ -284,7 +284,7 @@ add flow the skill never mints an id, runs the lookup or appends a line itself.
 3. Report the verdict `backlog-add` printed: the B-id it filed or bumped, REGRESSION for `REOPENED`, the
    F-id for a ledger record. A refusal is corrected only when the input was mistyped (a path, a line,
    the anchor text) and then resubmitted once; never by changing `--class` or `--conf` to get past a
-   bar. Anything else is reported as `NOT PERSISTED (<reason>)`. Never append the item by hand.
+   bar. Anything else is reported as `NOT PERSISTED (<reason>)`, except the outcomes the protocol's "Verdicts and exit codes" lists as no failure (`DISCARDED below-floor`, a refusal a re-read resolves, the exit-1 partial write reported as filed). Never append the item by hand.
 
 ### Batch Add
 

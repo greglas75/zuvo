@@ -319,16 +319,24 @@ class BumpTests(unittest.TestCase):
                                               "source: review, code-audit | conf: 90 | seen: 2")
                          .replace(TODAY, "2026-10-20") + "\n")
 
-    def test_seven_digit_tag_part_one_wrote_is_still_read_and_kept(self) -> None:
+    def test_legacy_pr_tag_up_to_nine_digits_is_still_read_and_kept(self) -> None:
         # Defect: the strict write bound also applied on read, so part 1's entries stop being bumped
-        # (every re-sighting only linked) or the bump drops their tag.
+        # (every re-sighting only linked) or the bump drops their tag. The read bound is 1-9 digits.
         line, bid = line_for(finding())
-        old = f"{line} {PR7}"
-        out = ent.bump([old + "\n"], bid, 90, "code-audit", "2026-10-20")
-        assert out is not None
-        own = ent.parse_own(old)
-        assert own is not None
-        self.assertEqual((own.tag, out[0].endswith(f"| 2026-10-20 {PR7}\n")), (PR7, True))
+        for name, tag in (("a 7-digit tag part 1 wrote", PR7),
+                          ("a 9-digit tag, the read bound's widest", "[pr:123456789]")):
+            with self.subTest(name):
+                old = f"{line} {tag}"
+                out = ent.bump([old + "\n"], bid, 90, "code-audit", "2026-10-20")
+                assert out is not None
+                own = ent.parse_own(old)
+                assert own is not None
+                self.assertEqual((own.tag, out[0].endswith(f"| 2026-10-20 {tag}\n")), (tag, True))
+
+    def test_pr_tag_past_nine_digits_is_not_an_own_format_tail(self) -> None:
+        # Defect: an unbounded read takes any digit run for a tag, so a line no version wrote is bumped.
+        line, _bid = line_for(finding())
+        self.assertIsNone(ent.parse_own(f"{line} [pr:1234567890]"))
 
     def test_lower_conf_and_known_source_keep_their_values(self) -> None:
         # Defect: conf drops to the weaker sighting's, or a source is listed twice.

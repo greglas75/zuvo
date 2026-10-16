@@ -430,8 +430,8 @@ WORK_FILES = <files being touched>
         continue — and cap the run-line verdict at WARN. A failure whose output names the input, the
         wrong result and the failing test's line is a BUG filed at that line of the TEST file, one call
         each (**Generic write**):
-        `~/.zuvo/backlog-add --repo "$R" --class BUG --conf <N> --source ship --file "$F" --line <n> --anchor "$A" --title "$T"`,
-        `F` the test file and `A` copied from that test source line ("The location rule"), never from
+        `~/.zuvo/backlog-add --repo "$R" --class BUG --conf <N> --source drive-by:ship --file "$F" --line <n> --anchor "$A" --title "$T"`,
+        the drive-by source because ship does not edit that test file (`backlog-protocol.md` "Filing from a skill"), `F` the test file and `A` copied from that test source line ("The location rule"), never from
         the crash output. The others (a crash, a timeout, a missing fixture, an output that names no
         test line) make one process item for the run: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source ship --target subject:ship-carried-failures --title "$T" --evidence "$E"`
         (**Process item**; `T` is the fixed title "pre-existing test failures carried by the ship", the

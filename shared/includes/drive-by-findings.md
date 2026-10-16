@@ -67,10 +67,19 @@ count all of them too. `SEC` and `BUG` are uncapped: they are defects, the rest 
 
    ```bash
    R='/abs/path/of/the/repository/root'   # same shell call as the command; never "$PWD"
+   read -r -d '' T <<'ZUVO_TXT' || true
+   <the defect, one sentence>
+   ZUVO_TXT
+   read -r -d '' E <<'ZUVO_TXT' || true
+   <what proves it>
+   ZUVO_TXT
    ~/.zuvo/backlog-add --repo "$R" --class DUP --conf 85 --source 'drive-by:<skill>' \
      --file src/orders/totals.ts --line 40 --also src/cart/sum.ts:12 \
-     --title '<the defect, one sentence>' --evidence '<what proves it>' --severity medium
+     --title "$T" --evidence "$E" --severity medium
    ```
+
+   Free text goes through a variable (`backlog-protocol.md` "Free text goes through a variable"); in a
+   real call the file path is assigned the same way, as `"$F"`.
 
 2. **`--source drive-by:<skill>`, exactly.** The source is the only way to tell a drive-by finding
    from the task's own follow-ups, and the helper refuses any other shape (`bad-source`), so a ticket

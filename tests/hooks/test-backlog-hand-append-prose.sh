@@ -940,7 +940,7 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
      "in `--evidence \"$E\"`.", None),
     ("the canonical pentest rows flagged as a hand write or a bad source",
      "| A white-box pentest finding, traced to a file and line | `SEC` | `pentest` | `~/.zuvo/backlog-add "
-     "--repo \"$PWD\" --class SEC --conf <N> --source pentest --file \"$F\" --line <n> --anchor \"$A\" "
+     "--repo \"$R\" --class SEC --conf <N> --source pentest --file \"$F\" --line <n> --anchor \"$A\" "
      "--title \"PT<n>: $T\"`; the dimension again in the `PT<n>:` prefix |", None),
     ("the canonical closing-not-removing sentence flagged as a hand delete",
      "Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is "

@@ -143,9 +143,10 @@ CWD_REPO_OK: Dict[str, str] = {
     "hooks/backlog-hand-append-warn.sh": "the part-2 plan leaves the hook untouched; its hint is fixed later",
     "hooks/fixture-warn.sh": "the self-check fixture that stands for the warning hook",
 }
-# `--repo` naming the working directory: `$PWD`, `${PWD}`, `$(pwd)` or a backtick `pwd`, or a path relative to
-# it (`.`, `./…`, optionally quoted): the harness may reset the cwd, and a relative --repo resolves against it.
-CWD_REPO = re.compile(r"\$\{?PWD\}?|\$\(\s*pwd\s*\)|`\s*pwd\s*`|^[\"']?\.(?:/[^\"']*)?[\"']?$")
+# `--repo` naming the working directory: `$PWD`, `${PWD}`, `$(pwd)` or a backtick `pwd` (with options such as
+# `-P` too), or a path relative to it (`.`, `./…`, `..`, `../…`, optionally quoted): the harness may reset the
+# cwd, and a relative --repo resolves against it.
+CWD_REPO = re.compile(r"\$\{?PWD\}?|\$\(\s*pwd\b[^)]*\)|`\s*pwd\b[^`]*`|^[\"']?\.\.?(?:/[^\"']*)?[\"']?$")
 TITLE = "the limit check accepts a total equal to the limit"
 EVIDENCE = "limit=100 and total=100 pass the check"
 FIX = "compare with >="
@@ -201,6 +202,8 @@ class Span:
     ordinal: int
     text: str
     lead: Lead = None
+    start: int = 0                                 # the token this command's search starts at
+    end: Optional[int] = None                      # the token after the operator that ended it, if any
     args: List[str] = field(default_factory=list)
     flags: List[str] = field(default_factory=list)
     problems: List[str] = field(default_factory=list)
@@ -405,7 +408,9 @@ def parse(span: Span) -> bool:
             span.problems.append(f"does not split as a shell command ({exc})")
             return True
         return False
-    at = next((k for k, t in enumerate(tokens) if CMD_WORD.fullmatch(t)), None)
+    at = next((k for k, t in enumerate(tokens) if k >= span.start and CMD_WORD.fullmatch(t)), None)
+    if at is None and span.start:
+        return False                               # no further command after the one before it
     if at is None:
         glued = next((k for k, t in enumerate(tokens) if GLUED.search(t)), None)
         if glued is None or glued == len(tokens) - 1:
@@ -418,9 +423,10 @@ def parse(span: Span) -> bool:
         return False
     args: List[str] = []
     value_next = False
-    for t in tokens[at + 1:]:
+    for k, t in enumerate(tokens[at + 1:], at + 1):
         if not value_next and (is_operator(t) or REDIRECT.fullmatch(t)):
-            break                                  # an operator ends the command; a flag's value never does
+            span.end = k + 1                       # an operator ends the command; a flag's value never does
+            break
         name, eq, val = t.partition("=")
         if not value_next and eq and name in VALUE_FLAGS:
             args += [name, val]
@@ -466,10 +472,14 @@ def extract(path: str, text: str) -> Tuple[List[Span], List[Tuple[str, str]]]:
     spans: List[Span] = []
     seen: Dict[int, int] = {}
     for line, body, lead in found:
-        span = Span(path, line, seen.get(line, 0), body, lead)
-        if parse(span):
+        start: Optional[int] = 0
+        while start is not None:                   # every command in the span: `X && backlog-add …` included
+            span = Span(path, line, seen.get(line, 0), body, lead, start)
+            if not parse(span):
+                break
             seen[line] = span.ordinal + 1
             spans.append(span)
+            start = span.end
     return spans, [(f"{path}:{line}#0", msg) for line, msg in bad]
 
 
@@ -776,6 +786,8 @@ FIXTURE_LINES: List[Tuple[str, str]] = [
     ("", "```bash"),
     ("gluedfence", f"ID=`{Z} --class CQ --conf 60`"),
     ("", "```"),
+    ("chained", f'Chained: `{Z} --class CQ --conf 60 --source <skill> --file "$F" --line <n> --title "$T" && '
+                f'{Z} --class CQ --conf 60 --source <skill> --file "$F" --line <n> --title "$T" --dimension PT3`.'),
 ]
 FIXTURE_LINE = {k: n for n, (k, _) in enumerate(FIXTURE_LINES, 1) if k}
 FIXTURE = "\n".join(t for _, t in FIXTURE_LINES)
@@ -868,6 +880,9 @@ FIXTURE_ROWS: List[Tuple[str, int, str, str, str]] = [
      "glued to shell syntax"),
     ("operators", 0, "a quoted '>= limit' or 'a | b' value does not end the command", "verdict", "LEDGER"),
     ("nestedfence", 0, "a ```python line inside a ```` fence does not close it", "verdict", "LEDGER"),
+    ("chained", 0, "the first of two commands chained in one span keeps its own verdict", "verdict", "LEDGER"),
+    ("chained", 1, "a second backlog-add after `&&` in the same span is checked, not skipped", "problem",
+     "unknown flag --dimension"),
 ]
 # (line, ordinal, label, kind, expected) for SH_FIXTURE, judged like FIXTURE_ROWS.
 SH_ROWS: List[Tuple[int, int, str, str, str]] = [
@@ -960,7 +975,9 @@ def tree_check() -> None:
 
 
 # ── W: every `--repo` in the prose, any helper ─────────────────────────────────────────────────────
-REPO_ARG = re.compile(r"(?<![\w-])--repo(?:=|\s+)(\"[^\"\n]*\"|'[^'\n]*'|[^\s`|;)]+)")
+# The value: quoted, an unquoted `$( … )` or backtick substitution (read whole, so `$(pwd)` is not cut at its
+# `)`), or a bare word.
+REPO_ARG = re.compile(r"(?<![\w-])--repo(?:=|\s+)(\"[^\"\n]*\"|'[^'\n]*'|\$\([^)\n]*\)|`[^`\n]*`|[^\s`|;)]+)")
 REPO_FIXTURE = "\n".join([
     'Look it up: `~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<B-id>"`.',
     "```bash",
@@ -974,8 +991,17 @@ REPO_FIXTURE = "\n".join([
     "backlog-groom.py apply --repo ./sub --dry-run",
     "```",
     'Never `--repo .` in a skill.',
+    "```bash",
+    "backlog-groom.py plan --repo $(pwd) --dry-run",
+    "backlog-groom.py plan --repo \"$(pwd -P)\" --dry-run",
+    "backlog-groom.py plan --repo `pwd` --dry-run",
+    "backlog-groom.py plan --repo .. --dry-run",
+    "backlog-groom.py plan --repo ../other --dry-run",
+    "```",
 ])
-REPO_FIXTURE_HITS = [1, 3, 7, 9]    # lookup, fenced groom, relative status, fenced relative apply; "$R" and mentions are not
+# lookup, fenced groom, relative status, fenced relative apply, then unquoted $(pwd), $(pwd -P), a backtick pwd,
+# `..` and `../other`; "$R" and mentions are not
+REPO_FIXTURE_HITS = [1, 3, 7, 9, 13, 14, 15, 16, 17]
 
 
 def cwd_repo_hits(path: str, text: str) -> List[int]:
