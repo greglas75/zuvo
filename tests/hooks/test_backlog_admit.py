@@ -2,6 +2,8 @@
 `backlog-add`, all pure. Every row is named after the defect it catches: a misroute (debt leaking into
 the backlog, a real defect parked in the ledger), a refusal that should not happen or should, or an id
 that splits one finding in two or merges two into one.
+
+Test level: small (in-process pure functions; no subprocess, no file system, no clock).
 """
 
 import dataclasses
@@ -469,6 +471,11 @@ class CanonicalTargetTests(unittest.TestCase):
          "https://[::1/x?a=1", "https://[::1/x?a=1"),
         ("line break in a URL removed by urlsplit, so the shape check never refuses it",
          URL + "/a\nb?q=1", URL + "/a\nb?q=1"),
+        # every file-cited finding reaches canonical_target with no --target at all (backlog-add `_finding`)
+        ("a file finding's absent target crashes or becomes a string", None, None),
+        ("an empty target turned into a URL", "", ""),
+        ("a target urlsplit reads as a scheme-less path stripped of its `?`", "db.internal?x=1",
+         "db.internal?x=1"),
     ]
 
     def test_url_target_is_kept_without_query_and_fragment(self):

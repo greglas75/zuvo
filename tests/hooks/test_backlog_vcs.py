@@ -4,6 +4,9 @@ tag the entry carries, and which lines the branch changed. Every row names the d
 
 Real `git init` repos in a temp dir (the farm mirror has no .git), a stub `gh` on a narrowed PATH built
 with tests/lib/hermetic-tools.sh, and HOME pointed at a temp dir so the real ~/.zuvo/cache is untouched.
+
+Test level: medium (real git and stub-gh subprocesses in temp dirs; no network). The hung-gh rows use real
+subprocess timeouts on purpose: a stubbed timeout cannot prove the process group is killed.
 """
 from __future__ import annotations
 
@@ -320,6 +323,15 @@ class TagTests(unittest.TestCase):
         ("non-integer PR number in gh's JSON used as a PR", "feat/x", GITHUB,
          """echo '[{"number": "17 x", "isCrossRepository": false}]'""", {}, None,
          ("branch", "feat/x", "[branch:feat/x]"), 1),
+        # _own_pr's except tuple, one row per member: each shape raised out of resolve_tag before
+        ("gh's JSON error object (not a list) crashes the tag", "feat/x", GITHUB,
+         """echo '{"message": "Not Found"}'""", {}, None, ("branch", "feat/x", "[branch:feat/x]"), 1),
+        ("a JSON scalar from gh crashes the tag", "feat/x", GITHUB, "echo 17", {}, None,
+         ("branch", "feat/x", "[branch:feat/x]"), 1),
+        ("a list of bare numbers (not objects) from gh crashes the tag", "feat/x", GITHUB, "echo '[17]'", {},
+         None, ("branch", "feat/x", "[branch:feat/x]"), 1),
+        ("a 6-digit PR from gh (the intake's upper bound) dropped as oversize", "feat/x", GITHUB,
+         gh_prs((999999, False)), {}, None, ("pr", "999999", "[pr:999999]"), 1),
         ("a fork's PR from an equally named branch tags the entry", "feat/x", GITHUB, gh_prs((30, True)),
          {}, None, ("branch", "feat/x", "[branch:feat/x]"), 1),
         ("a fork's newer PR chosen over the branch's own", "feat/x", GITHUB, gh_prs((30, True), (17, False)),
@@ -365,7 +377,7 @@ class TagTests(unittest.TestCase):
          ("pr", "17", "[pr:17]"), 1),
     ]
 
-    def test_tag_order(self) -> None:
+    def test_tag_is_none_on_default_then_pr_env_gh_branch_or_untaggable(self) -> None:
         for name, branch, remote, gh, env, pr, want, calls in self.ROWS:
             with self.subTest(name):
                 sb = Sandbox(self)
@@ -378,10 +390,14 @@ class TagTests(unittest.TestCase):
                 self.assertEqual(calls, sb.gh_calls())
 
     def test_gh_is_asked_about_exactly_this_repo_and_branch(self) -> None:
+        # The whole argv line, so a dropped `--repo=` (gh then picks the repo from the remotes itself,
+        # carrying the user's token to another repo) and a `--head` split from its value both fail.
+        tail = "--state open --json number,isCrossRepository"
         rows = [
             ("gh left to pick the repo from the remotes itself (another remote, another repo)", "feat/x",
-             "--repo=github.com/acme/app"),
-            ("a branch named like an option handed to gh as a separate argv word", "--help", "--head=--help"),
+             f"call pr list --repo=github.com/acme/app --head=feat/x {tail}"),
+            ("a branch named like an option handed to gh as a separate argv word", "--help",
+             f"call pr list --repo=github.com/acme/app --head=--help {tail}"),
         ]
         for name, branch, want in rows:
             with self.subTest(name):
@@ -392,7 +408,7 @@ class TagTests(unittest.TestCase):
                 sb.stub_gh(PR17)
                 with sb.env({}):
                     vcs.resolve_tag(str(sb.repo), None)
-                self.assertIn(want, sb.gh_argv()[0].split())
+                self.assertEqual([want], sb.gh_argv())
 
     def test_hung_gh_is_abandoned_at_its_timeout(self) -> None:
         # a hung gh blocking backlog-add (and the lock its caller may hold) past ZUVO_GH_TIMEOUT. No

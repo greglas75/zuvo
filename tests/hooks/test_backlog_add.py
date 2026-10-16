@@ -3,6 +3,9 @@ ledger. Every test drives the LAUNCHER as a subprocess in a temp `git init` repo
 temp directory (one in-process row aside, for a git answer no fixture can provoke), and asserts what a
 caller sees and what is left on disk: the one verdict line, the exit code, the backlog text and the
 folded ledger. Each test names the defect it catches.
+
+Test level: medium (subprocesses, a temp git repo and file locks; no network). The lock tests use the
+real clock on purpose: the contention they prove is between real processes.
 """
 
 import contextlib
@@ -541,10 +544,12 @@ class RoutingTests(AddCase):
         assert own is not None
         self.assertEqual((own.b_id, own.sources, own.seen), (b_id, ("seo-audit",), 1))
 
-    def test_url_query_and_fragment_never_reach_the_ledger(self) -> None:
-        # Defect: a credential in a crawled URL's query or fragment is written to the shared ledger.
+    def test_url_query_fragment_and_path_parameters_never_reach_the_ledger(self) -> None:
+        # Defect: a credential in a crawled URL's query or fragment, or a session id in its `;` path
+        # parameter, is written to the shared ledger because `_finding` passes --target on unstripped.
         r = self.repo()
-        p = self.add(r, "--class", "CQ", "--conf", "70", "--target", "https://example.com/p?token=abc#frag",
+        p = self.add(r, "--class", "CQ", "--conf", "70", "--target",
+                     "https://example.com/p;jsessionid=S1D?token=abc#frag",
                      "--evidence", "e", "--title", "page has no h1", "--source", "seo-audit")
         _, _, f_id = self.verdict(p)
         records, _ = self.folded(r)
@@ -552,6 +557,7 @@ class RoutingTests(AddCase):
         ledger = "".join(path.read_text(encoding="utf-8") for path in r.glob("memory/**/*.jsonl"))
         self.assertIn("https://example.com/p", ledger)
         self.assertNotIn("token", ledger)
+        self.assertNotIn("jsessionid", ledger)
 
     def test_credentials_before_the_host_are_still_refused_when_a_query_follows(self) -> None:
         # Defect: the query strip runs first and a `user:pw@` URL is stored without anyone refusing it.
