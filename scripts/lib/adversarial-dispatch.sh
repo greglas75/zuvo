@@ -122,7 +122,8 @@ dispatch_provider() {
   return "$status"
 }
 
-# run_byteplus <lane> <model> — the OpenRouter client on the BytePlus Coding Plan endpoint, with the plan's key.
+# run_byteplus <lane> <model> — the OpenRouter client on the BytePlus Coding Plan endpoint, with the plan's key
+# (BYTEPLUS_API_KEY, else the key file; never OPENROUTER_API_KEY).
 # While the plan's quota is spent — recorded earlier by any lane, chunk or run (byteplus_quota_until), or hit by
 # this very request — the plan is not asked: _byteplus_fallback runs the review on the Alibaba Token Plan (qwen CLI) or leaves the lane out.
 run_byteplus() {
@@ -133,7 +134,7 @@ run_byteplus() {
     return
   fi
   ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
-    OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
+    OPENROUTER_API_KEY="${BYTEPLUS_API_KEY:-}" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
     ZUVO_OPENROUTER_MODEL="$model" ZUVO_OR_STREAM=1 run_openrouter || rc=$?
   [[ $rc -ne 0 && -s "$JSON_TMPDIR/bpquota_$lane" ]] || return "$rc"
   until="$(cat "$JSON_TMPDIR/bpquota_$lane")"

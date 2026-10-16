@@ -218,3 +218,13 @@ assert_contains "$out" "refusing" "a backslash in the host is refused"
 refused_without_request c14b
 run_bp c14c "https://ark.ap-southeast.bytepluses.com:443/api/coding/v3" >/dev/null
 sent_to c14c "https://ark.ap-southeast.bytepluses.com:443/api/coding/v3"
+
+# ─── 15. BYTEPLUS_API_KEY alone is a key, not only a detection signal ──────
+# Detection enables the lanes on the env var OR the key file; the lane once blanked the env key and read only
+# the file, so an env-only setup was detected and then skipped as no-key.
+start_test "bp.15 with only BYTEPLUS_API_KEY set, the lane sends that key"
+mkdir -p "$BPTMP/c15"
+env -u OPENROUTER_API_KEY BYTEPLUS_API_KEY=bp-env-key-for-test ZUVO_BYTEPLUS_KEY_FILE="$BPTMP/c15/absent.key" \
+  ZUVO_BYTEPLUS_BASE_URL="$PLAN_URL" PATH="$BPTMP/bin:$PATH" BP_REC="$BPTMP/c15" HOME="$BPTMP/c15" ZUVO_HOME="$BPTMP/c15" \
+  ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 bash "$ADV" --provider byteplus-alt --mode code --files "$EMPTY" >/dev/null 2>&1
+assert_contains "$(cat "$BPTMP/c15/curl.cfg" 2>/dev/null)" "bp-env-key-for-test" "the env key is the one sent"
