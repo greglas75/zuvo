@@ -10,7 +10,8 @@
 # Usage: bash tests/hooks/test-backlog-hand-append-prose.sh [--only PATH ...]
 # Exit 0 = PASS, 1 = any FAIL, 2 = usage error. The self-test (G2), the mutants (G2m), the verdict-logic
 # checks (G2u) and the tree-path mutation (G2t) run on every invocation, so a matcher that silently reads
-# nothing cannot pass. `--only` scans just the named files.
+# nothing cannot pass. `--only` narrows the per-file scan; the tree mutation always runs on the full
+# scope, because it proves the scanner, not the files.
 #
 # Reads only files under the repo root: no git, no ~/.zuvo, no network, no subprocess.
 #

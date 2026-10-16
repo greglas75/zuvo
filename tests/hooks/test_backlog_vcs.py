@@ -667,7 +667,11 @@ class PrCacheTests(unittest.TestCase):
                 ("a 7-digit PR (no taggable PR for the intake) tagged [pr:1234567], or gh asked on every add",
                  gh_prs((1234567, False)), 1),
                 ("gh's garbage PR 0 cached as no PR, so a later add never asks gh again",
-                 gh_prs((0, False)), 2)]
+                 gh_prs((0, False)), 2),
+                ("a same-repo PR object with no number cached as no PR, so a later add never asks gh again",
+                 """echo '[{"isCrossRepository": false}]'""", 2),
+                ("a PR object with no isCrossRepository read as same-repo and tagged [pr:17]",
+                 """echo '[{"number": 17}]'""", 1)]
         for name, body, calls in rows:
             with self.subTest(name):
                 self.sb.counter.unlink(missing_ok=True)

@@ -1028,8 +1028,21 @@ def sentence(spans: Sequence[Span], text: str, marker: str, want: Callable[[Span
     return (hits[0] if len(hits) == 1 else None), 1
 
 
-def sha(path: str) -> str:
-    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+def sha(path: str) -> Optional[str]:
+    """The file's sha256, or None when it cannot be read."""
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def backlog_lines(path: str) -> Optional[List[str]]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().splitlines()
+    except OSError:
+        return None
 
 
 # (name, file, a prose phrase copied from the skill that only the command's line holds, which span on that
@@ -1048,7 +1061,8 @@ def flow_spans() -> Dict[str, Span]:
     picked: Dict[str, Span] = {}
     for name, path, marker, want in FLOW:
         try:
-            text = open(os.path.join(ROOT, path), encoding="utf-8").read()
+            with open(os.path.join(ROOT, path), encoding="utf-8") as fh:
+                text = fh.read()
         except OSError as exc:
             no(f"F {name}: {path} unreadable ({type(exc).__name__}): its command cannot be run")
             continue
@@ -1069,13 +1083,23 @@ def flow_spans() -> Dict[str, Span]:
 def flow_check() -> None:
     picked = flow_spans()
     repo = tempfile.mkdtemp(dir=WORK)
+    wanted = {name: seeds_of(substitute(span, repo, FLOW_CLASS[name])[0]) for name, span in picked.items()}
+    # A path two commands seed differently: each of them would run against a fixture it did not author, so
+    # neither runs; the rest still do.
+    for path in sorted({p for seeds in wanted.values() for p in seeds}):
+        claims = {name: seeds[path] for name, seeds in wanted.items() if path in seeds}
+        if len(set(claims.values())) > 1:
+            no(f"F seed conflict on {path!r}: {claims}; {', '.join(sorted(claims))} not run")
+            for name in claims:
+                picked.pop(name, None)
     seeds: Seeds = {}
-    for name, span in picked.items():
-        argv, _ = substitute(span, repo, FLOW_CLASS[name])
-        for path, seed in seeds_of(argv).items():
-            if seeds.setdefault(path, seed) != seed:
-                no(f"F {name}: seeds {path!r} as {seed}, another flow command as {seeds[path]}")
-    seed_repo(repo, seeds, branch="feat/x")
+    for name in picked:
+        seeds.update(wanted[name])
+    try:
+        seed_repo(repo, seeds, branch="feat/x")
+    except SeedError as exc:
+        no(f"F the flow repo cannot be seeded, so no flow command runs: {exc}")
+        return
     backlog = os.path.join(repo, "memory/backlog.md")
 
     def run(label: str, span: Span, cls: Optional[str], conf: Optional[str]) -> str:
@@ -1089,19 +1113,20 @@ def flow_check() -> None:
     if "bug" in picked:
         out = run("BUG conf 85", picked["bug"], "BUG", "85")
         bid = out.split()[2] if out.startswith("ACCEPTED backlog B-") else "<none>"
-        lines = open(backlog, encoding="utf-8").read().splitlines()
-        entry = [ln for ln in lines if ln.startswith(f"- [ ] {bid} ")]
+        lines = backlog_lines(backlog)
+        entry = [ln for ln in lines or [] if ln.startswith(f"- [ ] {bid} ")]
         (ok if bid != "<none>" and len(entry) == 1 and entry[0].endswith(" [branch:feat/x]") else no)(
             f"F BUG -> 'ACCEPTED backlog B-', one entry ending [branch:feat/x] (a sentence that lands no entry, "
-            f"or untagged): {out} / {entry}")
+            f"or untagged): {out} / {entry if lines is not None else 'memory/backlog.md unreadable'}")
 
     if "cq" in picked:
         before = sha(backlog)
         out = run("CQ conf 90", picked["cq"], "CQ", "90")
         (ok if out.startswith("LEDGER F-") and " reason=class-report-only " in f" {out} " else no)(
             f"F CQ -> 'LEDGER F-' reason=class-report-only (a report-only class ticketed): {out}")
-        (ok if sha(backlog) == before else no)(
-            "F CQ leaves memory/backlog.md byte-identical (a ledger route that writes the backlog)")
+        (ok if before is not None and sha(backlog) == before else no)(
+            "F CQ leaves memory/backlog.md byte-identical (a ledger route that writes the backlog)"
+            + ("" if before is not None else ": memory/backlog.md unreadable before the run"))
 
     if "process" in picked:
         first = run("PROCESS 1", picked["process"], None, None)
