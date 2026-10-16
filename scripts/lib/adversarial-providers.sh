@@ -359,9 +359,13 @@ detect_providers() {
   # a fix and another pass. openrouter-4 is reachable by --provider or ZUVO_ADV_OPENROUTER_LANES; mercury by
   # ZUVO_MODEL_OPENROUTER_3. openrouter-3 runs deepseek-v4.1-flash, which answers within 300 s only part of
   # the time: watch its timeout rate in `adversarial-stats` first if the lane disappoints.
+  # 2026-10-16: openrouter-3 is OUT of the default roster again, by the owner's decision. Back in it on
+  # 2026-10-15, deepseek ran on ~1,700 reviews a day and the key spent $32 that day and $146 that week —
+  # more than two months of normal OpenRouter use. Deepseek and glm belong on the plans that do not meter
+  # per call (byteplus-alt on BytePlus, the qwen lane's Token Plan); OpenRouter keeps only the cheap lane.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
