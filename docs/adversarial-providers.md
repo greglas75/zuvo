@@ -90,7 +90,7 @@ never a review: it fails with a named reason and is retried like a dropped conne
 3-10 min per review (bench rerun 2026-10-06: 171-576 s), so the slowest diffs exceed the 500 s lane
 timeout — backlog `B-20261006-BYTEPLUS-GLM-TIMEOUT-VS-500S`.
 
-**A spent BytePlus quota falls back to OpenRouter (since 2026-10-15).** The plan answers a spent
+**A spent BytePlus quota falls back to the Alibaba Token Plan (since 2026-10-16; never OpenRouter).** The plan answers a spent
 monthly, weekly or 5-hour quota with HTTP 429 `AccountQuotaExceeded` and names its reset ("It will
 reset at 2026-10-22 23:59:59 +0800"). That 429 is not retried: the reset goes to
 `~/.zuvo/byteplus-quota-until`, an hour ahead when the message names none, and until then no lane,

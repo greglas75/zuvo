@@ -190,12 +190,13 @@ open" "$(cat "$QTMP/q12.out")" "60 days ahead and yesterday are taken as an hour
 
 # Bug caught: a stop that could not be written passing silently, or a lock left by a killed run blocking it forever.
 start_test "q.13 a failed write says so, and a stale lock is waited out"
-mkdir -p "$QTMP/c13/ro" "$QTMP/c13/quota.lock"; chmod 500 "$QTMP/c13/ro"
+# The unwritable target sits under a regular file, not a chmod-ed dir: root writes through permissions.
+mkdir -p "$QTMP/c13/quota.lock"; : > "$QTMP/c13/notadir"
 ( source "$ROOT/scripts/lib/adversarial-lanes-http.sh"
   body=$(quota_body "You have exceeded the monthly usage quota. It will reset at $(epoch_fmt "$RESET") +0000 CST.")
-  ZUVO_BYTEPLUS_QUOTA_FILE="$QTMP/c13/ro/quota" byteplus_quota_record byteplus "$body" 2>&1 >/dev/null | awk '/could not be written/' | wc -l | tr -d ' '
+  ZUVO_BYTEPLUS_QUOTA_FILE="$QTMP/c13/notadir/quota" byteplus_quota_record byteplus "$body" 2>&1 >/dev/null | awk '/could not be written/' | wc -l | tr -d ' '
   ZUVO_BYTEPLUS_QUOTA_FILE="$QTMP/c13/quota" byteplus_quota_record byteplus "$body" 2>/dev/null
 ) > "$QTMP/c13/out"
-chmod 700 "$QTMP/c13/ro"
 assert_eq "1" "$(head -1 "$QTMP/c13/out")" "the unwritable stop is reported"
 assert_eq "$RESET" "$(until_of c13)" "a stale lock delays the write, never stops it"
+assert_eq "" "$(ls -d "$QTMP/c13/quota.lock" 2>/dev/null)" "…and the stale lock is cleared"

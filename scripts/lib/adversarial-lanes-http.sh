@@ -129,7 +129,7 @@ _byteplus_reset_epoch() {
 # a mkdir lock (a lock left by a killed run is waited out for ~2 s, then ignored) through a temp file and mv, and a
 # later reset already on file is kept: a shorter window's answer must not cut a monthly stop short.
 byteplus_quota_record() {
-  local lane="$1" msg until f tmp="" held n=0 locked=0
+  local lane="$1" msg until f tmp="" held n=0 locked
   msg=$(printf '%s' "$2" | jq -r '.error.message // empty' 2>/dev/null) || msg=""
   until=$(_byteplus_reset_epoch "$msg")
   echo "  WARN: $lane: BytePlus Coding Plan quota exhausted until $(_ar_epoch_text "$until") — not retried" >&2
@@ -142,7 +142,9 @@ byteplus_quota_record() {
     (( ++n > 20 )) && break
     sleep 0.1
   done
-  (( n > 20 )) || locked=1
+  # Held past ~2 s means its holder died (the section below takes microseconds): taken over, so the rmdir
+  # below clears it instead of leaving every later write to wait it out.
+  locked=1
   if ! { held="$(byteplus_quota_until)" && (( held >= until )); }; then
     tmp="$f.$$.$RANDOM"
     if ! { printf '%s\t%s\n' "$until" "$lane" > "$tmp" && mv -f -- "$tmp" "$f"; } 2>/dev/null; then
@@ -418,7 +420,7 @@ run_openrouter() {
       elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
 
     # A spent BytePlus plan is a 429 too, but asking again cannot help until its reset: recorded, never retried.
-    # Keyed on the endpoint, not the lane label, which an OpenRouter stand-in keeps.
+    # Keyed on the endpoint, not the lane label, which a stand-in on another endpoint keeps.
     if [[ -n "$_bp_path" && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
       byteplus_quota_record "$_lane" "$response"
       return 1

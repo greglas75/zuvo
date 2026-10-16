@@ -383,7 +383,7 @@ detect_providers() {
   # Antigravity, whose ~12 calls / 5h made it a fallback only.
   if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
     if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
-      # While the plan's quota is spent run_byteplus runs glm and deepseek on OpenRouter and leaves dola-seed out.
+      # While the plan's quota is spent run_byteplus runs glm and deepseek on the Alibaba Token Plan, never OpenRouter, and leaves dola-seed out.
       providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus byteplus-alt byteplus-3}"
     else
       echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
