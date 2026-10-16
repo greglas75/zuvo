@@ -313,7 +313,7 @@ re-filed as new work.
 
 Finding the entry a mode acts on, or answering "is this already known?" without filing anything, is
 the lookup across **both** files — run it, do not re-implement it:
-`~/.zuvo/backlog-archive.py lookup --repo "$R" "$Q"` (`R` is the repository root,
+`~/.zuvo/backlog-archive.py lookup --repo "$R" -- "$Q"` (`R` is the repository root,
 assigned in the same shell call: `backlog-protocol.md` "The repository root"; `Q` is the B-id or the
 candidate text, assigned through the heredoc of "Free text goes through a variable" there, since candidate
 text is the user's own words). It answers `OPEN` (exit 10),

@@ -280,10 +280,13 @@ NEG_WORDS: FrozenSet[str] = frozenset({"never", "not", "no", "don't", "nor", "wi
 NEG_PAIRS = {("instead", "of"), ("rather", "than")}
 # "not fixed", "no ... resolved": a condition on the finding, not a prohibition of the write.
 STATE_WORDS = frozenset({"fixed", "resolved", "done", "addressed", "handled", "applied"})
-# "If the fix is not localized, add it": a `not` after a copula, in a sentence that opened a condition, states
-# the condition; "It is not allowed to add it" (no condition word) stays a prohibition.
+# "If the fix is not localized, add it": a `not` after a copula, in the clause a condition word opened, states
+# the condition; "It is not allowed to add it" (no condition word) and "If X, it is not allowed to add it" (the
+# condition closed at the comma) stay prohibitions; "When X, or Y is not tracked, add it" goes on past `, or`.
 COPULAS = frozenset({"is", "are", "was", "were", "be"})
 CONDITIONS = frozenset({"if", "when", "unless", "whenever"})
+CLAUSE_BREAK = re.compile(r"[,;:](?!\s*(?:or|and)\b)", re.I)
+CLAUSE_BREAK_ANY = re.compile(r"[,;:]")
 WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 CODE_SPAN = re.compile(r"`[^`\n]*`")
 QUOTE = re.compile(r'"[^"\n]*"|“[^”\n]*”')
@@ -351,6 +354,8 @@ class Cfg:
     neg_words: FrozenSet[str] = NEG_WORDS
     state_is_condition: bool = True
     copula_condition: bool = True
+    condition_clause: bool = True
+    or_continues: bool = True
     heading_own_unit: bool = True
     item_needs_space: bool = True
     cite: Pattern[str] = CITE
@@ -534,10 +539,13 @@ def negated(unit: Unit, start: int, sentence_start: int, cfg: Cfg) -> bool:
     followed by a state word ("not fixed") are conditions; inside a fence the window stops at the line."""
     text = unit.text
     floor = text.rfind("\n", 0, start) + 1 if unit.fence and cfg.fence_lines else 0
+    brk = CLAUSE_BREAK if cfg.or_continues else CLAUSE_BREAK_ANY
     if cfg.neg_sentence:
         floor = max(floor, sentence_start)
     lo = floor if cfg.neg_window is None else max(floor, start - 200)
-    words = [w.lower() for w in WORD.findall(text[lo:start].replace("’", "'"))]
+    seg = text[lo:start].replace("’", "'")
+    toks = [(m.group().lower(), m.start()) for m in WORD.finditer(seg)]
+    words = [w for w, _ in toks]
     first = 0 if cfg.neg_window is None else max(0, len(words) - cfg.neg_window)
     for i in range(first, len(words)):
         w = words[i]
@@ -547,7 +555,9 @@ def negated(unit: Unit, start: int, sentence_start: int, cfg: Cfg) -> bool:
             continue
         if cfg.state_is_condition and w in ("not", "no") and nxt in STATE_WORDS:
             continue
-        if cfg.copula_condition and w == "not" and prev in COPULAS and CONDITIONS & set(words[:i]):
+        if cfg.copula_condition and w == "not" and prev in COPULAS and any(
+                c in CONDITIONS and not (cfg.condition_clause and brk.search(seg, p, toks[i][1]))
+                for c, p in toks[:i]):
             continue
         if w in cfg.neg_words or (cfg.neg_words and (w.startswith("forbid") or (prev, w) in NEG_PAIRS)):
             return True
@@ -809,6 +819,8 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
     ("'not fixed' before an arrow is a condition", "Anything not fixed → backlog", "B:arrow-backlog"),
     ("a copular 'is not' inside an if-clause is a condition, not a prohibition (the adversarial boilerplate)",
      "If the fix is not localized, add it to backlog.", "B:verb-to-backlog"),
+    ("a copular 'is not' in the second half of an '..., or ...' condition read as a prohibition",
+     "When the helper is down, or the entry is not tracked, add it to backlog.", "B:verb-to-backlog"),
     ("a heading's negation reaches the paragraph under it", "## No exceptions\nAdd it to backlog by hand.",
      "B:verb-to-backlog"),
     ("a wrapped line opening with bold text starts a new unit, so the verb and the path never meet",
@@ -887,6 +899,8 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
     ("a negation right before the verb flagged as a hand write", "never backlog it", None),
     ("a copular prohibition with no condition flagged as a hand write", "It is not allowed to add it to the backlog.",
      None),
+    ("a copular prohibition after a closed condition clause flagged as a hand write",
+     "If the fix is ready, it is not allowed to add it to the backlog.", None),
     ("a negated noun phrase flagged as a hand write", "Never a silent backlog row.", None),
     ("a quoted mention flagged as an instruction", 'This closes the "RECOMMENDED → backlog" reflex.', None),
     ("the adversarial driver's exit/verdict table flagged as the protocol's verdict table",
@@ -961,6 +975,8 @@ STRUCTURAL: List[Tuple[str, Cfg]] = [
     ("negation-lexicon-empty", replace(REAL, neg_words=frozenset())),
     ("state-words-negate", replace(REAL, state_is_condition=False)),
     ("copular-not-in-a-condition-negates", replace(REAL, copula_condition=False)),
+    ("condition-crosses-a-clause-break", replace(REAL, condition_clause=False)),
+    ("comma-or-closes-the-condition", replace(REAL, or_continues=False)),
     ("heading-joins-its-paragraph", replace(REAL, heading_own_unit=False)),
     ("bullet-marker-without-space", replace(REAL, item_needs_space=False)),
     ("backlog-adds-guard-dropped", replace(REAL, cite=re.compile(CITE.pattern.replace("(?!s)", "")))),

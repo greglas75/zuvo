@@ -351,7 +351,7 @@ PLAN (LIGHT)
   Files: [list]
   Changes: [1-2 sentences per file]
   Tests: [which test files to create/modify]
-  backlog-snapshot: [the Phase 0 snapshot output, or "clean"]
+  backlog-snapshot: [the Phase 0 snapshot output, verbatim, as a fenced block under this line; an empty snapshot is an empty block]
   backlog-writes: [every wrote= path printed so far, appended as each call prints it]
 ```
 
@@ -407,7 +407,7 @@ FORBIDDEN: files outside these lists, unrelated improvements, opportunistic refa
 ## 10. Open Questions
 [Genuine uncertainties. Empty if none.]
 
-backlog-snapshot: [the Phase 0 snapshot output, or "clean"]
+backlog-snapshot: [the Phase 0 snapshot output, verbatim, as a fenced block under this line; an empty snapshot is an empty block]
 backlog-writes: [every wrote= path printed so far, appended as each call prints it]
 ```
 

@@ -206,8 +206,11 @@ def canonical_target(target: Optional[str]) -> Optional[str]:
     if not isinstance(target, str) or target_kind(target) != "url":
         return target
     u = urlsplit(target.strip())
-    # Per segment: `/a;v=1/b` names `/a/b`, not `/a`.
-    path = "/".join(seg.split(";", 1)[0] for seg in u.path.split("/"))
+    # Per segment: `/a;v=1/b` names `/a/b`, not `/a`. An inner segment that is only parameters goes with them
+    # (`/;jsessionid=1/b` is `/b`, not `//b`); a last one leaves its slash (`/a/;s=1` is `/a/`, as `/a/` is).
+    parts = u.path.split("/")
+    path = "/".join(seg.split(";", 1)[0] for i, seg in enumerate(parts)
+                    if not (seg.startswith(";") and i < len(parts) - 1))
     return urlunsplit((u.scheme, u.netloc, path, "", ""))
 
 
