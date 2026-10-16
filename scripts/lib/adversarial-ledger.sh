@@ -716,7 +716,14 @@ root="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || r
 # The branch of THIS worktree: $root is the shared git dir, whose HEAD is the main worktree's.
 branch="$(git -C "$(ar_repo_root)" symbolic-ref -q --short HEAD 2>/dev/null)" || branch=""
 [[ -n "$branch" ]] || branch="detached"
-case "$branch" in main|master|develop|trunk) window=$PASS_WINDOW_SHARED_S ;; *) window=$PASS_WINDOW_S ;; esac
+# Shared: the usual default names, the remote's own default branch (whatever it is called), and a detached HEAD.
+local shared_branch
+shared_branch="$(git -C "$(ar_repo_root)" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || shared_branch=""
+shared_branch="${shared_branch#origin/}"
+case "$branch" in
+  main|master|develop|trunk|detached) window=$PASS_WINDOW_SHARED_S ;;
+  *) if [[ -n "$shared_branch" && "$branch" == "$shared_branch" ]]; then window=$PASS_WINDOW_SHARED_S; else window=$PASS_WINDOW_S; fi ;;
+esac
 ledger="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-passes.tsv"
 now="$(date +%s)"
 if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
