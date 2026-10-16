@@ -5121,11 +5121,49 @@ text says "dup of B-…" shipped as a NEGATIVE because `deident` had already era
    nothing, decides nothing. Off unless `ZUVO_BACKLOG_SIMILAR=1` and a key is present; fail-open on any error, with the
    call made BEFORE the lock is taken (the lock budget is 30 s and a network call must never sit inside it).
 2. MEASURE IN THE WILD: record each verdict and what the caller did next, so precision is computed on real pairs
-   instead of this proxy corpus.
+   instead of this proxy corpus. **Already being produced elsewhere — do not build a second recording path.**
+   Task 5's acceptance report (`feat/rerank-knowledge-backlog`) counts how many `possible-dup-of` flags land
+   on entries carrying a DIFFERENT `F-`, which is this measurement seen from the flag's side. An offline
+   denominator was considered and dropped for a good reason: `CLASS` and the anchor are arguments of the
+   `backlog-add` CALL, not properties of an entry's text, so recomputing `F-` over an archive of 18820
+   pre-`backlog-add` entries would measure the guesses, not the key. What that report gives is recall; the
+   field that gives PRECISION is what the caller did after the flag (merged / ignored / filed separately),
+   and precision is what decides whether stage 3 is defensible at all.
+   That session will take precision from what groom/verifier already records — whether a flagged entry was
+   later closed as a duplicate or still lives on its own — rather than adding a ledger field mid-execution.
+   ONE TRAP in that proxy, worth stating before the number exists: groom's own semantic pass runs through the
+   SAME rerank client as the flag it is being used to score. A closure whose evidence was that report measures
+   the model against its own echo, so the count has to separate closures reached independently (the exact key,
+   a human reading the entries) from closures that followed the semantic report — otherwise precision looks
+   good for the same reason the discarded "same file => duplicate" baseline did.
 3. ACT, only if stage 2 supports it: at p above the measured threshold, BUMP instead of filing, recording
    `dedup: <model> p=…` on the entry so it is auditable and reversible.
    The deterministic `CLASS | file | anchor` key stays the identity throughout: the model is consulted only on a miss,
-   and never gets to overrule a structural match. | severity: low | category: Tooling | conf: 85
+   and never gets to overrule a structural match.
+**NOT OURS TO BUILD — stage 1's insertion point already has an owner (2026-10-15).** Session
+`zuvo-plugin-ec` (Mac) carries `docs/specs/2026-10-15-rerank-knowledge-backlog-plan.md` (rev 6,
+status Reviewed, 6 tasks) whose **Task 5** is this exact change: a pre-lock dedup candidate in
+`zuvo_backlog_add._execute`, re-checked in `_backlog_route`'s double-ABSENT branch, same lock-budget
+constraint. Building stage 1 here would put two dedup paths in one function. So this entry stays a
+MEASUREMENT, not a queued implementation, and the table above was sent to that session instead.
+Their route is a RERANKER (BM25 top-15 + `voyageai/rerank-2.5-lite`, leave-one-out F1 0.89 at 0.72),
+which is complementary rather than competing: a rerank score is not a probability, so their threshold
+is calibrated on their gold set alone, while the decisions endpoint returns a calibrated `p`. The
+sequence that uses both is BM25 -> rerank picks 2-3 finalists -> decision model scores those pairs
+(~$0.001). One premise of their plan was re-measured before it was built, and it
+moved: "today's exact keys catch 0/38 reworded duplicates" was measured against the legacy key
+(`normalize_signature`/`entry_key` + `sha1(body[:200])`), not against `backlog-add`, whose key has
+not been word-based since 2026-10-14. Their own check: not one of the 18820 corpus entries carries
+an `F-` fingerprint, so how many of the 38 pairs `backlog-add` ALREADY folds is unmeasured. They
+corrected the plan (worktree `feat/rerank-knowledge-backlog`) and Task 5 now targets what is left
+over after the structural key — a different anchor within +/-3 lines, a different class or file, and
+legacy/hand-written entries. The decision-model calibration step is accepted as a follow-up but
+deliberately NOT added mid-execution (their scope freeze); it returns as its own proposal after
+PR-A2 lands, and this entry is where its numbers live until then.
+**Their gold set is not fetchable into this repo.** It sits in a Mac scratchpad and contains entry
+text from TGM repositories, so it stays out of public `zuvo-plugin`. Scoring the six decision models
+against it would send client finding text to OpenRouter -> the provider: that is an egress decision
+for the owner, not something this entry authorises. | severity: low | category: Tooling | conf: 85
 
 - [x] B-20261009-DEDUP-EMPTY-QUERY-OPEN [FIXED 4505da07] [P2][correctness][conf 95]
 **Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
