@@ -102,6 +102,29 @@ Never on OpenRouter: the first cut fell back there and deepseek alone spent $72 
 against the lane). The run log and the ledger name the model that answered.
 `ZUVO_BYTEPLUS_FALLBACK_<LANE>` sets a lane's stand-in, and set but empty turns it off. Delete the file to ask the plan again before the reset.
 
+**GLM runs on Z.ai's own plan, lane `zai` (since 2026-10-16).** `byteplus` (glm-5.3-flash) left the
+default BytePlus set the same day (owner's decision); it stays reachable by `--provider byteplus` or
+`ZUVO_ADV_BYTEPLUS_LANES`. Setup:
+
+```bash
+( umask 077; pbpaste > ~/.zuvo/zai.key )   # the FULL key, {API Key ID}.{secret} — Z.ai shows it once
+export ZUVO_ADV_ZAI=1                      # opt-in: the plan's 5-hour/weekly quota is shared
+~/.zuvo/adversarial-review --doctor        # zai must answer
+```
+
+- Endpoint `https://api.z.ai/api/coding/paas/v4` (`ZUVO_ZAI_BASE_URL`). Any other `z.ai` /
+  `bigmodel.cn` path, e.g. the metered `/api/paas/v4`, is refused before a request is sent — the same
+  guard as BytePlus (`_plan_endpoint`, `scripts/lib/adversarial-lanes-http.sh`).
+- Model `glm-5.2` (`ZUVO_ZAI_MODEL` / `ZUVO_MODEL_ZAI`), not benched yet. The plan's list:
+  `GET $ZUVO_ZAI_BASE_URL/models`.
+- A 429 that is the plan refusing — window spent (1308, 1310, 1316–1321), no package (1113), plan
+  expired (1309, 1314), model not in the plan (1311), Fair Usage (1313), wrong key type (1315) — is
+  not retried; a rate limit (1302) or overload (1305) is. No stop file and no fallback.
+- With the flag on, every review's diff goes to Z.ai (Zhipu AI) under its terms — leave it off for repos
+  whose code may not leave the approved vendors.
+- Not guarded: Z.ai's account-level **extra usage**. With it enabled and a balance, requests past
+  the window are paid from the balance. Keep it off for this key.
+
 ```bash
 ~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES
 ~/.zuvo/adversarial-stats --days 30 --project zuvo-plugin
@@ -114,6 +137,7 @@ prints them; a hand-made table must too. `CRIT` is what a model *reported*, not 
 | Vendor | Lanes | Where the usage / bill is |
 |---|---|---|
 | BytePlus ModelArk (Coding Plan) | `byteplus`, `byteplus-alt`, `byteplus-3` | https://console.byteplus.com/ark/region:ap-southeast-1/subscription/coding-plan |
+| Z.ai (GLM Coding Plan) | `zai` | no usage page recorded (z.ai → GLM Coding Plan → Usage) |
 | OpenRouter (per token) | `openrouter`, `openrouter-alt`, `openrouter-3`, `openrouter-4` | https://openrouter.ai/activity |
 | Alibaba Model Studio (Token Plan Intl) | `qwen` | https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal |
 | OpenAI (ChatGPT plan) | `codex-5.3`, `codex-5.4` | https://chatgpt.com/codex/settings/usage |

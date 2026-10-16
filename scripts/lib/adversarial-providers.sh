@@ -383,10 +383,25 @@ detect_providers() {
   # Antigravity, whose ~12 calls / 5h made it a fallback only.
   if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
     if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
-      # While the plan's quota is spent run_byteplus runs glm and deepseek on the Alibaba Token Plan, never OpenRouter, and leaves dola-seed out.
-      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus byteplus-alt byteplus-3}"
+      # While the plan's quota is spent run_byteplus runs deepseek on the Alibaba Token Plan, never OpenRouter, and leaves dola-seed out.
+      # `byteplus` (glm-5.3-flash) is not in the default set (owner): GLM runs on its own vendor's plan, lane
+      # `zai`. Still reachable by name or ZUVO_ADV_BYTEPLUS_LANES.
+      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus-alt byteplus-3}"
     else
       echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
+    fi
+  fi
+
+  # 4b'. Z.ai GLM Coding Plan — prepaid like BytePlus and opt-in for the same reason: the quota (5-hour
+  # and weekly windows) is shared with whatever else the owner points at the plan. Its key works ONLY on
+  # /api/coding/paas/v4; run_openrouter refuses any other z.ai/bigmodel.cn path (_plan_endpoint). One
+  # spill it cannot see: an account that enables Z.ai's "extra usage" pays for requests past the window
+  # from its balance — that is an account setting, not something a base URL decides.
+  if [[ "${ZUVO_ADV_ZAI:-0}" == "1" ]]; then
+    if [[ -n "${ZAI_API_KEY:-}" || -f "${ZUVO_ZAI_KEY_FILE:-$HOME/.zuvo/zai.key}" ]]; then
+      providers="${providers:+$providers }zai"
+    else
+      echo "  NOTE: ZUVO_ADV_ZAI=1 but no key (env ZAI_API_KEY or ~/.zuvo/zai.key) — lane skipped" >&2
     fi
   fi
 
@@ -468,7 +483,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|byteplus-3|muse|qwen) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|byteplus-3|zai|muse|qwen) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -477,7 +492,7 @@ if [[ -n "$PROVIDER" ]]; then
     mock-*) ;;
     *)
       echo "ERROR: unknown provider '$PROVIDER'." >&2
-      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude, muse, qwen" >&2
+      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude, muse, qwen, zai" >&2
       exit 2 ;;
   esac
   PROVIDERS="$PROVIDER"
@@ -604,7 +619,8 @@ lane_model() {
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
-    muse)         echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
+    zai)          echo "${ZUVO_ZAI_MODEL:-${ZUVO_MODEL_ZAI:-glm-5.2}}" ;;
+    muse)        echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
     qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;

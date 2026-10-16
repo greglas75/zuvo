@@ -341,6 +341,12 @@ Environment variables:
                            glm-5.3-flash -> glm-5.3, deepseek-v4-1-flash -> deepseek-v4.1-flash, none for the
                            rest: left out). Never OpenRouter. Set but empty = no fallback. The reset is kept in
                            ~/.zuvo/byteplus-quota-until.
+  ZUVO_ADV_ZAI=1           Opt IN to the `zai` lane: Z.ai GLM Coding Plan (prepaid). Key in ZAI_API_KEY or
+                           ~/.zuvo/zai.key (ZUVO_ZAI_KEY_FILE; mode 600/400, the full {id}.{secret}). Key
+                           presence alone does NOT enable it — the plan's quota is shared.
+  ZUVO_ZAI_MODEL           zai lane model (default: ZUVO_MODEL_ZAI from model-registry.sh, glm-5.2)
+  ZUVO_ZAI_BASE_URL        zai endpoint (default: https://api.z.ai/api/coding/paas/v4). Any other z.ai or
+                           bigmodel.cn path is refused: it is not the plan.
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
   ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)
