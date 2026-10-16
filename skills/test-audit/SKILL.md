@@ -660,8 +660,7 @@ After presenting the report, the user may request fixes:
    - All modified test files <= 400 lines
    - Q1-Q25 self-eval on each fixed file
    - Tier improvement confirmed (D->C+, C->B+, B->A)
-   - Each B- or F-id Phase 5 printed for a finding the fix resolved is closed, as `backlog-protocol.md` "Filing from a skill", **Closing, not removing**, says
-4. **Commit** -- behavior per `--commit` flag (ask/auto/off)
+4. **Commit** -- behavior per `--commit` flag (ask/auto/off). After the code commit, each B-id Phase 5 printed for a finding the fix resolved is closed with that commit's `<sha7>`, as `backlog-protocol.md` "Filing from a skill", **Closing, not removing**, says (an F-id is a ledger record with no entry to close). With no code commit (a declined `ask`, `--commit=off`) there is no `<sha7>`: the entry stays open and the summary names it as fixed and not yet committed
 5. **Re-audit** -- optionally re-run on fixed files to verify improvement
 
 ## Closing Commit for backlog-add's Writes

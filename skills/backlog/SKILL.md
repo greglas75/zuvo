@@ -313,8 +313,10 @@ re-filed as new work.
 
 Finding the entry a mode acts on, or answering "is this already known?" without filing anything, is
 the lookup across **both** files — run it, do not re-implement it:
-`~/.zuvo/backlog-archive.py lookup --repo "$R" "<B-id or candidate text>"` (`R` is the repository root,
-assigned in the same shell call: `backlog-protocol.md` "The repository root"). It answers `OPEN` (exit 10),
+`~/.zuvo/backlog-archive.py lookup --repo "$R" "$Q"` (`R` is the repository root,
+assigned in the same shell call: `backlog-protocol.md` "The repository root"; `Q` is the B-id or the
+candidate text, assigned through the heredoc of "Free text goes through a variable" there, since candidate
+text is the user's own words). It answers `OPEN` (exit 10),
 `ARCHIVED` (exit 11: the `regression` path), `ABSENT` (exit 0), or `NO-SIGNATURE` (exit 13: the query keys
 on nothing — empty, or stripped to nothing as resolution markers; nothing was looked up, so rewrite it to
 name the file and the defect, or pass the B-id). Checking only `backlog.md` is not a check: an entry that

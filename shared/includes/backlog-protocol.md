@@ -333,7 +333,11 @@ ZUVO_TXT
 
 `read` drops leading and trailing whitespace and keeps everything else byte for byte; `|| true`
 because `read -d ''` returns 1 at the end of the heredoc. The same two lines set `E`, `U`, `F` and `M` (the assertion the tests lack, for `--missing-assertion`).
-The text must not hold a line that is exactly `ZUVO_TXT`.
+The text must not hold a line that is exactly `ZUVO_TXT`: that line would end the heredoc early and run
+the rest of the text as commands. When it does, pick another delimiter the text does not hold
+(`ZUVO_TXT_2`, …) for that one assignment. A value that starts with `-` is read by the CLI as a flag
+(exit 2): reword a title or evidence that does, and start an anchor's copy after its leading dashes
+(the helper matches the anchor as a substring).
 
 **The repository root.** `R` is not free text, so it does not use the heredoc. Assign it in the SAME shell
 call as the `backlog-add` command, like the other variables, as a single-quoted literal of the absolute
@@ -460,7 +464,7 @@ For each finding that should be tracked:
    **The lookup:**
 
    ```bash
-   ~/.zuvo/backlog-archive.py lookup --repo "$R" "<candidate text or B-id>"
+   ~/.zuvo/backlog-archive.py lookup --repo "$R" "$Q"   # Q: the candidate text or B-id, set like T
    ```
 
    One verdict line, one exit code, and what follows from it. `backlog-add` acts on the same verdicts

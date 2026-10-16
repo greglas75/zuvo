@@ -318,7 +318,7 @@ Pushed back:
   3. [file:line] <reason>
 
 Recorded: [N (backlog: a, ledger: b): each B- or F-id, or NOT PERSISTED (<reason>) by name | "none"]
-Files written by backlog-add: [wrote= paths | "none"]
+Backlog writes: [<path>, … | none]
 Tests: N passing, 0 failing.
 Run: <ISO-8601-Z>	receive-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```

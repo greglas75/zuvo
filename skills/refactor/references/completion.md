@@ -144,6 +144,21 @@ receipt `~/.zuvo/log-ideas --skill refactor --count <N>` (N=0 is the normal, hon
 not invent ideas to inflate it). The receipt makes the un-gated step's silence auditable in
 `~/.zuvo/ideas.log` without forcing ideation.
 
+### Closing commit for backlog-add's writes
+
+After the run's last `backlog-add` call (Backlog Persistence above, Phase 3.6's gates, the
+`zuvo:write-tests` runs Phase 3.6 Step 0 dispatched, the aggregate review when refactor runs it, and
+the drive-by step), a run that commits makes the one closing commit
+`chore(backlog): record findings of refactor run`, as **Telemetry vs commits** above and
+`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** say, against the
+`backlog-snapshot:` in the CONTRACT (batch mode: the queue file, once after the last entry). Its
+paths are the `wrote=` paths this run printed (single mode keeps each one in the CONTRACT under
+`backlog-writes:` as it is printed, so a resumed run still has them; batch mode keeps them on the
+queue lines) plus every path on the `Backlog writes:` line of a skill it ran (review, write-tests),
+which make no closing commit of their own. With no path left there is no commit; in no-commit mode
+it stages nothing and lists the paths. The Post-Completion Summary's `Backlog commit:` line holds the
+result.
+
 ### Verification and quality status
 
 Keep actual command success separate from assessment completeness. Persist current CQ and
@@ -186,6 +201,7 @@ COMPLETION GATE CHECK
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Closing commit for backlog-add's writes made after the drive-by step: its hash, `none: nothing to stage`, or (no-commit mode) the listed `wrote=` paths
 [ ] Terminal state A (terminal-state.md): processes launched = N, still alive = 0   (PIDs + how each ended)
 [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
 [ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
@@ -215,6 +231,7 @@ Type: [TYPE] | Target: [filename]
 Files modified: [N] | Files created: [N]
 CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)]
 Complexity: maxfn [before]→[after] ([-N%| ESSENTIAL — file remains complex: <reason>]) | file LOC [before]→[after]   (SPLIT/GOD_CLASS/SIMPLIFY only)
+Backlog commit: [hash | none: nothing to stage | not committed: <paths>] [paths left out: <path> (<reason>)]
 
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ------------------------------------

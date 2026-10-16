@@ -202,7 +202,7 @@ BUILD TIER: STANDARD (3 files, 1 risk signal: shared utility)
 2. Detect the tech stack from config files (`package.json`, `tsconfig.json`, `pyproject.toml`, etc.)
 3. If the stack triggers a conditional rule file (TypeScript, React, NestJS, Python), read it from `../../rules/`
 4. Read `memory/backlog.md` if it exists — check for open items related to the feature area.
-   Before any `backlog-add` call, once, at the run's original start, take the snapshot `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/` (`R` assigned in the same shell call) and keep its output; Phase 2 writes it into the plan block as `backlog-snapshot:`, and a resumed run reuses it and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+   Before any `backlog-add` call, once, at the run's original start, take the snapshot `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/` (`R` assigned in the same shell call) and keep its output; Phase 2 writes it into the plan block as `backlog-snapshot:`, and every `wrote=` path a later call prints is appended there at once under `backlog-writes:`, so a resumed run's closing commit still holds the paths printed before it; a resumed run reuses the snapshot and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 5. **Knowledge Prime:** Run the knowledge prime protocol from `knowledge-prime.md`:
    ```
    WORK_TYPE = "implementation"
@@ -352,6 +352,7 @@ PLAN (LIGHT)
   Changes: [1-2 sentences per file]
   Tests: [which test files to create/modify]
   backlog-snapshot: [the Phase 0 snapshot output, or "clean"]
+  backlog-writes: [every wrote= path printed so far, appended as each call prints it]
 ```
 
 Proceed unless the user objects (or `--auto` is set).
@@ -407,6 +408,7 @@ FORBIDDEN: files outside these lists, unrelated improvements, opportunistic refa
 [Genuine uncertainties. Empty if none.]
 
 backlog-snapshot: [the Phase 0 snapshot output, or "clean"]
+backlog-writes: [every wrote= path printed so far, appended as each call prints it]
 ```
 
 If section 10 is non-empty — **interactive:** ask the user (max 4 questions), wait for answers, update plan. **Non-interactive/batch (Codex, Cursor, --auto):** do NOT stall the pipeline on questions nobody can answer — apply the Autonomous Disposition from `no-pause-protocol.md` per question: derive the safest defensible answer from the spec + codebase evidence, log it as `[AUTO-DECISION] <question> → <choice> — <why>`, update the plan, proceed. A genuinely undecidable product question → implement the smallest reversible interpretation, log it FIRST as `[AUTO-DECISION] [slug: <slug>] <question> → <choice> — <why>`, then record the question as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source build --target subject:build-decision-<slug> --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**; `T` is the question, `E` holds both interpretations; `<slug>` names the question's subject in 3 to 6 words joined by hyphens, ASCII `[a-z0-9-]`: choose it once and print it in that `[AUTO-DECISION]` line before the call, so a resumed run reuses it from the line, and give two questions different slugs; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the BUILD COMPLETE block, since the findings ledger that keeps it is not where a human triages yet; never hang, never guess silently.
@@ -777,7 +779,7 @@ The counts include the pre-existing adversarial findings 4.4 filed with `--sourc
 
 ### Closing commit for backlog-add's writes
 
-This comes after the drive-by step, the run's last `backlog-add` call. If 4.6 committed, make the one closing commit `chore(backlog): record findings of build run` with exactly the `wrote=` paths the run printed, as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says (its snapshot from Phase 0, kept in the plan block). With no path left there is no commit: BUILD COMPLETE reads `none: nothing to stage`. If 4.6 did not commit, stage nothing and list the paths in BUILD COMPLETE.
+This comes after the drive-by step, the run's last `backlog-add` call. If 4.6 committed, make the one closing commit `chore(backlog): record findings of build run` with exactly the `wrote=` paths the run printed (the plan block's `backlog-writes:`), as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says (its snapshot from Phase 0, kept in the plan block). With no path left there is no commit: BUILD COMPLETE reads `none: nothing to stage`. If 4.6 did not commit, stage nothing and list the paths in BUILD COMPLETE.
 
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 

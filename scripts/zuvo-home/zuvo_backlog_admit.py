@@ -206,7 +206,9 @@ def canonical_target(target: Optional[str]) -> Optional[str]:
     if not isinstance(target, str) or target_kind(target) != "url":
         return target
     u = urlsplit(target.strip())
-    return urlunsplit((u.scheme, u.netloc, u.path.split(";", 1)[0], "", ""))
+    # Per segment: `/a;v=1/b` names `/a/b`, not `/a`.
+    path = "/".join(seg.split(";", 1)[0] for seg in u.path.split("/"))
+    return urlunsplit((u.scheme, u.netloc, path, "", ""))
 
 
 def clean_text(s: Optional[str], cap: int) -> str:

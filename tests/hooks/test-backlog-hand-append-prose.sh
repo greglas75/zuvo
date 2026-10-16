@@ -280,6 +280,10 @@ NEG_WORDS: FrozenSet[str] = frozenset({"never", "not", "no", "don't", "nor", "wi
 NEG_PAIRS = {("instead", "of"), ("rather", "than")}
 # "not fixed", "no ... resolved": a condition on the finding, not a prohibition of the write.
 STATE_WORDS = frozenset({"fixed", "resolved", "done", "addressed", "handled", "applied"})
+# "If the fix is not localized, add it": a `not` after a copula, in a sentence that opened a condition, states
+# the condition; "It is not allowed to add it" (no condition word) stays a prohibition.
+COPULAS = frozenset({"is", "are", "was", "were", "be"})
+CONDITIONS = frozenset({"if", "when", "unless", "whenever"})
 WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 CODE_SPAN = re.compile(r"`[^`\n]*`")
 QUOTE = re.compile(r'"[^"\n]*"|“[^”\n]*”')
@@ -295,7 +299,9 @@ QUOTE_VERB = re.compile(r"(?i)\b(?:%s|%s)\w*" % (VERB_PATH, VERB_DEST))
 QUOTE_ONLY_DEST = re.compile(r"(?i)\s*(?:the\s+)?(?:backlog|memory/[\w./-]*)\s*")
 QUOTE_ONLY_VERB = re.compile(r"(?i)\s*(?:%s|%s)\w*\s*" % (VERB_PATH, VERB_DEST))
 MASK = re.compile(r"\x00(\d+)\x00")
-ITEM_START = re.compile(r"^(?:[-*+]|\d+[a-z]?[.)]|\|)")
+# A marker followed by a space: a wrapped line that opens with `**bold**`, `--flag` or `->` continues its unit.
+ITEM_START = re.compile(r"^(?:[-*+](?=\s|$)|\d+[a-z]?[.)](?=\s|$)|\|)")
+ITEM_START_LOOSE = re.compile(r"^(?:[-*+]|\d+[a-z]?[.)]|\|)")   # the retired reading, kept for its mutant only
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 # The whole opening run: a ```` fence is not closed by a ```python line inside it.
 FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})")
@@ -344,6 +350,9 @@ class Cfg:
     neg_sentence: bool = True
     neg_words: FrozenSet[str] = NEG_WORDS
     state_is_condition: bool = True
+    copula_condition: bool = True
+    heading_own_unit: bool = True
+    item_needs_space: bool = True
     cite: Pattern[str] = CITE
     cite_scope: str = "sentence"
     fence_lines: bool = True
@@ -483,9 +492,13 @@ def split_units(text: str, cfg: Cfg) -> List[Unit]:
         if not s:
             flush()
             continue
-        if (cfg.split_items and ITEM_START.match(s)) or HEADING.match(s) or not cfg.join_lines:
+        item = (ITEM_START if cfg.item_needs_space else ITEM_START_LOOSE).match(s)
+        heading = HEADING.match(s)
+        if (cfg.split_items and item) or heading or not cfg.join_lines:
             flush()
         cur.append((n, line))
+        if heading and cfg.heading_own_unit:
+            flush()                  # a heading is its own unit: its words never reach the paragraph below
     flush(fence is not None)
     return units
 
@@ -533,6 +546,8 @@ def negated(unit: Unit, start: int, sentence_start: int, cfg: Cfg) -> bool:
         if w == "not" and prev in ("if", "or"):
             continue
         if cfg.state_is_condition and w in ("not", "no") and nxt in STATE_WORDS:
+            continue
+        if cfg.copula_condition and w == "not" and prev in COPULAS and CONDITIONS & set(words[:i]):
             continue
         if w in cfg.neg_words or (cfg.neg_words and (w.startswith("forbid") or (prev, w) in NEG_PAIRS)):
             return True
@@ -792,6 +807,12 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
     ("'not fixed' is a condition, not a prohibition", "Items that are not fixed, add to backlog.",
      "B:verb-to-backlog"),
     ("'not fixed' before an arrow is a condition", "Anything not fixed → backlog", "B:arrow-backlog"),
+    ("a copular 'is not' inside an if-clause is a condition, not a prohibition (the adversarial boilerplate)",
+     "If the fix is not localized, add it to backlog.", "B:verb-to-backlog"),
+    ("a heading's negation reaches the paragraph under it", "## No exceptions\nAdd it to backlog by hand.",
+     "B:verb-to-backlog"),
+    ("a wrapped line opening with bold text starts a new unit, so the verb and the path never meet",
+     "Record it in\n**memory/backlog.md** by hand.", "B:verb-before-backlog-md"),
     ("a negation ending the previous sentence negates nothing in this one",
      "Do not skip this. Add it to backlog with file:line.", "B:verb-to-backlog"),
     ("a negation in the previous sentence, beyond the word window, negates nothing (the review's example)",
@@ -864,6 +885,8 @@ FIXTURES: List[Tuple[str, str, Optional[str]]] = [
      "````md\n```python\nx = 1\nCall `backlog-add` for BUG. Otherwise add it to backlog.\n```\n````", None),
     ("the pinned 'no backlog' phrase flagged as a hand write", "no cap, no backlog", None),
     ("a negation right before the verb flagged as a hand write", "never backlog it", None),
+    ("a copular prohibition with no condition flagged as a hand write", "It is not allowed to add it to the backlog.",
+     None),
     ("a negated noun phrase flagged as a hand write", "Never a silent backlog row.", None),
     ("a quoted mention flagged as an instruction", 'This closes the "RECOMMENDED → backlog" reflex.', None),
     ("the adversarial driver's exit/verdict table flagged as the protocol's verdict table",
@@ -937,6 +960,9 @@ STRUCTURAL: List[Tuple[str, Cfg]] = [
     ("negation-window-unbounded", replace(REAL, neg_window=None)),
     ("negation-lexicon-empty", replace(REAL, neg_words=frozenset())),
     ("state-words-negate", replace(REAL, state_is_condition=False)),
+    ("copular-not-in-a-condition-negates", replace(REAL, copula_condition=False)),
+    ("heading-joins-its-paragraph", replace(REAL, heading_own_unit=False)),
+    ("bullet-marker-without-space", replace(REAL, item_needs_space=False)),
     ("backlog-adds-guard-dropped", replace(REAL, cite=re.compile(CITE.pattern.replace("(?!s)", "")))),
     ("citation-unit-wide", replace(REAL, cite_scope="unit")),
     ("fence-exemptions-unit-wide", replace(REAL, fence_lines=False)),
