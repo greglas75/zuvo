@@ -328,7 +328,7 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter-alt` and `openrouter-3` (ZUVO_ADV_OPENROUTER_LANES overrides the list, e.g.
+                           Adds `openrouter-alt` (ZUVO_ADV_OPENROUTER_LANES overrides the list, e.g.
                            "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, qwen/qwen3.8-flash)
