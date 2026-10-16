@@ -206,3 +206,15 @@ refused_without_request c13a
 out=$(run_bp c13b "https://ark.example.com/api/coding/v3")
 assert_contains "$out" "refusing" "a non-BytePlus host is refused for a BytePlus lane"
 refused_without_request c13b
+
+# ─── 14. the reverse cross-vendor case, and the spellings around the host ──
+start_test "bp.14 a BytePlus lane refuses Z.ai's plan host and a backslash host; :443 is accepted"
+out=$(run_bp c14a "https://api.z.ai/api/coding/paas/v4")
+assert_contains "$out" "refusing to send the plan key" "Z.ai's plan host refused for a BytePlus lane"
+refused_without_request c14a
+# ark.*.bytepluses.com alone would match this host; only the backslash arm refuses it.
+out=$(run_bp c14b 'https://ark.evil\.bytepluses.com/api/coding/v3')
+assert_contains "$out" "refusing" "a backslash in the host is refused"
+refused_without_request c14b
+run_bp c14c "https://ark.ap-southeast.bytepluses.com:443/api/coding/v3" >/dev/null
+sent_to c14c "https://ark.ap-southeast.bytepluses.com:443/api/coding/v3"

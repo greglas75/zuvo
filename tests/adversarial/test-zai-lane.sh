@@ -145,3 +145,26 @@ env -u ZAI_API_KEY -u OPENROUTER_API_KEY PATH="$ZTMP/bin:$PATH" Z_REC="$ZTMP/c10
   ZUVO_ZAI_KEY_FILE="$ZTMP/c10/absent.key" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=40 \
   bash "$ADV" --provider zai --mode code --files "$EMPTY" >/dev/null 2>&1
 assert_eq "0" "$(requests c10)" "no request without the zai key"
+assert_contains "$(cat "$ZTMP/c10"/adversarial-failures/*/provider_*.stderr 2>/dev/null)" "absent.key" "…skipped for the missing zai key file, by name"
+
+# ─── 11. another vendor's PLAN host is refused too, not only unknown hosts ──
+# _plan_endpoint names the plan the host spends; a zai lane on BytePlus's plan URL would send the Z.ai key there.
+start_test "zai.11 the zai lane refuses the BytePlus plan endpoint"
+out=$(run_zai c11 "https://ark.ap-southeast.bytepluses.com/api/coding/v3")
+assert_contains "$out" "refusing to send the plan key" "cross-vendor plan host refused"
+refused_without_request c11
+
+# ─── 12. the accepted spellings: explicit :443 and the bigmodel.cn plan path ──
+start_test "zai.12 https on :443 and open.bigmodel.cn's plan path are the plan, not refused"
+run_zai c12a "https://api.z.ai:443/api/coding/paas/v4" >/dev/null
+assert_eq "https://api.z.ai:443/api/coding/paas/v4/chat/completions" "$(cat "$ZTMP/c12a/curl.urls" 2>/dev/null)" ":443 is the default port: sent"
+run_zai c12b "https://open.bigmodel.cn/api/coding/paas/v4" >/dev/null
+assert_eq "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions" "$(cat "$ZTMP/c12b/curl.urls" 2>/dev/null)" "bigmodel.cn plan path: sent"
+
+# ─── 13. every plan-refusal family stops at one request ──────────────────
+# 1308 is pinned in zai.8; these are the other windows, an empty package and a model outside the plan.
+start_test "zai.13 weekly window, no package, extra-usage cap, model outside the plan: one request each"
+for code in 1310 1113 1321 1311; do
+  Z_CODE=429 Z_BODY="{\"error\":{\"code\":\"$code\",\"message\":\"plan refusal $code\"}}" run_zai "c13-$code" "$PLAN_URL" >/dev/null
+  assert_eq "1" "$(requests "c13-$code")" "code $code: not retried"
+done
