@@ -253,14 +253,18 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 # defekty MAJA — to nie szybkosc, to odmowa pracy).
 #
 # Lane jest wlaczany flaga ZUVO_ADV_OPENROUTER=1 (platny, wiec nigdy sama obecnoscia klucza).
-ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}"
+# 2026-10-16, owner: "two or three cheap, good models so the pool never runs dry". From the benchmark, on
+# OpenRouter today: openrouter = z-ai/glm-5.3-flashx (+18, 88%, 166 s), openrouter-3 = inclusionai/ling-3.1-flash
+# (+16, 77%, 189 s, $0.075/$0.225 per M), openrouter-4 = thinkingmachines/inkling-small (+12, 80%, 89 s). All four
+# OpenRouter lanes answer to ZUVO_OPENROUTER_DAILY_USD (default $5 a day on the key): benchmark prices undercount
+# production ~30x (deepseek: $0.001 benched, $0.04 a real call), so the cap, not the price list, bounds the bill.
+ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3-flashx}"
 # openrouter-alt = xiaomi/mimo-v2.6-flash: +17 defects over the production lineup at ~$0.0063 per review
 # (docs/runbook/model-benchmark.md). Slow: its benchmark mean (~319 s) is above the 300 s lane ceiling.
 ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}"
-# openrouter-3 = deepseek-v4.1-flash, off by default: the model runs as byteplus-alt inside the plan.
-# gpt-oss (openrouter-4) is out of the default roster.
-ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-deepseek/deepseek-v4.1-flash}"
-ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}"
+# deepseek-v4.1-flash left openrouter-3 on 2026-10-16 ($72 in one day); it runs on BytePlus / the Token Plan.
+ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}"
+ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-thinkingmachines/inkling-small}"
 
 # ── BytePlus ModelArk Coding Plan (prepaid, opt-in via ZUVO_ADV_BYTEPLUS=1) ──
 # A SUBSCRIPTION, not a meter. Two consequences that shape everything below:

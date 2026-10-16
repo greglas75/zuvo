@@ -363,9 +363,11 @@ detect_providers() {
   # 2026-10-15, deepseek ran on ~1,700 reviews a day and the key spent $32 that day and $146 that week —
   # more than two months of normal OpenRouter use. Deepseek and glm belong on the plans that do not meter
   # per call (byteplus-alt on BytePlus, the qwen lane's Token Plan); OpenRouter keeps only the cheap lane.
+  # 2026-10-16, later: four cheap OpenRouter lanes so the pool never runs dry (models: model-registry.sh), all
+  # behind the daily spend cap ZUVO_OPENROUTER_DAILY_USD (openrouter_budget_ok) — the cap bounds the bill.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter openrouter-alt openrouter-3 openrouter-4}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
@@ -612,10 +614,10 @@ lane_model() {
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}" ;;
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}" ;;
-    openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}}" ;;
+    openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3-flashx}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}" ;;
-    openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-deepseek/deepseek-v4.1-flash}" ;;
-    openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
+    openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}" ;;
+    openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-thinkingmachines/inkling-small}" ;;
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
