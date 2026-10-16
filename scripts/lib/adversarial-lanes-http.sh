@@ -67,6 +67,95 @@ lane_no_key() {
   return 1
 }
 
+# lane_not_run <lane> <reason> — a lane deliberately left out for a reason that is not the lane's fault (a
+# prepaid plan out of quota, with no fallback): said, and recorded through lane_no_key's marker, so the outcome
+# is `no-key` — "not run, not held against the lane" — and the health ledger never benches it. Status 1.
+lane_not_run() {
+  echo "  WARN: $1 not run — $2 — not held against the lane" >&2
+  if [[ -n "$1" && "$1" != */* && -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then
+    : > "$JSON_TMPDIR/nokey_$1" 2>/dev/null || true
+  fi
+  return 1
+}
+
+# A spent BytePlus plan (any of its quota windows) answers HTTP 429 AccountQuotaExceeded naming the reset. Asking
+# again cannot help before it, so the reset is kept in a HOME-level file that every lane, chunk and run reads.
+
+# byteplus_quota_file — where the reset is kept; status 1 (none) under the test harness unless a test names one,
+# so no case writes the machine's ~/.zuvo.
+byteplus_quota_file() {
+  if [[ -n "${ZUVO_BYTEPLUS_QUOTA_FILE:-}" ]]; then printf '%s\n' "$ZUVO_BYTEPLUS_QUOTA_FILE"
+  elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then return 1
+  else printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/byteplus-quota-until"; fi
+}
+
+# byteplus_quota_until — the recorded reset epoch, status 0 while it is still ahead; status 1 when there is none,
+# it has passed or the file holds anything but a number.
+byteplus_quota_until() {
+  local f until=""
+  f="$(byteplus_quota_file)" || return 1
+  [[ -f "$f" ]] || return 1
+  { read -r until _ < "$f"; } 2>/dev/null || [[ -n "$until" ]] || return 1
+  [[ "$until" =~ ^[0-9]{1,12}$ ]] || return 1
+  (( until > $(date +%s) )) || return 1
+  printf '%s\n' "$until"
+}
+
+# _ar_epoch_text <epoch> — "2026-10-22 15:59Z", for a WARN. GNU date first: BSD has no -d, and GNU's -r reads a file.
+_ar_epoch_text() {
+  date -u -d "@$1" '+%Y-%m-%d %H:%MZ' 2>/dev/null || date -u -r "$1" '+%Y-%m-%d %H:%MZ' 2>/dev/null || printf '%s\n' "$1"
+}
+
+# _byteplus_quota_error <body> — status 0 when the body is the plan's quota refusal.
+_byteplus_quota_error() {
+  printf '%s' "$1" | jq -e '(.error.code // "") | tostring | test("QuotaExceeded")' >/dev/null 2>&1
+}
+
+# _byteplus_reset_epoch <message> — the reset the message names ("reset at YYYY-MM-DD HH:MM:SS +ZZZZ"), as an
+# epoch; now + 1 h when it names none, cannot be parsed, is past or is over 40 days ahead.
+_byteplus_reset_epoch() {
+  local now e="" ts re='reset at ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}) ([+-][0-9]{4})'
+  now=$(date +%s)
+  if [[ "$1" =~ $re ]]; then
+    ts="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+    e=$(date -d "$ts" +%s 2>/dev/null || date -j -f '%Y-%m-%d %H:%M:%S %z' "$ts" +%s 2>/dev/null) || e=""
+  fi
+  if [[ ! "$e" =~ ^[0-9]+$ ]] || (( e <= now || e > now + 40 * 86400 )); then e=$(( now + 3600 )); fi
+  printf '%s\n' "$e"
+}
+
+# byteplus_quota_record <lane> <body> — the quota stop: the reset into the HOME file and into the run's marker
+# bpquota_<lane>, which run_byteplus reads. Runs hit the stop at once, so the file is compared and replaced under
+# a mkdir lock (a lock left by a killed run is waited out for ~2 s, then ignored) through a temp file and mv, and a
+# later reset already on file is kept: a shorter window's answer must not cut a monthly stop short.
+byteplus_quota_record() {
+  local lane="$1" msg until f tmp="" held n=0 locked
+  msg=$(printf '%s' "$2" | jq -r '.error.message // empty' 2>/dev/null) || msg=""
+  until=$(_byteplus_reset_epoch "$msg")
+  echo "  WARN: $lane: BytePlus Coding Plan quota exhausted until $(_ar_epoch_text "$until") — not retried" >&2
+  if [[ "$lane" != */* && -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then
+    printf '%s\n' "$until" > "$JSON_TMPDIR/bpquota_$lane" 2>/dev/null || true
+  fi
+  f="$(byteplus_quota_file)" || return 0
+  mkdir -p -- "${f%/*}" 2>/dev/null || true
+  until mkdir -- "$f.lock" 2>/dev/null; do
+    (( ++n > 20 )) && break
+    sleep 0.1
+  done
+  # Held past ~2 s means its holder died (the section below takes microseconds): taken over, so the rmdir
+  # below clears it instead of leaving every later write to wait it out.
+  locked=1
+  if ! { held="$(byteplus_quota_until)" && (( held >= until )); }; then
+    tmp="$f.$$.$RANDOM"
+    if ! { printf '%s\t%s\n' "$until" "$lane" > "$tmp" && mv -f -- "$tmp" "$f"; } 2>/dev/null; then
+      rm -f -- "$tmp" 2>/dev/null || true
+      echo "  WARN: $lane: the quota stop could not be written to $f — later runs will ask the plan again" >&2
+    fi
+  fi
+  (( locked == 0 )) || rmdir -- "$f.lock" 2>/dev/null || true
+  return 0
+}
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -n "${CODESTRAL_API_KEY:-}" ]] || { lane_no_key codestral "CODESTRAL_API_KEY is not set"; return 1; }
@@ -248,13 +337,14 @@ run_openrouter() {
   # "Requests sent to this Base URL do not consume your Coding Plan quota and will instead incur
   # additional charges." One wrong character in a base URL would therefore turn an included
   # review into a metered one, silently and per chunk. Refuse rather than bill.
+  local _bp_path=""
   if [[ "${ZUVO_OPENROUTER_BASE_URL:-}" == *bytepluses.com* || "${ZUVO_OPENROUTER_BASE_URL:-}" == *volces.com* ]]; then
     # Compare the PATH, with the query and fragment cut off first. `*/api/coding` on the raw URL
     # matches anything merely ENDING in those characters, so
     #   https://ark.…/api/v3?from=/api/coding
     # satisfied the allow-list and would have been billed. A guard whose whole job is to keep
     # money off the wrong endpoint cannot be defeated by a query string.
-    local _bp_path="${ZUVO_OPENROUTER_BASE_URL%%\?*}"
+    _bp_path="${ZUVO_OPENROUTER_BASE_URL%%\?*}"
     _bp_path="${_bp_path%%#*}"
     _bp_path="${_bp_path%/}"
     case "$_bp_path" in
@@ -328,6 +418,13 @@ run_openrouter() {
     # .message is the OpenAI shape; some gateways send only a code, or a bare string
     [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
       elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
+
+    # A spent BytePlus plan is a 429 too, but asking again cannot help until its reset: recorded, never retried.
+    # Keyed on the endpoint, not the lane label, which a stand-in on another endpoint keeps.
+    if [[ -n "$_bp_path" && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
+      byteplus_quota_record "$_lane" "$response"
+      return 1
+    fi
 
     # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
     # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset, 18 partial body, 92 HTTP/2

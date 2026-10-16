@@ -383,10 +383,8 @@ detect_providers() {
   # Antigravity, whose ~12 calls / 5h made it a fallback only.
   if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
     if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
-      # byteplus-alt (deepseek-v4-flash) is out of the default set since 2026-09-25: 36% precision
-      # on the 20-input bench, 3 defects no other lane finds, and 41 timeouts in 288 calls over
-      # the preceding 24 h. Still reachable by name, or back via ZUVO_ADV_BYTEPLUS_LANES.
-      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus byteplus-3}"
+      # While the plan's quota is spent run_byteplus runs glm and deepseek on the Alibaba Token Plan, never OpenRouter, and leaves dola-seed out.
+      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus byteplus-alt byteplus-3}"
     else
       echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
     fi
@@ -604,7 +602,7 @@ lane_model() {
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-deepseek/deepseek-v4.1-flash}" ;;
     openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}" ;;
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
-    byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}" ;;
+    byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
     muse)         echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
     qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" ;;
@@ -658,6 +656,9 @@ provider_model() {
                   # shipped. Passed through a FILE, not a variable: providers are dispatched in
                   # subshells, so an exported name set inside run_agy never reaches this caller.
                   _ar_recorded_model agy-effective-model && return 0 ;;
+    byteplus|byteplus-alt|byteplus-3)
+                  # Same reason: with the plan out of quota the review ran on OpenRouter (_byteplus_fallback).
+                  _ar_recorded_model "byteplus-effective-model-$1" && return 0 ;;
   esac
   lane_model "$1"
 }

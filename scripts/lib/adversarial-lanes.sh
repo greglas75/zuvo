@@ -603,10 +603,13 @@ run_qwen() {
   lane_model_ok qwen "$model" || return 1
   _qwen_plan_guard "$model" || return 1
 
-  local ws="$JSON_TMPDIR/qwen_ws"
-  local pf="$JSON_TMPDIR/qwen_prompt.txt"
-  local out_file="$JSON_TMPDIR/raw_qwen.json"
-  local err_file="$JSON_TMPDIR/err_qwen.txt"
+  # ZUVO_QWEN_FILE_TAG: a BytePlus lane standing in through the Token Plan runs beside this lane in one JSON_TMPDIR.
+  local tag="${ZUVO_QWEN_FILE_TAG:-qwen}"
+  [[ "$tag" =~ ^[a-z0-9_-]+$ ]] || tag=qwen
+  local ws="$JSON_TMPDIR/${tag}_ws"
+  local pf="$JSON_TMPDIR/${tag}_prompt.txt"
+  local out_file="$JSON_TMPDIR/raw_${tag}.json"
+  local err_file="$JSON_TMPDIR/err_${tag}.txt"
   mkdir -p "$ws" 2>/dev/null || return 1
   printf '%s' "$REVIEW_PROMPT" > "$pf" 2>/dev/null || return 1
 
