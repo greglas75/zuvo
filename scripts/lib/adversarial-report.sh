@@ -58,6 +58,7 @@ write_artifact() {
     printf 'provider_count=%s\n' "$PROVIDER_COUNT"
     printf 'providers_attempted=%s\n' "${ATTEMPTED_COUNT:-0}"
     printf 'provider_outcomes=%s\n' "${PROVIDER_OUTCOMES:-none}"
+    [[ -n "${ZUVO_ADV_PASS_NUMBER:-}" ]] && printf 'adversarial_pass=%s\n' "$ZUVO_ADV_PASS_NUMBER"
     # Canonical proof-of-work markers. pipeline-gate-lib.sh :: pg_artifact_proven counts
     # `REVIEW BY:` lines to decide whether a review actually happened. They used to be emitted
     # only by the MULTI dispatch path's body banner, so every --single / --rotate / --json run

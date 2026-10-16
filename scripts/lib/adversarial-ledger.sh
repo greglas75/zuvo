@@ -668,9 +668,15 @@ count_findings() {
 # PASS_CAP — the most passes ONE change gets (adversarial-loop.md Step 5), with no override: later passes
 # mostly re-derive the false positives of the earlier ones.
 PASS_CAP=3
-# PASS_WINDOW_S — an earlier pass counts when it ran here, on this branch, within this window, over files that
-# include every file under review now (same scope, or a fix delta). A WIDER review is a new scope.
-PASS_WINDOW_S=10800
+# PASS_WINDOW_S — an earlier pass counts when it ran in this repository (any worktree of it), on this branch,
+# within this window, over files that share at least half of the SMALLER of the two file sets with the files under
+# review now — a fix delta, the full scope again, a wider or a re-based review of the same change all count.
+# Seven days: on 2026-10-15/16 one PR took 28 passes in 44 h because farm waits spread them past the old 3 h window
+# and every pass used another --diff base, so no file set contained all of the next one (tgm-survey-platform,
+# feature/import-parser-primitives, ~185M tokens). A shared default branch keeps the short window
+# (PASS_WINDOW_SHARED_S): unrelated changes land there one after another and touch the same files.
+PASS_WINDOW_S=604800
+PASS_WINDOW_SHARED_S=10800
 # PASS_CAP_EXIT — the exit status of a refused pass: nothing was reviewed, so it is not 0 and not a finding.
 PASS_CAP_EXIT=7
 
@@ -701,12 +707,16 @@ PASS_RECORD=""
 if [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-}" == 1 && "${ZUVO_ADV_PASS_CAP_TEST:-0}" != 1 ]]; then
   return 0
 fi
-local files root branch ledger now n
+local files root branch ledger now n window
 files="$(_ar_pass_files)"
 [[ -n "$files" ]] || return 0
-root="$(ar_repo_root)"
-branch="$(git -C "$root" symbolic-ref -q --short HEAD 2>/dev/null)" || branch=""
+# The repository, not the worktree: a second worktree of the same branch is the same change.
+root="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || root=""
+[[ -n "$root" ]] || root="$(ar_repo_root)"
+# The branch of THIS worktree: $root is the shared git dir, whose HEAD is the main worktree's.
+branch="$(git -C "$(ar_repo_root)" symbolic-ref -q --short HEAD 2>/dev/null)" || branch=""
 [[ -n "$branch" ]] || branch="detached"
+case "$branch" in main|master|develop|trunk) window=$PASS_WINDOW_SHARED_S ;; *) window=$PASS_WINDOW_S ;; esac
 ledger="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-passes.tsv"
 now="$(date +%s)"
 if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
@@ -717,23 +727,32 @@ if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
     # Through the environment, not -v: BSD awk (macOS) refuses a -v value holding a newline, and a refusal
     # here would read as "no earlier passes" — the cap silently off.
     n="$(ZUVO_ADV_PASS_FILES="$files" ZUVO_ADV_PASS_ROOT="$root" ZUVO_ADV_PASS_BRANCH="$branch" \
-      awk -F'\t' -v since=$(( now - PASS_WINDOW_S )) '
+      awk -F'\t' -v since=$(( now - window )) '
       BEGIN { nc = split(ENVIRON["ZUVO_ADV_PASS_FILES"], want, "\n")
               root = ENVIRON["ZUVO_ADV_PASS_ROOT"]; branch = ENVIRON["ZUVO_ADV_PASS_BRANCH"] }
       $1 >= since && $3 == root && $4 == branch && $2 != ENVIRON["ZUVO_ADV_PASS_ID"] {
-        m = split($5, f, "\037"); for (i = 1; i <= m; i++) seen[$2 SUBSEP f[i]] = 1; pass[$2] = 1 }
+        m = split($5, f, "\037")
+        for (i = 1; i <= m; i++) if (f[i] != "" && !((($2) SUBSEP f[i]) in seen)) { seen[$2 SUBSEP f[i]] = 1; size[$2]++ }
+        pass[$2] = 1 }
       END { c = 0
-        for (p in pass) { all = 1; for (i = 1; i <= nc; i++) if (!((p SUBSEP want[i]) in seen)) { all = 0; break }
-                          c += all }
+        for (p in pass) { hit = 0; for (i = 1; i <= nc; i++) if ((p SUBSEP want[i]) in seen) hit++
+                          small = (size[p] < nc) ? size[p] : nc
+                          if (small > 0 && 2 * hit >= small) c++ }
         print c }' "$ledger" 2>/dev/null)" || n=0
   fi
   if [[ "${n:-0}" -ge "$PASS_CAP" ]]; then
-    echo "PASS CAP: ${n} adversarial passes already reviewed these files on ${branch} in the last $(( PASS_WINDOW_S / 3600 ))h — the cap is ${PASS_CAP}, with no override." >&2
+    echo "PASS CAP: ${n} adversarial passes already reviewed these files on ${branch} in the last $(( window / 3600 ))h — the cap is ${PASS_CAP}, with no override." >&2
     echo "  Nothing was reviewed. Do not run another pass: record what is still open as known concerns" >&2
     echo "  (shared/includes/adversarial-loop.md, Step 5). A verified CRITICAL left open still means 'not complete'." >&2
     exit "$PASS_CAP_EXIT"
   fi
-  [[ "$n" -lt $(( PASS_CAP - 1 )) ]] || echo "  NOTE: this is adversarial pass ${PASS_CAP} of ${PASS_CAP} for these files — the last one." >&2
+  # Every pass says its number: an agent that never loaded adversarial-loop.md learns the cap from the driver.
+  export ZUVO_ADV_PASS_NUMBER="$(( n + 1 ))/${PASS_CAP}"
+  if [[ "$n" -lt $(( PASS_CAP - 1 )) ]]; then
+    echo "  NOTE: adversarial pass $(( n + 1 )) of ${PASS_CAP} for these files on ${branch} (the driver refuses a $(( PASS_CAP + 1 ))th)." >&2
+  else
+    echo "  NOTE: this is adversarial pass ${PASS_CAP} of ${PASS_CAP} for these files — the last one." >&2
+  fi
 fi
 PASS_RECORD="$(printf '%s\t%s\t%s\t%s' "${ZUVO_ADV_PASS_ID:-$now-$$}" "$root" "$branch" "$(printf '%s' "$files" | tr '\n' '\037')")"
 }
