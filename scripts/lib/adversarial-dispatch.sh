@@ -124,7 +124,7 @@ dispatch_provider() {
 
 # run_byteplus <lane> <model> — the OpenRouter client on the BytePlus Coding Plan endpoint, with the plan's key.
 # While the plan's quota is spent — recorded earlier by any lane, chunk or run (byteplus_quota_until), or hit by
-# this very request — the plan is not asked: _byteplus_fallback runs the review on OpenRouter or leaves the lane out.
+# this very request — the plan is not asked: _byteplus_fallback runs the review on the Alibaba Token Plan (qwen CLI) or leaves the lane out.
 run_byteplus() {
   local lane="$1" model="$2" until rc=0 t0=$SECONDS left
   rm -f "$JSON_TMPDIR/byteplus-effective-model-$lane" "$JSON_TMPDIR/bpquota_$lane" 2>/dev/null || true
@@ -138,46 +138,45 @@ run_byteplus() {
   [[ $rc -ne 0 && -s "$JSON_TMPDIR/bpquota_$lane" ]] || return "$rc"
   until="$(cat "$JSON_TMPDIR/bpquota_$lane")"
   if ! left="$(_ar_lane_budget "$t0")"; then
-    echo "  NOTE: $lane OpenRouter fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
+    echo "  NOTE: $lane Token Plan fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
     return "$rc"
   fi
   PROVIDER_TIMEOUT="$left" _byteplus_fallback "$lane" "$model" "$until"
 }
 
-# byteplus_or_fallback_model <lane> <model> — the OpenRouter model that stands in for <lane> while the plan is out
-# of quota; empty = none. ZUVO_BYTEPLUS_OR_FALLBACK_<LANE> (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) overrides it, set
-# but empty turning it off. The default is keyed on the MODEL, so a lane pointed at another model never inherits
-# the stand-in for the old one. Only the cheap models have one; dola-seed-2.0-code waits for the reset.
-byteplus_or_fallback_model() {
+# byteplus_fallback_model <lane> <model> — the Alibaba Token Plan model (the qwen lane's plan) that stands in for
+# <lane> while BytePlus is out of quota; empty = none. ZUVO_BYTEPLUS_FALLBACK_<LANE> (BYTEPLUS, BYTEPLUS_ALT,
+# BYTEPLUS_3) overrides it, set but empty turning it off. Keyed on the MODEL, so a lane pointed at another model never
+# inherits the stand-in for the old one. The stand-in is a PREPAID plan, never a metered one: the first cut fell back
+# to OpenRouter, and deepseek alone spent $72 there in one day (2026-10-15) — the owner's rule since 2026-10-16 is
+# "deepseek and glm on BytePlus or the Token Plan; neither has quota, the lane does not run". The Token Plan sells
+# glm-5.3, not the flash variant. dola-seed-2.0-code exists only on BytePlus and waits for the reset.
+byteplus_fallback_model() {
   local var
-  var="ZUVO_BYTEPLUS_OR_FALLBACK_$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
+  var="ZUVO_BYTEPLUS_FALLBACK_$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
   if [[ -n "${!var+x}" ]]; then printf '%s\n' "${!var}"; return 0; fi
   case "$2" in
-    glm-5.3-flash)        echo "z-ai/glm-5.3-flash" ;;
-    deepseek-v4-1-flash*) echo "deepseek/deepseek-v4.1-flash" ;;
+    glm-5.3-flash)        echo "glm-5.3" ;;
+    deepseek-v4-1-flash*) echo "deepseek-v4.1-flash" ;;
     *)                    echo "" ;;
   esac
 }
-
-# _byteplus_fallback <lane> <model> <reset epoch> — the review on OpenRouter (its own key and base URL, the
-# non-streaming path) with the stand-in model, recorded as the model asked, so the run log, the artifact and the
-# health ledger credit an answer — or charge a failure — to that model and the vendor that bills it. No stand-in,
-# or OpenRouter not opted in (ZUVO_ADV_OPENROUTER=1, its paid-lane switch) → the lane is left out, not failed.
 _byteplus_fallback() {
   local lane="$1" model="$2" when fb
   when="$(_ar_epoch_text "$3")"
-  fb="$(byteplus_or_fallback_model "$lane" "$model")"
+  fb="$(byteplus_fallback_model "$lane" "$model")"
   if [[ -z "$fb" ]]; then
-    lane_not_run "$lane" "BytePlus quota exhausted until $when, no OpenRouter fallback for $model"
+    lane_not_run "$lane" "BytePlus quota exhausted until $when, no Token Plan stand-in for $model"
     return 1
   fi
-  if [[ "${ZUVO_ADV_OPENROUTER:-0}" != "1" ]]; then
-    lane_not_run "$lane" "BytePlus quota exhausted until $when, OpenRouter not enabled (ZUVO_ADV_OPENROUTER=1)"
+  if [[ "${ZUVO_ADV_QWEN:-0}" != "1" ]]; then
+    lane_not_run "$lane" "BytePlus quota exhausted until $when, Alibaba Token Plan not enabled (ZUVO_ADV_QWEN=1)"
     return 1
   fi
-  echo "  NOTE: $lane: BytePlus quota exhausted until $when — via OpenRouter $fb" >&2
+  echo "  NOTE: $lane: BytePlus quota exhausted until $when — via Alibaba Token Plan $fb" >&2
   printf '%s' "$fb" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
-  ZUVO_OR_LANE_LABEL="$lane" ZUVO_OPENROUTER_MODEL="$fb" ZUVO_OR_STREAM=0 run_openrouter
+  # Its own file names: the qwen lane may be running in the same JSON_TMPDIR at the same time.
+  ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" run_qwen
 }
 
 _dispatch_provider_inner() {

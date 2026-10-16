@@ -3,7 +3,8 @@
 # byteplus_quota_*, adversarial-lanes-http.sh).
 #
 # The plan answers a spent quota with HTTP 429 AccountQuotaExceeded and names its reset: recorded once, the plan
-# not asked again until then, glm and deepseek on OpenRouter, dola-seed left out without counting against it.
+# not asked again until then, glm and deepseek on the Alibaba Token Plan (qwen CLI) — never on OpenRouter, which
+# bills per call — and dola-seed left out without counting against it.
 
 ADV="$ROOT/scripts/adversarial-review.sh"
 EMPTY="$ADV_TEST_EMPTY"
@@ -35,6 +36,21 @@ printf '%s\n%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}]}' 200
 EOF
 chmod +x "$QTMP/bin/curl"
 
+# Fake qwen CLI: records the -m model (qwen.models) and answers a review as Qwen Code's -o json does.
+cat > "$QTMP/bin/qwen" <<'EOF'
+#!/usr/bin/env bash
+prev=""
+for a in "$@"; do [ "$prev" = "-m" ] && printf '%s\n' "$a" >> "$BPQ_REC/qwen.models"; prev="$a"; done
+cat > /dev/null
+printf '%s' '[{"type":"result","is_error":false,"result":"NO ISSUES FOUND."}]'
+EOF
+chmod +x "$QTMP/bin/qwen"
+
+# The plan guard reads the CLI's settings: every stand-in is declared on a Token Plan endpoint.
+QSET="$QTMP/qwen-settings.json"
+jq -n '{modelProviders: {openai: [("glm-5.3","deepseek-v4.1-flash","qwen3.8-flash") as $m
+  | {id: $m, baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"}]}}' > "$QSET"
+
 epoch_fmt() { date -u -d "@$1" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u -r "$1" '+%Y-%m-%d %H:%M:%S'; }
 quota_body() { # quota_body <message>
   jq -cn --arg m "$1" '{error: {code: "AccountQuotaExceeded", message: $m, type: "TooManyRequests"}}'
@@ -47,16 +63,17 @@ run_q() {
   mkdir -p "$home/.zuvo"
   ( umask 077; printf 'fake-or-key' > "$home/.zuvo/openrouter.key" )
   env -u ZUVO_BYTEPLUS_BASE_URL -u ZUVO_OPENROUTER_BASE_URL -u OPENROUTER_API_KEY -u BPQ_BODY \
-    -u BPQ_SLOW -u ZUVO_MODEL_BYTEPLUS -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS_3 \
+    -u BPQ_SLOW -u ZUVO_MODEL_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_3 -u ZUVO_QWEN_MODEL \
     PATH="$QTMP/bin:$PATH" BPQ_REC="$home" ZUVO_BYTEPLUS_KEY_FILE="$KEYFILE" HOME="$home" ZUVO_HOME="$home" \
     ZUVO_BYTEPLUS_QUOTA_FILE="$home/quota" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
-    ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 "$@" \
+    ZUVO_QWEN_SETTINGS="$QSET" ZUVO_ADV_QWEN=1 ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 "$@" \
     bash "$ADV" --provider "$lane" --mode code --files "$EMPTY" >/dev/null 2>&1
   echo "$?" > "$home/rc"
   cat "$home"/adversarial-failures/*/provider_*.stderr 2>/dev/null
 }
 urls()   { cat "$QTMP/$1/curl.urls" 2>/dev/null; }
 models() { cat "$QTMP/$1/curl.models" 2>/dev/null; }
+qmodels() { cat "$QTMP/$1/qwen.models" 2>/dev/null; }
 until_of() { cut -f1 "$QTMP/$1/quota" 2>/dev/null; }
 
 NOW=$(date +%s)
@@ -64,40 +81,40 @@ RESET=$(( NOW + 5 * 86400 ))
 FUTURE=$(( NOW + 86400 ))
 
 # Bug caught: the quota 429 retried as transient (three requests a lane), the reset never recorded, the lane failed.
-start_test "q.1 a quota 429 is asked once, its reset recorded, and glm reviews on OpenRouter"
+# The $72 day (2026-10-15): the first cut sent the stand-in to OpenRouter, metered per call. ZUVO_ADV_OPENROUTER=1
+# is set in every case here, so a path back to OpenRouter shows up as a request to it.
+start_test "q.1 a quota 429 is asked once, its reset recorded, and glm reviews on the Token Plan, not OpenRouter"
 run_q c1 byteplus BPQ_BODY="$(quota_body "You have exceeded the monthly usage quota. It will reset at $(epoch_fmt "$RESET") +0000 CST. Request id: x")" >/dev/null
-assert_eq "https://ark.ap-southeast.bytepluses.com/api/coding/v3/chat/completions
-https://openrouter.ai/api/v1/chat/completions" "$(urls c1)" "one plan request, no retry, then one OpenRouter request"
-assert_eq "glm-5.3-flash
-z-ai/glm-5.3-flash" "$(models c1)" "…the OpenRouter one with glm's stand-in"
+assert_eq "https://ark.ap-southeast.bytepluses.com/api/coding/v3/chat/completions" "$(urls c1)" "one plan request, no retry, nothing to OpenRouter"
+assert_eq "glm-5.3" "$(qmodels c1)" "…then the Token Plan with glm's stand-in"
 assert_eq "$RESET" "$(until_of c1)" "the reset the message names is recorded"
 assert_eq "0" "$(cat "$QTMP/c1/rc")" "the review completes"
 
 # Bug caught: a recorded stop ignored — every later run pays a failing plan request first.
-start_test "q.2 while the stop is ahead the plan is not asked; deepseek reviews on OpenRouter"
+start_test "q.2 while the stop is ahead the plan is not asked; deepseek reviews on the Token Plan"
 mkdir -p "$QTMP/c2"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c2/quota"
 run_q c2 byteplus-alt >/dev/null
-assert_eq "https://openrouter.ai/api/v1/chat/completions" "$(urls c2)" "no plan request, one OpenRouter request"
-assert_eq "deepseek/deepseek-v4.1-flash" "$(models c2)" "…with deepseek's stand-in"
+assert_eq "" "$(urls c2)" "no HTTP request at all (plan or OpenRouter)"
+assert_eq "deepseek-v4.1-flash" "$(qmodels c2)" "…the Token Plan with deepseek's stand-in"
 assert_eq "0" "$(cat "$QTMP/c2/rc")" "the review completes"
-assert_contains "$(cat "$QTMP/c2/adversarial.log" 2>/dev/null)" "deepseek/deepseek-v4.1-flash" "the run log names the model that answered"
+assert_contains "$(cat "$QTMP/c2/adversarial.log" 2>/dev/null)" "deepseek-v4.1-flash" "the run log names the model that answered"
 
-# Bug caught: dola-seed sent to OpenRouter (~$7.6 a day), or its skip benching the lane in the health ledger.
+# Bug caught: dola-seed sent to a metered endpoint (~$7.6 a day on OpenRouter), or its skip benching the lane.
 start_test "q.3 dola-seed has no stand-in: no request, and the lane is not held against"
 mkdir -p "$QTMP/c3"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c3/quota"
 out=$(run_q c3 byteplus-3)
-assert_eq "" "$(urls c3)" "no request at all"
-assert_contains "$out" "no OpenRouter fallback for dola-seed-2.0-code" "the lane says why it did not run"
+assert_eq "" "$(urls c3)$(qmodels c3)" "no request at all"
+assert_contains "$out" "no Token Plan stand-in for dola-seed-2.0-code" "the lane says why it did not run"
 case "$(cat "$QTMP/c3/health" 2>/dev/null)" in
   *byteplus-3*) fail "the skip was recorded in the provider-health ledger" "$(cat "$QTMP/c3/health")" ;;
   *) pass "the provider-health ledger holds nothing against byteplus-3" ;;
 esac
 
-# Bug caught: a set-but-empty override ignored, so a lane the owner turned off still bills OpenRouter.
-start_test "q.4 ZUVO_BYTEPLUS_OR_FALLBACK_<LANE> set empty turns the stand-in off"
+# Bug caught: a set-but-empty override ignored, so a lane the owner turned off still runs.
+start_test "q.4 ZUVO_BYTEPLUS_FALLBACK_<LANE> set empty turns the stand-in off"
 mkdir -p "$QTMP/c4"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c4/quota"
-run_q c4 byteplus ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS= >/dev/null
-assert_eq "" "$(urls c4)" "no request at all"
+run_q c4 byteplus ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS= >/dev/null
+assert_eq "" "$(urls c4)$(qmodels c4)" "no request at all"
 
 # Bug caught: a stop that never lifts — the plan shut out after its reset.
 start_test "q.5 a stop that has passed asks the plan again"
@@ -127,21 +144,21 @@ mkdir -p "$QTMP/c7b"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c7b/quota"
     byteplus_quota_record byteplus "$(quota_body "You have exceeded the monthly usage quota. It will reset at $(epoch_fmt "$RESET") +0000 CST.")" ) 2>/dev/null
 assert_eq "$RESET" "$(until_of c7b)" "…while a later reset replaces an earlier one"
 
-# Bug caught: the stand-in spending on OpenRouter on a host that never opted into the paid lanes.
-start_test "q.8 without ZUVO_ADV_OPENROUTER=1 the lane is left out instead"
+# Bug caught: the stand-in running on a host that never opted into the Token Plan lane.
+start_test "q.8 without ZUVO_ADV_QWEN=1 the lane is left out instead"
 mkdir -p "$QTMP/c8"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c8/quota"
-out=$(run_q c8 byteplus ZUVO_ADV_OPENROUTER=0)
-assert_eq "" "$(urls c8)" "no request at all"
-assert_contains "$out" "OpenRouter not enabled" "the lane says why"
+out=$(run_q c8 byteplus ZUVO_ADV_QWEN=0)
+assert_eq "" "$(urls c8)$(qmodels c8)" "no request at all"
+assert_contains "$out" "Token Plan not enabled" "the lane says why"
 
 # Bug caught: a nonempty override ignored, or a lane moved to another model inheriting the old model's stand-in.
 start_test "q.9 the stand-in follows the override and the lane's model"
 mkdir -p "$QTMP/c9" "$QTMP/c9b"
 printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c9/quota"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c9b/quota"
-run_q c9 byteplus ZUVO_BYTEPLUS_OR_FALLBACK_BYTEPLUS=vendor/stand-in >/dev/null
-assert_eq "vendor/stand-in" "$(models c9)" "an override names the OpenRouter model"
+run_q c9 byteplus ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS=qwen3.8-flash >/dev/null
+assert_eq "qwen3.8-flash" "$(qmodels c9)" "an override names the Token Plan model"
 run_q c9b byteplus ZUVO_MODEL_BYTEPLUS=other-model >/dev/null
-assert_eq "" "$(urls c9b)" "a lane on a model with no stand-in is left out"
+assert_eq "" "$(urls c9b)$(qmodels c9b)" "a lane on a model with no stand-in is left out"
 
 # Bug caught: an ordinary throttling 429 from the plan taken for a spent quota — the plan shut out for an hour.
 start_test "q.10 a 429 that is not a quota stop is retried and records nothing"

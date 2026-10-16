@@ -94,12 +94,13 @@ timeout — backlog `B-20261006-BYTEPLUS-GLM-TIMEOUT-VS-500S`.
 monthly, weekly or 5-hour quota with HTTP 429 `AccountQuotaExceeded` and names its reset ("It will
 reset at 2026-10-22 23:59:59 +0800"). That 429 is not retried: the reset goes to
 `~/.zuvo/byteplus-quota-until`, an hour ahead when the message names none, and until then no lane,
-chunk or run asks the plan. Meanwhile `byteplus` (glm-5.3-flash) runs as `z-ai/glm-5.3-flash` and
-`byteplus-alt` (deepseek-v4-1-flash-260910) as `deepseek/deepseek-v4.1-flash` on OpenRouter, about
-$0.001 a call on the OpenRouter key. `byteplus-3` (dola-seed-2.0-code, ~$0.005 a call at ~1500 calls a day)
-has no stand-in: it is left out (outcome `no-key`, not held against the lane). The run log and the
-ledger name the OpenRouter model that answered. `ZUVO_BYTEPLUS_OR_FALLBACK_<LANE>` sets a lane's
-stand-in, and set but empty turns it off. Delete the file to ask the plan again before the reset.
+chunk or run asks the plan. Meanwhile `byteplus` (glm-5.3-flash) runs as `glm-5.3` and `byteplus-alt`
+(deepseek-v4-1-flash-260910) as `deepseek-v4.1-flash` on the Alibaba Token Plan, through the qwen CLI
+(needs `ZUVO_ADV_QWEN=1` and the model declared on a Token Plan endpoint in `~/.qwen/settings.json`).
+Never on OpenRouter: the first cut fell back there and deepseek alone spent $72 in one day (2026-10-15).
+`byteplus-3` (dola-seed-2.0-code) exists only on BytePlus: it is left out (outcome `no-key`, not held
+against the lane). The run log and the ledger name the model that answered.
+`ZUVO_BYTEPLUS_FALLBACK_<LANE>` sets a lane's stand-in, and set but empty turns it off. Delete the file to ask the plan again before the reset.
 
 ```bash
 ~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES

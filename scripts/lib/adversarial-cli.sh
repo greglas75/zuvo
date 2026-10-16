@@ -335,10 +335,11 @@ Environment variables:
   ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: xiaomi/mimo-v2.6-flash)
   ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: deepseek/deepseek-v4.1-flash)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
-  ZUVO_BYTEPLUS_OR_FALLBACK_<LANE>  OpenRouter model a BytePlus lane (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) runs
-                           while the plan's quota is spent (default: glm-5.3-flash -> z-ai/glm-5.3-flash,
-                           deepseek-v4-1-flash -> deepseek/deepseek-v4.1-flash, none for the rest: left out).
-                           Set but empty = no fallback. The reset is kept in ~/.zuvo/byteplus-quota-until.
+  ZUVO_BYTEPLUS_FALLBACK_<LANE>  Alibaba Token Plan model (qwen CLI, needs ZUVO_ADV_QWEN=1) a BytePlus lane
+                           (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) runs while the plan's quota is spent (default:
+                           glm-5.3-flash -> glm-5.3, deepseek-v4-1-flash -> deepseek-v4.1-flash, none for the
+                           rest: left out). Never OpenRouter. Set but empty = no fallback. The reset is kept in
+                           ~/.zuvo/byteplus-quota-until.
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
   ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)
