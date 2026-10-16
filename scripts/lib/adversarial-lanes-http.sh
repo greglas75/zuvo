@@ -423,8 +423,8 @@ run_openrouter() {
   local _plan
   _plan="$(_plan_endpoint "$_lane" "${ZUVO_OPENROUTER_BASE_URL:-}")" || return 1
 
-  # Every OpenRouter call answers to the day's budget; a BytePlus plan call is prepaid and does not.
-  if [[ -z "${_bp_path:-}" ]]; then
+  # Every OpenRouter call answers to the day's budget; a plan call (BytePlus, Z.ai) is prepaid and does not.
+  if [[ -z "$_plan" ]]; then
     openrouter_budget_ok "$_lane" "$key" || return 1
   fi
 
