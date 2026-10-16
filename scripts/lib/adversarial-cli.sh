@@ -328,13 +328,15 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter-alt` (ZUVO_ADV_OPENROUTER_LANES overrides the list, e.g.
+                           Adds `openrouter openrouter-alt openrouter-3 openrouter-4` (ZUVO_ADV_OPENROUTER_LANES overrides, e.g.
                            "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
-  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, qwen/qwen3.8-flash)
+  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, z-ai/glm-5.3-flashx)
   ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: xiaomi/mimo-v2.6-flash)
-  ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: deepseek/deepseek-v4.1-flash)
-  ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
+  ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inclusionai/ling-3.1-flash)
+  ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: thinkingmachines/inkling-small)
+  ZUVO_OPENROUTER_DAILY_USD  Daily spend cap on the OpenRouter key, USD (default 5; "off" lifts it). At or over
+                           it, or when /key cannot be read, OpenRouter lanes are not run (BytePlus is exempt).
   ZUVO_BYTEPLUS_FALLBACK_<LANE>  Alibaba Token Plan model (qwen CLI, needs ZUVO_ADV_QWEN=1) a BytePlus lane
                            (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) runs while the plan's quota is spent (default:
                            glm-5.3-flash -> glm-5.3, deepseek-v4-1-flash -> deepseek-v4.1-flash, none for the

@@ -12,6 +12,8 @@
 # request, with no error, no log line that looks wrong, and no upper bound. The lane refuses
 # rather than bills — and this file is what keeps a future edit from "simplifying" that away.
 
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 ADV="$ROOT/scripts/adversarial-review.sh"
 EMPTY="$ADV_TEST_EMPTY"
 

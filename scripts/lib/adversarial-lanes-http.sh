@@ -283,6 +283,43 @@ openrouter_review_text() {
   printf '%s\n' "$text"
 }
 
+# openrouter_budget_ok <lane> <key> — 0 while the OpenRouter key's spend TODAY (UTC, the vendor's usage_daily) is under
+# ZUVO_OPENROUTER_DAILY_USD (default 5; "off" lifts it). Over it, or when the spend cannot be read, the lane is not run
+# (no-key: not held against it). Why a cap at all: on 2026-10-15 one lane (deepseek on OpenRouter) ran on ~1,700
+# reviews and the key spent $91 that day — benchmark prices had put it at a tenth of a cent a review, while real diffs
+# made the model think for ~60k output tokens a call. A per-call price is a guess; the day's spend is a fact.
+# One GET to /api/v1/key, shared by every lane, chunk and run for ZUVO_OPENROUTER_USAGE_TTL seconds (default 120)
+# through $ZUVO_HOME/openrouter-usage. Fails CLOSED: this is a money check. The test harness skips it unless the
+# cap is set explicitly — its fake curls answer every URL with a review.
+openrouter_budget_ok() {
+  local lane="$1" key="$2" cap="${ZUVO_OPENROUTER_DAILY_USD-5}" f ttl now at="" used="" cfg body
+  [[ "$cap" == off ]] && return 0
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENROUTER_DAILY_USD+x}" ]] && return 0
+  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "  WARN: ZUVO_OPENROUTER_DAILY_USD='$cap' is not a number — using 5" >&2; cap=5; }
+  f="${ZUVO_OPENROUTER_USAGE_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/openrouter-usage}"
+  ttl="$(ar_decimal "${ZUVO_OPENROUTER_USAGE_TTL:-120}" 120)"
+  now=$(date +%s)
+  { read -r at used _ < "$f"; } 2>/dev/null || true
+  if ! [[ "$at" =~ ^[0-9]+$ && "$used" =~ ^[0-9]+(\.[0-9]+)?$ ]] || (( now - at > ttl )); then
+    cfg="$JSON_TMPDIR/openrouter_budget_${lane//[^a-zA-Z0-9-]/_}.cfg"
+    curl_auth_config "$cfg" "$lane" "$key" || return 1
+    body=$(curl -sS --max-time 10 -K "$cfg" "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/key" 2>/dev/null) || body=""
+    used=$(printf '%s' "$body" | jq -r '.data.usage_daily | numbers' 2>/dev/null) || used=""
+    if [[ ! "$used" =~ ^[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?$ ]]; then
+      lane_no_key "$lane" "today's OpenRouter spend could not be read from /key — refusing to spend blind"
+      return 1
+    fi
+    used=$(awk -v u="$used" 'BEGIN{printf "%.4f", u}')
+    mkdir -p "$(dirname "$f")" 2>/dev/null
+    printf '%s %s\n' "$now" "$used" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$" 2>/dev/null
+  fi
+  if awk -v u="$used" -v c="$cap" 'BEGIN{exit !(u >= c)}'; then
+    lane_no_key "$lane" "OpenRouter daily budget reached: \$$used spent today, cap \$$cap (ZUVO_OPENROUTER_DAILY_USD)"
+    return 1
+  fi
+  return 0
+}
+
 run_openrouter() {
   # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
   # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.
@@ -352,6 +389,11 @@ run_openrouter() {
       *) echo "  WARN: $_lane base URL '${ZUVO_OPENROUTER_BASE_URL}' is not the Coding Plan path (/api/coding/v3) — refusing, it would bill the account balance instead of the plan" >&2
          return 1 ;;
     esac
+  fi
+
+  # Every OpenRouter call answers to the day's budget; a BytePlus plan call is prepaid and does not.
+  if [[ -z "${_bp_path:-}" ]]; then
+    openrouter_budget_ok "$_lane" "$key" || return 1
   fi
 
   # Model id is attacker-adjacent only via env, but checked anyway: ids are vendor/name[:tag]. Rejected

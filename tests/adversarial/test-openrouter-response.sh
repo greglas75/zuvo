@@ -7,6 +7,8 @@
 # clock (the fake date/sleep below): the backoff is never waited out, and no verdict depends on real time.
 # Case ids OR.6-OR.10 belong to the sibling test-openrouter-response-refactor-regression.sh.
 
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 ADV="$ROOT/scripts/adversarial-review.sh"
 OR_HOME="$(mktemp -d "$ADV_TEST_HOME/openrouter-response.XXXXXX")"
 mkdir -p "$OR_HOME/bin"

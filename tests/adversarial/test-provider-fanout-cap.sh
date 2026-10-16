@@ -8,6 +8,8 @@
 # because 45 of those runs were dispatched with the literal string `{MODE}` and were
 # silently reviewed with the generic code rubric.
 
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 ADV="$ROOT/scripts/adversarial-review.sh"
 MOCKS="$HERE/mocks"
 EMPTY="$ADV_TEST_EMPTY"

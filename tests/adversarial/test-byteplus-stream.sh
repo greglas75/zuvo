@@ -14,6 +14,8 @@
 # Isolation: each case calls new_case, which gives it its own directory, key file, ZUVO_HOME,
 # request log and fixtures. No case reads a file another case wrote; any one can run alone.
 
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 ADV="$ROOT/scripts/adversarial-review.sh"
 BS_ROOT="$(mktemp -d "$ADV_TEST_HOME/byteplus-stream.XXXXXX")"
 trap 'rm -rf "$BS_ROOT"' EXIT

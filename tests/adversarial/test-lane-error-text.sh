@@ -15,6 +15,8 @@
 #
 # Everything runs against fakes on PATH (kimi, curl, qwen, muse) — no endpoint, no key, no quota.
 
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 ADV="$ROOT/scripts/adversarial-review.sh"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 
