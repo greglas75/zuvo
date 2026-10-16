@@ -550,3 +550,81 @@ amputated seed text. Both were real:
 - [x] B-20261012-CONSOLIDATE-HOME-PREFIX scripts/zuvo-home/backlog-consolidate.py:276 — [SEC] `str(mr).startswith(str(Path.home()))` is a string-prefix containment test (`/home/greg2` passes for `/home/greg`); use `Path.is_relative_to` | evidence: CQ auditor CQ31 | severity: low | source: review/2026-10-12 | defer-reason: NIT (pre-existing, path comes from git) | 2026-10-12 | RESOLVED 2026-10-12: Path.is_relative_to; regression test (sibling of HOME) in 5c3ffee1
 - [x] B-20261012-CONSOLIDATE-MAIN-GUARD scripts/zuvo-home/backlog-consolidate.py:265 — [READ] the run is a module-level loop (nesting 5) with no main()/`__main__` guard, unlike the sibling backlog helpers, so it cannot be imported or unit-tested; no return annotations; the merge header is written by an f-string and matched by MERGED_HEADER separately | evidence: CQ auditor CQ2/CQ11/CQ12/CQ25 | severity: low | source: review/2026-10-12 | defer-reason: NIT | 2026-10-12 | RESOLVED 2026-10-12: run split into consolidate_file/consolidate/print_report/main + __main__ guard; merged_header() beside MERGED_HEADER, in 5c3ffee1
 - [x] B-verify-review-claims-BUG-timeout-prefix scripts/verify-review-claims.py:80 — [BUG] ADVERSARIAL_RE accepts only control-flow words and VAR= assignments before adversarial-review, so `… | timeout 1500 ~/.zuvo/adversarial-review --multi …` is not seen and a self-review that used --multi is reported as a DISAGREEMENT ("no invocation carries --multi") | evidence: zuvo:review of S-66 ran 9 such passes; the verifier observed 9 calls (the --record-disposition ones) with --multi: 0 | severity: medium | source: drive-by:review | conf: 90 | 2026-10-12 | RESOLVED 2026-10-12: command wrappers (timeout/nice/nohup/env/command/stdbuf) take the command position; test 6c, in a5cf1e77
+
+## Archived from backlog.md on 2026-10-16 (3 completed items moved out)
+- [x] B-20261009-DEDUP-SIGNATURE-ONLY [OBSOLETE 2026-10-15] [P2][process][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|signature-match-only
+**Source:** owner's question 2026-10-09 — "czy agent przed dodaniem wpisu sprawdza czy podobny nie istnieje?"
+**What:** `skills/backlog/SKILL.md` "Adding Items" step 5 mandates `backlog-archive.py lookup` before an add, but the
+lookup keys on `normalize_signature` = cited-path basename + the 8 words AFTER the path. Measured on the live file
+(`--repo ~/DEV/zuvo-plugin`, exit code taken without a pipe):
+  - exact text of an existing entry citing `scripts/adversarial-review.sh:1744` -> `rc=10 OPEN fp:dd1533472ee9` (correct)
+  - the SAME file:line, same defect, different words                            -> `rc=0 ABSENT fp:4b9363e41053`
+  - rewording only BEFORE the path (`FILE:` -> `see`), 8 words intact           -> `rc=10 OPEN` (still correct)
+  - an existing entry with NO cited path (`B-leads-T1-jsonl-ext`), byte-exact   -> `rc=0 ABSENT`
+So dedup catches a re-paste and misses the same problem described by another session — which is the normal case, since
+every session writes its own words. Entries that cite no path are outside the check entirely. Measured scale of the
+symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone holding 32.
+**Fix:** add a similarity tier under the exact signature — same cited path (any basename match) plus a token-overlap or
+embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
+agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
+**Resolution 2026-10-15 — NOT the similarity tier this asked for; the write path stopped needing one.** `backlog-add`
+(landed 2026-10-14) keys a finding on `CLASS | file | anchor`, where the anchor is text copied from the cited line, so
+"paraphrased titles collapse" by construction instead of by scoring. Probed on a scratch repo, two sessions filing the
+same defect in completely different words:
+  - same `--anchor`, titles sharing no content word -> `BUMPED … seen=2`, sources merged into the one entry
+  - same `--anchor`, `--line` off by one            -> `BUMPED … seen=3` (the anchor is the identity, not the line)
+  - DIFFERENT `--anchor` line, both legitimately within the ±3 the command allows -> `ACCEPTED` a second entry
+So the filed symptom ("dedup misses the same problem described by another session — the normal case") is gone for
+everything written through `backlog-add`, and adding a token-overlap tier now would introduce a SECOND notion of
+identity next to the structural one. What is left is narrower than what was filed and is tracked separately as
+B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS. The free-text `lookup` keeps its exact-signature behaviour, which is correct for
+what it is now: the resolver for legacy and hand-written entries, where there is no anchor to key on.
+- [x] B-20261009-DEDUP-EMPTY-QUERY-OPEN [FIXED 4505da07] [P2][correctness][conf 95]
+**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
+**Source:** probing the dedup path for the question above, 2026-10-09.
+**What:** an empty or whitespace-only query returns a false positive pointing at an unrelated, already-DONE section:
+  `lookup --repo ~/DEV/zuvo-plugin ""`    -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+  `lookup --repo ~/DEV/zuvo-plugin "   "` -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
+backlog.md:186 is `## B-noverify-hardening — DONE`. A nonsense-but-nonempty query correctly returns `rc=0 ABSENT`. So the
+failure is specific to a signature that normalizes to nothing. This is worse than a fail-open: the SKILL's contract for
+`OPEN` is "update that entry in place", so an agent whose candidate text carries no signature words is instructed to
+overwrite a closed, unrelated entry. Any candidate that is only a path, only punctuation, or stripped to nothing by
+`strip_resolution_markers` lands here.
+**Fix:** `lookup` refuses an empty normalized signature with its own exit code (not 0/10) and a message naming what was
+stripped; a test seeds "", "   ", a path-only query and a markers-only query and asserts none of them returns OPEN.
+**Resolution 4505da07:** both halves, because the filed symptom was one key rather than one command. `normalize_signature`
+returns `"|"` for anything that strips to nothing, so EVERY such line hashed to `fp:3eb416223e9e` — measured across
+`~/DEV` 2026-10-13: 11 of 58043 entries, 8 of them in ONE archive (tgm-survey-platform). A fixture of two unrelated
+resolution lines, one per file, also makes `verify` report a namespace VIOLATION, and `append-runlog` runs `verify` as a
+BLOCKING gate, so the collision cost more than the reported lookup did. `entry_key` now keys a no-content signature off
+the raw line (same line = same entry, so archiving stays idempotent; two different lines stop being one), and `lookup`
+refuses such a candidate before reading the files: verdict `NO-SIGNATURE`, exit **13** (12 is `status`'s OVERDUE), naming
+what was stripped. Documented in `backlog-protocol.md`, `skills/backlog/SKILL.md` and `drive-by-findings.md`, with a test
+that fails if the code answers something the contract does not carry. Tests written first and seen red (12 FAIL).
+H10 blocked the key rotation, as designed: rather than refreshing the frozen snapshot, its oracle gained a PREDICATE for
+exactly this case (identical in every other field, frozen side keyed on nothing, new keys distinct), proven narrow
+against a mutant that rotates every key — real module `OK 878 (1 no-signature key(s) rotated)`, mutant still FAILS.
+Also removed `[--json]` from the usage header: argparse rejects it (`unrecognized arguments: --json`).
+- [x] B-20261009-DEDUP-ADD-MODE-ONLY [FIXED 55d4b354] [P3][process][conf 85]
+**Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
+**Source:** owner's question 2026-10-09, same probe.
+**What:** the dedup check lives only in the SKILL's `add` mode. The actual practice — every `docs(backlog):` commit in this
+repo's history, mine included — is a direct append to `memory/backlog.md` followed by a commit, which never enters `add`
+mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-commit` does not exist here and the global
+`hooks/git-dispatch/` chain gates pushes for pipeline entry, not backlog appends.
+**Fix:** move the check to where the write happens — a commit-time or pre-push hook that, for a commit touching
+`memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
+a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
+B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
+**Resolution 55d4b354:** `hooks/backlog-hand-append-warn.sh`, chained from the global `git-dispatch/pre-commit`. Both
+stated dependencies were met first: the false OPEN is fixed (B-20261009-DEDUP-EMPTY-QUERY-OPEN), and the similarity tier
+turned out not to be needed, because `backlog-add` keys on `CLASS | file | anchor` (B-20261009-DEDUP-SIGNATURE-ONLY,
+OBSOLETE). WARNS, NEVER BLOCKS — the dispatcher discards its status with `|| true`, so a future non-zero cannot start
+failing commits over a backlog line. It does NOT re-run `lookup`: the signal is the `ledger: F-<hex>` link only
+`backlog-add` can write, which makes the check a substring test on the staged lines (no python, no repo read, no lock).
+Silent on the hand edits the protocol MANDATES — `- [x]` and `[REGRESSION`. Test 17/0: exit 0 on every path, the count
+and its three-line cap, and an unborn HEAD, where `git diff --cached HEAD` would otherwise print a fatal on a repo's
+first commit. Refreshing the pinned dispatcher identity in `install-refactor-gate.sh` is part of the same commit; the
+nine failures skipping it caused are in that commit's message. NOT measured: how often entries still arrive by hand now
+that `backlog-add` exists — since it landed (2026-10-14) no open entry has been added at all, historically 990 of 1000.
