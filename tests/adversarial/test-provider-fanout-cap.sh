@@ -533,8 +533,7 @@ err=$(cat "$_st/err")
 assert_contains "$err" "Known stops, left out before the fan-out draw" "the stopped lanes are named"
 assert_eq "2 2" "$(printf '%s' "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("attempted_count"),d.get("provider_count"))' 2>/dev/null)" \
   "both slots go to working lanes, and both review"
-case "$(printf '%s' "$err" | sed -n 's/.*sampled at random (\([^)]*\)).*/\1/p' | head -1)" in
-  *muse*|*byteplus*|*openrouter*) fail "a stopped lane was drawn" "$err" ;;
-  *) pass "no stopped lane in the draw" ;;
-esac
+# The run's dispatched list (JSON), not a stderr phrase: a reworded log line cannot turn this into a pass.
+_ran=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("providers_used","?"))' 2>/dev/null)
+assert_eq "mock-success, mock-success" "$_ran" "only the working lanes ran"
 rm -rf "$_st"

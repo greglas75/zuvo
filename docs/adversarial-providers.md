@@ -242,7 +242,7 @@ filtering the list to nothing.
 
 **Known stops are left out before the draw** (`ar_skip_stopped_lanes`, 2026-10-17). Some lanes would only
 end as "not run — not held against the lane": muse inside a spent window, a BytePlus lane while the plan is
-out of quota and the lane has no Token Plan stand-in, an OpenRouter lane once today's spend has reached
+out of quota with no Token Plan stand-in it can use (none mapped, or `ZUVO_ADV_QWEN` not 1), an OpenRouter lane once today's spend has reached
 `ZUVO_OPENROUTER_DAILY_USD`. Those are removed from the pool first, from local state only (no request), and
 named on stderr (`Known stops, left out before the fan-out draw: …`), so the cap's slots go to lanes that can
 answer. Before this, rdesigner #4111 drew 5 of 8, four were known stops, and the run ended single-provider

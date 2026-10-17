@@ -824,8 +824,9 @@ _ar_lane_stop() {   # <lane> — prints why the lane cannot run now; status 1 wh
     byteplus|byteplus-alt|byteplus-3)
       until="$(byteplus_quota_until)" || return 1
       fb="$(byteplus_fallback_model "$lane" "$(lane_model "$lane")")"
-      [[ -n "$fb" && "${ZUVO_ADV_QWEN:-0}" == 1 ]] && return 1
-      echo "BytePlus quota until $(_ar_epoch_text "$until"), no Token Plan stand-in" ;;
+      if [[ -z "$fb" ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), no Token Plan stand-in"
+      elif [[ "${ZUVO_ADV_QWEN:-0}" != 1 ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), stand-in $fb needs ZUVO_ADV_QWEN=1"
+      else return 1; fi ;;
     openrouter|openrouter-alt|openrouter-3|openrouter-4)
       # A base URL on a prepaid plan host is not OpenRouter's money.
       [[ -n "$(_plan_endpoint "$lane" "${ZUVO_OPENROUTER_BASE_URL:-}" 2>/dev/null)" ]] && return 1
