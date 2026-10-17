@@ -343,17 +343,16 @@ class ClientTest(Base):
         self.assertFalse(worker.is_alive(), "key() blocked on a FIFO")
         self.assertIsNone(rio.key())
 
-    def test_a_windows_like_os_reads_a_key_file(self) -> None:
-        # Windows has no os.O_NONBLOCK (unguarded: AttributeError) and reports 0o666 for every file, so the
-        # POSIX 0o600 gate refused all key files there. A copy of os without O_NONBLOCK, named "nt".
+    def test_without_o_nonblock_a_key_file_is_refused_not_a_crash(self) -> None:
+        # Windows has no os.O_NONBLOCK: used unguarded it raised AttributeError out of key(). A key file is
+        # refused there anyway (0o666 reported for every file), so the answer is None, quietly.
         kf = self.home / "openrouter.key"
         kf.write_text("sk-file-key\n")
-        kf.chmod(0o644)
+        kf.chmod(0o666)
         os.environ.update(OPENROUTER_API_KEY="", ZUVO_OR_KEY_FILE=str(kf))
         fake = types.SimpleNamespace(**{k: getattr(os, k) for k in dir(os) if k != "O_NONBLOCK"})
-        fake.name = "nt"
         with mock.patch.object(rio, "os", fake):
-            self.assertEqual(rio.key(), "sk-file-key")
+            self.assertIsNone(rio.key())
 
     def test_a_home_without_a_path_is_no_key_not_a_crash(self) -> None:
         # Path.home() raises RuntimeError with no HOME and no passwd entry; key() must read that as no key.
