@@ -369,6 +369,23 @@ openrouter_budget_ok() {
   return 0
 }
 
+# openrouter_budget_spent — status 0 (printing "<spent> <cap>") when the cached reading of today's OpenRouter spend
+# already meets the cap: read from openrouter_budget_ok's cache only, no request. The TTL is deliberately ignored —
+# usage_daily only grows within a UTC day, so a same-day reading at or over the cap stays true until midnight. For
+# the fan-out (ar_skip_stopped_lanes): a lane that cannot spend is not drawn. Status 1 when unknown or under.
+openrouter_budget_spent() {
+  local cap="${ZUVO_OPENROUTER_DAILY_USD-5}" f at="" used=""
+  [[ "$cap" == off ]] && return 1
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENROUTER_DAILY_USD+x}" ]] && return 1
+  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || cap=5
+  f="${ZUVO_OPENROUTER_USAGE_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/openrouter-usage}"
+  { read -r at used _ < "$f"; } 2>/dev/null || return 1
+  [[ "$at" =~ ^[0-9]{1,12}$ && "$used" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
+  (( at <= $(date +%s) && at / 86400 == $(date +%s) / 86400 )) || return 1
+  awk -v u="$used" -v c="$cap" 'BEGIN{exit !(u >= c)}' || return 1
+  printf '%s %s\n' "$used" "$cap"
+}
+
 run_openrouter() {
   # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
   # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.

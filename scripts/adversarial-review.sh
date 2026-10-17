@@ -398,6 +398,7 @@ ar_ba_filter_lanes                # blind-audit
 ar_apply_exclude_last             # providers
 ar_skip_auth_cached               # providers
 ar_bench_failing_lanes            # providers
+ar_skip_stopped_lanes             # providers
 ar_cap_fanout                     # providers
 ar_require_providers              # providers
 ar_resolve_dispatch_mode          # providers
