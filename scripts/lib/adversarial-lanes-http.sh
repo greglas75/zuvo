@@ -477,17 +477,18 @@ run_openrouter() {
   # for several. Lane-tied so an exported ZUVO_OR_STREAM=1 leaves OpenRouter on its measured non-stream path.
   local _or_stream=0
   [[ "${ZUVO_OR_STREAM:-0}" == "1" && ( "$_lane" == byteplus* || "$_lane" == zai ) ]] && _or_stream=1
-  # Z.ai: thinking OFF by default (ZUVO_ZAI_THINKING=enabled turns it back on). Measured 2026-10-18 on the plan:
-  # glm-5.3 and glm-5.3-flash spent ~150 s reasoning on a 3k-char diff before the first answer token (8,000
-  # reasoning chunks to 480 of content), and on real review prompts every 300 s lane budget ran out — four
-  # timeouts in a row benched the lane for 6 h. With thinking disabled the same review came back in 11 s.
+  # Z.ai: reasoning_effort LOW by default (ZUVO_ZAI_REASONING=low|medium|high, or off = thinking disabled). Measured
+  # 2026-10-18 on the plan, glm-5.3-flash, one 3k-char diff: default reasoning 158 s (8,000 reasoning chunks to 480
+  # of content) — on real review prompts every 300 s lane budget ran out, four timeouts in a row benched the lane
+  # for 6 h; thinking off 11 s with no reasoning at all; effort low 11 s with ~190 reasoning chunks kept. A token
+  # budget (thinking.budget_tokens) is ignored by the API (106 s).
   local _or_extra=""
   if [[ "$_lane" == zai ]]; then
-    case "$(printf '%s' "${ZUVO_ZAI_THINKING:-disabled}" | tr 'A-Z' 'a-z')" in
-      enabled|on|1|true)    _or_extra='{"thinking":{"type":"enabled"}}' ;;
-      disabled|off|0|false) _or_extra='{"thinking":{"type":"disabled"}}' ;;
-      *) echo "  WARN: ZUVO_ZAI_THINKING='$ZUVO_ZAI_THINKING' is not enabled/disabled — thinking stays off" >&2
-         _or_extra='{"thinking":{"type":"disabled"}}' ;;
+    case "$(printf '%s' "${ZUVO_ZAI_REASONING:-low}" | tr 'A-Z' 'a-z')" in
+      low|medium|high) _or_extra="{\"reasoning_effort\":\"$(printf '%s' "${ZUVO_ZAI_REASONING:-low}" | tr 'A-Z' 'a-z')\"}" ;;
+      off|disabled|0)  _or_extra='{"thinking":{"type":"disabled"}}' ;;
+      *) echo "  WARN: ZUVO_ZAI_REASONING='$ZUVO_ZAI_REASONING' is not low/medium/high/off — using low" >&2
+         _or_extra='{"reasoning_effort":"low"}' ;;
     esac
   fi
   chat_payload "$payload_file" "$model" 0.2 "$_or_stream" "$_or_extra" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }

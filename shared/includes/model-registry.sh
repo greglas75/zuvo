@@ -292,7 +292,7 @@ ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}"
 
 # ── Z.ai GLM Coding Plan (lane `zai`, opt-in ZUVO_ADV_ZAI=1): /api/coding/paas/v4 is the plan, /api/paas/v4 meters ──
 ZUVO_ZAI_BASE_URL="${ZUVO_ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
-# glm-5.3-flash (owner's choice 2026-10-18), sent with thinking OFF (run_openrouter, ZUVO_ZAI_THINKING): with
+# glm-5.3-flash (owner's choice 2026-10-18), sent with reasoning_effort low (run_openrouter, ZUVO_ZAI_REASONING): with
 # thinking on, glm-5.3 and the flash both reasoned past the 300 s lane budget on real diffs. glm-5.3-flashx is not
 # in this plan (1311). ZUVO_ZAI_MODEL picks another.
 ZUVO_MODEL_ZAI="${ZUVO_MODEL_ZAI:-glm-5.3-flash}"
