@@ -65,10 +65,7 @@ VERIFIED_BY = "deterministic:%s"          # `_BY_RE`'s shape; a free-form proven
 # which blanks `image:` targets first (`_IMAGE_TARGET_RE`).
 _CITED_RE = re.compile(
     r"(?<![\w./@~*?+-])([\w.@-]+(?:/[\w.@-]+)*/[\w.@-]*[\w@-]\.[a-z][a-z0-9]{0,4})(?::(\d+))?(?![\w/])")
-# A backlog-add `image:` target names a container image, not a repo file, and a registry port puts a
-# colon inside it (`image:localhost:5000/org/my.app:1` would cite `5000/org/my.app`), so the whole
-# reference is blanked before `_CITED_RE` runs: only the characters a reference is made of, so a path
-# chained after it by a comma or semicolon is still cited.
+# `image:` targets are not repo files, and a registry port restarts a match; a chained `,path` survives.
 _IMAGE_TARGET_RE = re.compile(r"\bimage:[\w.:/@-]+")
 # A `path:line` inside a QUOTED clause would be a second citation, and then "every location in this
 # evidence resolves" becomes a claim about text the entry happened to contain rather than about the
