@@ -115,7 +115,7 @@ export ZUVO_ADV_ZAI=1                      # opt-in: the plan's 5-hour/weekly qu
 - Endpoint `https://api.z.ai/api/coding/paas/v4` (`ZUVO_ZAI_BASE_URL`). Any other `z.ai` /
   `bigmodel.cn` path, e.g. the metered `/api/paas/v4`, is refused before a request is sent — the same
   guard as BytePlus (`_plan_endpoint`, `scripts/lib/adversarial-lanes-http.sh`).
-- Model `glm-5.2` (`ZUVO_ZAI_MODEL` / `ZUVO_MODEL_ZAI`), not benched yet. The plan's list:
+- Model `glm-5.3` (`ZUVO_ZAI_MODEL` / `ZUVO_MODEL_ZAI`), the newest full model in the plan; not benched yet. The plan's list:
   `GET $ZUVO_ZAI_BASE_URL/models`.
 - A 429 that is the plan refusing — window spent (1308, 1310, 1316–1321), no package (1113), plan
   expired (1309, 1314), model not in the plan (1311), Fair Usage (1313), wrong key type (1315) — is
