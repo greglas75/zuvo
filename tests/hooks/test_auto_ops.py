@@ -267,6 +267,21 @@ esac
         self.assertEqual((rc, self.installs()), (1, []), out)
         self.assertIn("writable by no one else", out)
 
+    def test_a_trust_list_that_is_a_symlink_is_refused(self):
+        # catches trust taken from wherever a link points
+        signers = os.path.join(self.home, "release-signers")
+        os.rename(signers, signers + ".real")
+        os.symlink(signers + ".real", signers)
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (1, []), out)
+        self.assertIn("must be a regular file", out)
+
+    def test_a_plugin_that_is_not_installed_at_all_is_reported(self):
+        sh(self.claude, 'echo "$1 $2" >> /dev/null; exit 0\n')
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("plugin is absent, disabled — want 1.0.0, enabled", out)
+
     def test_without_release_signers_nothing_is_installed(self):
         # catches a machine with no trust list treating every tag as trusted
         os.remove(os.path.join(self.home, "release-signers"))
