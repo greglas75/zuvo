@@ -331,7 +331,9 @@ exit 0
         with open(os.path.join(self.home, "key-sync"), "w") as f:   # run by the job's own Python
             f.write("print('zai.key: written from 1Password (mode 600)')\n")
         rc, out = self.quiet(RA.locked_pass)
-        self.assertIn("key-sync: zai.key: written from 1Password", out)
+        synced = out.find("key-sync: zai.key: written from 1Password")
+        installing = out.find("installing v1.0.0")
+        self.assertEqual((rc, synced >= 0, synced < installing), (0, True, True), out)
 
     def test_an_unsaved_state_still_reports_the_install_and_redoes_it_next_pass(self):
         # catches a state-write OSError aborting the pass as a traceback after a good install
@@ -380,8 +382,9 @@ class Timeout(unittest.TestCase):
                 child = int(f.read())
         self.assertEqual(r.returncode, 124)
         # gone, or a zombie nobody reaps yet (pid 1 in a container) — never still running
-        state = subprocess.run(["ps", "-o", "stat=", "-p", str(child)], capture_output=True, text=True).stdout
-        self.assertIn(state.strip()[:1], ("", "Z"))
+        ps = subprocess.run(["ps", "-o", "stat=", "-p", str(child)], capture_output=True, text=True)
+        self.assertIn(ps.returncode, (0, 1), ps.stderr)   # 1: no such process; other: ps failed
+        self.assertIn(ps.stdout.strip()[:1], ("", "Z"))
 
 
 class KeySync(Env):
