@@ -108,7 +108,7 @@ class TagAndListing(unittest.TestCase):
             self.assertEqual(RA.newest(tags), f"v{want[0]}.{want[1]}.{want[2]}", tags)
 
     def test_plugin_state_reads_a_real_claude_plugin_list(self):
-        # contract: output recorded from Claude Code 2026-10-17, three project-scope pins beside the user one
+        # contract: real Claude Code output, three project-scope pins beside the user one
         with open(REAL_LISTING, encoding="utf-8") as f:
             self.assertEqual(RA.plugin_state(f.read()), ("1.6.87", True))
 
