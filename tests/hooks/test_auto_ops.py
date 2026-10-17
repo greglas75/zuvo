@@ -383,8 +383,24 @@ exit 0
         RA.write_state({"installed": "v2.0.0"})
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual(self.installs(), [], out)
-        self.assertIn("not downgraded", out)
         self.assertEqual(RA.read_state()["installed"], "v2.0.0")
+
+    def test_tags_at_or_below_the_installed_release_are_not_examined(self):
+        # catches every pass re-verifying and logging all old unsigned tags, every 30 minutes
+        # the state right after signing began: every tag unsigned, the installed one among them
+        git(self.origin, "tag", "-d", "v1.0.0")
+        git(self.origin, "tag", "v1.0.0")
+        git(self.origin, "tag", "v0.9.0")
+        RA.write_state({"installed": "v1.0.0"})
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((self.installs(), "skipped v" in out), ([], False), out)
+
+    def test_a_trust_list_in_a_directory_others_can_write_is_refused(self):
+        # catches a safe file inside a directory where someone else can swap it
+        os.chmod(self.home, 0o777)
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (1, []), out)
+        self.assertIn("must be owned by you and writable by no one else", out)
 
     def test_a_pass_while_another_holds_the_lock_installs_nothing(self):
         with open(os.path.join(self.home, "release-autoinstall.lock"), "w") as held:

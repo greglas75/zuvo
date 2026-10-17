@@ -450,7 +450,7 @@ if existing_tag_sha=$(git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}^
 else
   # Signed when this machine has a release key: release-autoinstall installs only signed tags.
   _trc=0; bash "$(dirname "$0")/release-tag.sh" "v${NEW_VERSION}" "$NEW_SHA" || _trc=$?
-  if [[ "$_trc" == 1 ]]; then
+  if [[ "$_trc" != 0 && "$_trc" != 3 ]]; then
     fail "tag v${NEW_VERSION} not created (signing failed, see above). main is pushed; fix the key, then: bash scripts/release-tag.sh v${NEW_VERSION} ${NEW_SHA} && git push origin refs/tags/v${NEW_VERSION}"
   fi
 fi
