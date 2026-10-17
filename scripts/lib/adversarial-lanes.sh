@@ -705,6 +705,57 @@ if bad:
 PY
 }
 
+# _qwen_reasoning_extra <model> — the request fields that cap the model's reasoning on the Token Plan, as a JSON object;
+# empty = send none. Measured 2026-10-18 (6 real diffs, one Opus judge; ~/.zuvo bench, effort per variant):
+#   qwen3.8-flash uncapped thinks to ~29k tokens: 42% of production calls ran past the 300 s lane budget (p50 234 s).
+#     thinking_budget 8000: 0 timeouts, p50 183 s, 6 of 14 judged defects (uncapped 9, but half its calls never finish).
+#   deepseek-v4.1-flash ignores thinking_budget; reasoning_effort low: 10 of 14 vs 11 at default, 100 s vs 168 s, half
+#     the plan's tokens. Thinking off lost half the defects.
+# ZUVO_QWEN_THINKING_BUDGET (tokens, default 8000; 0 or off = no cap) and ZUVO_QWEN_REASONING_EFFORT (default low;
+# medium|high; anything else = no cap). Only the measured models get a cap.
+_qwen_reasoning_extra() {
+  local tb="${ZUVO_QWEN_THINKING_BUDGET:-8000}" re="${ZUVO_QWEN_REASONING_EFFORT:-low}"
+  case "$1" in
+    qwen3.8-flash*)
+      [[ "$tb" =~ ^[1-9][0-9]{0,6}$ ]] && printf '{"thinking_budget":%s}\n' "$tb" ;;
+    deepseek-v4*)
+      case "$re" in low|medium|high) printf '{"reasoning_effort":"%s"}\n' "$re" ;; esac ;;
+  esac
+  return 0
+}
+
+# _qwen_call_home <dir> <model> <settings> <extra JSON> — a QWEN_HOME for ONE call: settings.json copied from the owner's
+# with <extra> as generationConfig.extra_body on <model>'s provider entries (the CLI sends it as top-level request
+# fields; checked in its request log). Carried: $version, ui, security, model, modelProviders; dropped: the env block
+# and hooks. Prints the entry's envKey NAME (the key's value is read by the caller, never written here). Status 1 when
+# the copy cannot be built (unreadable, model absent, ambiguous envKey) — the call then runs uncapped, as before.
+_qwen_call_home() {
+  ( umask 077; mkdir -p "$1" && python3 - "$3" "$2" "$4" "$1/settings.json" <<'PY'
+import json, os, sys
+src, model, extra, dst = sys.argv[1], sys.argv[2], json.loads(sys.argv[3]), sys.argv[4]
+try:
+    cfg = json.load(open(src, encoding="utf-8"))
+except Exception as exc:
+    print(f"  WARN: qwen: {src} unreadable ({exc.__class__.__name__})", file=sys.stderr); sys.exit(1)
+out = {k: cfg[k] for k in ("$version", "ui", "security", "model", "modelProviders") if k in cfg}
+keys = set()
+for entries in (out.get("modelProviders") or {}).values():
+    for e in entries if isinstance(entries, list) else []:
+        if isinstance(e, dict) and e.get("id") == model:
+            gc = e.get("generationConfig") if isinstance(e.get("generationConfig"), dict) else {}
+            e["generationConfig"] = {**gc, "extra_body": {**(gc.get("extra_body") or {}), **extra}}
+            keys.add(str(e.get("envKey") or ""))
+if len(keys) != 1 or not next(iter(keys)).isidentifier():
+    sys.exit(1)
+tmp = dst + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(out, fh)
+os.replace(tmp, dst)
+print(next(iter(keys)))
+PY
+  )
+}
+
 run_qwen() {
   # Qwen Code CLI (`qwen`), headless. Verified against v0.20.0 with a local OpenAI-compatible
   # stub before any real call was made:
@@ -743,8 +794,30 @@ run_qwen() {
   mkdir -p "$ws" 2>/dev/null || return 1
   printf '%s' "$REVIEW_PROMPT" > "$pf" 2>/dev/null || return 1
 
+  # Reasoning cap (see _qwen_reasoning_extra): a per-call QWEN_HOME, the settings' env block exported in this subshell
+  # only (never argv). Unbuildable → WARN and the uncapped call, as before.
+  # Only the plan key is carried over, by the envKey name the model's entry names: already in the env, or from the
+  # settings' env block (the place the CLI itself would take it from). No key → the uncapped call, as before.
+  local settings="${ZUVO_QWEN_SETTINGS:-$HOME/.qwen/settings.json}" extra qhome="" kname="" kval=""
+  extra="$(_qwen_reasoning_extra "$model")"
+  if [[ -n "$extra" ]]; then
+    if kname="$(_qwen_call_home "$JSON_TMPDIR/${tag}_qhome" "$model" "$settings" "$extra")" && [[ -n "$kname" ]]; then
+      kval="${!kname:-}"
+      [[ -n "$kval" ]] || kval="$(jq -r --arg k "$kname" '.env[$k] // empty | strings' "$settings" 2>/dev/null)"
+      if [[ -n "$kval" ]]; then
+        qhome="$JSON_TMPDIR/${tag}_qhome"
+        echo "  NOTE: $tag [$model] reasoning capped: $extra" >&2
+      else
+        echo "  WARN: $tag: $kname not found for the reasoning cap — running uncapped" >&2
+      fi
+    else
+      echo "  WARN: $tag: could not build the reasoning cap for $model — running uncapped" >&2
+    fi
+  fi
+
   local status=0
-  (cd "$ws" && env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_MODEL \
+  (if [[ -n "$qhome" ]]; then export QWEN_HOME="$qhome" "$kname=$kval"; fi
+   cd "$ws" && env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_MODEL \
     timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
     qwen -p "Everything you need is in this message: the complete code under review is included above. Do NOT use any tool, do NOT read the filesystem, do NOT invoke any skill or slash command. Reply with the findings only." \
       -o json -m "$model" --safe-mode --max-tool-calls 0 \
