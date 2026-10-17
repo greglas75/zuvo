@@ -80,7 +80,7 @@ R='/abs/path/of/the/repository/root'   # same shell call as the command; "Filing
 | `--title` | yes | the defect in one sentence (cut at 200 characters) |
 | `--file`, `--line` | these, or `--target` | the cited site, repo-relative; the file must exist in the work tree |
 | `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part before the value — the name and what precedes it (`AWS_SECRET_KEY =`, `const db_pw =`), still 8 non-space characters — never any character of the value; when the line has fewer than 8 before the value, copy a line within ±3 that holds no secret |
-| `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL (stored without its query and fragment) or a hostname (any class; the bars still route it), or `subject:<slug>` (PROCESS, SEC only) |
+| `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL (stored without its query and fragment), a hostname or `host:port`, or `image:<reference>` for a container image (`image:redis:7`, `image:ghcr.io/org/app:1.2@sha256:…`; without the prefix `redis:7` is read as host `redis`, port 7) (any class; the bars still route it), or `subject:<slug>` (PROCESS, SEC only) |
 | `--evidence` | with a URL or host target | what proves it (cut at 600) |
 | `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
 | `--missing-assertion` | TEST-GAP, MUTATION only | the assertion the tests lack |
@@ -153,7 +153,10 @@ integration branch is `develop`, or entries filed there carry `[branch:develop]`
 DATA with an anchor it covers the class, the path and the normalised anchor, so two skills that
 paraphrase one defect on the same code file one entry. For every other finding it covers the class,
 the path and the first 8 words of the title. A `--target` finding uses the target, lowercased and
-without a trailing `/`, where the path would be. The line number is never part of it.
+without a trailing `/`, where the path would be. An `image:` target keeps its case (a tag is
+case-sensitive) and is reduced to one key per image: the registry lowercased (its port without leading zeros), Docker Hub's implied
+registry and `library/` namespace dropped (`docker.io/library/nginx`, `library/nginx` and `nginx` are
+one image), a digest in place of the tag when there is one, else the tag, `latest` when none is written. The line number is never part of it.
 
 Under the lock, `backlog-add` runs the `lookup` described in "How to Persist Findings" at most twice.
 First on the entry's B-id: an open entry is bumped in place (`seen`, `conf`, date, sources); an
@@ -217,10 +220,10 @@ the dedupe and the lock it files exactly the entries the intake has to retire.
 | `unknown-class` | Use a class from the bar table. |
 | `bad-conf` | An integer 0-100. |
 | `bad-source` | A lowercase skill name, `drive-by:<skill>`, or `user`. |
-| `bad-target` | An `http(s)://` URL, a hostname, or `subject:<slug>`. |
+| `bad-target` | An `http(s)://` URL, a hostname, `image:<reference>` (a lowercase repository, a name of at most 255 characters registry included, an optional tag and an optional `sha256:` or `sha512:` digest), or `subject:<slug>`. |
 | `bad-path` | `--file` with a control character, a `\|` or surrounding spaces; an `--also` without `:LINE`. |
 | `bad-pr` | `--pr` or `ZUVO_BACKLOG_PR` must be a PR number of 1–6 digits, no leading zero. |
-| `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION, or together with `--target`; `subject:` on a class other than PROCESS or SEC (a URL or host takes any class). |
+| `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION, or together with `--target`; `subject:` on a class other than PROCESS or SEC (a URL, host or image takes any class). |
 | `path-outside-repo` | The path leaves the repository (`..`, an absolute path elsewhere, a symlink out). |
 | `file-not-in-worktree` | The file does not exist in the work tree. If the path is right, the code is gone: nothing is filed or reported as not persisted. If the path was mistyped, correct it. |
 | `line-out-of-range` | `--line` is not a positive integer, or is past the end of the file (an `--also` line too). |
@@ -271,7 +274,7 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
 |-----------|-------|--------|----------|
 | A finding in a file the run is editing, which the run defers | its class: `BUG` only when it names the input and the wrong output, else `CQ` or the class the finding is | `<skill>` | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
 | A finding in a file the run is not editing | its drive-by tag (`SEC`, `BUG`, `SIZE`, `DUP`, `CPLX`, `PERF`, `DEAD` or `READ`); one that meets no tag's condition is reported, not recorded (`drive-by-findings.md` "Categories and what qualifies") | `drive-by:<skill>` (`drive-by-findings.md`) | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
-| A finding on a live page or host, with no repository file causing it | any class; the bars still route it, so a report-only class stays in the ledger | `<skill>` | `--target "$U" --evidence "$E"`, `U` a URL or a host (the location rule below) |
+| A finding on a live page or host, with no repository file causing it | any class; the bars still route it, so a report-only class stays in the ledger | `<skill>` | `--target "$U" --evidence "$E"`, `U` a URL, a host or `image:<reference>` (the location rule below) |
 | A validity-gate item: an incomplete run, a skipped tier, an escape hatch taken | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-<gate>`, with no date in it and the gate's fixed title on every run, so a repeat bumps the one record (`LEDGER-BUMPED seen=N`); kept in the ledger only |
 | A deferred decision, or follow-up work the run will not do | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-decision-<slug>`; the question as the title, both options in `--evidence "$E"` |
 | A NIT at ship time | `CQ` | `ship` | `--file "$F" --line <n>`; it is recorded (the ledger keeps it), never ignored silently |
@@ -317,7 +320,7 @@ variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers t
   file", never a guess at a location. A class with no anchor requirement (CQ, TEST-GAP, SIZE, …)
   passes no `--anchor`. A whole-file BUG, SEC or DATA needs an anchor within ±3 lines of its line, so
   it is filed at the line that shows the defect, not at line 1.
-- A **target** record has no line, so no anchor is checked. A URL or host target needs `--evidence`
+- A **target** record has no line, so no anchor is checked. A URL, host or image target needs `--evidence`
   (refused `missing-field:evidence` without it), whatever the class; a `subject:` target (PROCESS or
   SEC only) needs neither. Pass no `--anchor` with a target: on BUG, SEC and DATA a given anchor
   replaces the title as the record's identity, and nothing checks it.

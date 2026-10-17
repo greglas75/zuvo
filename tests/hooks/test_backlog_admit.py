@@ -25,6 +25,7 @@ REPORT_ONLY = ("DUP", "CPLX", "SIZE", "PERF", "DEAD", "READ", "CQ", "TEST-GAP", 
 LOW_PREFIX = "(low confidence — verify manually) "
 CHANGED = frozenset({42})
 URL = "https://api.example.com/v1/orders"
+DIGEST = "sha256:" + "a" * 64
 
 BASE = adm.Finding(cls="BUG", conf=85, source="review", title="total is NaN when the cart is empty",
                    file="src/cart.ts", line=42, anchor="const total = sum(cart.items)")
@@ -111,6 +112,22 @@ class TargetKindTests(unittest.TestCase):
         ("URL whose host urlsplit cannot read named a url", "https://[::1/x", None),
         ("URL not recognised", URL, "url"),
         ("subject not recognised", "subject:review-incomplete", "subject"),
+        ("image reference read as host `redis`, port 7", "image:redis:7", "image"),
+        ("unprefixed `redis:7` no longer a host, breaking every live-host target", "redis:7", "host"),
+        ("registry with a port and a digest refused",
+         "image:registry.local:5000/team/app:1.2@" + DIGEST, "image"),
+        ("uppercase repository accepted although registries refuse it", "image:Org/App:1", None),
+        ("empty tag accepted", "image:nginx:", None),
+        ("uppercase first component taken for a registry (a registry has a `.`, a port or is `localhost`)",
+         "image:Org/app:1", None),
+        ("`localhost:5000` registry refused", "image:localhost:5000/app:1", "image"),
+        ("truncated digest accepted", "image:nginx@sha256:abc", None),
+        ("space in an image reference accepted", "image:nginx 1", None),
+        ("a numeric repository after `image:` read as a host named `image`", "image:80", "image"),
+        ("registry port past 65535 accepted", "image:localhost:99999/app:1", None),
+        ("a repository name past OCI's 255 characters accepted", "image:" + "a" * 256, None),
+        ("a 255-character name refused for counting its tag and digest too",
+         "image:" + "a" * 255 + ":" + "t" * 128 + "@" + DIGEST, "image"),
     ]
 
     def test_target_kind_names_the_one_shape_or_none(self):
@@ -285,6 +302,13 @@ class ValidationTests(unittest.TestCase):
          tgt("https://user:p@ss@api.example.com/", evidence="e"), "secret-like-value"),
         ("subject BUG accepted", tgt("subject:x"), "bad-combination"),
         ("subject PROCESS refused", tgt("subject:review-incomplete", cls="PROCESS"), None),
+        ("image target without evidence accepted", tgt("image:redis:7", cls="SEC"), "missing-field:evidence"),
+        ("image digest's `@` refused as credentials", tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e"),
+         None),
+        ("credentials in an image-shaped target stored",
+         tgt("image:admin:hunter2@db.internal", cls="SEC", evidence="e"), "secret-like-value"),
+        ("image CQ refused although an image takes any class", tgt("image:nginx:1.25", cls="CQ", evidence="e"),
+         None),
         ("URL PROCESS refused although any class may name a live URL", tgt(URL, cls="PROCESS", evidence="x"),
          None),
         ("URL READ finding kept without the evidence that proves the page was seen", tgt(URL, cls="READ"),
@@ -428,6 +452,19 @@ class FingerprintTests(unittest.TestCase):
          tgt("https://example.com/x", evidence="e")),
         ("same page split into two records by a tracking parameter",
          tgt(URL + "?utm_source=mail#top", cls="CQ", evidence="e"), tgt(URL, cls="CQ", evidence="e")),
+        ("Docker Hub's implied `docker.io/library/` split one image",
+         tgt("image:docker.io/library/nginx:1.25", cls="SEC", evidence="e"),
+         tgt("image:nginx:1.25", cls="SEC", evidence="e")),
+        ("the implied `latest` tag split one image", tgt("image:nginx", cls="SEC", evidence="e"),
+         tgt("image:nginx:latest", cls="SEC", evidence="e")),
+        ("registry case split one image", tgt("image:MyReg:5000/app:1", cls="SEC", evidence="e"),
+         tgt("image:myreg:5000/app:1", cls="SEC", evidence="e")),
+        ("a zero-padded registry port split one image", tgt("image:reg.io:00080/app:1", cls="SEC", evidence="e"),
+         tgt("image:reg.io:80/app:1", cls="SEC", evidence="e")),
+        ("Docker Hub's `library/` namespace split one image", tgt("image:library/nginx:1", cls="SEC", evidence="e"),
+         tgt("image:nginx:1", cls="SEC", evidence="e")),
+        ("a tag beside a digest split one image (the digest names it)",
+         tgt("image:nginx:1.25@" + DIGEST, cls="SEC", evidence="e"), tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e")),
     ]
     DIFFERENT = [
         ("same basename in two directories merged", f(file="lib/cart.ts"), BASE),
@@ -438,6 +475,10 @@ class FingerprintTests(unittest.TestCase):
          dataclasses.replace(TITLED, title="Сумма заказа неверна")),
         ("wordless title hashed as an empty string", dataclasses.replace(TITLED, title="!!!"),
          dataclasses.replace(TITLED, title="???")),
+        ("`org/app` and `org-app` merged, as a hand-made slug merges them",
+         tgt("image:org/app:1", cls="SEC", evidence="e"), tgt("image:org-app:1", cls="SEC", evidence="e")),
+        ("tag case folded, merging `v1` and `V1`", tgt("image:app:v1", cls="SEC", evidence="e"),
+         tgt("image:app:V1", cls="SEC", evidence="e")),
     ]
 
     def test_one_defect_one_id(self):
@@ -510,6 +551,8 @@ class BIdTests(unittest.TestCase):
          tgt("https://[::1]/x", evidence="e"), "B-1-BUG-80957004"),
         ("subject target stemmed with its `subject:` prefix",
          tgt("subject:review-incomplete", cls="PROCESS"), "B-review-incomplete-PROCESS-0e8ef327"),
+        ("image target stemmed on its registry or tag instead of its repository",
+         tgt("image:ghcr.io/org/app:1.2", cls="SEC", evidence="e"), "B-app-SEC-c89b8107"),
     ]
 
     def test_b_id_is_a_descriptive_definition_id(self):

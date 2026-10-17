@@ -80,9 +80,22 @@ _HOSTNAME_RE = re.compile(_LABEL + r"(?:\." + _LABEL + r")*")
 _PORT_RE = re.compile(r"[0-9]{1,5}")
 _PORT_MAX = 65535
 _SUBJECT_RE = re.compile(r"subject:[a-z0-9][a-z0-9._-]{0,79}")
-# Which classes each target kind may carry: URL/host for a live-system finding of any class (the bars
-# still route it), `subject:` for process items and SEC.
-_TARGET_CLASSES = {"url": CLASSES, "host": CLASSES, "subject": frozenset({"PROCESS", "SEC"})}
+# A container image reference, the OCI grammar: an optional registry (`localhost`, a dotted hostname or
+# any hostname with a port, as Docker tells a registry from a namespace), lowercase repository components, an optional tag and an optional digest. Prefixed, because `redis:7`
+# also has the `host:port` shape.
+_IMAGE_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_IMAGE_RE = re.compile(
+    r"image:(?P<name>(?:(?P<registry>(?:localhost|" + _LABEL + r"(?:\." + _LABEL + r")+)(?::(?P<port>[0-9]{1,5}))?"
+    r"|" + _LABEL + r":(?P<port2>[0-9]{1,5}))/)?"
+    + _IMAGE_COMPONENT + r"(?:/" + _IMAGE_COMPONENT + r")*)"
+    r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}))?"
+    r"(?:@(?P<digest>sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128}))?")
+_IMAGE_NAME_MAX = 255     # the reference's limit on the whole name, registry included; tag and digest have their own
+# Docker Hub's names for the default registry and namespace: `nginx` is `docker.io/library/nginx`.
+_HUB_PREFIXES = ("docker.io/library/", "index.docker.io/library/", "docker.io/", "index.docker.io/")
+# Which classes each target kind may carry: URL/host/image for a live-system finding of any class (the
+# bars still route it), `subject:` for process items and SEC.
+_TARGET_CLASSES = {"url": CLASSES, "host": CLASSES, "image": CLASSES, "subject": frozenset({"PROCESS", "SEC"})}
 # Prefixed provider keys (`sk-ant-…`, `sk-proj-…`), every GitHub token kind, a JWT's two `eyJ` parts, and
 # a URL carrying `user:password@` (a DSN) in any field, not only in `--target`.
 _SECRET_RES = tuple(re.compile(p) for p in (
@@ -187,8 +200,18 @@ def _bare_host_ok(target: str) -> bool:
     return bool(_HOSTNAME_RE.fullmatch(host))
 
 
+def _image_match(t: str) -> Optional["re.Match[str]"]:
+    """The image reference's parts, or None: a name past OCI's 255 characters or a registry port past
+    65535 is not one. The `image:` prefix always means an image, `image:80` included."""
+    m = _IMAGE_RE.fullmatch(t)
+    if m is None or len(m.group("name")) > _IMAGE_NAME_MAX:
+        return None
+    port = m.group("port") or m.group("port2")
+    return None if port and int(port) > _PORT_MAX else m
+
+
 def target_kind(target: Optional[str]) -> Optional[str]:
-    """`url`, `host`, `subject`, or None when the text is none of the three shapes."""
+    """`url`, `host`, `image`, `subject`, or None when the text is none of the four shapes."""
     t = (target or "").strip()
     if _BAD_LOCATION_RE.search(t):
         return None
@@ -196,6 +219,8 @@ def target_kind(target: Optional[str]) -> Optional[str]:
         return "url" if _url_host(t) else None
     if _SUBJECT_RE.fullmatch(t):
         return "subject"
+    if t.startswith("image:"):
+        return "image" if _image_match(t) else None
     return "host" if _bare_host_ok(t) else None
 
 
@@ -314,7 +339,8 @@ def _check_secrets(f: Finding) -> Optional[str]:
     # Every text field, because every one is stored: a lowercase `sk-…` key even passes `_SOURCE_RE`.
     texts = [cast(Optional[str], getattr(f, name)) for name in _TEXT_FIELDS]
     hit = any(rx.search(t) for t in texts if t for rx in _SECRET_RES)
-    userinfo = bool(f.target and _USERINFO_RE.match(f.target.strip()))
+    # An image digest's `@` is not userinfo: only a target that is a whole image reference is let through.
+    userinfo = bool(f.target and _USERINFO_RE.match(f.target.strip()) and target_kind(f.target) != "image")
     return "secret-like-value" if hit or userinfo else None
 
 
@@ -381,7 +407,32 @@ def _strip_dot(path: str) -> str:
     return path
 
 
+def _image_key(m: "re.Match[str]") -> str:
+    """One image, one key: the registry lowercased, its port without leading zeros; Docker Hub's implied registry and `library/`
+    namespace dropped (`docker.io/library/nginx`, `library/nginx` and `nginx` are one image, while
+    `docker.io/org/app` is `org/app`); a digest, when there is one, in place of the tag, since it names
+    the image whatever the tag says; else the tag, `latest` when none is written. The tag keeps its
+    case, since `v1` and `V1` are two tags."""
+    name = m.group("name")
+    registry = m.group("registry")
+    if registry:
+        host, sep, port = registry.lower().rpartition(":") if ":" in registry else (registry.lower(), "", "")
+        name = host + (sep + str(int(port)) if sep else "") + name[len(registry):]
+    for prefix in _HUB_PREFIXES:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    if name.startswith("library/") and name.count("/") == 1:
+        name = name[len("library/"):]
+    if m.group("digest"):
+        return "image:" + name + "@" + m.group("digest")
+    return "image:" + name + ":" + (m.group("tag") or "latest")
+
+
 def _target_key(target: str) -> str:
+    m = _image_match((target or "").strip())
+    if m:
+        return _image_key(m)
     return (canonical_target(target) or "").strip().lower().rstrip("/")
 
 
@@ -409,6 +460,9 @@ def _stem(f: Finding) -> str:
         raw = _url_host(t) or ""
     elif kind == "host":
         raw = t.split(":", 1)[0]
+    elif kind == "image":
+        m = _image_match(t)
+        raw = m.group("name").rsplit("/", 1)[-1] if m else ""
     elif kind == "subject":
         raw = t.split(":", 1)[1]
     else:
