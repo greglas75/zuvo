@@ -61,13 +61,15 @@ VERIFIED_BY = "deterministic:%s"          # `_BY_RE`'s shape; a free-form proven
                                           # what the cross-model spot check asks
 
 # See the module docstring for why every restriction here is in place. The `(?![\w/])` tail stops a
-# directory being harvested out of the middle of a longer path.
+# directory being harvested out of the middle of a longer path. Match it only through `cited_paths`,
+# which blanks `image:` targets first (`_IMAGE_TARGET_RE`).
 _CITED_RE = re.compile(
     r"(?<![\w./@~*?+-])([\w.@-]+(?:/[\w.@-]+)*/[\w.@-]*[\w@-]\.[a-z][a-z0-9]{0,4})(?::(\d+))?(?![\w/])")
 # A backlog-add `image:` target names a container image, not a repo file, and a registry port puts a
 # colon inside it (`image:localhost:5000/org/my.app:1` would cite `5000/org/my.app`), so the whole
-# token is blanked before `_CITED_RE` runs.
-_IMAGE_TARGET_RE = re.compile(r"\bimage:\S+")
+# reference is blanked before `_CITED_RE` runs: only the characters a reference is made of, so a path
+# chained after it by a comma or semicolon is still cited.
+_IMAGE_TARGET_RE = re.compile(r"\bimage:[\w.:/@-]+")
 # A `path:line` inside a QUOTED clause would be a second citation, and then "every location in this
 # evidence resolves" becomes a claim about text the entry happened to contain rather than about the
 # citation this module made. The line number is dropped from the quote; the path is kept, so the quote

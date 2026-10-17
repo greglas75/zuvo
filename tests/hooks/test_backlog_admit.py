@@ -619,10 +619,18 @@ class ImageTargetGroomingTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual([], zv.cited_paths(self.LINE.format(target)))
 
+    # An exemption wide enough to swallow the path after it drops a live citation, and with one path
+    # fewer "every cited path is gone" can turn true for an entry whose code is still there.
+    BESIDE = [
+        ("a path after a space swallowed with the image", "image:ghcr.io/org/my.app:1 deploy/compose.yml:4"),
+        ("a path chained by a comma swallowed with the image", "image:alpine:3.19,deploy/compose.yml:4"),
+        ("a path chained by a semicolon swallowed with the image", "image:org/my.app:1;deploy/compose.yml:4"),
+    ]
+
     def test_a_real_path_beside_an_image_target_is_still_cited(self):
-        # an exemption wide enough to swallow the path after it hides an entry whose code is gone
-        line = self.LINE.format("image:ghcr.io/org/my.app:1") + " deploy/compose.yml:4"
-        self.assertEqual(["deploy/compose.yml"], zv.cited_paths(line))
+        for name, text in self.BESIDE:
+            with self.subTest(name):
+                self.assertEqual(["deploy/compose.yml"], zv.cited_paths(self.LINE.format(text)))
 
 
 if __name__ == "__main__":
