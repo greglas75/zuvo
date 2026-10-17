@@ -253,13 +253,18 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 # defekty MAJA — to nie szybkosc, to odmowa pracy).
 #
 # Lane jest wlaczany flaga ZUVO_ADV_OPENROUTER=1 (platny, wiec nigdy sama obecnoscia klucza).
-ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-qwen/qwen3.8-flash}"
+# 2026-10-16, owner: "two or three cheap, good models so the pool never runs dry". From the benchmark, on
+# OpenRouter today: openrouter = z-ai/glm-5.3-flashx (+18, 88%, 166 s), openrouter-3 = inclusionai/ling-3.1-flash
+# (+16, 77%, 189 s, $0.075/$0.225 per M), openrouter-4 = thinkingmachines/inkling-small (+12, 80%, 89 s). All four
+# OpenRouter lanes answer to ZUVO_OPENROUTER_DAILY_USD (default $5 a day on the key): benchmark prices undercount
+# production ~30x (deepseek: $0.001 benched, $0.04 a real call), so the cap, not the price list, bounds the bill.
+ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3-flashx}"
 # openrouter-alt = xiaomi/mimo-v2.6-flash: +17 defects over the production lineup at ~$0.0063 per review
 # (docs/runbook/model-benchmark.md). Slow: its benchmark mean (~319 s) is above the 300 s lane ceiling.
 ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}"
-# openrouter-3 = deepseek-v4.1-flash (owner's pick); gpt-oss (openrouter-4) is out of the default roster.
-ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-deepseek/deepseek-v4.1-flash}"
-ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-openai/gpt-oss-120b}"
+# deepseek-v4.1-flash left openrouter-3 on 2026-10-16 ($72 in one day); it runs on BytePlus / the Token Plan.
+ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}"
+ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-thinkingmachines/inkling-small}"
 
 # ── BytePlus ModelArk Coding Plan (prepaid, opt-in via ZUVO_ADV_BYTEPLUS=1) ──
 # A SUBSCRIPTION, not a meter. Two consequences that shape everything below:
@@ -277,14 +282,18 @@ ZUVO_BYTEPLUS_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytep
 # glm-5.3-flash: 95% precision and +18 defects nobody else in the set finds — the best reviewer
 # measured after Gemini 3.8 Flash, on the same 20 diffs and the same Opus judge as the rest of
 # this file. On OpenRouter the identical model is $0.15/$0.50 per 1M; here it is inside the plan.
+# Lane `byteplus` is not in the default set (owner): GLM runs on the `zai` lane.
 ZUVO_MODEL_BYTEPLUS="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}"
-# deepseek-v4-flash: a second VENDOR family in the same plan, which is where cross-model
-# coverage actually comes from. (The benched sibling deepseek-v4-pro scored 64%/+6; the flash
-# variant is the one the plan lists and is not yet benched here — measure before promoting it
-# past the alt slot.)
-ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-flash}"
+# deepseek-v4.1-flash: a second vendor family in the same plan, for cross-model coverage. With the
+# quota spent it runs on OpenRouter as deepseek/deepseek-v4.1-flash (run_byteplus).
+ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}"
 # Verified 2026-09-22 against the live plan: glm-5.3-flash 7s, deepseek-v4-flash 5s.
 # 'ark-code-latest' is REJECTED as UnsupportedModel on this plan — name a concrete model.
+
+# ── Z.ai GLM Coding Plan (lane `zai`, opt-in ZUVO_ADV_ZAI=1): /api/coding/paas/v4 is the plan, /api/paas/v4 meters ──
+ZUVO_ZAI_BASE_URL="${ZUVO_ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
+# glm-5.2: the model Z.ai's setup guide names for OpenAI-compatible tools; not benched (model-benchmark.md).
+ZUVO_MODEL_ZAI="${ZUVO_MODEL_ZAI:-glm-5.2}"
 
 # ── Cursor ──────────────────────────────────────────────────────────
 # A named model, not `auto`: on `auto` Cursor's router picks per request and the client never says

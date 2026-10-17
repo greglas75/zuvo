@@ -122,11 +122,62 @@ dispatch_provider() {
   return "$status"
 }
 
-# run_byteplus <lane> <model> — the OpenRouter client on the BytePlus Coding Plan endpoint, with the plan's key.
+# run_byteplus <lane> <model> — the OpenRouter client on the BytePlus Coding Plan endpoint, with the plan's key
+# (BYTEPLUS_API_KEY, else the key file; never OPENROUTER_API_KEY).
+# While the plan's quota is spent — recorded earlier by any lane, chunk or run (byteplus_quota_until), or hit by
+# this very request — the plan is not asked: _byteplus_fallback runs the review on the Alibaba Token Plan (qwen CLI) or leaves the lane out.
 run_byteplus() {
-  ZUVO_OR_LANE_LABEL="$1" ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
-    OPENROUTER_API_KEY="" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
-    ZUVO_OPENROUTER_MODEL="$2" ZUVO_OR_STREAM=1 run_openrouter
+  local lane="$1" model="$2" until rc=0 t0=$SECONDS left
+  rm -f "$JSON_TMPDIR/byteplus-effective-model-$lane" "$JSON_TMPDIR/bpquota_$lane" 2>/dev/null || true
+  if until="$(byteplus_quota_until)"; then
+    _byteplus_fallback "$lane" "$model" "$until"
+    return
+  fi
+  ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+    OPENROUTER_API_KEY="${BYTEPLUS_API_KEY:-}" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
+    ZUVO_OPENROUTER_MODEL="$model" ZUVO_OR_STREAM=1 run_openrouter || rc=$?
+  [[ $rc -ne 0 && -s "$JSON_TMPDIR/bpquota_$lane" ]] || return "$rc"
+  until="$(cat "$JSON_TMPDIR/bpquota_$lane")"
+  if ! left="$(_ar_lane_budget "$t0")"; then
+    echo "  NOTE: $lane Token Plan fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
+    return "$rc"
+  fi
+  PROVIDER_TIMEOUT="$left" _byteplus_fallback "$lane" "$model" "$until"
+}
+
+# byteplus_fallback_model <lane> <model> — the Alibaba Token Plan model (the qwen lane's plan) that stands in for
+# <lane> while BytePlus is out of quota; empty = none. ZUVO_BYTEPLUS_FALLBACK_<LANE> (BYTEPLUS, BYTEPLUS_ALT,
+# BYTEPLUS_3) overrides it, set but empty turning it off. Keyed on the MODEL, so a lane pointed at another model never
+# inherits the stand-in for the old one. The stand-in is a PREPAID plan, never a metered one: the first cut fell back
+# to OpenRouter, and deepseek alone spent $72 there in one day (2026-10-15) — the owner's rule since 2026-10-16 is
+# "deepseek and glm on BytePlus or the Token Plan; neither has quota, the lane does not run". The Token Plan sells
+# glm-5.3, not the flash variant. dola-seed-2.0-code exists only on BytePlus and waits for the reset.
+byteplus_fallback_model() {
+  local var
+  var="ZUVO_BYTEPLUS_FALLBACK_$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
+  if [[ -n "${!var+x}" ]]; then printf '%s\n' "${!var}"; return 0; fi
+  case "$2" in
+    glm-5.3-flash)        echo "glm-5.3" ;;
+    deepseek-v4-1-flash*) echo "deepseek-v4.1-flash" ;;
+    *)                    echo "" ;;
+  esac
+}
+_byteplus_fallback() {
+  local lane="$1" model="$2" when fb
+  when="$(_ar_epoch_text "$3")"
+  fb="$(byteplus_fallback_model "$lane" "$model")"
+  if [[ -z "$fb" ]]; then
+    lane_not_run "$lane" "BytePlus quota exhausted until $when, no Token Plan stand-in for $model"
+    return 1
+  fi
+  if [[ "${ZUVO_ADV_QWEN:-0}" != "1" ]]; then
+    lane_not_run "$lane" "BytePlus quota exhausted until $when, Alibaba Token Plan not enabled (ZUVO_ADV_QWEN=1)"
+    return 1
+  fi
+  echo "  NOTE: $lane: BytePlus quota exhausted until $when — via Alibaba Token Plan $fb" >&2
+  printf '%s' "$fb" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
+  # Its own file names: the qwen lane may be running in the same JSON_TMPDIR at the same time.
+  ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" run_qwen
 }
 
 _dispatch_provider_inner() {
@@ -147,6 +198,13 @@ _dispatch_provider_inner() {
                    ZUVO_OR_LANE_LABEL="$provider" ZUVO_OPENROUTER_MODEL="$(lane_model "$provider")" run_openrouter ;;
     byteplus|byteplus-alt|byteplus-3)
                    run_byteplus "$provider" "$(lane_model "$provider")" ;;
+    # The OpenRouter client on the Z.ai GLM Coding Plan endpoint, with the plan's key: ZAI_API_KEY or the key
+    # file, never OPENROUTER_API_KEY (the client reads that first, and it would go to Z.ai). The fallback base
+    # URL is the plan's, for a driver that finds no model-registry.sh.
+    zai)           ZUVO_OR_LANE_LABEL=zai ZUVO_OR_KEY_FILE="${ZUVO_ZAI_KEY_FILE:-$HOME/.zuvo/zai.key}" \
+                     OPENROUTER_API_KEY="${ZAI_API_KEY:-}" \
+                     ZUVO_OPENROUTER_BASE_URL="${ZUVO_ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}" \
+                     ZUVO_OPENROUTER_MODEL="$(lane_model zai)" ZUVO_OR_STREAM=1 run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI

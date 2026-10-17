@@ -190,17 +190,17 @@ fi
 assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen" "the exclusion names qwen, not cursor-agent"
 
 # ─── 8d. every lane that reaches the host's model is excluded ──────────────
-# The openrouter lane's default model is a Qwen model; on a Qwen host it would be Qwen reviewing
-# Qwen through another door (the Antigravity and Kimi hosts already exclude all their lanes).
+# With a Qwen model on the openrouter lane (pinned here: since 2026-10-16 the default is glm-5.3-flashx), a Qwen
+# host would have Qwen reviewing Qwen through another door (the Antigravity and Kimi hosts already exclude all their lanes).
 # With a non-Qwen openrouter model the lane stays a legitimate cross-model reviewer.
 start_test "qw.8d a Qwen host also excludes openrouter while its model is a Qwen model"
 c="$QTMP/c8d"; mkdir -p "$c"
 env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
-  -u ZUVO_OPENROUTER_MODEL -u ZUVO_MODEL_OPENROUTER QWEN_CODE=1 \
+  -u ZUVO_MODEL_OPENROUTER ZUVO_OPENROUTER_MODEL=qwen/qwen3.8-flash QWEN_CODE=1 \
   PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
   ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
   bash "$ADV" --provider qwen --mode code --files "$INPUT" >/dev/null 2>"$c/stderr"
-assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen openrouter" "the default (Qwen) openrouter model is excluded on a Qwen host"
+assert_contains "$(cat "$c/stderr")" "auto-excluded: qwen openrouter" "a Qwen openrouter model is excluded on a Qwen host"
 c="$QTMP/c8e"; mkdir -p "$c"
 env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
   QWEN_CODE=1 ZUVO_OPENROUTER_MODEL=deepseek/deepseek-v4-flash \
@@ -221,7 +221,7 @@ assert_eq "kept" "$_qw8e_or" "a non-Qwen openrouter model stays a cross-model re
 start_test "qw.8f blind-audit on a Qwen host excludes qwen and the Qwen-serving openrouter lane"
 c="$QTMP/c8f"; mkdir -p "$c"
 env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier \
-  -u ZUVO_OPENROUTER_MODEL -u ZUVO_MODEL_OPENROUTER QWEN_CODE=1 \
+  -u ZUVO_MODEL_OPENROUTER ZUVO_OPENROUTER_MODEL=qwen/qwen3.8-flash QWEN_CODE=1 \
   PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" ZUVO_QWEN_SETTINGS="$S" \
   ZUVO_HOME="$c" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
   bash "$ADV" --mode blind-audit --provider qwen --production "$INPUT" --test "$INPUT" >/dev/null 2>"$c/stderr"

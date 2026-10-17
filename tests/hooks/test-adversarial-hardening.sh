@@ -13,6 +13,8 @@
 # F35, F38, F39, F47, F48, F49, F50, F52, F57, F60, F61, F64; the driver's own helpers through drv_fns) — or
 # source the installer (adv_stamp below, F27, F34). Each section builds its own fixtures and homes, so it runs
 # alone exactly as it runs in the suite.
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

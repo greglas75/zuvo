@@ -14,6 +14,8 @@
 # Isolation: each case calls new_case, which gives it its own directory, key file, ZUVO_HOME,
 # request log and fixtures. No case reads a file another case wrote; any one can run alone.
 
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 ADV="$ROOT/scripts/adversarial-review.sh"
 BS_ROOT="$(mktemp -d "$ADV_TEST_HOME/byteplus-stream.XXXXXX")"
 trap 'rm -rf "$BS_ROOT"' EXIT
@@ -121,7 +123,7 @@ assert_eq "true" "$(payload 1 '.stream_options.include_usage')" "usage requested
 assert_eq "glm-5.3-flash" "$(payload 1 '.model')" "the lane's default model"
 
 start_test "BS.2 byteplus-alt and byteplus-3 stream too, each with its own default model"
-for lane_model in byteplus-alt:deepseek-v4-flash byteplus-3:dola-seed-2.0-code; do
+for lane_model in byteplus-alt:deepseek-v4-1-flash-260910 byteplus-3:dola-seed-2.0-code; do
   lane="${lane_model%%:*}"; model="${lane_model#*:}"
   new_case; out=$(run_lane "$lane" "$(ok_stream)"); rc=$?
   assert_exit_code "0" "$rc" "$lane accepted"
