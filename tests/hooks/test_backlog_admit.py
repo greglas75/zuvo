@@ -17,6 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "scripts", "zuvo-home"))
 import zuvo_backlog_admit as adm  # noqa: E402
 import zuvo_backlog_parse as zb  # noqa: E402
+import zuvo_backlog_verdicts as zv  # noqa: E402
 
 # The class vocabulary as the skills spell it, retyped here so a class dropped from the module fails.
 ALL_CLASSES = ("BUG", "SEC", "DATA", "DUP", "CPLX", "SIZE", "PERF", "DEAD", "READ", "CQ",
@@ -125,6 +126,10 @@ class TargetKindTests(unittest.TestCase):
         ("space in an image reference accepted", "image:nginx 1", None),
         ("a numeric repository after `image:` read as a host named `image`", "image:80", "image"),
         ("registry port past 65535 accepted", "image:localhost:99999/app:1", None),
+        ("undotted registry's port past 65535 accepted (the `port2` branch unchecked)",
+         "image:myhost:99999/app:1", None),
+        ("registry port 65535 refused by an off-by-one bound", "image:localhost:65535/app:1", "image"),
+        ("registry port 65536 accepted by an off-by-one bound", "image:localhost:65536/app:1", None),
         ("a repository name past OCI's 255 characters accepted", "image:" + "a" * 256, None),
         ("a 255-character name refused for counting its tag and digest too",
          "image:" + "a" * 255 + ":" + "t" * 128 + "@" + DIGEST, "image"),
@@ -479,6 +484,8 @@ class FingerprintTests(unittest.TestCase):
          tgt("image:org/app:1", cls="SEC", evidence="e"), tgt("image:org-app:1", cls="SEC", evidence="e")),
         ("tag case folded, merging `v1` and `V1`", tgt("image:app:v1", cls="SEC", evidence="e"),
          tgt("image:app:V1", cls="SEC", evidence="e")),
+        ("`library/` dropped from a three-component Hub name, merging `docker.io/library/a/b` with `a/b`",
+         tgt("image:docker.io/library/a/b:1", cls="SEC", evidence="e"), tgt("image:a/b:1", cls="SEC", evidence="e")),
     ]
 
     def test_one_defect_one_id(self):
@@ -569,6 +576,28 @@ class BIdTests(unittest.TestCase):
         # passing the B-id or a raw hash would mint an id the ledger cannot link back
         with self.assertRaisesRegex(ValueError, r"^b_id: 'B-cart-BUG-1234' is not an F-id \(F- \+ 12 hex\)$"):
             adm.b_id(BASE, adm.decide(BASE, CHANGED, False), "B-cart-BUG-1234")
+
+
+class ImageTargetGroomingTests(unittest.TestCase):
+    """The backlog line an `image:` target writes, as grooming's verdict pass reads it back."""
+
+    LINE = "- [ ] B-my.app-SEC-0a1b2c3d {} — [SEC] image runs as root | evidence: seen on the host"
+    NOT_PATHS = [
+        ("repository ending in `.app` read as a deleted repo file, so a live finding goes STALE-OBSOLETE",
+         "image:ghcr.io/org/my.app:1"),
+        ("digest-pinned dotted repository read as a deleted repo file",
+         "image:reg.io/team/web.ui@" + DIGEST),
+    ]
+
+    def test_an_image_target_is_not_a_cited_path(self):
+        for name, target in self.NOT_PATHS:
+            with self.subTest(name):
+                self.assertEqual([], zv.cited_paths(self.LINE.format(target)))
+
+    def test_a_real_path_beside_an_image_target_is_still_cited(self):
+        # an exemption wide enough to swallow the path after it hides an entry whose code is gone
+        line = self.LINE.format("image:ghcr.io/org/my.app:1") + " deploy/compose.yml:4"
+        self.assertEqual(["deploy/compose.yml"], zv.cited_paths(line))
 
 
 if __name__ == "__main__":

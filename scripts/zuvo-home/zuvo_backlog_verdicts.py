@@ -61,9 +61,10 @@ VERIFIED_BY = "deterministic:%s"          # `_BY_RE`'s shape; a free-form proven
                                           # what the cross-model spot check asks
 
 # See the module docstring for why every restriction here is in place. The `(?![\w/])` tail stops a
-# directory being harvested out of the middle of a longer path.
+# directory being harvested out of the middle of a longer path. `(?<!image:)` keeps a backlog-add
+# `image:` target out: `image:ghcr.io/org/my.app:1` names a container image, not a repo file.
 _CITED_RE = re.compile(
-    r"(?<![\w./@~*?+-])([\w.@-]+(?:/[\w.@-]+)*/[\w.@-]*[\w@-]\.[a-z][a-z0-9]{0,4})(?::(\d+))?(?![\w/])")
+    r"(?<![\w./@~*?+-])(?<!image:)([\w.@-]+(?:/[\w.@-]+)*/[\w.@-]*[\w@-]\.[a-z][a-z0-9]{0,4})(?::(\d+))?(?![\w/])")
 # A `path:line` inside a QUOTED clause would be a second citation, and then "every location in this
 # evidence resolves" becomes a claim about text the entry happened to contain rather than about the
 # citation this module made. The line number is dropped from the quote; the path is kept, so the quote

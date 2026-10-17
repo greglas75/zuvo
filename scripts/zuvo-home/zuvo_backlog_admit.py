@@ -81,21 +81,25 @@ _PORT_RE = re.compile(r"[0-9]{1,5}")
 _PORT_MAX = 65535
 _SUBJECT_RE = re.compile(r"subject:[a-z0-9][a-z0-9._-]{0,79}")
 # A container image reference, the OCI grammar: an optional registry (`localhost`, a dotted hostname or
-# any hostname with a port, as Docker tells a registry from a namespace), lowercase repository components, an optional tag and an optional digest. Prefixed, because `redis:7`
-# also has the `host:port` shape.
+# any hostname with a port, as Docker tells a registry from a namespace), lowercase repository
+# components, an optional tag and an optional digest. Prefixed, because `redis:7` also has the
+# `host:port` shape.
 _IMAGE_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
 _IMAGE_RE = re.compile(
-    r"image:(?P<name>(?:(?P<registry>(?:localhost|" + _LABEL + r"(?:\." + _LABEL + r")+)(?::(?P<port>[0-9]{1,5}))?"
+    r"image:(?P<name>(?:(?P<registry>(?:localhost|" + _LABEL + r"(?:\." + _LABEL + r")+)"
+    r"(?::(?P<port>[0-9]{1,5}))?"
     r"|" + _LABEL + r":(?P<port2>[0-9]{1,5}))/)?"
     + _IMAGE_COMPONENT + r"(?:/" + _IMAGE_COMPONENT + r")*)"
     r"(?::(?P<tag>[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}))?"
     r"(?:@(?P<digest>sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128}))?")
-_IMAGE_NAME_MAX = 255     # the reference's limit on the whole name, registry included; tag and digest have their own
+# The reference's limit on the whole name, registry included; the tag and the digest have their own.
+_IMAGE_NAME_MAX = 255
 # Docker Hub's names for the default registry and namespace: `nginx` is `docker.io/library/nginx`.
-_HUB_PREFIXES = ("docker.io/library/", "index.docker.io/library/", "docker.io/", "index.docker.io/")
+_HUB_PREFIXES = ("docker.io/", "index.docker.io/")
 # Which classes each target kind may carry: URL/host/image for a live-system finding of any class (the
 # bars still route it), `subject:` for process items and SEC.
-_TARGET_CLASSES = {"url": CLASSES, "host": CLASSES, "image": CLASSES, "subject": frozenset({"PROCESS", "SEC"})}
+_TARGET_CLASSES = {"url": CLASSES, "host": CLASSES, "image": CLASSES,
+                   "subject": frozenset({"PROCESS", "SEC"})}
 # Prefixed provider keys (`sk-ant-…`, `sk-proj-…`), every GitHub token kind, a JWT's two `eyJ` parts, and
 # a URL carrying `user:password@` (a DSN) in any field, not only in `--target`.
 _SECRET_RES = tuple(re.compile(p) for p in (
@@ -408,11 +412,11 @@ def _strip_dot(path: str) -> str:
 
 
 def _image_key(m: "re.Match[str]") -> str:
-    """One image, one key: the registry lowercased, its port without leading zeros; Docker Hub's implied registry and `library/`
-    namespace dropped (`docker.io/library/nginx`, `library/nginx` and `nginx` are one image, while
-    `docker.io/org/app` is `org/app`); a digest, when there is one, in place of the tag, since it names
-    the image whatever the tag says; else the tag, `latest` when none is written. The tag keeps its
-    case, since `v1` and `V1` are two tags."""
+    """One image, one key: the registry lowercased, its port without leading zeros; Docker Hub's
+    implied registry and `library/` namespace dropped (`docker.io/library/nginx`, `library/nginx` and
+    `nginx` are one image, while `docker.io/org/app` is `org/app`); a digest, when there is one, in
+    place of the tag, since it names the image whatever the tag says; else the tag, `latest` when none
+    is written. The tag keeps its case, since `v1` and `V1` are two tags."""
     name = m.group("name")
     registry = m.group("registry")
     if registry:

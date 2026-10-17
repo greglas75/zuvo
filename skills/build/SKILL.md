@@ -781,7 +781,7 @@ The counts include the pre-existing adversarial findings 4.4 filed with `--sourc
 
 ### Closing commit for backlog-add's writes
 
-This comes after the drive-by step, the run's last `backlog-add` call. If 4.6 committed, make the one closing commit `chore(backlog): record findings of build run` with exactly the `wrote=` paths the run printed (the `backlog-writes:` of this run's sidecar, which the plan block copies), as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says (its snapshot from Phase 0, kept in the plan block and the sidecar). With no path left there is no commit: BUILD COMPLETE reads `none: nothing to stage`. If 4.6 did not commit, stage nothing and list the paths in BUILD COMPLETE. Whatever the outcome (committed, nothing to stage, or not committed), the run then sets its sidecar's `status:` to `closed`, so a later run never adopts it.
+This comes after the drive-by step, the run's last `backlog-add` call. If 4.6 committed, make the one closing commit `chore(backlog): record findings of build run` with exactly the `wrote=` paths the run printed (the union of the `backlog-writes:` paths in this run's sidecar and in its plan block, Phase 0 step 4), as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says (its snapshot from Phase 0, kept in the plan block and the sidecar). With no path left there is no commit: BUILD COMPLETE reads `none: nothing to stage`. If 4.6 did not commit, stage nothing and list the paths in BUILD COMPLETE. Whatever the outcome (committed, nothing to stage, or not committed), the run then sets its sidecar's `status:` to `closed`, so a later run never adopts it.
 
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 

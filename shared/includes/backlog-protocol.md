@@ -81,7 +81,7 @@ R='/abs/path/of/the/repository/root'   # same shell call as the command; "Filing
 | `--file`, `--line` | these, or `--target` | the cited site, repo-relative; the file must exist in the work tree |
 | `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part before the value — the name and what precedes it (`AWS_SECRET_KEY =`, `const db_pw =`), still 8 non-space characters — never any character of the value; when the line has fewer than 8 before the value, copy a line within ±3 that holds no secret |
 | `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL (stored without its query and fragment), a hostname or `host:port`, or `image:<reference>` for a container image (`image:redis:7`, `image:ghcr.io/org/app:1.2@sha256:…`; without the prefix `redis:7` is read as host `redis`, port 7) (any class; the bars still route it), or `subject:<slug>` (PROCESS, SEC only) |
-| `--evidence` | with a URL or host target | what proves it (cut at 600) |
+| `--evidence` | with a URL, host or image target | what proves it (cut at 600) |
 | `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
 | `--missing-assertion` | TEST-GAP, MUTATION only | the assertion the tests lack |
 | `--also PATH:LINE` | no, repeatable | another site of the same finding (DUP) |
@@ -381,7 +381,7 @@ call first, as "The repository root" says: `R='/abs/path/of/repo'; git -C "$R" �
 - **The snapshot.** Once, at the run's ORIGINAL start, before its first `backlog-add` call:
   `R='/abs/path/of/repo'; git -C "$R" status --porcelain -uall -- memory/`. The run saves the output in
   its own state (execute: `execution-state.md`; refactor: its CONTRACT or batch queue file; build: its
-  plan block), saved verbatim, as a fenced block in the run's state file or as a sidecar file, never
+  plan block and its per-run sidecar, `skills/build/SKILL.md` Phase 0), saved verbatim, as a fenced block in the run's state file or as a sidecar file, never
   collapsed onto one line; an empty snapshot is an empty block. A resumed run reuses the saved snapshot and
   never takes it again, so its own earlier writes are not mistaken for someone else's. Every path the snapshot LISTED, whatever its status
   (modified, added, untracked `??`), holds someone else's edits. If the snapshot command fails, the run
