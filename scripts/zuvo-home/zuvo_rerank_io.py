@@ -44,14 +44,14 @@ def env_num(name: str, default: float) -> float:
 def key() -> str | None:
     k = os.environ.get("OPENROUTER_API_KEY", "")
     if not k:
-        kf = Path(os.environ.get("ZUVO_OR_KEY_FILE") or Path.home() / ".zuvo" / "openrouter.key")
-        try:
+        try:  # Path.home() raises RuntimeError with no HOME and no passwd entry
+            kf = Path(os.environ.get("ZUVO_OR_KEY_FILE") or Path.home() / ".zuvo" / "openrouter.key")
             # mode checked on the OPEN file (fstat), so a swap between check and read cannot slip in
             with os.fdopen(os.open(kf, os.O_RDONLY)) as fh:
                 if os.fstat(fh.fileno()).st_mode & 0o777 not in (0o600, 0o400):
                     return None
                 k = fh.read().rstrip("\n")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError, RuntimeError):
             return None
     if not k or any(c in k for c in "\"'\\\n\r"):
         return None
@@ -71,6 +71,7 @@ def url_problem(url: str) -> str | None:
     try:
         parts = urllib.parse.urlsplit(url)
         host = parts.hostname
+        parts.port  # noqa: B018 — raises ValueError on a port out of range or not a number
     except ValueError:
         return "bad-url"
     if parts.scheme not in ("https", "http") or not host:

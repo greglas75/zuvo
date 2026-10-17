@@ -27,6 +27,7 @@ TELEMETRY  ${ZUVO_HOME:-$HOME/.zuvo}/rerank.log, one TSV line per call (zuvo_rer
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -62,7 +63,7 @@ def reset_budget() -> None:
 
 
 def available() -> str | None:
-    """The refusal rerank() logs before its cache: "disabled", "no-key", or None to go on.
+    """The refusal rerank() logs when nothing is cached: "disabled", "no-key", or None to go on.
 
     Budget, call-cap and URL refusals are per call and stay inside rerank(); None is not a promise to send.
     """
@@ -156,5 +157,6 @@ def rerank(model: str, query: str, docs: list[str], *, timeout: float = 5.0,
     try:
         return _rerank(model, query, docs, timeout, caller, t0)
     except Exception:  # the contract is "never fatal": an unforeseen failure is today's behaviour, logged
-        rio.log(caller, model, len(docs) if isinstance(docs, list) else 0, t0, None, "error")
+        with contextlib.suppress(Exception):  # the failure may have been the log itself
+            rio.log(caller, model, len(docs) if isinstance(docs, list) else 0, t0, None, "error")
         return None

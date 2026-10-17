@@ -268,7 +268,9 @@ class ClientTest(Base):
                  ("openrouter as a subdomain", "https://openrouter.ai.evil.example/v1", "foreign-host"),
                  ("other scheme", "ftp://openrouter.ai/v1", "bad-url"),
                  ("no scheme", "foo", "bad-url"),
-                 ("broken ipv6", "http://[::1/v1", "bad-url"))
+                 ("broken ipv6", "http://[::1/v1", "bad-url"),
+                 ("port out of range", "http://127.0.0.1:99999/v1", "bad-url"),
+                 ("port not a number", "http://127.0.0.1:x/v1", "bad-url"))
         for name, url, want in cases:
             with self.subTest(name):
                 self.assertEqual(rio.url_problem(url), want)
@@ -329,6 +331,17 @@ class ClientTest(Base):
         self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
         self.assertEqual((stub.requests, self.last_outcome()), (0, "disabled"))
 
+    def test_a_home_without_a_path_is_no_key_not_a_crash(self) -> None:
+        # Path.home() raises RuntimeError with no HOME and no passwd entry; key() must read that as no key.
+        os.environ.pop("OPENROUTER_API_KEY")
+        with mock.patch.object(Path, "home", side_effect=RuntimeError("no home")):
+            self.assertIsNone(rio.key())
+
+    def test_a_failing_log_in_the_error_path_is_still_not_fatal(self) -> None:
+        # The catch-all logged again; when the failure was the log itself, rerank() raised.
+        with mock.patch.object(rio, "log", side_effect=ValueError("bad log")):
+            self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
+
     def test_available_names_the_refusal_rerank_logs(self) -> None:
         # Groom skips on available(); a refusal named unlike rerank()'s log would skip or send wrongly.
         cases = [("no key", {"OPENROUTER_API_KEY": ""}, "no-key"),
@@ -353,7 +366,7 @@ class ClientTest(Base):
 
     def test_unusable_cost_is_logged_as_unknown_and_the_scores_still_count(self) -> None:
         # A string or NaN usage.cost must not raise, drop good scores, or reach the budget as a number.
-        for name, cost in (("string cost", "0.002"), ("boolean cost", True)):
+        for name, cost in (("string cost", "0.002"), ("boolean cost", True), ("nan cost", float("nan"))):
             with self.subTest(name):
                 self.stub(cost=cost)
                 self.assertEqual(rr.rerank(MODEL, f"q {name}", DOCS, caller="t"), [0.0, 0.0, 0.0])
