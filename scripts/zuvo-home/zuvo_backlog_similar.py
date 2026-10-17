@@ -45,6 +45,7 @@ import os
 import stat
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -67,7 +68,8 @@ THRESHOLD_ENV = "ZUVO_BACKLOG_SIMILAR_THRESHOLD"
 THRESHOLD = 0.55
 TIMEOUT_ENV = "ZUVO_BACKLOG_SIMILAR_TIMEOUT"
 TIMEOUT_S = 8.0
-# The deadline for the WHOLE advisory, not one call. Without it the per-call timeout multiplies by
+# A budget for the WHOLE advisory, not one call (a bound, not a wall clock: no call STARTS
+# once it is spent and each socket timeout is clipped to what is left). Without it the per-call timeout multiplies by
 # the number of candidates (5 x 8 s = 40 s) and a degraded endpoint stalls the caller before the
 # verdict is printed — the lock is safe, the human is not. Calls stop when the budget is spent; the
 # answers already in hand are still used.
@@ -137,12 +139,39 @@ def api_key() -> Optional[str]:
         return key
     path = Path(os.path.expanduser(KEY_FILE))
     try:
-        if stat.S_IMODE(path.stat().st_mode) not in KEY_FILE_MODES:
-            return None
-        key = path.read_text(encoding="utf-8").strip()
+        # The mode is judged on the OPEN DESCRIPTOR, not on the path: `stat(path)` followed by
+        # `open(path)` judges one file and reads another if the path is replaced in between.
+        with open(path, encoding="utf-8") as fh:
+            if stat.S_IMODE(os.fstat(fh.fileno()).st_mode) not in KEY_FILE_MODES:
+                return None
+            key = fh.read(4096).strip()
     except OSError:
         return None
     return key if key.startswith(KEY_PREFIX) else None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """`urllib` follows redirects and re-sends the Authorization header to wherever it is pointed.
+    The advisory does not follow any: an endpoint that answers 302 is not the endpoint."""
+
+    def redirect_request(self, *_: Any, **__: Any) -> None:
+        return None
+
+
+def _checked_url() -> Optional[str]:
+    """The endpoint, if sending a bearer key to it is defensible. `ZUVO_BACKLOG_SIMILAR_URL` exists
+    so the specs can point this at a loopback stub, but it is an ordinary environment variable and
+    whatever it names receives the key. https anywhere; plain http only to loopback, where there is
+    no network to read it off; anything else (a `file:` URL, a bare host, http to a real host) is
+    refused rather than silently honoured."""
+    url = os.environ.get(URL_ENV, "").strip() or URL
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme == "https":
+        return url
+    if parts.scheme == "http" and (parts.hostname or "") in ("127.0.0.1", "::1", "localhost"):
+        return url
+    _debug("endpoint refused", f"{parts.scheme}://{parts.hostname} would receive the API key")
+    return None
 
 
 def _cap(value: Any) -> str:
@@ -227,26 +256,35 @@ def _probability(payload: Any) -> Optional[float]:
     return None
 
 
-def _post(key: str, state: str, timeout: float) -> Any:
+def _post(key: str, url: str, state: str, timeout: float) -> Any:
     body = {
         "model": os.environ.get(MODEL_ENV, "").strip() or MODEL,
         "state": state,
         "questions": {QUESTION: {"type": "choice", "instructions": INSTRUCTIONS, "criteria": CRITERIA}},
     }
     req = urllib.request.Request(
-        os.environ.get(URL_ENV, "").strip() or URL,
+        url,
         data=json.dumps(body).encode("utf-8"),
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                  "X-Title": "zuvo-backlog-similar"})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read(MAX_RESPONSE_BYTES), strict=False)
+    opener = urllib.request.build_opener(_NoRedirect)
+    with opener.open(req, timeout=timeout) as response:
+        # One byte over the cap is read deliberately: `read(CAP)` alone would hand a TRUNCATED body
+        # to the parser, and a parse error is indistinguishable from an honest "no answer".
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError(f"response over {MAX_RESPONSE_BYTES} bytes")
+    return json.loads(raw, strict=False)
 
 
 def ask(key: str, existing: str, new: str, timeout: Optional[float] = None) -> Optional[float]:
     """P(same defect) for one pair, or None when the call or the response fails."""
     state = f"EXISTING FINDING\n{existing}\n\nNEW FINDING\n{new}"
+    url = _checked_url()
+    if url is None:
+        return None
     try:
-        return _probability(_post(key, state, timeout or _env_float(TIMEOUT_ENV, TIMEOUT_S)))
+        return _probability(_post(key, url, state, timeout or _env_float(TIMEOUT_ENV, TIMEOUT_S)))
     except Exception as exc:                     # noqa: BLE001 — see FAIL-OPEN, ALWAYS above
         # Not OSError|ValueError: a truncated body raises http.client.IncompleteRead and a dropped
         # connection RemoteDisconnected, both HTTPException, which is neither of those.
@@ -278,7 +316,9 @@ def advise(ledger: Path, f: adm.Finding, d: adm.Decision, fid: str) -> Optional[
     """The one entry point. Returns the stderr line, or None when there is nothing to say.
 
     Returns None — never raises — for: the feature off, no key, no cited file, a fingerprint the
-    ledger already knows (the structural key HITS, so this call would be bumped and no hint is owed),
+    ledger already knows (the structural key HITS, so this call would be bumped and no hint is owed;
+    this looks at the LEDGER only, so a finding whose entry exists in the backlog with no ledger
+    record can still be hinted about — a spurious line, never a wrong write),
     no same-file same-class candidate, every call failing, and the best probability below the
     threshold. KeyboardInterrupt and SystemExit are deliberately NOT caught: a caller interrupting
     `backlog-add` must not be told it was an advisory hiccup.

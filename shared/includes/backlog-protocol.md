@@ -193,7 +193,12 @@ verdict is printed — the lock being free is no comfort to the human waiting fo
 | `ZUVO_BACKLOG_SIMILAR_TIMEOUT` | `8` | seconds per call |
 | `ZUVO_BACKLOG_SIMILAR_BUDGET` | `12` | seconds for the WHOLE advisory; candidates left when it runs out are not asked |
 | `ZUVO_BACKLOG_SIMILAR_DEBUG` | unset | `1` prints why the advisory gave up, for when no hint appears and you need to know whether that is an answer or a failure |
-| `ZUVO_BACKLOG_SIMILAR_URL` | OpenRouter's decisions endpoint | overridden by the tests' stub server |
+| `ZUVO_BACKLOG_SIMILAR_URL` | OpenRouter's decisions endpoint | overridden by the tests' stub server; **https anywhere, plain http only to loopback** — whatever this names receives the API key, and redirects are not followed |
+
+What leaves the machine when it is on: the candidate's and the new finding's class, cited file and
+line, anchor line, title and evidence — the fields the question is about, capped, with the F-id
+deliberately left out. That is the same provider the adversarial lanes already use, but it is worth
+knowing before enabling it on a finding whose evidence quotes a credential.
 
 The model and the threshold are the measured operating point, not a preference: over
 `tests/lib/dedup-corpus.py`, `pplx-decider-v1.1-27b` held AUC 0.919 / 0.913 / 0.923 across three

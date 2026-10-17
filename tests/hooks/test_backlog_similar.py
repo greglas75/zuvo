@@ -42,7 +42,8 @@ SOURCE = "a = 1\nb = 2\nif total > limit:\n    return total - limit\n"
 HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "XDG_CONFIG_HOME": os.devnull}
 SCRUB = ("ZUVO_BACKLOG_PR", "ZUVO_BACKLOG_ADMIT", "ZUVO_LOCK_WAIT", "ZUVO_BACKLOG_READY_FILE",
          "ZUVO_BACKLOG_SIMILAR", "ZUVO_BACKLOG_SIMILAR_URL", "ZUVO_BACKLOG_SIMILAR_MODEL",
-         "ZUVO_BACKLOG_SIMILAR_THRESHOLD", "ZUVO_BACKLOG_SIMILAR_TIMEOUT", "OPENROUTER_API_KEY",
+         "ZUVO_BACKLOG_SIMILAR_THRESHOLD", "ZUVO_BACKLOG_SIMILAR_TIMEOUT",
+         "ZUVO_BACKLOG_SIMILAR_BUDGET", "ZUVO_BACKLOG_SIMILAR_DEBUG", "OPENROUTER_API_KEY",
          "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
          "GIT_PREFIX", "GIT_CEILING_DIRECTORIES")
 PROXY_VARS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"})
@@ -84,23 +85,30 @@ class StubDecisions:
     HTTP status in `status`), and runs `on_request` before answering so a spec can observe what the
     caller had already done to the filesystem at the moment the call was made."""
 
-    def __init__(self, probability: float = 0.9, status: int = 200, on_request: Any = None) -> None:
+    def __init__(self, probability: float = 0.9, status: int = 200, on_request: Any = None,
+                 pad: int = 0) -> None:
         self.bodies: List[Dict[str, Any]] = []
         self.notes: List[Any] = []
+        self.lock = threading.Lock()
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler's name
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                outer.bodies.append(json.loads(raw or b"{}"))
-                if on_request is not None:
-                    outer.notes.append(on_request())
+                note = on_request() if on_request is not None else None
+                with outer.lock:                 # ThreadingHTTPServer: one thread per request
+                    outer.bodies.append(json.loads(raw or b"{}"))
+                    if on_request is not None:
+                        outer.notes.append(note)
                 if status != 200:
                     self.send_error(status)
                     return
-                payload = json.dumps({"choice": "DUP", "confidence": 0.5,
-                                      "probabilities": {"DUP": probability,
-                                                        "DIFFERENT": 1.0 - probability}}).encode()
+                answer: Dict[str, Any] = {"choice": "DUP", "confidence": 0.5,
+                                          "probabilities": {"DUP": probability,
+                                                            "DIFFERENT": 1.0 - probability}}
+                if pad:
+                    answer["pad"] = "x" * pad
+                payload = json.dumps(answer).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
@@ -240,12 +248,19 @@ class AnswerCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.f = finding()
         self.other = finding(anchor=ANCHOR_B, line=4)
+        (self.tmp / "home").mkdir()
 
     def advise(self, post: Any, **env: str) -> Optional[str]:
-        full = {"ZUVO_BACKLOG_SIMILAR": "1", "OPENROUTER_API_KEY": KEY, **env}
+        """`HOME` is isolated and every SCRUB variable the caller did not set is removed: these
+        specs read the module's defaults, not whatever the developer's shell happens to export."""
+        full = {"HOME": str(self.tmp / "home"), "ZUVO_BACKLOG_SIMILAR": "1",
+                "OPENROUTER_API_KEY": KEY, **env}
         with mock.patch.object(sim, "_post", post), \
              mock.patch.object(fnd, "fold", return_value=(records_of(self.other), [])), \
              mock.patch.dict(os.environ, full):
+            for name in SCRUB:
+                if name not in full:
+                    os.environ.pop(name, None)
             return sim.advise(self.tmp, self.f, decision(self.f), adm.fingerprint(self.f))
 
     @staticmethod
@@ -299,6 +314,24 @@ class AnswerCase(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIsNone(self.advise(self.answering({"probabilities": {DUP_KEY: value}})))
 
+    def test_the_api_key_only_goes_to_an_endpoint_worth_trusting(self) -> None:
+        """Defect: `ZUVO_BACKLOG_SIMILAR_URL` is an ordinary environment variable and whatever it
+        names receives the OpenRouter bearer key. Plain http to a real host puts it on the wire, and
+        a `file:` URL is not an endpoint at all. https anywhere and http to loopback are allowed;
+        everything else is refused before the request is built."""
+        # "" is not a refusal: an unset or empty override means "no override", and the default
+        # endpoint is the https one.
+        allowed = ("https://openrouter.ai/api/alpha/decisions", "http://127.0.0.1:8080/x",
+                   "http://localhost:8080/x", "")
+        refused = ("http://example.com/x", "file:///etc/passwd", "ftp://example.com/x",
+                   "example.com/x", "http://10.0.0.5/x")
+        for url in allowed:
+            with self.subTest(url=url), mock.patch.dict(os.environ, {"ZUVO_BACKLOG_SIMILAR_URL": url}):
+                self.assertIsNotNone(sim._checked_url())
+        for url in refused:
+            with self.subTest(url=url), mock.patch.dict(os.environ, {"ZUVO_BACKLOG_SIMILAR_URL": url}):
+                self.assertIsNone(sim._checked_url(), f"{url!r} would have received the key")
+
     def test_the_whole_advisory_stops_at_one_deadline(self) -> None:
         """Defect: the per-call timeout multiplies by the candidate count, so five candidates and a
         degraded endpoint stall the caller for 5 x 8 s before the verdict appears. The lock is not
@@ -309,9 +342,9 @@ class AnswerCase(unittest.TestCase):
             rows[adm.fingerprint(other)] = record(other, ts=f"2026-10-{i + 1:02d}T10:00:00+00:00")
         seen: List[float] = []
 
-        def slow(key: str, state: str, timeout: float) -> Any:
+        def slow(key: str, url: str, state: str, timeout: float) -> Any:
             seen.append(timeout)
-            time.sleep(0.25)
+            time.sleep(0.5)                      # 5 candidates x 0.5 s cannot fit a 1 s budget
             raise TimeoutError("slow")
 
         with mock.patch.object(sim, "_post", slow), \
@@ -322,9 +355,12 @@ class AnswerCase(unittest.TestCase):
             started = time.monotonic()
             self.assertIsNone(sim.advise(self.tmp, self.f, decision(self.f), adm.fingerprint(self.f)))
             elapsed = time.monotonic() - started
-        self.assertLess(elapsed, 4.0, f"the budget did not stop the calls ({elapsed:.1f}s)")
-        self.assertLess(len(seen), sim.MAX_CANDIDATES, "every candidate was asked despite the budget")
-        self.assertTrue(all(t <= 8.0 for t in seen), seen)
+        # Without the budget this is 5 x 0.5 s; with it, calls stop once 1 s is spent. The bound is
+        # generous enough for a loaded runner and still far below the unbudgeted cost.
+        self.assertLess(elapsed, 2.0, f"the budget did not stop the calls ({elapsed:.1f}s)")
+        self.assertLess(len(seen), len(rows), "every candidate was asked despite the budget")
+        self.assertTrue(all(t <= 8.0 for t in seen), f"a socket timeout exceeded the per-call cap: {seen}")
+        self.assertTrue(all(t > 0 for t in seen), f"a call started with no time left: {seen}")
 
     def test_a_dropped_or_truncated_response_is_silent(self) -> None:
         """Defect: `http.client` failures are neither OSError nor ValueError, so a truncated body
@@ -351,7 +387,7 @@ class AnswerCase(unittest.TestCase):
         hash of the very fields it is being asked to compare, and the hint silently measures the
         structural key instead of second-guessing it."""
         seen: List[str] = []
-        self.advise(lambda key, state, timeout: seen.append(state) or {"probabilities": {"DUP": 0.9}})
+        self.advise(lambda key, url, state, timeout: seen.append(state) or {"probabilities": {"DUP": 0.9}})
         self.assertTrue(seen)
         for state in seen:
             self.assertNotIn(adm.fingerprint(self.f), state)
@@ -410,7 +446,9 @@ class LauncherCase(unittest.TestCase):
         """Defect: the network call sits inside `zio.Lock`, so a slow or hanging endpoint holds the
         one write path for the backlog and every other writer on the machine waits on a third party.
         `backlog-add` appends to ZUVO_BACKLOG_READY_FILE immediately before it requests the lock, so
-        that file not existing yet when the request arrives is proof the call is outside it."""
+        that file not existing yet when the request arrives is proof the call is outside it. The
+        observation is made in the handler thread, which is not a race: the caller is blocked inside
+        `urlopen` until the handler answers, so it cannot have reached the ready file meanwhile."""
         self.file_one()
         ready = self.tmp / "ready"
         with StubDecisions(probability=0.9, on_request=lambda: ready.exists()) as stub:
@@ -465,6 +503,19 @@ class LauncherCase(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(stub.bodies, [], "a dry run reached the network")
         self.assertNotIn("SIMILAR", run.stderr)
+
+    def test_an_oversized_response_is_refused_rather_than_truncated(self) -> None:
+        """Defect: `read(CAP)` hands a TRUNCATED body to the parser, so an endpoint streaming more
+        than the cap yields a parse error indistinguishable from an honest 'no answer' — and the
+        body is read through the real transport here, because patching `_post` would bypass the
+        very cap this checks. A body just under the cap must still be answered, or the spec would
+        also pass with the request broken outright."""
+        for pad, expected in ((sim.MAX_RESPONSE_BYTES + 1024, False), (16, True)):
+            with self.subTest(pad=pad), StubDecisions(probability=0.9, pad=pad) as stub:
+                with mock.patch.dict(os.environ, {"ZUVO_BACKLOG_SIMILAR_URL": stub.url}):
+                    answer = sim.ask(KEY, "EXISTING", "NEW")
+                self.assertTrue(stub.bodies, "the stub was never reached")
+                self.assertEqual(answer is not None, expected, f"pad={pad} answer={answer}")
 
     def test_the_default_run_reaches_no_endpoint(self) -> None:
         """Defect: the flag is read somewhere else (or defaulted on), so an ordinary `backlog-add`
