@@ -180,7 +180,8 @@ Exit codes:
   5    no reviewable material (nothing was sent to any provider — this is NOT a completed review)
   6    blind-audit: input too large (prompt over ZUVO_BLIND_AUDIT_MAX_BYTES; nothing was sent)
        (blind-audit: 0 = strict, >= 2 valid answers; 1 = no lane left after its exclusions)
-  7    pass cap — these files already had 3 adversarial passes on this branch in the last 3h
+  7    pass cap — 3 adversarial passes already reviewed (half or more of) these files on this branch
+       in the last 7 days (3 h on main/master/develop/trunk)
        (code/test/security/migrate modes; nothing was reviewed; no override)
   124  timeout — every ATTEMPTED lane timed out with none answering at all, even invalidly (all
        providers timed out, or the whole-run deadline fired)
@@ -328,13 +329,26 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter-alt` and `openrouter-3` (ZUVO_ADV_OPENROUTER_LANES overrides the list, e.g.
+                           Adds `openrouter openrouter-alt openrouter-3 openrouter-4` (ZUVO_ADV_OPENROUTER_LANES overrides, e.g.
                            "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
-  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, qwen/qwen3.8-flash)
+  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, z-ai/glm-5.3-flashx)
   ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: xiaomi/mimo-v2.6-flash)
-  ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: deepseek/deepseek-v4.1-flash)
-  ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: openai/gpt-oss-120b)
+  ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inclusionai/ling-3.1-flash)
+  ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: thinkingmachines/inkling-small)
+  ZUVO_OPENROUTER_DAILY_USD  Daily spend cap on the OpenRouter key, USD (default 5; "off" lifts it). At or over
+                           it, or when /key cannot be read, OpenRouter lanes are not run (BytePlus is exempt).
+  ZUVO_BYTEPLUS_FALLBACK_<LANE>  Alibaba Token Plan model (qwen CLI, needs ZUVO_ADV_QWEN=1) a BytePlus lane
+                           (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) runs while the plan's quota is spent (default:
+                           glm-5.3-flash -> glm-5.3, deepseek-v4-1-flash -> deepseek-v4.1-flash, none for the
+                           rest: left out). Never OpenRouter. Set but empty = no fallback. The reset is kept in
+                           ~/.zuvo/byteplus-quota-until.
+  ZUVO_ADV_ZAI=1           Opt IN to the `zai` lane: Z.ai GLM Coding Plan (prepaid). Key in ZAI_API_KEY or
+                           ~/.zuvo/zai.key (ZUVO_ZAI_KEY_FILE; mode 600/400, the full {id}.{secret}). Key
+                           presence alone does NOT enable it — the plan's quota is shared.
+  ZUVO_ZAI_MODEL           zai lane model (default: ZUVO_MODEL_ZAI from model-registry.sh, glm-5.2)
+  ZUVO_ZAI_BASE_URL        zai endpoint (default: https://api.z.ai/api/coding/paas/v4). Any other z.ai or
+                           bigmodel.cn path is refused: it is not the plan.
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
   ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)

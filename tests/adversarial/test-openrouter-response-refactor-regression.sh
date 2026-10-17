@@ -3,6 +3,8 @@
 # The fake curl returns fixture bytes; no network or paid API is used.
 # Exercises the extracted decoder through the real driver.
 
+# The fake curls here answer every URL with a review; the daily spend cap has its own test (test-openrouter-budget.sh).
+export ZUVO_OPENROUTER_DAILY_USD=off
 ADV="$ROOT/scripts/adversarial-review.sh"
 OR_HOME="$(mktemp -d "$ADV_TEST_HOME/openrouter-response.XXXXXX")"
 mkdir -p "$OR_HOME/bin"

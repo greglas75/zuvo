@@ -1616,8 +1616,10 @@ exec /bin/mkdir "$@"
   if [ "$harness_checks" -ge "$HARNESS_FLOOR" ]; then pass "${TAGX}the execution harness ran all of its checks ($harness_checks)"; else bad "${TAGX}the execution harness ran all of its checks (only $harness_checks of $HARNESS_FLOOR)"; fi
   ta_cleanup
   # D10: no EXIT trap was replaced — clean the scratch tree here, and only a mktemp path.
+  # The host's own TMPDIR counts too (the farm's is /scratch/tf/t/…): mktemp made $X there.
+  local tmp_root="${TMPDIR:-/nonexistent-tmpdir}"; tmp_root="${tmp_root%/}"
   case "$X" in
-    /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*)
+    /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*|"$tmp_root"/tmp.*)
       if [ -n "${TA_KEEP:-}" ]; then echo "kept: $X"; else rm -rf "$X"; fi ;;
     *) bad "refusing to remove an unexpected scratch path: $X" ;;
   esac

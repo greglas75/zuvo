@@ -348,12 +348,16 @@ MOCK
 chmod +x "$HT_SIG/bin/mock-hang-marked"
 # ht_signal_run <SIG> -> "<exit code> <lane pid>" of a run sent <SIG> while its lane runs ("never-started"
 # when the lane never started; the run is then killed outright).
+# The driver starts through perl, which resets INT/QUIT to their defaults: a shell cannot trap a signal ignored
+# when it started, and the farm's job runner starts jobs with INT ignored, so HT.9 failed there (exit 0, not 130)
+# while it passed on a terminal — a harness difference, not the driver's.
 ht_signal_run() {
   local started="$HT_SIG/started-$1"; rm -f "$started"
   ( set -m
     HT_STARTED="$started" PATH="$HT_SIG/bin:$PATH" ZUVO_HOME="$HT_SIG/home-$1" ZUVO_PROVIDER_BENCH=0 \
       ZUVO_REVIEW_TEST_PROVIDERS="mock-hang-marked" ZUVO_REVIEW_TIMEOUT=120 \
-      bash "$ADV" --json --files "$EMPTY" >/dev/null 2>"$HT_SIG/err-$1" &
+      perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; exec @ARGV or die "exec: $!"' \
+        bash "$ADV" --json --files "$EMPTY" >/dev/null 2>"$HT_SIG/err-$1" &
     p=$!
     for _ in $(seq 1 300); do [ -s "$started" ] && break; sleep 0.1; done
     if [ ! -s "$started" ]; then kill -KILL "$p"; wait "$p"; echo "never-started"; exit 0; fi

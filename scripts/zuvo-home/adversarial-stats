@@ -46,6 +46,7 @@ from collections import defaultdict
 BILLING = [
     ("byteplus", "BytePlus ModelArk (Coding Plan)",
      "https://console.byteplus.com/ark/region:ap-southeast-1/subscription/coding-plan"),
+    ("zai", "Z.ai (GLM Coding Plan)", None),
     ("openrouter", "OpenRouter (per token)", "https://openrouter.ai/activity"),
     ("qwen", "Alibaba Model Studio (Token Plan Intl)", "https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal"),
     ("codex", "OpenAI (ChatGPT plan)", "https://chatgpt.com/codex/settings/usage"),

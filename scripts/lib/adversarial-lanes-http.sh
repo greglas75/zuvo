@@ -67,6 +67,139 @@ lane_no_key() {
   return 1
 }
 
+# lane_not_run <lane> <reason> — a lane deliberately left out for a reason that is not the lane's fault (a
+# prepaid plan out of quota, with no fallback): said, and recorded through lane_no_key's marker, so the outcome
+# is `no-key` — "not run, not held against the lane" — and the health ledger never benches it. Status 1.
+lane_not_run() {
+  echo "  WARN: $1 not run — $2 — not held against the lane" >&2
+  if [[ -n "$1" && "$1" != */* && -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then
+    : > "$JSON_TMPDIR/nokey_$1" 2>/dev/null || true
+  fi
+  return 1
+}
+
+# A spent BytePlus plan (any of its quota windows) answers HTTP 429 AccountQuotaExceeded naming the reset. Asking
+# again cannot help before it, so the reset is kept in a HOME-level file that every lane, chunk and run reads.
+
+# byteplus_quota_file — where the reset is kept; status 1 (none) under the test harness unless a test names one,
+# so no case writes the machine's ~/.zuvo.
+byteplus_quota_file() {
+  if [[ -n "${ZUVO_BYTEPLUS_QUOTA_FILE:-}" ]]; then printf '%s\n' "$ZUVO_BYTEPLUS_QUOTA_FILE"
+  elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then return 1
+  else printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/byteplus-quota-until"; fi
+}
+
+# byteplus_quota_until — the recorded reset epoch, status 0 while it is still ahead; status 1 when there is none,
+# it has passed or the file holds anything but a number.
+byteplus_quota_until() {
+  local f until=""
+  f="$(byteplus_quota_file)" || return 1
+  [[ -f "$f" ]] || return 1
+  { read -r until _ < "$f"; } 2>/dev/null || [[ -n "$until" ]] || return 1
+  [[ "$until" =~ ^[0-9]{1,12}$ ]] || return 1
+  (( until > $(date +%s) )) || return 1
+  printf '%s\n' "$until"
+}
+
+# _ar_epoch_text <epoch> — "2026-10-22 15:59Z", for a WARN. GNU date first: BSD has no -d, and GNU's -r reads a file.
+_ar_epoch_text() {
+  date -u -d "@$1" '+%Y-%m-%d %H:%MZ' 2>/dev/null || date -u -r "$1" '+%Y-%m-%d %H:%MZ' 2>/dev/null || printf '%s\n' "$1"
+}
+
+# _byteplus_quota_error <body> — status 0 when the body is the plan's quota refusal.
+_byteplus_quota_error() {
+  printf '%s' "$1" | jq -e '(.error.code // "") | tostring | test("QuotaExceeded")' >/dev/null 2>&1
+}
+
+# _zai_plan_refusal <body> — status 0 when a 429 is the Z.ai plan refusing (spent window, no package, expired,
+# model outside the plan, Fair Usage, wrong key type): a retry within the lane's budget cannot change those.
+# 1302/1305 (rate limit, overload) stay retryable. Codes: https://docs.z.ai/api-reference/api-code
+_zai_plan_refusal() {
+  printf '%s' "$1" | jq -e '(.error.code // "") | tostring
+    | test("^(1113|1308|1309|1310|1311|1313|1314|1315|1316|1317|1318|1319|1320|1321)$")' >/dev/null 2>&1
+}
+
+# _plan_endpoint <lane> <base-url> — the plan (byteplus | zai) a request spends; nothing off those API hosts. A plan
+# host on any other path (BytePlus /api/v3, Z.ai /api/paas/v4: metered) WARNs, status 1. Host and path are parsed
+# and compared whole, never as substrings (api.xyz.ai is not Z.ai; `/api/v3?from=/api/coding` was once allowed).
+# A plan LANE fails closed: anything but https to its own vendor's API host is refused, so its key goes nowhere else.
+_plan_endpoint() {
+  local lane="$1" url="$2" rest host path="" plan="" want need=""
+  case "$lane" in byteplus*) need=byteplus ;; zai) need=zai ;; esac
+  case "$url" in *[[:space:][:cntrl:]]*)
+    echo "  WARN: $lane base URL holds whitespace or a control character — refusing" >&2; return 1 ;;
+  esac
+  local port=""
+  rest="${url#*://}"; host="${rest%%[/?#]*}"; host="${host##*@}"
+  [[ "$host" == *:* ]] && port="${host#*:}"; host="${host%%:*}"
+  host="$(printf '%s' "$host" | tr 'A-Z' 'a-z')"; host="${host%.}"
+  [[ -z "$port" || "$port" == 443 ]] || host=""   # another port on the host is another service
+  case "$host" in
+    *[%\\]*) ;;
+    ark.*.bytepluses.com|ark.*.volces.com) plan=byteplus want="/api/coding/v3" ;;
+    api.z.ai|open.bigmodel.cn)             plan=zai want="/api/coding/paas/v4" ;;
+  esac
+  if [[ -n "$need" && ( "$plan" != "$need" || "$url" != https://* ) ]]; then
+    echo "  WARN: $lane base URL '$url' is not https:// on the $need plan's host — refusing to send the plan key there" >&2
+    return 1
+  fi
+  [[ -n "$plan" ]] || return 0
+  rest="${rest%%[?#]*}"
+  [[ "$rest" == */* ]] && path="/${rest#*/}"
+  path="${path%/}"
+  case "$plan:$path" in
+    byteplus:/api/coding/v3|byteplus:/api/coding|zai:/api/coding/paas/v4)
+      printf '%s\n' "$plan"; return 0 ;;
+  esac
+  echo "  WARN: $lane base URL '$url' is not the Coding Plan path ($want) — refusing, it would bill the account balance instead of the plan" >&2
+  return 1
+}
+
+# _byteplus_reset_epoch <message> — the reset the message names ("reset at YYYY-MM-DD HH:MM:SS +ZZZZ"), as an
+# epoch; now + 1 h when it names none, cannot be parsed, is past or is over 40 days ahead.
+_byteplus_reset_epoch() {
+  local now e="" ts re='reset at ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}) ([+-][0-9]{4})'
+  now=$(date +%s)
+  if [[ "$1" =~ $re ]]; then
+    ts="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+    e=$(date -d "$ts" +%s 2>/dev/null || date -j -f '%Y-%m-%d %H:%M:%S %z' "$ts" +%s 2>/dev/null) || e=""
+  fi
+  if [[ ! "$e" =~ ^[0-9]+$ ]] || (( e <= now || e > now + 40 * 86400 )); then e=$(( now + 3600 )); fi
+  printf '%s\n' "$e"
+}
+
+# byteplus_quota_record <lane> <body> — the quota stop: the reset into the HOME file and into the run's marker
+# bpquota_<lane>, which run_byteplus reads. Runs hit the stop at once, so the file is compared and replaced under
+# a mkdir lock (a lock left by a killed run is waited out for ~2 s, then ignored) through a temp file and mv, and a
+# later reset already on file is kept: a shorter window's answer must not cut a monthly stop short.
+byteplus_quota_record() {
+  local lane="$1" msg until f tmp="" held n=0 locked
+  msg=$(printf '%s' "$2" | jq -r '.error.message // empty' 2>/dev/null) || msg=""
+  until=$(_byteplus_reset_epoch "$msg")
+  echo "  WARN: $lane: BytePlus Coding Plan quota exhausted until $(_ar_epoch_text "$until") — not retried" >&2
+  if [[ "$lane" != */* && -n "${JSON_TMPDIR:-}" && -d "$JSON_TMPDIR" ]]; then
+    printf '%s\n' "$until" > "$JSON_TMPDIR/bpquota_$lane" 2>/dev/null || true
+  fi
+  f="$(byteplus_quota_file)" || return 0
+  mkdir -p -- "${f%/*}" 2>/dev/null || true
+  until mkdir -- "$f.lock" 2>/dev/null; do
+    (( ++n > 20 )) && break
+    sleep 0.1
+  done
+  # Held past ~2 s means its holder died (the section below takes microseconds): taken over, so the rmdir
+  # below clears it instead of leaving every later write to wait it out.
+  locked=1
+  if ! { held="$(byteplus_quota_until)" && (( held >= until )); }; then
+    tmp="$f.$$.$RANDOM"
+    if ! { printf '%s\t%s\n' "$until" "$lane" > "$tmp" && mv -f -- "$tmp" "$f"; } 2>/dev/null; then
+      rm -f -- "$tmp" 2>/dev/null || true
+      echo "  WARN: $lane: the quota stop could not be written to $f — later runs will ask the plan again" >&2
+    fi
+  fi
+  (( locked == 0 )) || rmdir -- "$f.lock" 2>/dev/null || true
+  return 0
+}
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -n "${CODESTRAL_API_KEY:-}" ]] || { lane_no_key codestral "CODESTRAL_API_KEY is not set"; return 1; }
@@ -194,6 +327,48 @@ openrouter_review_text() {
   printf '%s\n' "$text"
 }
 
+# openrouter_budget_ok <lane> <key> — 0 while the OpenRouter key's spend TODAY (UTC, the vendor's usage_daily) is under
+# ZUVO_OPENROUTER_DAILY_USD (default 5; "off" lifts it). Over it, or when the spend cannot be read, the lane is not run
+# (no-key: not held against it). Why a cap at all: on 2026-10-15 one lane (deepseek on OpenRouter) ran on ~1,700
+# reviews and the key spent $91 that day — benchmark prices had put it at a tenth of a cent a review, while real diffs
+# made the model think for ~60k output tokens a call. A per-call price is a guess; the day's spend is a fact.
+# One GET to /api/v1/key, shared by every lane, chunk and run for ZUVO_OPENROUTER_USAGE_TTL seconds (default 120)
+# through $ZUVO_HOME/openrouter-usage. Fails CLOSED: this is a money check. A soft cap: lanes already in flight when
+# the day crosses it finish, so the overshoot is bounded by one round of calls, not a reservation. The test harness skips it unless the
+# cap is set explicitly — its fake curls answer every URL with a review.
+openrouter_budget_ok() {
+  local lane="$1" key="$2" cap="${ZUVO_OPENROUTER_DAILY_USD-5}" f ttl now at="" used="" cfg body
+  [[ "$cap" == off ]] && return 0
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENROUTER_DAILY_USD+x}" ]] && return 0
+  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "  WARN: ZUVO_OPENROUTER_DAILY_USD='$cap' is not a number — using 5" >&2; cap=5; }
+  f="${ZUVO_OPENROUTER_USAGE_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/openrouter-usage}"
+  ttl="${ZUVO_OPENROUTER_USAGE_TTL:-120}"
+  [[ "$ttl" =~ ^[0-9]{1,6}$ ]] || ttl=120
+  now=$(date +%s)
+  { read -r at used _ < "$f"; } 2>/dev/null || true
+  # Stale: unreadable, older than the TTL, from the future (clock skew), or from another UTC day — usage_daily
+  # restarts at UTC midnight, so yesterday's spend must not stop today's first reviews (nor today's be missed).
+  if ! [[ "$at" =~ ^[0-9]{1,12}$ && "$used" =~ ^[0-9]+(\.[0-9]+)?$ ]] || (( now - at > ttl || at > now )) \
+     || (( at / 86400 != now / 86400 )); then
+    cfg="$JSON_TMPDIR/openrouter_budget_${lane//[^a-zA-Z0-9-]/_}.cfg"
+    curl_auth_config "$cfg" "$lane" "$key" || return 1
+    body=$(curl -sS --max-time 10 -K "$cfg" "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/key" 2>/dev/null) || body=""
+    used=$(printf '%s' "$body" | jq -r '.data.usage_daily | numbers' 2>/dev/null) || used=""
+    if [[ ! "$used" =~ ^[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?$ ]]; then
+      lane_no_key "$lane" "today's OpenRouter spend could not be read from /key — refusing to spend blind"
+      return 1
+    fi
+    used=$(awk -v u="$used" 'BEGIN{printf "%.4f", u}')
+    mkdir -p "$(dirname "$f")" 2>/dev/null
+    printf '%s %s\n' "$now" "$used" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$" 2>/dev/null
+  fi
+  if awk -v u="$used" -v c="$cap" 'BEGIN{exit !(u >= c)}'; then
+    lane_no_key "$lane" "OpenRouter daily budget reached: \$$used spent today, cap \$$cap (ZUVO_OPENROUTER_DAILY_USD)"
+    return 1
+  fi
+  return 0
+}
+
 run_openrouter() {
   # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
   # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.
@@ -243,25 +418,14 @@ run_openrouter() {
       return 1 ;;
   esac
 
-  # BYTEPLUS BILLING GUARD. ModelArk serves the same key on two base URLs: /api/coding consumes
-  # the prepaid Coding Plan, /api/v3 bills the account balance. The vendor's own doc says so:
-  # "Requests sent to this Base URL do not consume your Coding Plan quota and will instead incur
-  # additional charges." One wrong character in a base URL would therefore turn an included
-  # review into a metered one, silently and per chunk. Refuse rather than bill.
-  if [[ "${ZUVO_OPENROUTER_BASE_URL:-}" == *bytepluses.com* || "${ZUVO_OPENROUTER_BASE_URL:-}" == *volces.com* ]]; then
-    # Compare the PATH, with the query and fragment cut off first. `*/api/coding` on the raw URL
-    # matches anything merely ENDING in those characters, so
-    #   https://ark.…/api/v3?from=/api/coding
-    # satisfied the allow-list and would have been billed. A guard whose whole job is to keep
-    # money off the wrong endpoint cannot be defeated by a query string.
-    local _bp_path="${ZUVO_OPENROUTER_BASE_URL%%\?*}"
-    _bp_path="${_bp_path%%#*}"
-    _bp_path="${_bp_path%/}"
-    case "$_bp_path" in
-      */api/coding/v3|*/api/coding) ;;
-      *) echo "  WARN: $_lane base URL '${ZUVO_OPENROUTER_BASE_URL}' is not the Coding Plan path (/api/coding/v3) — refusing, it would bill the account balance instead of the plan" >&2
-         return 1 ;;
-    esac
+  # Billing guard: one wrong character in a plan's base URL would meter every chunk in silence. Refuse instead.
+  # _plan = the plan this request spends (byteplus | zai), empty off any plan.
+  local _plan
+  _plan="$(_plan_endpoint "$_lane" "${ZUVO_OPENROUTER_BASE_URL:-}")" || return 1
+
+  # Every OpenRouter call answers to the day's budget; a plan call (BytePlus, Z.ai) is prepaid and does not.
+  if [[ -z "$_plan" ]]; then
+    openrouter_budget_ok "$_lane" "$key" || return 1
   fi
 
   # Model id is attacker-adjacent only via env, but checked anyway: ids are vendor/name[:tag]. Rejected
@@ -279,12 +443,10 @@ run_openrouter() {
   local slug
   slug="$(printf '%s' "$_lane" | LC_ALL=C tr -c 'a-zA-Z0-9-' '_').$(printf '%s' "$model" | LC_ALL=C tr -c 'a-zA-Z0-9' '_')"
   local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
-  # STREAMING (ZUVO_OR_STREAM=1, set by the byteplus lanes only): the Coding Plan closes a non-streaming
-  # request after a minute without a byte, while a reasoning model on a real diff thinks for minutes.
-  # OpenRouter keeps the non-streaming path its keep-alive comments hold open. Tied to the lane too: an
-  # exported ZUVO_OR_STREAM=1 must not flip the OpenRouter lanes onto a path they were never measured on.
+  # STREAMING (byteplus and zai lanes only): a plan drops a request silent for a minute while a model reasons
+  # for several. Lane-tied so an exported ZUVO_OR_STREAM=1 leaves OpenRouter on its measured non-stream path.
   local _or_stream=0
-  [[ "${ZUVO_OR_STREAM:-0}" == "1" && "$_lane" == byteplus* ]] && _or_stream=1
+  [[ "${ZUVO_OR_STREAM:-0}" == "1" && ( "$_lane" == byteplus* || "$_lane" == zai ) ]] && _or_stream=1
   chat_payload "$payload_file" "$model" 0.2 "$_or_stream" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
   local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"
@@ -328,6 +490,18 @@ run_openrouter() {
     # .message is the OpenAI shape; some gateways send only a code, or a bare string
     [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
       elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
+
+    # A spent BytePlus plan is a 429 too, but asking again cannot help until its reset: recorded, never retried.
+    # Keyed on the endpoint, not the lane label, which a stand-in on another endpoint keeps.
+    if [[ "$_plan" == byteplus && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
+      byteplus_quota_record "$_lane" "$response"
+      return 1
+    fi
+    # No stop file for Z.ai: no fallback reads one, and a chunk's one refused request costs nothing.
+    if [[ "$_plan" == zai && "$http_code" == 429 ]] && _zai_plan_refusal "$response"; then
+      echo "  WARN: $_lane: Z.ai GLM Coding Plan refused (code $(printf '%s' "$response" | jq -r '.error.code' 2>/dev/null)): $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS") — not retried" >&2
+      return 1
+    fi
 
     # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
     # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset, 18 partial body, 92 HTTP/2

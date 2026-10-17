@@ -245,7 +245,8 @@ start_test "CK.15 a small document is left alone"
 { printf '# Small Plan\n\n'
   for t in 1 2 3; do printf '### Task %d: Step\n' "$t"; awk 'BEGIN{for(i=0;i<1000;i++)printf "s"}'; printf '\n\n'; done
 } > "$CK_DOC/small.md"
-small_out=$(bash "$ADV" --mode plan --dry-run < "$CK_DOC/small.md" 2>"$CK_DOC/err_small"); rc=$?
+# The farm has no reviewer CLI, and with none the driver stops before the dry run: a mock lane stands in.
+small_out=$(ZUVO_REVIEW_TEST_PROVIDERS=mock-success bash "$ADV" --mode plan --dry-run < "$CK_DOC/small.md" 2>"$CK_DOC/err_small"); rc=$?
 assert_eq "0" "$rc" "an under-cap plan passes the material check (dry run: exit 0)"
 assert_contains "$small_out" "### Task 3: Step" "…and goes whole into the one prompt"
 grep -q 'CHUNKED INPUT:' "$CK_DOC/err_small" \
@@ -379,7 +380,7 @@ start_test "CK.21 a document over the code cap but under the document cap goes w
 mid_size=$(wc -c < "$CK_DOC/mid.md" | tr -d ' ')
 if [[ "$mid_size" -gt 30000 && "$mid_size" -lt 50000 ]]; then pass "premise: the plan ($mid_size chars) is between the two caps"
 else fail "premise: the plan is between the two caps" "size $mid_size"; fi
-mid_out=$(bash "$ADV" --mode plan --dry-run < "$CK_DOC/mid.md" 2>"$CK_DOC/err_mid"); rc=$?
+mid_out=$(ZUVO_REVIEW_TEST_PROVIDERS=mock-success bash "$ADV" --mode plan --dry-run < "$CK_DOC/mid.md" 2>"$CK_DOC/err_mid"); rc=$?
 assert_eq "0" "$rc" "the dry run of the plan: exit 0"
 if grep -qE 'CHUNKED INPUT:|WARN: input truncated' "$CK_DOC/err_mid"; then
   fail "the plan is neither chunked nor truncated" "$(grep -E 'CHUNKED|truncated' "$CK_DOC/err_mid" | head -2)"
@@ -392,7 +393,7 @@ start_test "CK.22 ZUVO_ADV_MAX_CHARS under its 2000 minimum is refused with a WA
 # ar_set_input_cap reads the override through ar_env_int with a floor of 2000: under it, the chunk budget
 # (the cap less the per-chunk note's headroom) would be nothing but note. 2000 itself is accepted — the
 # control — and a dry run applies it (the one ~10.7k-char file is cut), so 1999 not cutting is the floor.
-ZUVO_ADV_MAX_CHARS=1999 bash "$ADV" --single --dry-run --files "$CK_TMP/src/module-1.ts" >/dev/null 2>"$CK_TMP/err22"; rc=$?
+ZUVO_REVIEW_TEST_PROVIDERS=mock-success ZUVO_ADV_MAX_CHARS=1999 bash "$ADV" --single --dry-run --files "$CK_TMP/src/module-1.ts" >/dev/null 2>"$CK_TMP/err22"; rc=$?
 assert_eq "0" "$rc" "the dry run under ZUVO_ADV_MAX_CHARS=1999: exit 0"
 assert_contains "$(cat "$CK_TMP/err22")" "ZUVO_ADV_MAX_CHARS=1999 is below its minimum of 2000 — using 30000" "the WARN names the floor and the cap used instead"
 if grep -qE 'CHUNKED INPUT:|WARN: input truncated' "$CK_TMP/err22"; then
@@ -400,7 +401,7 @@ if grep -qE 'CHUNKED INPUT:|WARN: input truncated' "$CK_TMP/err22"; then
 else
   pass "the refused value cuts nothing"
 fi
-ZUVO_ADV_MAX_CHARS=2000 bash "$ADV" --single --dry-run --files "$CK_TMP/src/module-1.ts" >/dev/null 2>"$CK_TMP/err22b"; rc=$?
+ZUVO_REVIEW_TEST_PROVIDERS=mock-success ZUVO_ADV_MAX_CHARS=2000 bash "$ADV" --single --dry-run --files "$CK_TMP/src/module-1.ts" >/dev/null 2>"$CK_TMP/err22b"; rc=$?
 assert_eq "0" "$rc" "control: the dry run under ZUVO_ADV_MAX_CHARS=2000: exit 0"
 assert_contains "$(cat "$CK_TMP/err22b")" "WARN: input truncated" "control: 2000 is accepted and is the cap the file is cut to"
 

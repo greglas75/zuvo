@@ -2,8 +2,8 @@
 # scripts/lib/adversarial-ledger.sh; shared/includes/adversarial-loop.md Step 5).
 #
 # The defect it guards: an agent re-running full passes over one change without end. A pass counts against
-# the current one when it ran in the same repository, on the same branch, within 3 h, over files that include
-# every file under review now (the same scope, or a fix delta of it).
+# the current one when it ran in the same repository (any worktree), on the same branch, within 7 days (3 h on a
+# shared default branch), over files sharing at least half of the smaller file set with the files under review now.
 # Sourced by run.sh.
 
 ADV="$ROOT/scripts/adversarial-review.sh"
@@ -45,16 +45,16 @@ assert_eq "0,0,0" "$r0,$r1,$r2" "the full pass and two fix deltas are reviewed"
 pc_run "$H2" mock-echo-files a.ts; rc=$?
 assert_exit_code "7" "$rc" "a third fix delta is pass 4 of the change: refused"
 
-start_test "PC.3 a WIDER review, another branch, and a pass older than 3 h are new scopes"
-pc_run "$H1" mock-echo-files a.ts b.ts c.ts; rc=$?
-assert_exit_code "0" "$rc" "a review that adds c.ts is not capped by the passes over a.ts and b.ts"
+start_test "PC.3 mostly other files, another branch, and a pass older than 3 h on main are new scopes"
+pc_run "$H1" mock-echo-files c.ts d.ts e.ts; rc=$?
+assert_exit_code "0" "$rc" "a review of other files (c, d, e) is another change"
 git -C "$PC_TMP/repo" checkout -q -b other
 pc_run "$H1" mock-echo-files a.ts b.ts; rc=$?
 assert_exit_code "0" "$rc" "the same files on another branch are another change"
 git -C "$PC_TMP/repo" checkout -q main
 H3="$PC_TMP/h3"; mkdir -p "$H3"
 old=$(( $(date +%s) - 4 * 3600 ))
-root="$(cd "$PC_TMP/repo" && git rev-parse --show-toplevel)"
+root="$(cd "$PC_TMP/repo" && git rev-parse --path-format=absolute --git-common-dir)"
 for i in 1 2 3; do printf '%s\told-%s\t%s\tmain\ta.ts\n' "$old" "$i" "$root" >> "$H3/adversarial-passes.tsv"; done
 pc_run "$H3" mock-echo-files a.ts; rc=$?
 assert_exit_code "0" "$rc" "three passes from 4 h ago do not cap a new one"
@@ -93,3 +93,44 @@ for i in 1 2 3 4; do
 done
 assert_exit_code "0" "$rc" "a fourth mock-only run is reviewed"
 [[ -e "$H6/adversarial-passes.tsv" ]] && fail "mock-only runs leave no ledger" "$(cat "$H6/adversarial-passes.tsv")" || pass "mock-only runs leave no ledger"
+
+# The 28-pass PR (tgm-survey-platform, 2026-10-15/16): every pass used another --diff base, so no earlier file set
+# held all of the next one, and farm waits spread the passes past a 3 h window.
+start_test "PC.7 on a feature branch, re-based and wider passes of one change count, and the window is 7 days"
+git -C "$PC_TMP/repo" checkout -q -b feature/x
+H7="$PC_TMP/h7"; mkdir -p "$H7"
+pc_run "$H7" mock-echo-files a.ts b.ts; pc_run "$H7" mock-echo-files b.ts c.ts; pc_run "$H7" mock-echo-files a.ts c.ts d.ts
+pc_run "$H7" mock-echo-files a.ts b.ts c.ts d.ts e.ts; rc=$?
+assert_exit_code "7" "$rc" "a fourth pass over a wider, re-based file set of the same change is refused"
+H7b="$PC_TMP/h7b"; mkdir -p "$H7b"
+root="$(cd "$PC_TMP/repo" && git rev-parse --path-format=absolute --git-common-dir)"
+for i in 1 2 3; do printf '%s\tday-%s\t%s\tfeature/x\ta.ts\n' "$(( $(date +%s) - 3 * 86400 ))" "$i" "$root" >> "$H7b/adversarial-passes.tsv"; done
+pc_run "$H7b" mock-echo-files a.ts; rc=$?
+assert_exit_code "7" "$rc" "three passes three days ago still cap a feature branch"
+H7c="$PC_TMP/h7c"; mkdir -p "$H7c"
+for i in 1 2 3; do printf '%s\tweek-%s\t%s\tfeature/x\ta.ts\n' "$(( $(date +%s) - 8 * 86400 ))" "$i" "$root" >> "$H7c/adversarial-passes.tsv"; done
+pc_run "$H7c" mock-echo-files a.ts; rc=$?
+assert_exit_code "0" "$rc" "eight days ago is outside the window"
+git -C "$PC_TMP/repo" checkout -q main
+
+# Bug caught: a second worktree of the branch reading as another repository, so each worktree got three passes.
+start_test "PC.8 a second worktree of the same branch is the same change"
+git -C "$PC_TMP/repo" branch -q feature/wt
+git -C "$PC_TMP/repo" worktree add -q "$PC_TMP/wt2" feature/wt
+H8="$PC_TMP/h8"; mkdir -p "$H8"
+for i in 1 2 3; do (cd "$PC_TMP/wt2" && pc_diff a.ts | ZUVO_HOME="$H8" ZUVO_ADV_PASS_CAP_TEST=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files \
+  bash "$ADV" --single --mode code) >/dev/null 2>&1; done
+mkdir -p "$PC_TMP/wt3"; git -C "$PC_TMP/repo" worktree remove --force "$PC_TMP/wt2" >/dev/null 2>&1
+git -C "$PC_TMP/repo" worktree add -q "$PC_TMP/wt3/w" feature/wt
+(cd "$PC_TMP/wt3/w" && pc_diff a.ts | ZUVO_HOME="$H8" ZUVO_ADV_PASS_CAP_TEST=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files \
+  bash "$ADV" --single --mode code) >/dev/null 2>&1; rc=$?
+assert_exit_code "7" "$rc" "the fourth pass, from another worktree of feature/wt, is refused"
+git -C "$PC_TMP/repo" worktree remove --force "$PC_TMP/wt3/w" >/dev/null 2>&1
+
+# Bug caught: an agent that never loaded adversarial-loop.md not knowing which pass it is on.
+start_test "PC.9 every pass names its number, on stderr and in the artifact"
+H9="$PC_TMP/h9"; mkdir -p "$H9"
+(cd "$PC_TMP/repo" && pc_diff q.ts | ZUVO_HOME="$H9" ZUVO_ADV_PASS_CAP_TEST=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files \
+  bash "$ADV" --single --mode code --artifact "$PC_TMP/art9.txt") >/dev/null 2>"$PC_TMP/err9"
+assert_contains "$(cat "$PC_TMP/err9")" "adversarial pass 1 of 3" "stderr names pass 1"
+assert_contains "$(cat "$PC_TMP/art9.txt" 2>/dev/null)" "adversarial_pass=1/3" "the artifact records it"
