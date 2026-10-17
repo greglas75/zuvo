@@ -6,7 +6,7 @@ Phase 3.5 has already committed: the pure refactor (`REFACTOR_SHA`), and — whe
 
 In no-commit mode: Phase 3.5 showed both diffs + proposed messages instead of committing; nothing to record here beyond the proposed messages.
 
-**Telemetry vs commits:** everything Phase 4 writes (CONTRACT, review artifact, backlog, retro, doc notes) is LOCAL telemetry — never stage it into the refactor/fix commits. If the repo tracks these paths, ONE trailing `chore(refactor): telemetry` commit MAY carry them; the `commits` array still lists only the production refactor/fix commits. Expected final `git status`: clean, or dirty only with untracked/ignored telemetry paths — that is the intended end state, not an unfinished run.
+**Telemetry vs commits:** Phase 4's run telemetry (CONTRACT, review artifact, retro, doc notes) is local and never staged into the refactor/fix commits. The `wrote=` paths `backlog-add` prints follow `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**: never in a refactor, fix or per-file commit, one closing commit after the run's last call when the run commits (none when no path remains: the Post-Completion Summary reads `none: nothing to stage`), and a list in the Post-Completion Summary in no-commit mode. Refactor's own facts: in batch mode each entry keeps its `wrote=` paths on its queue line (`refactor-reference.md` step 8), so a resumed batch still finds them, and the closing commit comes after the last queue entry and, when refactor runs the aggregate review, after that review, carrying the paths the review listed on its `Backlog writes:` line too (a review run inside refactor makes no closing commit of its own). If the repo tracks the other telemetry paths, a separate `chore(refactor): telemetry` commit MAY carry them, never a `wrote=` path; the `commits` array still lists only the production refactor/fix commits. Expected final `git status`: clean, or dirty only with untracked/ignored telemetry paths, the `wrote=` paths the closing commit left out because the snapshot listed them (someone else's edits), and, in no-commit mode, every `wrote=` path; the Post-Completion Summary names each of those `wrote=` paths. That is the intended end state, not an unfinished run.
 
 ### Update Contract State
 
@@ -68,14 +68,23 @@ cycle checks, and the test suite — so say which of those carried the verificat
 
 ### Backlog Persistence (FULL mode)
 
-Read `../../../shared/includes/backlog-protocol.md`. Persist ONLY the items Phase 3.5 deferred — fixes needing files outside the scope fence, and behavior decisions the user declined. **Mechanical bugs were already fixed in Phase 3.5; they do NOT belong in the backlog.** Persist to `memory/backlog.md`. Fingerprint: `file|rule-id|signature`. Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor`. Deduplicate per `backlog-protocol.md`.
+Read `../../../shared/includes/backlog-protocol.md` "Filing from a skill". Record ONLY the items Phase 3.5 deferred — fixes needing files outside the scope fence, and behavior decisions the user declined — and the agents' `DEFERRED` and `BACKLOG ITEMS` lines. **Mechanical bugs were already fixed in Phase 3.5; they do NOT belong in the backlog**, and a finding this run fixed gets no call (`backlog-protocol.md` "Filing from a skill", **Closing, not removing**). One `backlog-add` call per distinct finding (same file, line and defect): a finding that both Phase 3.5 deferred and an agent's `DEFERRED` line reported is one call, its finders joined in `E`, and the report lists each B- or F-id once (`backlog-protocol.md` "Filing from a skill", **Generic write**): the helper dedupes and decides whether it reaches `memory/backlog.md` or only the findings ledger; report the B- or F-id it prints, act on a non-zero exit as the protocol's exit table says, and list a finding still not persisted under `NOT PERSISTED (<reason>)`.
+
+`DEFERRED` items: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source refactor --file "$F" --line <n> [--anchor "$A"] --severity <level> --evidence "$E" --title "$T"` — Phase 3.5's out-of-fence fixes and every CQ Auditor `DEFERRED` line Phase 3.5 did not fix; `<C>` is the line's class (`CQ`, or `BUG` only when it names the input and the wrong output), `<level>` its `severity:` field, and `E` its `evidence:` with the finder prefixed (`cq-auditor: …`, `adversarial: …`, `orchestrator: …`): the finder is who found it, a different thing from `--source`, which stays `refactor`. Pass `--anchor "$A"` when the class requires one (BUG) or the line carries one, otherwise drop the flag; never invent one. Re-locate the cited line before the call, and give a BUG line with `anchor: -` its anchor, as "Moved lines and missing anchors" below says. A whole-file CQ item cites `--line 1`, a title starting "Whole file: …" and no `--anchor`; a whole-file BUG is filed at the line that shows the defect, with its anchor (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**). Assign `"$R"`, `"$F"`, `"$E"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
+
+`BACKLOG ITEMS`: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:refactor --file "$F" --line <n> [--anchor "$A"] --severity <level> --evidence "$E" --title "$T"` — every agent's `BACKLOG ITEMS` line, outside the fence, `<C>` its drive-by tag (`drive-by-findings.md`), `<level>` its `severity:` field; pass `--anchor "$A"` only when the class requires one (`SEC`, `BUG`) or the line carries one, otherwise drop the flag, never invent one; a `SEC` or `BUG` line without an anchor, and every moved line, is handled as "Moved lines and missing anchors" below says; assign `"$R"`, `"$F"`, `"$E"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
+
+**Moved lines and missing anchors.** Phase 3.5's commits can move the line an agent cited. Before each `DEFERRED` or `BACKLOG ITEMS` call, read the cited line as the agent saw it (`git show <audited sha>:<file>`, the commit holding the content the agent read) and re-locate that text in the working tree; `--line` is its CURRENT line. A line with `anchor: -`, or a `SEC` or `BUG` line with no anchor, gets its anchor here: a substring of that line of at least 8 non-space characters, with no ` | ` and no backtick. When the text is gone from the working tree, a class with no anchor requirement is filed by the whole-file rule (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**), and a `BUG` or `SEC` is listed under `NOT PERSISTED (cited line gone after Phase 3.5)` with its file and defect.
+
+A behavior decision the user declined is a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source refactor --target subject:refactor-decision-<slug> --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**; `<slug>` is the decision slug (`backlog-protocol.md` "Filing from a skill", **The decision slug**), written into this decision's report entry; `T` is the question and `E` holds both options; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the Post-Completion Summary under that decision: the findings ledger, where it is kept, is not where a human triages yet.
 
 **Transactional / concurrency residuals need an atomicity boundary line.** A deferred item like
 "read-modify-write race in `applyCredit`" is unactionable months later — the next person re-derives
-the whole analysis. When the deferral is an out-of-fence data race, add ONE line naming: (a) the
+the whole analysis. When the deferral is an out-of-fence data race, add ONE short line to its `E` naming: (a) the
 operations that must share a transaction, (b) the current race window (what interleaving loses or
 duplicates data), and (c) the migration/constraint/RPC that would close it (unique index, `SELECT
-… FOR UPDATE`, atomic RPC). That keeps the fix cheap to pick up without dragging schema work into
+… FOR UPDATE`, atomic RPC). `backlog-add` cuts `--evidence` at 600 characters, so a longer analysis
+goes in the run report and `E` carries a pointer to it. That keeps the fix cheap to pick up without dragging schema work into
 a behavior-preserving refactor.
 
 ### Content-keyed review artifact (on success only)
@@ -135,6 +144,21 @@ receipt `~/.zuvo/log-ideas --skill refactor --count <N>` (N=0 is the normal, hon
 not invent ideas to inflate it). The receipt makes the un-gated step's silence auditable in
 `~/.zuvo/ideas.log` without forcing ideation.
 
+### Closing commit for backlog-add's writes
+
+After the run's last `backlog-add` call (Backlog Persistence above, Phase 3.6's gates, the
+`zuvo:write-tests` runs Phase 3.6 Step 0 dispatched, the aggregate review when refactor runs it, and
+the drive-by step), a run that commits makes the one closing commit
+`chore(backlog): record findings of refactor run`, as **Telemetry vs commits** above and
+`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** say, against the
+`backlog-snapshot:` in the CONTRACT (batch mode: the queue file, once after the last entry). Its
+paths are the `wrote=` paths this run printed (single mode keeps each one in the CONTRACT under
+`backlog-writes:` as it is printed, so a resumed run still has them; batch mode keeps them on the
+queue lines) plus every path on the `Backlog writes:` line of a skill it ran (review, write-tests),
+which make no closing commit of their own. With no path left there is no commit; in no-commit mode
+it stages nothing and lists the paths. The Post-Completion Summary's `Backlog commit:` line holds the
+result.
+
 ### Verification and quality status
 
 Keep actual command success separate from assessment completeness. Persist current CQ and
@@ -171,12 +195,13 @@ COMPLETION GATE CHECK
     matching baseline number — verdict `reduced` (maxfn ≥10% smaller), `already-small` (baseline
     ≤50), or `essential:reason=<shape>` with the completion block saying the file REMAINS complex.
     A halved file with an intact worst function is a relocation, not a refactor
-[ ] Per-module coverage (Phase 3.6 Step 0): every path in `modules_created` either has a test that imports it DIRECTLY, or was tested in-run via `zuvo:write-tests`, or is a NAMED backlog entry with an out-of-fence/user-declined reason; `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` recorded (`"N/A"` only when the refactor created no files). The characterization lock does NOT satisfy this item — it targets the pre-refactor surface by construction, so it can never cover a module that did not exist yet
-[ ] Test Quality Gate (Phase 3.6) ran: `[GATE: test-quality] PASS|WARN|N/A` printed with a REAL `zuvo/audits/` test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a `test:` commit or WARN + per-file backlog; `prove.test_quality` recorded
+[ ] Per-module coverage (Phase 3.6 Step 0): every path in `modules_created` either has a test that imports it DIRECTLY, or was tested in-run via `zuvo:write-tests`, or is recorded through backlog-add (Phase 3.6 Step 0, item 3) with an out-of-fence/user-declined reason; `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` recorded (`"N/A"` only when the refactor created no files). The characterization lock does NOT satisfy this item — it targets the pre-refactor surface by construction, so it can never cover a module that did not exist yet
+[ ] Test Quality Gate (Phase 3.6) ran: `[GATE: test-quality] PASS|WARN|N/A` printed with a REAL `zuvo/audits/` test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a `test:` commit or WARN with each one recorded through backlog-add (test-quality-gate.md step 5); `prove.test_quality` recorded
 [ ] Mutation gate (Phase 3.6 Step 2) ran: the REAL `zuvo:mutation-test` dispatched over the tests this refactor created or touched (including Step 0's new specs), survivors CLOSED in-run — never `--report-only`, never `--no-install` — and `prove.mutation = "<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>"` recorded from the artifact. Phase 2.5's probes do NOT satisfy this item: they probe the pre-refactor lock, not the specs this run wrote. `N/A` only as `N/A:<why>` with a nameable condition
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
+[ ] Closing commit for backlog-add's writes made after the drive-by step: its hash, `none: nothing to stage`, or (no-commit mode) the listed `wrote=` paths
 [ ] Terminal state A (terminal-state.md): processes launched = N, still alive = 0   (PIDs + how each ended)
 [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
 [ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
@@ -206,6 +231,7 @@ Type: [TYPE] | Target: [filename]
 Files modified: [N] | Files created: [N]
 CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)]
 Complexity: maxfn [before]→[after] ([-N%| ESSENTIAL — file remains complex: <reason>]) | file LOC [before]→[after]   (SPLIT/GOD_CLASS/SIMPLIFY only)
+Backlog commit: [<sha7> | none: nothing to stage | not committed: <path>, …] [left out: <path> (<reason>)]
 
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ------------------------------------

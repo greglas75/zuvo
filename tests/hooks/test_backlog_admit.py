@@ -2,6 +2,8 @@
 `backlog-add`, all pure. Every row is named after the defect it catches: a misroute (debt leaking into
 the backlog, a real defect parked in the ledger), a refusal that should not happen or should, or an id
 that splits one finding in two or merges two into one.
+
+Test level: small (in-process pure functions; no subprocess, no file system, no clock).
 """
 
 import dataclasses
@@ -87,6 +89,10 @@ class TargetRoutingTests(unittest.TestCase):
          tgt("subject:review-incomplete", cls="PROCESS"), ("ledger", "class-report-only", "PROCESS")),
         ("bare-host SEC from infra-audit parked", tgt("db.internal:5432", cls="SEC", evidence="port open"),
          ("backlog", "admitted", "SEC")),
+        ("live-page CQ finding refused, or leaked into the backlog instead of the ledger",
+         tgt(URL, cls="CQ", evidence="h1 missing"), ("ledger", "class-report-only", "CQ")),
+        ("live-host ADVISORY finding refused instead of kept as an advisory",
+         tgt("db.internal:5432", cls="ADVISORY", evidence="port open"), ("ledger", "advisory", "ADVISORY")),
     ]
 
     def test_target_findings_follow_the_normal_bars(self):
@@ -279,7 +285,16 @@ class ValidationTests(unittest.TestCase):
          tgt("https://user:p@ss@api.example.com/", evidence="e"), "secret-like-value"),
         ("subject BUG accepted", tgt("subject:x"), "bad-combination"),
         ("subject PROCESS refused", tgt("subject:review-incomplete", cls="PROCESS"), None),
-        ("URL PROCESS accepted", tgt(URL, cls="PROCESS", evidence="x"), "bad-combination"),
+        ("URL PROCESS refused although any class may name a live URL", tgt(URL, cls="PROCESS", evidence="x"),
+         None),
+        ("URL READ finding kept without the evidence that proves the page was seen", tgt(URL, cls="READ"),
+         "missing-field:evidence"),
+        ("subject CQ accepted (`subject:` is for PROCESS and SEC only)", tgt("subject:x", cls="CQ"),
+         "bad-combination"),
+        ("URL TEST-GAP with a missing assertion accepted (the assertion needs a file and a line)",
+         tgt(URL, cls="TEST-GAP", evidence="e", missing_assertion="expect(x)"), "bad-combination"),
+        ("credentials in a CQ URL target stored once URLs are open to every class",
+         tgt("https://user:pw@api.example.com/x", cls="CQ", evidence="e"), "secret-like-value"),
         ("AWS key in the title stored", f(title="leaks " + SECRET_AKIA), "secret-like-value"),
         ("GitHub token in evidence stored", f(evidence="token " + SECRET_GHP), "secret-like-value"),
         ("private key in the fix stored", f(fix=SECRET_KEY), "secret-like-value"),
@@ -411,6 +426,8 @@ class FingerprintTests(unittest.TestCase):
          tgt("subject:auth", cls="SEC", conf=70)),
         ("target trailing slash or case split the id", tgt("https://Example.com/x/", evidence="e"),
          tgt("https://example.com/x", evidence="e")),
+        ("same page split into two records by a tracking parameter",
+         tgt(URL + "?utm_source=mail#top", cls="CQ", evidence="e"), tgt(URL, cls="CQ", evidence="e")),
     ]
     DIFFERENT = [
         ("same basename in two directories merged", f(file="lib/cart.ts"), BASE),
@@ -436,6 +453,45 @@ class FingerprintTests(unittest.TestCase):
     def test_f_id_shape(self):
         # a malformed F-id breaks the backlog ↔ ledger cross-link
         self.assertRegex(adm.fingerprint(BASE), r"^F-[0-9a-f]{12}$")
+
+
+class CanonicalTargetTests(unittest.TestCase):
+    ROWS = [
+        ("credential in the query stored in the shared ledger", URL + "?token=abc#frag", URL),
+        ("credential in the fragment (`#access_token=`) stored", URL + "#access_token=abc", URL),
+        ("percent-encoded or `;`-separated credential key outlives the strip", URL + "?%74oken=a;sig=b", URL),
+        ("root URL with only a query left with a dangling `?`", "https://x.test?a=1", "https://x.test"),
+        ("`user:pw@` dropped by the strip, so the secret screen never sees it",
+         "https://u:pw@x.test/p?a=1", "https://u:pw@x.test/p"),
+        ("session id in a path parameter stored in the shared ledger", "https://x.test/p;jsessionid=AB12?z=1",
+         "https://x.test/p"),
+        ("a `;` parameter in a middle segment cuts every later segment, so two pages share one record",
+         "https://x.test/owners/42;v=1/pets/21?z=1", "https://x.test/owners/42/pets/21"),
+        ("session id in a middle segment stored in the shared ledger", "https://x.test/a;jsessionid=AB12/b",
+         "https://x.test/a/b"),
+        ("a segment of parameters only left as `//`, so the same page gets a second record",
+         "https://x.test/;jsessionid=AB12/b", "https://x.test/b"),
+        ("a last segment of parameters only taking the trailing slash with it, so `/a/` gets a second record",
+         "https://x.test/a/;jsessionid=AB12", "https://x.test/a/"),
+        ("an empty segment the page has dropped with the parameters", "https://x.test/a//b;v=1",
+         "https://x.test/a//b"),
+        ("host target rewritten", "db.internal:5432", "db.internal:5432"),
+        ("subject target rewritten", "subject:review-incomplete", "subject:review-incomplete"),
+        ("URL urlsplit cannot read replaced instead of left for the shape check to refuse",
+         "https://[::1/x?a=1", "https://[::1/x?a=1"),
+        ("line break in a URL removed by urlsplit, so the shape check never refuses it",
+         URL + "/a\nb?q=1", URL + "/a\nb?q=1"),
+        # every file-cited finding reaches canonical_target with no --target at all (backlog-add `_finding`)
+        ("a file finding's absent target crashes or becomes a string", None, None),
+        ("an empty target turned into a URL", "", ""),
+        ("a target urlsplit reads as a scheme-less path stripped of its `?`", "db.internal?x=1",
+         "db.internal?x=1"),
+    ]
+
+    def test_url_target_is_kept_without_query_and_fragment(self):
+        for name, raw, want in self.ROWS:
+            with self.subTest(name):
+                self.assertEqual(want, adm.canonical_target(raw))
 
 
 class BIdTests(unittest.TestCase):

@@ -194,7 +194,7 @@ this section can never truncate the schema it sees. Add rows inside the markers,
 | `verify` | string | Command(s) and exit code(s) |
 | `acceptance-verified` | array of string | AC ids plus artifact paths, one element each (`["AC2@zuvo/proofs/task-4-report.md", ...]`). Empty array when none. **Written as ONE JSON array literal, never comma-split** — an AC id or an artifact path may legally contain a comma, and splitting turns one element into two silently. A value that does not parse as a JSON array degrades to `[]` rather than aborting the record. |
 | `codesift` | string | `available` \| `unavailable` \| `index-failed` |
-| `backlog-adds` | int | Backlog entries added by this task. **`-1` is the unsubstituted sentinel** — same reasoning as `task`; `0` would be a plausible real value. |
+| `backlog-adds` | int | The `backlog-add` calls this task made that kept a finding: any verdict but REFUSED and DISCARDED (ACCEPTED, BUMPED, REOPENED, LEDGER, LEDGER-BUMPED), process items included; the Final Summary's `backlog: a, ledger: b` split is a breakdown of the same calls. **`-1` is the unsubstituted sentinel** — same reasoning as `task`; `0` would be a plausible real value. |
 | `failure-strategy` | string | `halt` \| `skip-and-continue` \| `degraded:<desc>` — the task's declared failure strategy. **Defaults to `halt`, never null.** Populated from the plan's declared strategy (Task 9, commit 23a207a). |
 
 <!-- zuvo:telemetry-schema:end -->

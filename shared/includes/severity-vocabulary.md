@@ -37,7 +37,7 @@ Four severity levels, ordered by impact:
 
 **Cross-skill finding inheritance:** When one skill consumes findings from another (e.g., `/ship` runs `/review` then reads its findings), use this table to normalize severity before applying fix policy.
 
-**Backlog persistence:** When writing findings to `memory/backlog.md`, always record the canonical level (S1-S4) alongside the skill-specific label. This enables cross-skill queries like "show all S1 findings regardless of source skill."
+**Backlog persistence:** When persisting through `backlog-add`, add `--severity <level>` to whichever printed command files a finding that carries an S-level (the command templates in other includes do not print it), with the canonical level: S1 `critical`, S2 `high`, S3 `medium`, S4 `low`. Keep the skill's own label in the title or evidence when it matters. This enables cross-skill queries like "show all S1 findings regardless of source skill."
 
 **User-facing reports:** When presenting findings from multiple skills in one session, prefer the canonical vocabulary to avoid confusing the user with MUST-FIX + CRITICAL + BLOCKER + Tier D for the same severity concept.
 

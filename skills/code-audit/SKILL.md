@@ -687,7 +687,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran on audit report (--mode audit)
 [ ] Cross-file analysis section present
 [ ] Report saved to zuvo/audits/
-[ ] Backlog updated for deferred findings
+[ ] Findings recorded through backlog-add (Phase 5), each B- or F-id reported or named under NOT PERSISTED (<reason>); `Backlog writes:` line printed
 [ ] Run: line printed and appended to log
 ```
 
@@ -717,7 +717,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item `B-code-audit-incomplete-<date>`.
+If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source code-audit --target subject:code-audit-incomplete --title "$T"`, with `T` the fixed title `code-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
 
 The Validity Gate must be printed **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`). Printing it before guarantees `NOT_APPENDED`.
 
@@ -745,23 +745,23 @@ VERDICT: INCOMPLETE when required validation/applicability review is unfinished;
 
 ## Phase 5: Backlog Persistence
 
-Persist findings to `memory/backlog.md`:
+Every finding the tier list below selects goes through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here).
 
-1. Read `memory/backlog.md`. If missing, create with template.
-2. Fingerprint each finding: `file|CQ-id|signature`. Dedup: existing = increment `Seen`. New = append `B-{N}`.
-3. Delete resolved items (Tier A files with open items).
+**How:** a **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source code-audit --file "$F" --line <n> [--anchor "$A"] --severity <level> --title "$T"`. `<level>` is `critical`, `high` or `medium` as the tier list below says. `<N>` is your confidence that the finding is real. `<C>` is `CQ` for a failed CQ gate and for every CAP failure except CAP6, `SEC` for a CQ4, CQ5 or CAP6 failure, and `BUG` only when the finding names the input and the wrong output; BUG and SEC take `--anchor "$A"`, copied from the line that shows the defect or, for something absent (CQ4: no auth check), from the line of the code that lacks it ("The location rule"). A gate failure with no line of its own (a file-wide CQ violation) is a whole-file finding: `--line 1`, a "Whole file: ..." title, no `--anchor`. Assign "$R", "$F" and "$T" before each call, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
 
-Full protocol: `../../shared/includes/backlog-protocol.md`.
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
-**Which findings to persist:**
+**Which findings to record:**
 Tier boundaries are the ONES DEFINED IN "Summary by Tier" above — percentages of applicable, never
 raw counts. (These four lines read `<16` / `16-20` / `21-23` until 2026-08-02: absolute counts over
 the old 29-gate set, sitting one section below the percentage table they contradict.)
 
-- **Tier D** (auto Tier-D red flag): ALL findings -- CRITICAL severity
+- **Tier D** (auto Tier-D red flag): ALL findings, each at its own severity (the red-flag finding is critical; the tier decides which findings are recorded, not how severe they are)
 - **Tier C** (critical gate FAIL, or ratio < 0.79): ALL critical gate failures -- HIGH severity
-- **Tier B** (ratio >= 0.79 and < 0.86, active critical gates PASS): only critical gate near-misses -- MEDIUM severity
-- **Tier A** (ratio >= 0.86, active critical gates PASS): do NOT persist. Delete any open backlog items for Tier A files.
+- **Tier B** (ratio >= 0.79 and < 0.86, active critical gates PASS): only critical gate near-misses -- MEDIUM severity. A near-miss is a pass, so it is not a failed-gate finding: record it as a `CQ` with `--severity medium`. Every other Tier B finding is reported, not recorded (never a candidate, so no `NOT PERSISTED` line)
+- **Tier A** (ratio >= 0.86, active critical gates PASS): do NOT record. A Tier A score does not prove any one defect is gone: close only an entry whose cited code this run re-read and found fixed, as the **Closing, not removing** paragraph below says.
+
+**Resolved entries** (**Closing, not removing**): a finding this run fixed gets no call. An open entry from an earlier audit that this run re-read and found fixed is closed, never removed: in one edit tick its box (`- [x]`) and append its resolution marker (`[FIXED <sha7>]`), as `backlog-protocol.md` "How to Persist Findings" step 3 says. That tick is the one hand edit the protocol sanctions (no helper ticks), and it is not a `wrote=` path: this audit does not stage it and names each ticked entry in its report. Moving a closed entry to the archive is the helper's job (`~/.zuvo/backlog-archive.py archive`, which `append-runlog` runs at the end of the run), never done by hand.
 
 ## Phase 6: Next-Action Routing
 

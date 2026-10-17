@@ -167,6 +167,8 @@ $ARGUMENTS = other         -> task description, FULL mode
 
 ## Phase 0: Stack Detection and CodeSift Setup
 
+Before any `backlog-add` call, once, at the run's original start, take the snapshot `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/` (`R` assigned in the same shell call) and save its output as `backlog-snapshot:` in the CONTRACT, or in the batch queue file in batch mode; a resumed run reuses the saved one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+
 ### Knowledge Prime
 
 Run `knowledge-prime.md`: `WORK_TYPE = "implementation"`, `WORK_KEYWORDS = <target file/module names>`, `WORK_FILES = <files to refactor>`.

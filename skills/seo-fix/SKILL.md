@@ -60,7 +60,7 @@ and report its actual independence or an unmet requirement.
 
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup and update
+3. `../../shared/includes/backlog-protocol.md` -- Filing findings through `backlog-add`
 4. `../../shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, eta, and manual verification rules
 5. `../../shared/includes/fix-output-schema.md` -- JSON report contract
 6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
@@ -102,7 +102,7 @@ in the final fix report.
 **Allowed write targets:**
 - Files listed in template registry target paths (source/config files)
 - `zuvo/audits/` for the fix report (`.md` and `.json`)
-- `memory/backlog.md` for backlog updates
+- `memory/backlog.md` (closing a resolved entry: tick it and its resolution marker; the archive helper moves it) and `memory/findings/` (written by `backlog-add`)
 
 **FORBIDDEN:**
 - Installing packages without explicit user confirmation (e.g., `@astrojs/sitemap`). If a fix requires dependency installation, escalate to NEEDS_REVIEW with install instructions.
@@ -526,12 +526,12 @@ If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; th
 
 Wait for complete output. Handle findings by severity:
 - **CRITICAL** — confirm it first: two or more lanes in its `.agreement` group, or your own check (a failing test, a reproduced input, the cited code read and the defect traced). Confirmed → fix immediately. A single-lane CRITICAL you cannot confirm is triaged as a WARNING and reported as `[CRITICAL→WARNING single-lane]` (`adversarial-loop.md` Step 4).
-- **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
+- **WARNING** — fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source seo-fix --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`backlog-protocol.md` "Filing from a skill", **Adversarial review**; `<C>` is `CQ` or `BUG` and `<N>` the confidence, as for the Phase 5.1 write; pass `--anchor "$A"` only when the class requires one, BUG, SEC or DATA, or the finding carries one, never an invented one (`--anchor` is required on a BUG, SEC or DATA file record); assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Report the B- or F-id it prints; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 - **INFO** — known concerns (max 3, one line each).
 
 Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
 
-"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
+"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:seo-fix --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`drive-by-findings.md`; `backlog-protocol.md` "Filing from a skill", **Adversarial review**; `<C>` is the drive-by class the finding qualifies for under `drive-by-findings.md` (SEC, BUG, SIZE, DUP, CPLX, PERF, DEAD or READ) and `<N>` the confidence; the anchor as for the WARNING command above (`--anchor` is required on a BUG, SEC or DATA file record); assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Report the B- or F-id it prints; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
 
 ---
 
@@ -653,20 +653,22 @@ REFERENCE = <git SHA or relevant identifier>
 
 ### 5.1 Backlog operations
 
-Per `shared/includes/backlog-protocol.md`:
+Per `shared/includes/backlog-protocol.md` "Filing from a skill":
 
 | Finding status | Backlog action |
 |----------------|---------------|
-| FIXED | Remove row by fingerprint |
-| NEEDS_REVIEW | If exists: increment `Seen`. If new: add as OPEN |
-| MANUAL | Add as OPEN if not present |
-| OUT_OF_SCOPE | Add as OPEN with category `seo-manual` |
-| NO_TEMPLATE | Add as OPEN with category `seo-manual` |
+| FIXED | No record; the matching open entries are closed once the fix is committed (**Closing, not removing**; the rule below the table) |
+| NEEDS_REVIEW | Record (`backlog-add`; `--file "$F"` when a repo file causes it, `--target "$U"` for a live page), `E` starting `seo-review:`. The helper bumps a re-sighting. |
+| MANUAL | Record, as for NEEDS_REVIEW, `E` starting `seo-manual:` |
+| OUT_OF_SCOPE | Record, as for NEEDS_REVIEW, `E` starting `seo-manual:` |
+| NO_TEMPLATE | Record, as for NEEDS_REVIEW, `E` starting `seo-manual:` |
 | INSUFFICIENT DATA | Do not add (unconfirmed issue) |
 
-**Fingerprint format:** `{file}|{dimension}|{check}`
+FIXED matches each open entry with the same file (or target) and the same title check ID whose cited code this run re-read and found fixed (for a file entry, its line and anchor); every other entry with that file and check ID stays open. A target (live-page) entry is closed only by a later live audit that re-reads the page; a source-file patch alone never closes it. seo-fix does not commit, so there is no `<sha7>` to write: an entry FIXED matches stays open, the report lists its B-id on one line, `Close after commit: B-…, B-… | none`, and whoever commits the fix closes each one it lists (`backlog-protocol.md` "How to Persist Findings" step 3: tick `- [x]` and append `[FIXED <sha7>]`). A legacy entry written in the old `{file}|{dimension}|{check}` fingerprint format is matched by that fingerprint's file and check segments. `E` is the prefix from the table plus what was observed, the evidence that the finding is real.
 
-Same format as seo-audit backlog persistence. Uses the stable check ID from the finding (e.g., `sitemap-exists`, `json-ld-ssr`), NOT the fix_type. Example: `astro.config.mjs|D4|sitemap-exists`.
+A **Generic write** per recorded finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source seo-fix --file "$F" --line <n> [--anchor "$A"] --evidence "$E" --title "$T"` when a repository file causes it. A finding on a live page or host with no repository file causing it takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`, whatever the class: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source seo-fix --target "$U" --evidence "$E" --title "$T"`. A live defect that a repository file causes is filed by that file (the file form), with the URL in `--evidence "$E"`; the target form is only for a finding with no repository file causing it. `<N>` is your confidence that the finding is real. This skill files `CQ` or `BUG` only: `<C>` is `CQ` for a failed check and `BUG` only when the finding names the input and the wrong output; BUG takes `--anchor "$A"`, copied from the line that shows the defect ("The location rule"). `T` starts with the finding's stable check ID, `<check-id>: <title>` (e.g. `sitemap-exists`, `json-ld-ssr`), NOT the fix_type, so FIXED can close the entry later. A whole-file finding is `--line 1` with a "Whole file: ..." title (after the check ID) and no `--anchor`; a whole-file BUG is filed at the line that shows the defect instead, with `--anchor "$A"` copied from it, never at line 1. Assign "$R", "$E" and "$T" before each call, "$F" only for a file finding, "$U" only for a target finding, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+Recording findings through `backlog-add` commits and stages nothing. This skill lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none) in its final summary, whether it runs standalone or inside another skill, for the calling skill's closing commit to carry when there is one (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**). With `--dry-run` make no `backlog-add` call and tick no entry: list in the report what would be recorded (status, file or target, check ID) and what would be closed.
 
 ### 5.2 Save report
 

@@ -37,6 +37,7 @@ from typing import NamedTuple, Optional
 
 import zuvo_backlog_admit as adm
 import zuvo_backlog_parse as zb
+import zuvo_backlog_vcs as vcs
 
 ARCHIVE_NAME = "backlog-done.md"     # as the protocol and `lookup` spell it
 SEVERITY_CAP = 40
@@ -46,8 +47,11 @@ RENDER_INVISIBLE = "render-invisible"
 
 _FID_RE = re.compile(r"F-[0-9a-f]{%d}" % adm.FP_HEX)
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_TAG_RE = re.compile(r"\[(?:pr:[1-9][0-9]{0,8}|branch:[A-Za-z0-9._/-]+)\]")
-_TAG_TAIL_RE = re.compile(r"\s*" + _TAG_RE.pattern + r"$")
+# Written: the intake's contract exactly. Read: what earlier versions wrote too, so their lines stay
+# bumpable and re-openable. Every written tag is a read one, so `render`'s own read-back holds.
+_TAG_WRITE_RE = re.compile(r"\[(?:pr:%s|branch:%s)\]" % (vcs.PR_PATTERN, vcs.BRANCH_PATTERN))
+_TAG_READ_RE = re.compile(r"\[(?:pr:[1-9][0-9]{0,8}|branch:[A-Za-z0-9._/-]+)\]")
+_TAG_TAIL_RE = re.compile(r"\s*" + _TAG_READ_RE.pattern + r"$")
 # Each TEMPLATE_RE trigger a `|` escape does not already defuse, and the character to escape in it.
 _DEFUSE = (
     (re.compile(r"(severity:\s*)\[", re.I), r"\1\\["),
@@ -61,7 +65,7 @@ _OWN_RE = re.compile(
     r" \| evidence: (?P<ev>.*?) \| fix: (?P<fix>.*?) \| severity: (?P<sev>.*?)"
     r" \| source: (?P<src>%s(?:, %s)*) \| conf: (?P<conf>\d{1,3}) \| seen: (?P<seen>\d+)"
     r" \| ledger: (?P<fid>F-[0-9a-f]{%d}) \| (?P<date>\d{4}-\d{2}-\d{2})(?P<tag> %s)?$"
-    % (_SOURCE, _SOURCE, adm.FP_HEX, _TAG_RE.pattern))
+    % (_SOURCE, _SOURCE, adm.FP_HEX, _TAG_READ_RE.pattern))
 _SEV_FIELD_RE = re.compile(r"(?<!\\)(\| severity: )(\w+)( \|)")   # an escaped `\|` is title text
 
 
@@ -104,7 +108,7 @@ def _check_date(today: str) -> None:
 
 
 def _check_tag(tag: str) -> None:
-    if tag and not _TAG_RE.fullmatch(tag):
+    if tag and not _TAG_WRITE_RE.fullmatch(tag):
         raise ValueError(f"not a [pr:N] / [branch:name] tag: {tag!r}")
 
 

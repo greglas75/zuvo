@@ -15,9 +15,10 @@ The backlog file is `memory/backlog.md`. Which copy is THE backlog depends on wh
   There is exactly ONE backlog per repository, under the **MAIN checkout root**, never inside a linked
   worktree.
 
-**Resolution (MANDATORY — worktree-safe).** `~/.zuvo/backlog-archive.py path --repo "$PWD"` applies this
+**Resolution (MANDATORY — worktree-safe).** `~/.zuvo/backlog-archive.py path --repo "$R"` applies this
 rule (`zuvo_backlog_io.backlog_root`) and prints the `declared`, `real` and `archive` paths; the helper
-calls below take `--repo "$PWD"` and resolve the same way. By hand:
+calls below take `--repo "$R"` and resolve the same way. `R` is the repository root, assigned in the same
+shell call as "The repository root" in "Filing from a skill" says; never `$PWD`, which the harness resets. By hand:
 
 ```bash
 BACKLOG_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -63,7 +64,8 @@ at conf ≥ 26 is still kept, as data, in the findings ledger, where reports suc
 map are built from what has accumulated instead of from a fresh scan.
 
 ```bash
-~/.zuvo/backlog-add --repo "$PWD" --class BUG --conf 85 --source review \
+R='/abs/path/of/the/repository/root'   # same shell call as the command; "Filing from a skill"
+~/.zuvo/backlog-add --repo "$R" --class BUG --conf 85 --source review \
   --file src/cart.ts --line 42 --anchor 'if (total > limit) {' \
   --title 'checkout accepts a total equal to the limit' \
   --evidence 'limit=100, total=100 passes; the order rules say strictly below' \
@@ -78,14 +80,14 @@ map are built from what has accumulated instead of from a fresh scan.
 | `--title` | yes | the defect in one sentence (cut at 200 characters) |
 | `--file`, `--line` | these, or `--target` | the cited site, repo-relative; the file must exist in the work tree |
 | `--anchor` | BUG, SEC, DATA with `--file`; optional otherwise | text copied from the cited line, at least 8 non-space characters for BUG, SEC and DATA; when given, it must appear within ±3 lines of `--line`, whitespace-insensitive. On a hardcoded secret, copy the part before the value — the name and what precedes it (`AWS_SECRET_KEY =`, `const db_pw =`), still 8 non-space characters — never any character of the value; when the line has fewer than 8 before the value, copy a line within ±3 that holds no secret |
-| `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL or a hostname (SEC, BUG, DATA only), or `subject:<slug>` (PROCESS, SEC only) |
+| `--target` | instead of `--file` | for a finding with no repository file: an `http(s)://` URL (stored without its query and fragment) or a hostname (any class; the bars still route it), or `subject:<slug>` (PROCESS, SEC only) |
 | `--evidence` | with a URL or host target | what proves it (cut at 600) |
 | `--fix`, `--severity` | no | the remedy (cut at 300); `critical`, `high`, `medium` or `low` |
 | `--missing-assertion` | TEST-GAP, MUTATION only | the assertion the tests lack |
 | `--also PATH:LINE` | no, repeatable | another site of the same finding (DUP) |
-| `--pr N` | no | the PR to tag with; `ZUVO_BACKLOG_PR` does the same |
+| `--pr N` | no | the PR to tag with (1–6 digits); `ZUVO_BACKLOG_PR` does the same |
 | `--dry-run`, `--json` | no | write nothing and print the verdict it would give, with ` dry-run` appended (and `wrote=-` on the verdicts that carry `wrote=`); print the verdict as one JSON object |
-| `--repo` | no | the checkout to file in (default: the current directory); it must be inside a git work tree |
+| `--repo` | no, but a skill always passes `"$R"` | the checkout to file in; an existing directory inside a git work tree, resolved to that work tree's top level (the helper accepts a subdirectory; a skill passes the root, "The repository root"). Left out, it is the current directory, which the harness resets between Bash calls ("Filing from a skill") |
 
 **The cited code must hold now.** "Holds" means the file exists in the work tree and the anchor is at
 the line. Files the run created count, because skills write before they commit. A deleted file is
@@ -102,7 +104,8 @@ Precedence, in this order:
 3. `ZUVO_BACKLOG_ADMIT=1` in the environment sends any class at conf ≥ 26 to the backlog. It is set
    only on the user's explicit request for a specific finding: the user sets it, or an agent sets it
    on the one call for the finding the user's own message asked to have filed. An agent never sets it
-   on its own judgement, and no skill instructs it. Nothing in the shell can tell who typed it, so
+   on its own judgement. The one skill text that names it is the backlog skill's `add` mode, and only
+   for the item the user's own message asked it to file; no other skill instructs it. Nothing in the shell can tell who typed it, so
    what keeps it honest is that every use stays visible. A first sighting it forces records
    `forced: true` and reason `forced`. A forced re-sighting of a finding already in the ledger records
    a status patch whose `note` is `forced (natural: <the reason the bars gave>)`, which the fold keeps
@@ -133,10 +136,12 @@ can state the concrete input or state that produces the wrong output:
 
 **The tag.** On a branch other than the default, the entry ends with `[pr:N]` (from `--pr`,
 `ZUVO_BACKLOG_PR`, or the open PR `gh` finds on a github.com remote) or `[branch:<name>]`. The intake
-holds a tagged entry until that PR or branch merges and retires it when the PR is declined, so a
-finding about unmerged code is never ticketed early. A branch name with a character outside
-`[A-Za-z0-9._/-]` and no PR cannot be tagged: a non-SEC finding then stays in the ledger
-(`branch-untaggable`), and a SEC finding lands untagged so it is ticketed at once. The name is never
+takes a PR number of 1–6 digits, no leading zero; a branch name of 1–200 characters, all in
+`[A-Za-z0-9._/-]`. It holds a tagged entry until that PR or branch merges and retires it when the PR
+is declined, so a finding about unmerged code is never ticketed early. A PR `gh` reports past 6 digits
+counts as no PR, so the entry waits as `[branch:<name>]`. A branch name with a character outside that
+set, or longer than 200 characters, and no PR cannot be tagged: a non-SEC finding then stays in the
+ledger (`branch-untaggable`), and a SEC finding lands untagged so it is ticketed at once. The name is never
 rewritten, because a rewritten name resolves to no branch. A detached HEAD that is not on the default
 branch has no name to tag with: it takes `--pr`, else it is untaggable too. The PR lookup asks `gh`
 only on a github.com remote; with no `gh`, `gh` not authenticated, any other remote or
@@ -167,6 +172,18 @@ One line on stdout; `--json` prints the same fields as one object, and `--dry-ru
 A dry run writes nothing, so every verdict that carries `wrote=` shows `wrote=-`; `DISCARDED` and
 `REFUSED` carry no `wrote=` at all.
 
+The exit table below, and `NOT PERSISTED (<reason>)` for a call that still fails, apply to EVERY call a
+skill makes, a process item's included: a call that ends without a B- or F-id is named in the report
+under `NOT PERSISTED (<reason>)`, never dropped. Three outcomes carry no id and are not failures:
+`DISCARDED below-floor` (not a finding), a refusal a re-read resolves (`file-not-in-worktree` or
+`anchor-not-at-line` once the code is confirmed gone or changed: "The cited code must hold now"), and the
+exit-1 partial write, which is reported as filed under its B-id.
+
+**The report line.** A run's report sums its calls on one line, `Recorded: N (backlog: a, ledger: b)`: `N` the
+calls that ended with a B- or F-id, `a` those whose verdict names a backlog entry (`ACCEPTED`, `BUMPED`,
+`REOPENED`, an exit-1 partial write), `b` those kept in the ledger only (`LEDGER`, `LEDGER-BUMPED`), so
+`N = a + b`; each `NOT PERSISTED (<reason>)` follows by name.
+
 | Verdict | Exit | What you do |
 |---------|------|-------------|
 | `ACCEPTED backlog <B> ledger=<F> wrote=<paths>` | 0 | Report it as filed under `<B>`. |
@@ -179,13 +196,14 @@ A dry run writes nothing, so every verdict that carries `wrote=` shows `wrote=-`
 
 | Exit | Means | What you do |
 |------|-------|-------------|
-| 0 | one of the six verdicts above `REFUSED` | Stage what `wrote=` lists. |
-| 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | If stderr says `failed after writing: wrote=<paths>`, the backlog entry exists and only its ledger record is missing: do not retry (a retry counts a second sighting); report it as filed, stage the listed paths, and the next sighting writes the record. Otherwise retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
+| 0 | one of the six verdicts above `REFUSED` | Keep the `wrote=` paths for the run's closing commit ("Committing what backlog-add wrote" in "Filing from a skill"). |
+| 1 | lock timeout, IO error, `render-invisible`, lookup failure or incomplete install; stderr names which. Nothing was written, except after an IO error during the ledger append, when stderr names the backlog path already written as `wrote=` | If stderr says `failed after writing: wrote=<paths>`, the backlog entry exists and only its ledger record is missing: do not retry (a retry counts a second sighting); report it as filed, keep the listed paths for the run's closing commit (as for exit 0), and the next sighting writes the record. Otherwise retry once after 2 s. If it fails again, list the finding in the report under `NOT PERSISTED (backlog-add exit 1)`. `render-invisible` (the rendered line would not parse back as one open entry) and an incomplete install fail the same way on the retry. |
 | 2 | usage error: the call itself is malformed, or `--repo` is not a directory inside a git work tree | Fix the call. If you cannot, `NOT PERSISTED (backlog-add exit 2)`. |
 | 3 | `REFUSED <reason>`: the input does not conform, and resubmitting it unchanged cannot help | An input mistake: correct it and resubmit once, otherwise list it under `NOT PERSISTED (REFUSED <reason>)`. Some refusals are not input mistakes, and the refusal table says what to do instead: `anchor-not-at-line` and `file-not-in-worktree` after a re-read, and the repository's visibility refusals. |
 
 **`wrote=`** lists the repo-relative paths written that git does not ignore. A skill that commits
-stages exactly those (`git add -- <paths>`); `wrote=-` means nothing to stage, as in a repo that
+stages exactly those, in its one closing commit ("Committing what backlog-add wrote" in "Filing from
+a skill"); `wrote=-` means nothing to stage, as in a repo that
 ignores `memory/`. Staging a path the verdict does not list is how an ignored file gets committed.
 
 **The helper is missing** (only the Claude Code install ships `~/.zuvo/`): list every finding in the
@@ -201,8 +219,8 @@ the dedupe and the lock it files exactly the entries the intake has to retire.
 | `bad-source` | A lowercase skill name, `drive-by:<skill>`, or `user`. |
 | `bad-target` | An `http(s)://` URL, a hostname, or `subject:<slug>`. |
 | `bad-path` | `--file` with a control character, a `\|` or surrounding spaces; an `--also` without `:LINE`. |
-| `bad-pr` | `--pr` or `ZUVO_BACKLOG_PR` must be a PR number. |
-| `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION; a target the class may not use (a URL or host: SEC, BUG, DATA; `subject:`: PROCESS, SEC). |
+| `bad-pr` | `--pr` or `ZUVO_BACKLOG_PR` must be a PR number of 1–6 digits, no leading zero. |
+| `bad-combination` | `--file` with `--target`; `--missing-assertion` on a class other than TEST-GAP or MUTATION, or together with `--target`; `subject:` on a class other than PROCESS or SEC (a URL or host takes any class). |
 | `path-outside-repo` | The path leaves the repository (`..`, an absolute path elsewhere, a symlink out). |
 | `file-not-in-worktree` | The file does not exist in the work tree. If the path is right, the code is gone: nothing is filed or reported as not persisted. If the path was mistyped, correct it. |
 | `line-out-of-range` | `--line` is not a positive integer, or is past the end of the file (an `--also` line too). |
@@ -235,6 +253,166 @@ ignored backlog keeps private; `backlog-add` refuses to write it.
   and retired with it if that PR is declined, until a later sighting files it again.
 - Only credential shapes are refused. PII such as an e-mail address is not scanned: keep it out of
   titles and evidence yourself.
+
+## Filing from a skill
+
+How a skill turns each situation into one `backlog-add` call. The bars, the dedupe, the tag and the
+exit handling are the ones in "Persisting a finding: backlog-add"; this table only says which class,
+source and location a skill passes. `<skill>` is the skill's own name (`review`, not `zuvo:review`).
+Every call carries `--repo "$R"`, never `--repo "$PWD"`: `R` is the absolute path of the repository root the
+run works in (in a linked worktree, the worktree's root), assigned in the same shell call as the command
+("The repository root" below). The harness resets the shell's working directory between Bash calls, back to
+the session's primary directory, so a `$PWD` read in a later call can name another checkout and the finding
+is filed there, silently. Every free-text or externally sourced value is a double-quoted
+variable assigned before the call (`"$T"`, `"$A"`, `"$E"`, `"$U"`, `"$F"`, `"$M"`: "Free text goes through a
+variable" below); `<C>`, `<N>`, `<n>` and `<skill>` are fixed words or numbers the skill fills in.
+
+| Situation | Class | Source | Location |
+|-----------|-------|--------|----------|
+| A finding in a file the run is editing, which the run defers | its class: `BUG` only when it names the input and the wrong output, else `CQ` or the class the finding is | `<skill>` | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
+| A finding in a file the run is not editing | its drive-by tag (`SEC`, `BUG`, `SIZE`, `DUP`, `CPLX`, `PERF`, `DEAD` or `READ`); one that meets no tag's condition is reported, not recorded (`drive-by-findings.md` "Categories and what qualifies") | `drive-by:<skill>` (`drive-by-findings.md`) | `--file "$F" --line <n> --anchor "$A"` (the location rule below) |
+| A finding on a live page or host, with no repository file causing it | any class; the bars still route it, so a report-only class stays in the ledger | `<skill>` | `--target "$U" --evidence "$E"`, `U` a URL or a host (the location rule below) |
+| A validity-gate item: an incomplete run, a skipped tier, an escape hatch taken | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-<gate>`, with no date in it and the gate's fixed title on every run, so a repeat bumps the one record (`LEDGER-BUMPED seen=N`); kept in the ledger only |
+| A deferred decision, or follow-up work the run will not do | `PROCESS`, `--conf 90` | `<skill>` | `--target subject:<skill>-decision-<slug>`; the question as the title, both options in `--evidence "$E"` |
+| A NIT at ship time | `CQ` | `ship` | `--file "$F" --line <n>`; it is recorded (the ledger keeps it), never ignored silently |
+| An item the user files through the backlog skill's `add` mode | `BUG` when the user states the input and the wrong result, else `CQ`; `PROCESS` with `--target subject:<slug>` only for a process or decision item (for a code defect, the file and a verified line: the backlog skill's "Adding Items") | `user` | as the item says; `ZUVO_BACKLOG_ADMIT=1` only when the user invoked that mode in their own message |
+| A finding this run fixed | none: no call | none | an open entry it resolved is closed (sentence 4 below) |
+| A skill that commits after filing | none | none | **Committing what backlog-add wrote** below: one closing commit after the run's last call, never a per-task commit |
+| A source written `zuvo:refactor` or `zuvo:refactor/cq-auditor` | as the finding is | `refactor`; the agent's name goes in `--evidence` | as the finding is |
+| A source written `test-audit/{date}` | as the finding is | `test-audit` | as the finding is |
+| A source written `manual` | as the item is | `user` | as the item is |
+| A source written `debug/[date]` | as the finding is | `drive-by:debug` | as the finding is |
+| A source written `source:build` in a hand-written entry template | as the finding is | `build`; the template is gone | as the finding is |
+| A black-box pentest finding, on a live target (formerly suggested as `--source pentest --dimension PT<n>`) | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source pentest --target "$U" --evidence "$E" --title "PT<n>: $T"`. `backlog-add` has no `--dimension` argument: the dimension lives in the title's `PT<n>:` prefix |
+| A white-box pentest finding, traced to a file and line | `SEC` | `pentest` | `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source pentest --file "$F" --line <n> --anchor "$A" --title "PT<n>: $T"`; the dimension again in the `PT<n>:` prefix |
+
+**The location rule.** A record names either a file or a target, never both (`bad-combination`).
+
+- A **file** record takes `--file` and `--line`. `--anchor` is required on a BUG, SEC or DATA file
+  record (at least 8 non-space characters, refused `missing-field:anchor` otherwise); on any class,
+  an anchor that is given must appear within ±3 lines of `--line`.
+- **The anchor is copied, never invented.** A BUG, SEC or DATA record cites the line that shows the
+  defect, which holds code, and its anchor is text copied from that line. If that line has fewer than
+  8 non-space characters, copy the anchor from the nearest line within ±3 of it that has them (the
+  helper compares the anchor, whitespace removed, with lines `--line`−3 to `--line`+3). If no line
+  within ±3 qualifies, the finding is listed under `NOT PERSISTED (no anchor within ±3 lines)`; it is
+  never filed under another class to avoid the anchor. A finding about something ABSENT (no auth check,
+  no index, no constraint) cites the line of the code that lacks it (the handler, the query, the model or
+  schema definition), and its anchor is copied from that line; a schema-wide DATA finding cites the schema
+  or model definition line, and a finding across several endpoints cites one representative handler and
+  lists the others in `--evidence "$E"`; it is closed only when every handler listed there is fixed.
+- **A secret or user data is never copied into a record.** A value that is a secret or user data (a
+  credential, token, key, password, cookie, or a form field's value) is never copied into `--anchor`,
+  `--title`, `--evidence` or `--target`; the helper refuses only the shapes it knows (`secret-like-value`),
+  so the rule is the skill's. For a finding about a secret, the anchor is the key or variable name on
+  that line (`ENV API_KEY=`), never the value: the helper checks an anchor as a substring of lines
+  `--line`−3 to `--line`+3 with the whitespace removed from both, so a name without its value is
+  accepted when it has 8 non-space characters (a shorter name takes the neighbouring non-secret text of
+  the same line with it). A URL target has its query string stripped (the helper strips it from
+  `--target` too, but not from the title or the evidence). "Path order", wherever an audit uses it to
+  pick a file, is byte-wise order, `LC_ALL=C sort`.
+- A **whole-file** finding (a below-A test file, a skipped or blocklisted file, a file-wide CQ or Q
+  violation, a file over its size limit, a missing test file for a source file) is a file record that
+  cites `--line 1`, and its title starts "Whole file: …". Line 1 is the convention for "the whole
+  file", never a guess at a location. A class with no anchor requirement (CQ, TEST-GAP, SIZE, …)
+  passes no `--anchor`. A whole-file BUG, SEC or DATA needs an anchor within ±3 lines of its line, so
+  it is filed at the line that shows the defect, not at line 1.
+- A **target** record has no line, so no anchor is checked. A URL or host target needs `--evidence`
+  (refused `missing-field:evidence` without it), whatever the class; a `subject:` target (PROCESS or
+  SEC only) needs neither. Pass no `--anchor` with a target: on BUG, SEC and DATA a given anchor
+  replaces the title as the record's identity, and nothing checks it.
+
+**Free text goes through a variable.** A title, evidence, fix, anchor, file path or target taken from
+a live page, a tool's output, a pentest response or the user's own words can hold a `'`, a `"` or a
+`$(`, which ends a quoted argument or runs a command. Assign every `"$X"` argument of the call just
+before it, one assignment per value, from a quoted heredoc, and pass the variable in double quotes;
+never splice such text into single quotes. This form works in bash 3.2 (macOS `/bin/bash`, which
+mis-parses quotes inside a heredoc nested in `$(…)`, so `T=$(cat <<'ZUVO_TXT' …)` is not used) and
+in zsh:
+
+```bash
+read -r -d '' T <<'ZUVO_TXT' || true
+<the title, verbatim>
+ZUVO_TXT
+read -r -d '' A <<'ZUVO_TXT' || true
+<the anchor, copied from the cited line>
+ZUVO_TXT
+```
+
+`read` drops leading and trailing whitespace and keeps everything else byte for byte; `|| true`
+because `read -d ''` returns 1 at the end of the heredoc. The same two lines set `E`, `U`, `F` and `M` (the assertion the tests lack, for `--missing-assertion`).
+The text must not hold a line that is exactly `ZUVO_TXT`: that line would end the heredoc early and run
+the rest of the text as commands. When it does, pick another delimiter the text does not hold
+(`ZUVO_TXT_2`, …) for that one assignment. Text quoted from the audited code, a page or a user can be
+written to hold such a line on purpose, so for that text make up a fresh suffix for each call, never one
+copied from this document or an earlier call, then compare every line of the text with the whole
+delimiter and choose again until no line matches. A one-word value that starts with `-` is read by the CLI as a flag
+(exit 2): pass it joined to its flag, `--title="$T"`, `--evidence="$E"`, `--anchor="$A"`, which keeps it
+a value byte for byte, and put `--` before the lookup's `"$Q"`.
+
+**The repository root.** `R` is not free text, so it does not use the heredoc. Assign it in the SAME shell
+call as the `backlog-add` command, like the other variables, as a single-quoted literal of the absolute
+path of the repository root the run works in (`R='/abs/path/of/repo'`; a linked worktree's own root; a path
+that holds a `'` uses the heredoc form above) or as `R=$(git -C '/abs/path/of/repo' rev-parse --show-toplevel)`.
+Never `$PWD`, `$(pwd)` or the shell's current directory: it can be reset between calls, and a value assigned
+in an earlier call is gone. The helper checks `--repo` is an existing directory inside a git work tree
+(otherwise exit 2) and resolves it to that work tree's top level itself; the branch tag, the backlog and
+the ledger are those of that checkout. `R` is still the root itself, never a subdirectory: the closing
+commit runs `git -C "$R" add` with the repo-relative `wrote=` paths, which a subdirectory would misresolve. Without `--repo` it
+files into whatever the current directory is, the very trap above.
+
+**A process item keeps its first title.** Its identity is the class, the `subject:` target and the
+first 8 words of the title, so pass the same title on every run (name the gate, not this run's
+circumstances): a repeat then only bumps `seen` on the one record. A reason that changes from run to
+run goes in that run's report, not in the ledger.
+
+**Committing what backlog-add wrote.** `backlog-add` prints `wrote=` followed by the repo-relative
+paths it wrote inside the checkout `--repo` names that git does not ignore (`wrote=-` when there are
+none). They are always under `memory/`: the backlog `memory/backlog.md`, its archive
+`memory/backlog-done.md`, and the findings ledger `memory/findings/` (one JSONL segment per day, branch
+and host, beside the real backlog). A backlog reached through a symlink, or kept in the main checkout
+while the run works in a linked worktree, is outside the checkout and never listed. So a snapshot of
+`memory/` sees every path `wrote=` can name. Every git command below assigns `R` in the same shell
+call first, as "The repository root" says: `R='/abs/path/of/repo'; git -C "$R" …`.
+
+- **The snapshot.** Once, at the run's ORIGINAL start, before its first `backlog-add` call:
+  `R='/abs/path/of/repo'; git -C "$R" status --porcelain -uall -- memory/`. The run saves the output in
+  its own state (execute: `execution-state.md`; refactor: its CONTRACT or batch queue file; build: its
+  plan block), saved verbatim, as a fenced block in the run's state file or as a sidecar file, never
+  collapsed onto one line; an empty snapshot is an empty block. A resumed run reuses the saved snapshot and
+  never takes it again, so its own earlier writes are not mistaken for someone else's. Every path the snapshot LISTED, whatever its status
+  (modified, added, untracked `??`), holds someone else's edits. If the snapshot command fails, the run
+  stages nothing at the end and lists its `wrote=` paths instead.
+- **No per-step commit.** A per-task, per-file or per-step commit never stages a `wrote=` path. Every task
+  and every parallel run writes the same backlog and ledger segment, and a task that ends BLOCKED never
+  reaches its commit.
+- **One closing commit.** A skill that commits makes ONE closing commit,
+  `chore(backlog): record findings of <skill> run`, after its LAST `backlog-add` call. That includes the
+  calls of a review it runs and of steps after its own commits (the test-quality gate, drive-by findings).
+  It stages exactly the union of the `wrote=` paths the run printed, minus three kinds: `wrote=-`; any path
+  for which `R='/abs/path/of/repo'; git -C "$R" check-ignore -q -- <path>` succeeds; and any path the
+  snapshot listed. Then `R='/abs/path/of/repo'; git -C "$R" add -- <path> … && git -C "$R" commit -m "chore(backlog): record findings of <skill> run" -- <path> …`:
+  the pathspec on `commit` commits those paths only, never anything else already staged. The final
+  summary reports it on one line, `Backlog commit: <sha7> | none: nothing to stage | not committed: <path>, …`,
+  followed by `left out: <path> (<reason>)` for each path left out.
+- **Nothing to stage, no commit.** When no `wrote=` path remains (none printed, every one `wrote=-`, or
+  every one excluded), there is no closing commit, and every gate or summary line that asks for it reads
+  `none: nothing to stage`.
+- **A skill run inside another skill** (review inside execute or refactor) makes no closing commit of its
+  own. It lists its `wrote=` paths in its report on one line, `Backlog writes: <path>, …` (or
+  `Backlog writes: none`), and the outer skill's closing commit carries them.
+- **A skill that does not commit** stages nothing and lists the `wrote=` paths in its final summary.
+
+The sentences below are the text skills cite, `<skill>` replaced by the skill's name. Each command is
+one code span, so it can be run as written once the variables are assigned and the placeholders
+filled.
+
+1. **Generic write.** Record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (one call per finding; `backlog-protocol.md` "Persisting a finding"; `--anchor` is required on a BUG, SEC or DATA file record). The helper decides whether it reaches `memory/backlog.md` or only the findings ledger; report the B- or F-id it prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
+2. **Adversarial review.**
+   - **WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` "Persisting a finding").
+   - "Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:<skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: don't dismiss it just because it existed before your changes.
+3. **Process item.** Record it as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`, with `T` the gate's fixed title, the same words on every run (`backlog-protocol.md` "Filing from a skill"). It is kept in the findings ledger, not ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options in `--evidence "$E"`. **The decision slug:** `<slug>` names the decision's subject in 3 to 6 words joined by hyphens, ASCII `[a-z0-9-]`; it is chosen once and written where the skill records the decision (its report entry, or the line it prints before the call), so a resumed run or a sub-agent reuses it from there and never re-derives it, and two different decisions get different slugs.
+4. **Closing, not removing.** Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is closed, never removed: tick it and append its resolution marker (`[FIXED <sha7>]`) as `backlog-protocol.md` "How to Persist Findings" step 3 says; the archive helper moves it ("Archiving is done by the helper, never by hand"). For an audit's tier score: a Tier A score does not prove any one defect is gone: close only an entry whose cited code this run re-read and found fixed.
 
 ## Backlog Table Format
 
@@ -299,7 +477,7 @@ For each finding that should be tracked:
    **The lookup:**
 
    ```bash
-   ~/.zuvo/backlog-archive.py lookup --repo "$PWD" "<candidate text or B-id>"
+   ~/.zuvo/backlog-archive.py lookup --repo "$R" -- "$Q"   # Q: the candidate text or B-id, set like T
    ```
 
    One verdict line, one exit code, and what follows from it. `backlog-add` acts on the same verdicts
@@ -348,8 +526,8 @@ For each finding that should be tracked:
    it verbatim to `$ARCHIVE` under a dated section:
 
    ```bash
-   ~/.zuvo/backlog-archive.py archive --repo "$PWD" --dry-run   # always first
-   ~/.zuvo/backlog-archive.py archive --repo "$PWD"
+   ~/.zuvo/backlog-archive.py archive --repo "$R" --dry-run   # always first
+   ~/.zuvo/backlog-archive.py archive --repo "$R"
    ```
 
    By hand: tick the box (`- [x]`), append the resolution marker (`[FIXED <sha7>]`,

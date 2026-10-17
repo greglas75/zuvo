@@ -6,9 +6,9 @@
 |----------------|-----|------------|
 | `assertIsBool` / `assertIsInt` / `assertIsString` as sole assertion | Tests TYPE not VALUE — accepts both correct and wrong results | `assertEquals`/`assertFalse`/`assertTrue` with specific expected value |
 | `assertInstanceOf` as sole assertion (except factory/DI tests) | Existence test, not behavior | Test a method call and verify its output |
-| `markTestSkipped('Requires database')` + no real assertion | Stub test, inflates coverage with zero value | Write integration test with transaction rollback, or skip file + backlog item |
+| `markTestSkipped('Requires database')` + no real assertion | Stub test, inflates coverage with zero value | Write integration test with transaction rollback, or skip the file and record it with `backlog-add` as a whole-file `TEST-GAP` record (`--line 1`; `backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**) |
 | `assertTrue(true)` as primary assertion | Always-true, passes regardless of production behavior | Let test pass naturally (no exception = pass) or use `expectNotToPerformAssertions()` |
-| TODO comment as test body ("With DB fixtures: create X, verify Y") | Recipe, not a test | Write the actual test or add backlog item |
+| TODO comment as test body ("With DB fixtures: create X, verify Y") | Recipe, not a test | Write the actual test or record it with `backlog-add` as a whole-file `TEST-GAP` record (`--line 1`; `backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**) |
 | Testing a different class than the test file name | `FooServiceTest` testing `BarHelper` constants | Create `BarHelperTest` for BarHelper |
 | `canConnectToDb()` guard wrapping most tests | Mixing unit and integration | Choose one strategy per file |
 | `if (condition) { expect(...) }` / ternary expect | Assertion silently skipped when condition is false — test is green but verifies nothing | Assert precondition first (`expect(condition).toBe(true)`), then assert outcome unconditionally. Or use separate tests for each branch. |

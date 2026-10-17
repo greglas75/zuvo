@@ -35,7 +35,7 @@ Read these files before any work begins:
 
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup and update
+3. `../../shared/includes/backlog-protocol.md` -- Filing findings through `backlog-add`
 4. `../../shared/includes/content-check-registry.md` -- Canonical check slugs (49 checks, CC1-CC8)
 5. `../../shared/includes/audit-output-schema.md` -- JSON output contract (v1.1)
 6. `../../shared/includes/content-fix-registry.md` -- fix_type and safety for tagging fixable findings
@@ -76,7 +76,7 @@ This audit is read-only against source files.
 
 **Allowed write targets:**
 - `zuvo/audits/` for the report file (`.md` and `.json`)
-- `memory/backlog.md` only when `--persist-backlog` is explicitly enabled
+- `memory/backlog.md` and `memory/findings/` (written by `backlog-add`) only when `--persist-backlog` is explicitly enabled
 
 **FORBIDDEN:**
 - Modifying any content files
@@ -94,7 +94,7 @@ This audit is read-only against source files.
 | `--quick` | Source-only grep checks, no agent dispatch. Runs CC1-CC3 grep patterns + CC5/CC6 path resolution. Skips CC4/CC7/CC8 entirely. Checks requiring agents or live access return `INSUFFICIENT DATA`. |
 | `--lang <code>` | Force language for spell/typography checks (ISO 639-1: `pl`, `en`, `de`, `tr`, etc.) |
 | `--check-external` | Enable external link checking (requires network access) |
-| `--persist-backlog` | Append findings to memory/backlog.md |
+| `--persist-backlog` | Record findings through `backlog-add` (Phase 5) |
 | `--profile <type>` | Content profile: `blog`, `docs`, `ecommerce`, `marketing`. Adjusts thresholds for CC7 content completeness checks. |
 
 ---
@@ -470,16 +470,19 @@ WARNING → fix if localized. INFO → ignore.
 
 ## Phase 5: Backlog (optional)
 
-When `--persist-backlog` is enabled, persist findings per
-`shared/includes/backlog-protocol.md`:
+When `--persist-backlog` is enabled, record each finding through `backlog-add`, one call per finding (`shared/includes/backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here):
 
 | Finding status | Backlog action |
 |----------------|---------------|
-| FAIL (blocking) | Add as OPEN with category `content-blocking` |
-| FAIL (scored) | Add as OPEN with category `content-quality` |
-| ADVISORY | Add as OPEN with category `content-advisory` |
+| FAIL (blocking) | Record (`backlog-add`), `E` starting `content-blocking:` |
+| FAIL (scored) | Record (`backlog-add`), `E` starting `content-quality:` |
+| ADVISORY | Record (`backlog-add`), `E` starting `content-advisory:` |
 
-**Fingerprint format:** `{file}|{dimension}|{check}`
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source content-audit --file "$F" --line <n> [--anchor "$A"] --evidence "$E" --title "$T"` when a content or template file causes it. A finding on a live page with no repository file causing it (`--live-url`) takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`, whatever the class: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source content-audit --target "$U" --evidence "$E" --title "$T"`, `U` the page URL. A live defect that a repository file causes is filed by that file (the file form), with the URL in `--evidence "$E"`; the target form is only for a finding with no repository file causing it. `<N>` is your confidence that the finding is real. This audit files `CQ` or `BUG` only: `<C>` is `CQ` for a failed check and `BUG` only when the finding names the input and the wrong output; BUG takes `--anchor "$A"`, copied from the line that shows the defect ("The location rule"). `T` starts with the finding's `check` ID, `<check-id>: <title>` (e.g. `mojibake-detected`), so a later run can find the entry. A check that fails for the whole file is a whole-file finding: `--line 1`, a "Whole file: ..." title (after the check ID), and no `--anchor`; a whole-file BUG is filed at the line that shows the defect instead, with `--anchor "$A"` copied from it, never at line 1. Assign "$R", "$E" and "$T" before each call, "$F" only for a file finding, "$U" only for a target finding, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+An open entry is closed, never removed (**Closing, not removing**), when this run re-read its cited code and found it fixed. Close each open entry with the same file (or target) and the same title check ID whose cited code this run re-read and found fixed (for a file entry, its line and anchor); leave every other entry with that file and check ID open. A target (live-page) entry is closed only by a later live audit that re-reads the page, never by a source-file patch alone. A legacy entry written in the old `{file}|{dimension}|{check}` fingerprint format is matched by that fingerprint's file and check segments.
+
+Recording findings through `backlog-add` commits and stages nothing. This audit lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ---
 

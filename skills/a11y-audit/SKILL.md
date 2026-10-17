@@ -69,7 +69,7 @@ Parse `$ARGUMENTS` for these flags:
 | `--standard AA\|AAA` | Compliance level (default: AA) |
 | `--legal ada\|eaa\|508` | Focus on a specific legal standard |
 | `--max-files [N]` | Cap audit to N files (default: 40) |
-| `--persist-backlog` | Emit backlog entries for CRITICAL/HIGH findings |
+| `--persist-backlog` | Record CRITICAL/HIGH findings via `backlog-add` (also done whenever a CRITICAL finding exists) |
 
 | Mode | Scope | Phases | Browser |
 |------|-------|--------|---------|
@@ -569,14 +569,15 @@ SCORE: [N]% -- Grade [A/B/C/FAIL]
 
 ### 5.4 Backlog Persistence
 
-If `--persist-backlog` is set or CRITICAL findings exist:
+One rule: when `--persist-backlog` is set, or the run has at least one CRITICAL finding, every CRITICAL or HIGH finding of the run goes through `backlog-add` (the HIGH ones too, not only the CRITICAL that triggered it), one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars and the dedupe are the protocol's, so compute no fingerprint and no `seen` count). With neither the flag nor a CRITICAL finding, nothing is recorded. `<level>` is `critical` or `high`.
 
-For each CRITICAL or HIGH finding, persist to `memory/backlog.md`:
-```markdown
-- B-{N} | {file}:{line} | A11Y-{NNN} | {WCAG criterion}: {description} | seen:1 | confidence:{0-100} | source:a11y-audit | {date}
-```
+A **Generic write** per finding. In the repository, an A2 keyboard trap or an A5 form finding that names the input and the wrong result is a `BUG` file record, and takes `--anchor "$A"`, copied from the line that shows the defect or, for something absent (a control with no label, no key handler), from the line of the code that lacks it ("The location rule"): `~/.zuvo/backlog-add --repo "$R" --class BUG --conf <N> --source a11y-audit --file "$F" --line <n> --anchor "$A" --severity <level> --title "$T"`. Every other finding is a `CQ`, with no anchor: `~/.zuvo/backlog-add --repo "$R" --class CQ --conf <N> --source a11y-audit --file "$F" --line <n> --severity <level> --title "$T"`; a finding that covers the whole component is a whole-file finding (`--line 1`, a "Whole file: ..." title).
 
-**Dedup:** If the same `file|WCAG criterion` combo exists, increment `seen:N` and update the date.
+A Phase 2 finding on the live page with no repository file causing it is a target record, which takes no anchor at all (`--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`), with `U` the page URL and its own class by the same test: a `BUG` for an A2 or A5 finding that names the input and the wrong result, `~/.zuvo/backlog-add --repo "$R" --class BUG --conf <N> --source a11y-audit --target "$U" --evidence "$E" --severity <level> --title "$T"`; otherwise a `CQ`, `~/.zuvo/backlog-add --repo "$R" --class CQ --conf <N> --source a11y-audit --target "$U" --evidence "$E" --severity <level> --title "$T"`. `E` holds the axe-core rule, the selector and the element's tag and attributes without any `value=` attribute or field content, and `U` has no query string; a secret or user data is never copied into a record (`backlog-protocol.md` "Filing from a skill", "The location rule", the secrets sentence).
+
+Assign "$R" and "$T" before each call, "$F" and "$A" only for a file finding ("$A" only for a `BUG`), "$U" and "$E" only for a live-page finding, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ### 5.5 Save Report
 

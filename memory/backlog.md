@@ -5049,34 +5049,6 @@ confidence:98 source:self-account of the first live verify run 2026-10-06
 - B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
   collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
 
-- [x] B-20261009-DEDUP-SIGNATURE-ONLY [OBSOLETE 2026-10-15] [P2][process][conf 95]
-**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|signature-match-only
-**Source:** owner's question 2026-10-09 — "czy agent przed dodaniem wpisu sprawdza czy podobny nie istnieje?"
-**What:** `skills/backlog/SKILL.md` "Adding Items" step 5 mandates `backlog-archive.py lookup` before an add, but the
-lookup keys on `normalize_signature` = cited-path basename + the 8 words AFTER the path. Measured on the live file
-(`--repo ~/DEV/zuvo-plugin`, exit code taken without a pipe):
-  - exact text of an existing entry citing `scripts/adversarial-review.sh:1744` -> `rc=10 OPEN fp:dd1533472ee9` (correct)
-  - the SAME file:line, same defect, different words                            -> `rc=0 ABSENT fp:4b9363e41053`
-  - rewording only BEFORE the path (`FILE:` -> `see`), 8 words intact           -> `rc=10 OPEN` (still correct)
-  - an existing entry with NO cited path (`B-leads-T1-jsonl-ext`), byte-exact   -> `rc=0 ABSENT`
-So dedup catches a re-paste and misses the same problem described by another session — which is the normal case, since
-every session writes its own words. Entries that cite no path are outside the check entirely. Measured scale of the
-symptom: 116 open entries sit on 26 files, `scripts/adversarial-review.sh` alone holding 32.
-**Fix:** add a similarity tier under the exact signature — same cited path (any basename match) plus a token-overlap or
-embedding score over the body, reported as `SIMILAR` with the candidate ids, distinct from `OPEN`. The decision stays the
-agent's; the lookup's job is to show the neighbours it already has the index for (`~/.zuvo/backlog-index.jsonl`).
-**Resolution 2026-10-15 — NOT the similarity tier this asked for; the write path stopped needing one.** `backlog-add`
-(landed 2026-10-14) keys a finding on `CLASS | file | anchor`, where the anchor is text copied from the cited line, so
-"paraphrased titles collapse" by construction instead of by scoring. Probed on a scratch repo, two sessions filing the
-same defect in completely different words:
-  - same `--anchor`, titles sharing no content word -> `BUMPED … seen=2`, sources merged into the one entry
-  - same `--anchor`, `--line` off by one            -> `BUMPED … seen=3` (the anchor is the identity, not the line)
-  - DIFFERENT `--anchor` line, both legitimately within the ±3 the command allows -> `ACCEPTED` a second entry
-So the filed symptom ("dedup misses the same problem described by another session — the normal case") is gone for
-everything written through `backlog-add`, and adding a token-overlap tier now would introduce a SECOND notion of
-identity next to the structural one. What is left is narrower than what was filed and is tracked separately as
-B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS. The free-text `lookup` keeps its exact-signature behaviour, which is correct for
-what it is now: the resolver for legacy and hand-written entries, where there is no anchor to key on.
 
 - [ ] B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS [P4][process][conf 85]
 **Fingerprint:** scripts/zuvo-home/zuvo_backlog_admit.py|fingerprint|anchor-choice-splits-identity
@@ -5165,55 +5137,7 @@ text from TGM repositories, so it stays out of public `zuvo-plugin`. Scoring the
 against it would send client finding text to OpenRouter -> the provider: that is an egress decision
 for the owner, not something this entry authorises. | severity: low | category: Tooling | conf: 85
 
-- [x] B-20261009-DEDUP-EMPTY-QUERY-OPEN [FIXED 4505da07] [P2][correctness][conf 95]
-**Fingerprint:** ~/.zuvo/backlog-archive.py|lookup|empty-query-false-open
-**Source:** probing the dedup path for the question above, 2026-10-09.
-**What:** an empty or whitespace-only query returns a false positive pointing at an unrelated, already-DONE section:
-  `lookup --repo ~/DEV/zuvo-plugin ""`    -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
-  `lookup --repo ~/DEV/zuvo-plugin "   "` -> `rc=10 OPEN fp:3eb416223e9e - backlog.md:186`
-backlog.md:186 is `## B-noverify-hardening — DONE`. A nonsense-but-nonempty query correctly returns `rc=0 ABSENT`. So the
-failure is specific to a signature that normalizes to nothing. This is worse than a fail-open: the SKILL's contract for
-`OPEN` is "update that entry in place", so an agent whose candidate text carries no signature words is instructed to
-overwrite a closed, unrelated entry. Any candidate that is only a path, only punctuation, or stripped to nothing by
-`strip_resolution_markers` lands here.
-**Fix:** `lookup` refuses an empty normalized signature with its own exit code (not 0/10) and a message naming what was
-stripped; a test seeds "", "   ", a path-only query and a markers-only query and asserts none of them returns OPEN.
-**Resolution 4505da07:** both halves, because the filed symptom was one key rather than one command. `normalize_signature`
-returns `"|"` for anything that strips to nothing, so EVERY such line hashed to `fp:3eb416223e9e` — measured across
-`~/DEV` 2026-10-13: 11 of 58043 entries, 8 of them in ONE archive (tgm-survey-platform). A fixture of two unrelated
-resolution lines, one per file, also makes `verify` report a namespace VIOLATION, and `append-runlog` runs `verify` as a
-BLOCKING gate, so the collision cost more than the reported lookup did. `entry_key` now keys a no-content signature off
-the raw line (same line = same entry, so archiving stays idempotent; two different lines stop being one), and `lookup`
-refuses such a candidate before reading the files: verdict `NO-SIGNATURE`, exit **13** (12 is `status`'s OVERDUE), naming
-what was stripped. Documented in `backlog-protocol.md`, `skills/backlog/SKILL.md` and `drive-by-findings.md`, with a test
-that fails if the code answers something the contract does not carry. Tests written first and seen red (12 FAIL).
-H10 blocked the key rotation, as designed: rather than refreshing the frozen snapshot, its oracle gained a PREDICATE for
-exactly this case (identical in every other field, frozen side keyed on nothing, new keys distinct), proven narrow
-against a mutant that rotates every key — real module `OK 878 (1 no-signature key(s) rotated)`, mutant still FAILS.
-Also removed `[--json]` from the usage header: argparse rejects it (`unrecognized arguments: --json`).
 
-- [x] B-20261009-DEDUP-ADD-MODE-ONLY [FIXED 55d4b354] [P3][process][conf 85]
-**Fingerprint:** skills/backlog/SKILL.md|add-mode|dedup-not-enforced
-**Source:** owner's question 2026-10-09, same probe.
-**What:** the dedup check lives only in the SKILL's `add` mode. The actual practice — every `docs(backlog):` commit in this
-repo's history, mine included — is a direct append to `memory/backlog.md` followed by a commit, which never enters `add`
-mode and so never calls `lookup`. Nothing enforces it either: `.git/hooks/post-commit` does not exist here and the global
-`hooks/git-dispatch/` chain gates pushes for pipeline entry, not backlog appends.
-**Fix:** move the check to where the write happens — a commit-time or pre-push hook that, for a commit touching
-`memory/backlog.md`, runs `lookup` on each added entry and prints `SIMILAR`/`OPEN` neighbours as a warning (never a block;
-a near-duplicate is sometimes deliberate). Depends on B-20261009-DEDUP-SIGNATURE-ONLY for the similarity tier and on
-B-20261009-DEDUP-EMPTY-QUERY-OPEN, since a hook that fires on every append would hit the false OPEN immediately.
-**Resolution 55d4b354:** `hooks/backlog-hand-append-warn.sh`, chained from the global `git-dispatch/pre-commit`. Both
-stated dependencies were met first: the false OPEN is fixed (B-20261009-DEDUP-EMPTY-QUERY-OPEN), and the similarity tier
-turned out not to be needed, because `backlog-add` keys on `CLASS | file | anchor` (B-20261009-DEDUP-SIGNATURE-ONLY,
-OBSOLETE). WARNS, NEVER BLOCKS — the dispatcher discards its status with `|| true`, so a future non-zero cannot start
-failing commits over a backlog line. It does NOT re-run `lookup`: the signal is the `ledger: F-<hex>` link only
-`backlog-add` can write, which makes the check a substring test on the staged lines (no python, no repo read, no lock).
-Silent on the hand edits the protocol MANDATES — `- [x]` and `[REGRESSION`. Test 17/0: exit 0 on every path, the count
-and its three-line cap, and an unborn HEAD, where `git diff --cached HEAD` would otherwise print a fatal on a repo's
-first commit. Refreshing the pinned dispatcher identity in `install-refactor-gate.sh` is part of the same commit; the
-nine failures skipping it caused are in that commit's message. NOT measured: how often entries still arrive by hand now
-that `backlog-add` exists — since it landed (2026-10-14) no open entry has been added at all, historically 990 of 1000.
 
 
 
@@ -5403,6 +5327,9 @@ worktree copy is stubbed.
 - [ ] B-20261014-SPEC-RUNNER-EMPTY-MODULE tests/hooks/test-backlog-add.sh:21 — [BUG] the REQUIRED guard proves only that each spec file exists; a spec that collects zero tests (a broken import guard, a renamed class) still reads green | evidence: adversarial pass 2 chunk E | fix: count tests per module (unittest loader) and FAIL a REQUIRED module with zero | severity: low | source: review | conf: 35 | defer-reason: NIT | 2026-10-14
 - [ ] B-20261014-LOOKUP-INHERITS-GIT-ENV scripts/zuvo-home/zuvo_backlog_lookup.py:lookup — [BUG] [below-threshold] lookup runs backlog-archive.py with the caller's whole environment, while vcs._run and findings._git drop the git location variables a hook exports; a backlog-add whose --repo differs from the hook's GIT_DIR repo asks the archiver about the wrong repo and can read ABSENT, filing a duplicate (the specs that ran the real archiver failed exactly this way under a decoy GIT_DIR, rt 1791933860-3900752-26812) | evidence: adversarial pass 2 chunk G; reproduced for the tests only | fix: pass the archiver an env without vcs._GIT_LOCATION_ENV (share the tuple through a small module both import) | severity: low | source: review | conf: 40 | defer-reason: below-threshold | 2026-10-14
 - [ ] B-20261014-INFRA-AGENTS-SIGPIPE-FLAKE tests/infra-suite/test-infra-agents.sh:54 — [BUG] assert_body_grep pipes awk into `grep -qE` under `set -o pipefail`: grep -q exits at the first match, awk dies of SIGPIPE, and the pipeline fails — 1 run in 6 failed on the farm with the files unchanged | evidence: rt 1791933292-3823723-6045 (5 OK, 1 FAIL); found while running the review's prose suites | fix: read into a variable first, or `grep -E … >/dev/null` without -q | severity: medium | source: drive-by:review | conf: 90 | defer-reason: drive-by (outside the reviewed files) | 2026-10-14
+- [ ] B-backlog-hand-append-warn-BUG-7e8096ec hooks/backlog-hand-append-warn.sh:45 — [BUG] The hand-append warning prints a backlog-add hint with --repo "$PWD", so an agent whose shell cwd was reset files the finding in the wrong checkout | evidence: backlog-protocol.md "The repository root" forbids $PWD; the prose-commands test exempts this hook via CWD_REPO_OK only because the part-2 plan left it untouched | fix: - | severity: medium | source: drive-by:review | conf: 85 | seen: 1 | ledger: F-7e8096ecdf14 | 2026-10-16 [branch:feat/backlog-noise-bar-part2]
+- [ ] B-SKILL-BUG-76c3f5af skills/a11y-audit/SKILL.md:650 — [BUG] A failed validity gate in a11y-audit (and 14 other audits) sets INCOMPLETE but files no incomplete PROCESS item, so the failure leaves no ledger record, unlike code/db/security/structure-audit | evidence: no subject:<skill>-incomplete call in a11y, api, ci, container, content, dependency, design-review, env, geo, infra, pentest, performance, seo, test-audit (retro too); code-audit:720 shows the pattern | fix: - | severity: medium | source: drive-by:review | conf: 80 | seen: 1 | ledger: F-76c3f5aff5ef | 2026-10-16 [branch:feat/backlog-noise-bar-part2]
+- [ ] B-append-runlog-BUG-d7474c1b scripts/zuvo-home/append-runlog:262 — [BUG] append-runlog runs backlog verify, archive and groom coverage with --repo "$PWD", so a call from a reset cwd archives and checks another checkout's backlog | evidence: same --repo "$PWD" at scripts/zuvo-home/append-runlog:296 (archive) and :341 (groom coverage); observed 2026-10-16: the archive move happened in whatever checkout the call ran from | fix: - | severity: medium | source: drive-by:review | conf: 85 | seen: 1 | ledger: F-d7474c1b1534 | 2026-10-16 [branch:feat/backlog-noise-bar-part2]
 - [ ] B-20261015-BPQ-TEST-TIER-C tests/adversarial/test-byteplus-quota-fallback.sh:43 — [TEST] tier C after the 2-iteration test-audit cap (Q7/Q11 on scripts/lib/adversarial-lanes-http.sh changed lines): untested quota-file location branches (:87), a matching but unparseable reset date (:119), a quota body without .message; real clock (AP26) and a 16 s sleep for the low-budget branch (AP15) — a fake clock would remove both. Source: build byteplus-or-fallback, report zuvo/audits/test-quality-audit-2026-10-15.md. seen:1 confidence:60
 - [ ] B-20261015-RUNALL-LAST-FAILED-NAME-LOST tests/run-all.sh:311 — [BUG] `printf '%s' "$FAILED_NAMES" | while IFS= read -r n` drops the last name when FAILED_NAMES has no trailing newline: a run with one failed child prints "FAILED children:" and no name (seen 2026-10-15, PASS=214 FAIL=1). Use `printf '%s\n'` or `|| [ -n "$n" ]`. seen:1 confidence:85
 - [ ] B-pipeline-gate-lib-BUG-8dd0b449 hooks/lib/pipeline-gate-lib.sh:1201 — [BUG] The ZUVO_ALLOW_ADHOC=1 escape is described as '(logged)' in 6 places, but no gate records it — only stderr; the only write to gate-bypass.log is in the control-block gate (with a different env variab… | evidence: [HK-ADHOC-NEVER-LOGGED] partial by codex gpt-6.1-sol (verify-01) @ 21fe2680; hooks/lib/pipeline-gate-lib.sh:1201-1203 only checks ZUVO_ALLOW_ADHOC and returns a status. hooks/pre-push-gate.sh:53-55,148-150 and hooks/refactor-safety-gate.sh:72 print to stderr. hooks/zuvo-stop-pipeline-gate.sh:45 and hooks/pre-commit-adversarial-gate.sh:265 are silent. The only gate-bypass.log write found: hooks/control-block-bench-gate.sh:64-67, for a different variable. | fix: Move the write from control-block to pipeline-gate-lib as pg_log_bypass <gate> <reason> (ts, repo, HEAD, gate, is_agent) and call it from pg_allow_adhoc and refactor-safety-gate/block-no-verify; control-block uses the same function. (map: https://tgm-mockups.pages.dev/v/zuvo-plugin/duplicated-code#… | severity: low | source: dup-map | conf: 80 | seen: 1 | ledger: F-8dd0b449670e | 2026-10-15

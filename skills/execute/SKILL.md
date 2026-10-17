@@ -355,7 +355,7 @@ Minimum fields:
 - `verify`: command(s) and exit code(s) — implementation-detail check
 - `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-AC1.txt,AC3@zuvo/proofs/task-4-AC3.txt`) — behavior check
 - `codesift`: `available`, `unavailable`, or `index-failed`
-- `backlog-adds`: integer count for this task
+- `backlog-adds`: integer, the `backlog-add` calls this task made that kept a finding: any verdict but REFUSED and DISCARDED (ACCEPTED, BUMPED, REOPENED, LEDGER, LEDGER-BUMPED), process items included; the Final Summary's `backlog: a, ledger: b` split is a breakdown of the same calls
 - `failure-strategy`: `halt`, `skip-and-continue`, or `degraded:<one-line description>` — the value the task's `**Failure:**` line declares in the approved plan, copied verbatim (the `degraded:` description is opaque text: never tokenised, never split). **Defaults to `halt` when the plan line is absent**, which is byte-identical to pre-rule-20 behavior. Never inferred, upgraded, or invented at run time — it is read from the plan or it is `halt`.
 
 **Per-file scoring is mandatory.** A telemetry block reporting `q_gates: 19/19 aggregate` is rejected by the completion gate. Aggregate averaging hides per-file zeros — the documented proximate cause of the 2026-04-22 codec session shipping with Q7=0 and Q11=0 in specific files while telemetry reported all-green.
@@ -386,7 +386,8 @@ failure-strategy=halt
 ## Pre-loop guards (run once before the first task)
 
 - **Worktree / shared-tree pre-flight — RESOLVE `repo_root`, don't bail to single-agent.** Run `git worktree list`. Determine the ONE tree this plan targets (the worktree checked out on the plan's `branch:`, else the current checkout), set `repo_root` to its absolute path, and **store it in `project-context.md`** so every sub-agent dispatch (Step 2) and the resume path get the same root. Sub-agents then `cd $repo_root` + use absolute paths, so **multi-agent runs correctly even when the session CWD is the main checkout and the work lives in a worktree** — you do NOT need a worktree-rooted session and you do NOT drop to single-agent for this. STOP (ask the user) ONLY on genuine ambiguity: the plan's branch is checked out in **two** worktrees, or in **none** (can't locate the tree). Otherwise resolve and proceed. (Pairs with `zuvo:worktree`.)
-- **Baseline test snapshot.** Run the suite ONCE at session start and record which tests are already red (`baseline-failures: [...]` in `execution-state.md`). Per-task verification then compares against this baseline — a test that was red before your change is a pre-existing failure to backlog, NOT a regression to re-investigate every task.
+- **Backlog snapshot (before the baseline below, which may call `backlog-add`).** Once, at the run's original start: `R='<repo_root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the `repo_root` the pre-flight above resolved, assigned in the same shell call. Save the output in `execution-state.md` under `backlog-snapshot:`, verbatim as a fenced block (an empty snapshot is an empty block, never one line). Every `wrote=` path a later `backlog-add` call prints is appended at once under `backlog-writes:` in the same file, so the closing commit of a resumed run still holds the paths of the tasks before it; a resumed run reuses the saved snapshot and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+- **Baseline test snapshot.** Run the suite ONCE at session start and record which tests are already red (`baseline-failures: [...]` in `execution-state.md`). Per-task verification then compares against this baseline — a test that was red before your change is a pre-existing failure, NOT a regression to re-investigate every task. If the baseline is red, it is recorded ONCE, here, before the loop, as a process item with a gate subject (a green baseline makes no call): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source execute --target subject:execute-baseline-red --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**; `T` is the fixed title "test suite red before the run", the same words on every run, and `E` lists the failing tests; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the Final Summary under "Recorded Findings".
 - **Per-task verification is TARGETED, full suite runs ONCE at Phase Final. (HARD — measured sink.)** A task's Verify step runs the tests/type-check for the TOUCHED package/files (`turbo run test --filter=<pkg>`, the package's own script, or the specific test files) — NEVER the whole monorepo suite. The FULL suite + build runs exactly twice per plan: the baseline snapshot above and once at Phase Final (smoke). The 2026-07-17 timing forensics measured execute/plan sessions re-running the full turbo-test suite on EVERY task and every plan revision — pure multiplication of a fixed cost by N tasks with near-zero added signal (the baseline already isolates pre-existing reds). A reviewer or fix-loop iteration re-verifies with the SAME targeted scope, not an escalated one.
 - **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME file concurrently — **production OR test** (a shared test file loses edits exactly like a shared service; the rule said "production" until 2026-08-02) (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
 - **DB integration tasks.** For a task that changes schema, generate the migration via `migrate diff` / hand-written SQL applied with `psql` against a clean DB — NEVER `migrate dev` against a drifted local DB (it silently rewrites history / drops data). Verify the migration applies forward AND the rollback is present.
@@ -399,8 +400,9 @@ The 2026-07-17 post-mortem measured a plan growing 32→37 tasks in flight, drag
 Playwright, DB fixtures, live preview and reducer refactors: scope creep turned one feature into a
 37-hour, 127-file branch. Rules:
 
-1. The task list is FROZEN at plan approval. New work → `memory/backlog.md` (with a one-line reason)
-   or a NEW plan/PR after this one lands. No new task numbers mid-run, ever.
+1. The task list is FROZEN at plan approval. New work is recorded as a process item through
+   `backlog-add` (follow-up work the run will not do: "Backlog Persistence" below, **Process item**,
+   `T` naming the work and `E` its one-line reason) or becomes a NEW plan/PR after this one lands. No new task numbers mid-run, ever.
 2. A discovered BLOCKER that genuinely prevents a planned task (missing migration, broken contract)
    is handled as that task's fix-scope — the minimal unblocking change, recorded in telemetry — not
    as a new feature task.
@@ -540,8 +542,8 @@ Proceed to spec review (step 4).
 Read the concerns list. Classify each concern:
 
 - **Correctness concern** (wrong behavior, missing edge case, broken contract): treat as BLOCKED. Do not proceed to review. Present the concern to the user with the implementer's analysis.
-- **Style/preference concern** (naming, structure, alternative approach): note the concern. Proceed to review. Persist to backlog after task completion.
-- **Scope concern** (discovered adjacent work needed): note the concern. Proceed to review. Add to backlog as a follow-up task.
+- **Style/preference concern** (naming, structure, alternative approach): note the concern. Proceed to review. Record it through `backlog-add` with `--source execute` ("Backlog Persistence" below, **Generic write**) only after the spec and quality reviews settle, before Step 8: a concern a review made the implementer change gets no call (**Closing, not removing**). A task that stops BLOCKED before Step 8 records its still-open style and scope concerns as it stops, so none is lost with the task.
+- **Scope concern** (discovered adjacent work needed): note the concern. Proceed to review. Before Step 8, record it through `backlog-add` as a process item: follow-up work the run will not do ("Backlog Persistence" below, **Process item**).
 
 #### NEEDS_CONTEXT
 
@@ -682,7 +684,7 @@ Read the issue list. Each issue has a file:line reference and a description of t
 **Limit:** Maximum 3 spec review iterations per task. After 3 iterations with unresolved issues, **do NOT pause to ask the user `fix / accept / abort`.** Apply the **Post-Cap Autonomous Disposition** from `no-pause-protocol.md`:
 - Reviewer objectively right + determinate fix (maps to an explicit plan/AC requirement) → apply ONE final implementer pass conforming the contract, verify tests/tsc/build, continue. Record `[POST-CAP: FIXED]`.
 - Spec itself wrong / contradicts the codebase → amend the plan task's contract, record `[POST-CAP: SPEC-AMENDED]`, continue.
-- Genuine irreversible product call → safest reversible default + backlog, record `[POST-CAP: DEFERRED]`, continue (BLOCK only the one item if every path is destructive).
+- Genuine irreversible product call → safest reversible default, the decision recorded through `backlog-add` as a process item ("Backlog Persistence" below, **Process item**), record `[POST-CAP: DEFERRED]`, continue (BLOCK only the one item if every path is destructive).
 
 The agent decides and continues — it does not wake the user. Every `[POST-CAP: ...]` line goes into the Final Summary for morning review. A spec-vs-code contract gap is case (a) or (b), never a reason to halt overnight.
 
@@ -715,11 +717,11 @@ Proceed to the comment pass (step 7a).
 
 Read the failure details. Each failure has a gate ID, file:line reference, and what needs fixing.
 
-**Pre-existing vs diff-introduced (only the latter blocks).** A critical-gate-0 failure (CQ critical gate, a red test) blocks this task ONLY if THIS task's diff introduced it. Cross-check the cited `file:line` against the staged diff and the session `baseline-failures`: if the failure pre-existed your change (it is in the baseline / outside the diff hunks), do NOT block the task on it — backlog it as pre-existing tech debt and proceed. Blocking every task on the repo's pre-existing redness stalls the whole plan for debt this task did not create.
+**Pre-existing vs diff-introduced (only the latter blocks).** A critical-gate-0 failure (CQ critical gate, a red test) blocks this task ONLY if THIS task's diff introduced it. Cross-check the cited `file:line` against the staged diff and the session `baseline-failures`: if the failure pre-existed your change (it is in the baseline / outside the diff hunks), do NOT block the task on it — record it through `backlog-add` as pre-existing tech debt, unless it is a test already in `baseline-failures`, which the baseline item covers ("Backlog Persistence" below: `--source execute` when the file is one this task edits, that is, a file in the task's Files list or its diff; `--source drive-by:execute` when it is not) and proceed. Blocking every task on the repo's pre-existing redness stalls the whole plan for debt this task did not create.
 
 **Re-dispatch the implementer** with the quality reviewer's findings. The implementer fixes the issues. Then re-dispatch the quality reviewer.
 
-**Limit:** Maximum 3 quality review iterations per task. After 3 iterations with unresolved failures, **do NOT pause to ask the user.** Apply the **Post-Cap Autonomous Disposition** from `no-pause-protocol.md`: a CQ/Q gate failure with a determinate fix → apply it and continue (`[POST-CAP: FIXED]`); a gate that is a genuine false-positive for this code shape → log the rule-mismatch to backlog and continue (`[POST-CAP: DEFERRED]` with the gate ID + why it is a false positive); a real design disagreement → backlog both positions, take the safest default, continue. Surface every `[POST-CAP: ...]` in the Final Summary. The pipeline keeps moving; the user reviews dispositions in the morning, not mid-run.
+**Limit:** Maximum 3 quality review iterations per task. After 3 iterations with unresolved failures, **do NOT pause to ask the user.** Apply the **Post-Cap Autonomous Disposition** from `no-pause-protocol.md`: a CQ/Q gate failure with a determinate fix → apply it and continue (`[POST-CAP: FIXED]`); a gate that is a genuine false-positive for this code shape → record the rule-mismatch through `backlog-add` as a process item ("Backlog Persistence" below, **Process item**; `T` asks whether the gate ID is a false positive for this code shape, `E` says why) and continue (`[POST-CAP: DEFERRED]` with the gate ID + why it is a false positive); a real design disagreement → record it through `backlog-add` as a process item with both positions in `E`, take the safest default, continue. Surface every `[POST-CAP: ...]` in the Final Summary. The pipeline keeps moving; the user reviews dispositions in the morning, not mid-run.
 
 ### Step 7a: Comment Pass (MANDATORY — every task, before the adversarial review)
 
@@ -802,14 +804,14 @@ Two variants, matching how the helper was actually invoked. Both ask **git** for
   | sort -u > zuvo/context/task-<task-N>-scope.txt
 ```
 
-For each finding, confirm its file path appears in that scope list. A CRITICAL/WARNING finding targeting a file NOT in the review patch is a backlog candidate (persist via `backlog-protocol.md`), NOT a task blocker — only findings intersecting the reviewed file set gate the commit. This prevents whole-repo scans from misattributing pre-existing findings to the task's diff.
+For each finding, confirm its file path appears in that scope list. A CRITICAL/WARNING finding targeting a file NOT in the review patch is recorded through `backlog-add` with `--source drive-by:execute` ("Backlog Persistence" below; `drive-by-findings.md`), NOT a task blocker — only findings intersecting the reviewed file set gate the commit. This prevents whole-repo scans from misattributing pre-existing findings to the task's diff.
 
 Wait for complete output. Then:
 - **Binary unavailable / no verdict produced** → `BLOCKED_ADVERSARIAL_UNAVAILABLE`. Do not commit.
 - **Plan-accepted risk** → if a CRITICAL maps to a risk the plan EXPLICITLY accepts (match the plan's `## Review Trail` entries and any per-task `> **Accepted risk note**` block), do NOT auto-fix AND do NOT pause to ask — the plan already made this decision at the approved entry gate. Confirm-accept-as-planned automatically: record `[POST-CAP: DEFERRED] adversarial CRITICAL <X> — accepted per plan Review Trail` in the Final Summary, proceed. (Per `no-pause-protocol.md`: re-litigating a plan-accepted risk mid-run is the waste; the user reviews the disposition in the Final Summary.) Only if the CRITICAL is a NEW risk the plan did NOT anticipate does it route to the normal CRITICAL fix path below.
 - **CRITICAL** → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial on the updated staged diff.
 - **WARNING** (< 10 lines, localized) → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial.
-- **WARNING** (large/cross-file) or **INFO** → proceed only if logged as known concerns (max 3, one line each) and persisted to backlog.
+- **WARNING** (large/cross-file) or **INFO** → proceed only if logged as known concerns (max 3, one line each) and each recorded through `backlog-add`: `--source execute` in a file this task edits, `--source drive-by:execute` otherwise ("Backlog Persistence" below; `backlog-protocol.md` "Filing from a skill", **Adversarial review**).
 
 **Re-run ECONOMY (HARD caps — the loop multiplier measured 2026-07-18: ~10 full 4-min adversarial
 invocations for ONE task).** Per task: at most **2 FULL-diff runs + 1 DELTA run**, total. After a fix,
@@ -821,7 +823,7 @@ with base-code proof becomes KNOWN: record it in the FACTS block of any later in
 re-triage it (the field run re-litigated the same legacy-RS-403 semantics three times because each
 fresh provider pass re-discovered it).
 
-**Retry limit (distinct vs. relooped).** Track a finding fingerprint (`file|rule-id|signature`, same scheme as Backlog Persistence) for each CRITICAL across iterations:
+**Retry limit (distinct vs. relooped).** Track a loop-local finding fingerprint (`file|rule-id|signature`, a key for this retry count only, never written anywhere) for each CRITICAL across iterations:
 - Each iteration surfaces a NEW distinct CRITICAL fingerprint (progressive hardening) → allow continued iteration up to a ceiling of 6. A blunt 3-cap would ship a real bug when several distinct CRITICALs are legitimately found in sequence.
 - The SAME CRITICAL fingerprint reappears after a fix attempt (relooped, not converging) → hard-stop at 3 with `BLOCKED_ADVERSARIAL_LOOP` and surface the exact findings to the user.
 
@@ -888,7 +890,7 @@ For the current task:
 
 Only after spec review (COMPLIANT), quality review (PASS), the comment pass (`[GATE: comment-pass]` PASS or N/A), and adversarial review (NO ISSUES or non-critical only), the orchestrator creates the commit:
 
-1. Stage only the files listed in the task's "Files" field: `git add <file1> <file2> ...`
+1. Stage only the files listed in the task's "Files" field: `git add <file1> <file2> ...`, never a `wrote=` path `backlog-add` printed: those go into the run's one closing commit (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**)
 2. Never use `git add -A` or `git add .`
 3. Verify `zuvo/context/adversarial-task-<task-N>.txt` exists, is non-empty, and covers the task's
    SUBSTANTIVE diff. **Freshness is SEMANTIC, not mtime (HARD — the 2026-07-18 field run lost 40+
@@ -1189,8 +1191,10 @@ tier A in-run (separate `test:` commit, targeted suites re-run green vs the sess
 re-audits (max 2 iterations), and emits
 `[GATE: test-quality] PASS|WARN|N/A worst=<tier> report=<zuvo/audits/…>` — the on-disk test-audit
 report path is the proof of dispatch (same NO-SUBSTITUTION rule as Phase Final-2: an inline
-Q-rescoring pass reported as this gate is INVALID). Below-A after the cap → WARN + per-file
-backlog, never silence. Record `test_quality=<verdict>:<worst tier>:<report path>` in final
+Q-rescoring pass reported as this gate is INVALID). Below-A after the cap → WARN, each below-A
+file recorded once through `backlog-add` as the include's step 5 prints it (whole-file), with
+`--source execute` when a task's Files list or diff touched that test file, else
+`--source drive-by:execute`, never silence. Record `test_quality=<verdict>:<worst tier>:<report path>` in final
 telemetry, then proceed to Phase Final-2.
 
 ### Phase Final-2: End-of-Plan Aggregate Review (MANDATORY — every plan)
@@ -1224,7 +1228,7 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    ```
    Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA}")
    ```
-   Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick`, `--report-only`, or any narrowing flag; the whole point is the deep cross-task pass that also **applies its localized fixes**. Default FIX-AUTO means review fixes MUST-FIX + localized/high-confidence RECOMMENDED in-loop (review's own post-fix gate — verify + adversarial re-validation — guards against over-correction) and defers only NIT + multi-file structural-refactor to backlog. This is deliberate: per-task gates structurally cannot see cross-task findings, so this phase is where they get **found AND fixed** — which makes a separate manual `/zuvo:review` after execute redundant rather than mandatory. (Prior behavior passed `--report-only`, which SURFACED localized RECOMMENDED but applied nothing — forcing the user to re-run review in fix mode to apply the exact fixes review had already identified. That second pass is the friction this removes; it also contradicted the review skill's own "localized RECOMMENDED → fix in-loop, never silently backlog" rule.)
+   Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick`, `--report-only`, or any narrowing flag; the whole point is the deep cross-task pass that also **applies its localized fixes**. Default FIX-AUTO means review fixes MUST-FIX + localized/high-confidence RECOMMENDED in-loop (review's own post-fix gate — verify + adversarial re-validation — guards against over-correction) and defers only NIT + multi-file structural-refactor, which review records through `backlog-add` itself. This is deliberate: per-task gates structurally cannot see cross-task findings, so this phase is where they get **found AND fixed** — which makes a separate manual `/zuvo:review` after execute redundant rather than mandatory. (Prior behavior passed `--report-only`, which SURFACED localized RECOMMENDED but applied nothing — forcing the user to re-run review in fix mode to apply the exact fixes review had already identified. That second pass is the friction this removes; it also contradicted the review skill's own "localized RECOMMENDED → fix in-loop, never silently backlog" rule.)
 
    **NO-SUBSTITUTION (HARD — closes the "I'll do a lighter pass instead" drift).** Step 2 is the literal `Skill(skill="zuvo:review", …)` dispatch and NOTHING ELSE may stand in for it. Specifically forbidden as a substitute for the review-skill dispatch:
    - a single `Agent`/`Explore` "focused integration pass",
@@ -1313,7 +1317,7 @@ The files remain on disk — they serve as a record of what was done. `zuvo:exec
 
 ### Final Summary
 
-Print a completion report. **The header is conditional:** `<k>` IS the number of
+Print it after the drive-by step and the closing commit below, so it can name every B- or F-id and that commit. Print a completion report. **The header is conditional:** `<k>` IS the number of
 `[AC-UNPROVEN: …]` lines the AC-coverage item of the final Completion Gate emitted (one per
 unproven AC — see that item for the single definition of PROVEN), so if it emitted `k > 0` of
 them, the header MUST read `## Execution Complete (AC-UNPROVEN: <k>)` — a bare
@@ -1346,8 +1350,11 @@ landed with an AC nothing verified.
  If SKIPPED, print `aggregate-review: SKIPPED (--skip-final-review)`.
  If BLOCKED, print `aggregate-review: BLOCKED (<reason>) — run /zuvo:review manually before merge.`]
 
-### Backlog Items Added
-[list any new items persisted to backlog during execution]
+### Recorded Findings
+[Recorded: N (backlog: a, ledger: b), plus each NOT PERSISTED (<reason>) by name; for each, the
+ B- or F-id the helper printed, or NOT PERSISTED (<reason>); the F-id of every process item with its
+ question or work; the closing commit's hash, or none: nothing to stage, and each wrote= path it
+ left out, with the reason]
 
 ### Documentation
 [per documentation-mandate.md — list every doc file created/updated (path + one-line what
@@ -1412,16 +1419,21 @@ not invent ideas to inflate it). The receipt makes the un-gated step's silence a
 
 ### Backlog Persistence
 
-Persist all findings to the backlog using the backlog protocol (`shared/includes/backlog-protocol.md`):
+Every finding the run does not fix goes through `backlog-add` (`backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here). Record each when it is classified, in the task where it arises, so that task's `backlog-adds` counts it, and a task that ends BLOCKED has recorded its findings too:
 - Quality reviewer findings that were accepted but not fixed (user chose "accept as-is")
-- Implementer concerns classified as scope concerns
-- Adversarial WARNING / INFO findings that were intentionally deferred
+- Implementer style/preference concerns (Step 4)
+- Pre-existing failures outside the task's diff (Step 7) and adversarial WARNING / INFO findings that were intentionally deferred (Step 7b)
 - Any issues surfaced to the user that were deferred
 
-For each finding:
-1. Compute fingerprint: `file|rule-id|signature`
-2. Check for duplicates in existing backlog
-3. Route by confidence (0-25 discard, 26-50 backlog only, 51+ report and backlog)
+A finding in a file this task edits (a file in the task's Files list or its diff), which the run defers, is a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source execute --file "$F" --line <n> [--anchor "$A"] --title "$T"`. A finding in a file the run is not editing is the same call with the drive-by source: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:execute --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`drive-by-findings.md`). One call per finding; `<C>` is `CQ`, or `BUG` only when it names the input and the wrong output, or the class the finding is; in the drive-by call `<C>` is its drive-by tag, and a finding that meets no tag's condition is reported, not recorded (`drive-by-findings.md` "Categories and what qualifies"); pass `--anchor "$A"` only when the class requires one, BUG, SEC or DATA, or the finding carries one, never an invented one; a finding about the whole file cites `--line 1` with a "Whole file: …" title ("The location rule"); assign `"$R"`, `"$F"` and `"$T"` before the call, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id it prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
+
+Follow-up work the run will not do (SCOPE-FREEZE new work, a scope concern) and a deferred decision (a post-cap product call, a rule mismatch, a design disagreement) are process items: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source execute --target subject:execute-decision-<slug> --title "$T" --evidence "$E"` (**Process item**; `T` is the question or the work, `E` holds both options or positions and the reason; `<slug>` is the decision slug (`backlog-protocol.md` "Filing from a skill", **The decision slug**), printed FIRST, as `[slug: <slug>]` in the item's report line (the `[POST-CAP: DEFERRED]` line for a post-cap decision, the task's report entry otherwise), then the call is made; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id under "Recorded Findings" in the Final Summary: the findings ledger that keeps it is not where a human triages yet.
+
+A finding this run fixed gets no call (**Closing, not removing**).
+
+### Closing commit for backlog-add's writes (Phase Final, after the aggregate review)
+
+After the run's last `backlog-add` call (the aggregate review's own calls in Phase Final-2, the test-quality gate, the drive-by step), make the one closing commit `chore(backlog): record findings of execute run` with exactly the `wrote=` paths the run printed (the `backlog-writes:` list in `execution-state.md`), plus those the aggregate review listed on its `Backlog writes:` line (a skill run inside another makes no closing commit of its own), as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote** says, against the snapshot saved in `execution-state.md`. With no path left there is no commit: the Final Summary reads `none: nothing to stage`. Otherwise it names the commit's hash and each path left out.
 
 ### Documentation (REQUIRED — no silent skip)
 
@@ -1467,13 +1479,13 @@ COMPLETION GATE CHECK (per task):
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
 [ ] AC COVERAGE: every AC in the plan's Coverage Matrix has been CLASSIFIED as PROVEN or UNPROVEN and the result REPORTED. This item is satisfied by emitting the gate honestly, **not** by every AC being PROVEN — `k>0` is a legitimate terminal outcome (it surfaces as the `(AC-UNPROVEN: k)` header below), never a reason to withhold `## Execution Complete`, retry, or halt. What fails this item is not reporting: a missing `[GATE: ac-coverage]` line, a `<k>` that disagrees with the emitted `[AC-UNPROVEN: …]` lines, or an unenumerated Coverage Matrix row. **PROVEN is defined HERE, once, and every other mention of it in this skill points back to this line: an AC is PROVEN iff at least ONE of its claiming tasks ended COMPLETED *and* that task's `acceptance-verified=` value names that AC's OWN id.** Everything else is UNPROVEN — including (a) a claiming task that ended COMPLETED with a missing or empty `acceptance-verified=`, (b) a claiming task that ended COMPLETED with an `acceptance-verified=` naming only OTHER ACs, (c) all claiming tasks ending SKIPPED / SKIPPED_BY_DEPENDENCY / BLOCKED / BLOCKED_BY_DEPENDENCY, and (d) a Coverage Matrix row with NO claiming task at all. A task's overall COMPLETED status alone NEVER proves an AC. This is the SAME per-AC rule the per-task `[GATE: acceptance-verified]` gate applies to the ACs one task claims — this item is that gate's whole-plan backstop, re-asked over every Coverage Matrix row, and it is therefore never weaker than it. Enumerate every Coverage Matrix row and emit `[GATE: ac-coverage] checked=<N> unproven=<k>` on EVERY run — never silently omitted, even when `k=0` — where `<N>` is the number of Coverage Matrix rows actually enumerated (the AC count, NOT the task count: a plan may have more or fewer ACs than tasks, so deriving `<N>` from the task count is a contract violation). Print EXACTLY ONE `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]` line per UNPROVEN AC — no more, no fewer — and `<k>` **is defined as the number of those lines**, so the suffix count and the emitted lines cannot drift apart; if they differ, the gate output is wrong. `<states>` reports each claiming task's ACTUAL final state so the line reads truthfully: use `COMPLETED (no proof for this AC)` for case (a)/(b) rather than any state implying the task was skipped or blocked, and for case (d) the line reads `[AC-UNPROVEN: <AC-id> — claimed by task(s) none; final states UNMAPPED]` — an unmapped Coverage Matrix row is REPORTED, never silently skipped by a vacuously-true "all claiming tasks failed" test over an empty set. ZERO such lines = closed; one or more = the Final Summary header reads `## Execution Complete (AC-UNPROVEN: <k>)`, NEVER a bare `## Execution Complete`, and each line is repeated verbatim in `### Unproven Acceptance Criteria`
-[ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN + backlogged
+[ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN with each one recorded through backlog-add
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/**adversarial:** header for the plan range (the adversarial proof path is REQUIRED — pg_artifact_proven rejects an artifact whose proof does not resolve or holds <2 `REVIEW BY:` lines, so an artifact without it grants ZERO coverage) (on success only — pipeline-entry signal read by pre-push/CI gates)
 [ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION)
 [ ] If `[GATE: aggregate-review] BLOCKED`: the reason is a GENUINE skill-missing/dispatch error — NOT "worktree"/"CWD reset"/"isolation" (those are solved with `git -C $repo_root` + the explicit content-SHA range and must be dispatched, never punted to the user)
+[ ] Every finding the run did not fix and every process item recorded through backlog-add, each B- or F-id in the Final Summary, or named under NOT PERSISTED (<reason>); the closing commit made, or none: nothing to stage ("Committing what backlog-add wrote")
 [ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block
-[ ] Backlog persistence ran for deferred findings
 [ ] Knowledge curation ran
 [ ] Documentation created/updated for the landed change (per documentation-mandate.md) — or explicit [DOC: N/A — <reason>]; a bare skip is INCOMPLETE
 [ ] Terminal state A (terminal-state.md): processes launched = N, still alive = 0   (PIDs + how each ended)
@@ -1562,7 +1574,7 @@ From `shared/includes/quality-gates.md`:
 
 ### Backlog Protocol
 
-From `shared/includes/backlog-protocol.md`: every finding with confidence above 25% is persisted. Zero silent discards.
+From `shared/includes/backlog-protocol.md`: every finding the run does not fix goes to `backlog-add`, and the helper's bars decide where it is kept; one it did not persist is listed under `NOT PERSISTED (<reason>)` ("Zero Silent Discards").
 
 ---
 

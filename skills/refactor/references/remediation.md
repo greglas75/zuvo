@@ -10,15 +10,15 @@ Classify findings with `change-assessment.md` before selecting fixes. In preserv
 fix regressions and authorized remediation targets. Verified baseline debt is reported rather
 than changing established behavior to satisfy an absolute audit score.
 
-This phase OWNS all committing (Phase 4 no longer commits — it records).
+This phase OWNS all committing of the refactor and its fixes. Phase 4 records; the `wrote=` paths `backlog-add` printed go into the run's one closing commit, and only when the run commits (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
 
 **Disposition (the line is fix-SCOPE, not severity or size):**
 
 | Finding | Disposition |
 |---------|-------------|
 | Introduced/worsened bug or authorized remediation target, one clearly-correct fix (any size) | **Fix now** (commit 2). Mechanical correctness has one answer — don't park it. |
-| Real bug, fix needs files OUTSIDE the scope fence | Backlog with file:line — genuinely out of this contract's reach. |
-| Behavior/product DECISION (partial vs hard error on failure; swallow vs surface a cost; etc.) | **Not a bug — a choice.** Interactive: ask the user (≤1 question), apply the chosen fix into commit 2. Batch/`--auto`/`no-pause`: pick the safe, conservative default, log `[DECISION-DEFAULT: …]`, surface in the report; backlog only if the user later declines. |
+| Real bug, fix needs files OUTSIDE the scope fence | Recorded in Phase 4 through `backlog-add` with `--source refactor` at its file and line (`backlog-protocol.md` "Filing from a skill", **Generic write**; the command is the `DEFERRED` line of `completion.md` "Backlog Persistence") — genuinely out of this contract's reach. |
+| Behavior/product DECISION (partial vs hard error on failure; swallow vs surface a cost; etc.) | **Not a bug — a choice.** Interactive: ask the user (≤1 question), apply the chosen fix into commit 2. Batch/`--auto`/`no-pause`: pick the safe, conservative default, log `[DECISION-DEFAULT: …]`, surface in the report. If the user later declines, Phase 4 records the decision through `backlog-add` with `--source refactor` (`backlog-protocol.md` "Filing from a skill", **Process item**). |
 
 **Before applying the FIRST fix, size its blast radius.** When a finding changes the *error*,
 *validation*, or *authorization* behaviour of an **exported** symbol, the fix is a contract change,
@@ -88,7 +88,7 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
       Re-verify: type-check + **targeted suite** (touched package/files, compared against the session baseline — a test that was red before the correction or broken by the local env is `pre-existing-out-of-scope`, recorded, NOT a blocker; the FULL suite runs once at the end per the targeted-tests rule) + ONE adversarial pass over the fix diff (`~/.zuvo/adversarial-review --mode code`) — must converge (no new CRITICAL).
    e. **Commit separately:** `git commit -m "fix([scope]): [bug summary]"` (`feat`/`perf` if that fits better). NEVER fold the fix into the refactor commit — that erases the move-vs-change boundary that makes commit 1 trustworthy.
    Else: print `[REMEDIATION: none — no fixable bugs surfaced]`.
-4. **Decisions:** resolve per the table (ask / safe-default+log). Out-of-scope-fence items → backlog (Phase 4).
+4. **Decisions:** resolve per the table (ask / safe-default+log). Out-of-scope-fence items are recorded in Phase 4 through `backlog-add` with `--source refactor` (`backlog-protocol.md` "Filing from a skill", **Generic write**).
 
 **Why two commits and not one:** a single mixed commit can't be bisected — if prod breaks you can't tell "moved the code" from "changed the logic." Two commits in one run cost you nothing and keep that boundary. (If you genuinely want one commit, that's the only thing to override here — the in-run fixing stays either way.)
 
@@ -126,15 +126,19 @@ For each path in `modules_created`:
 
 1. Does a test file exercise it **directly** (imports the module, not only the facade)? Search by
    import, not by filename convention — a module covered from a differently-named spec is covered.
-2. **Uncovered modules get tests IN THIS RUN.** Dispatch `Skill(zuvo:write-tests <module>)` per
-   uncovered module, commit as `test(<scope>):`. This is the same in-run fix rule Phase 3.5 applies
+2. **Uncovered modules get tests IN THIS RUN.** Dispatch `Skill(zuvo:write-tests <module> --invoked-by refactor)` per
+   uncovered module (the flag makes it list its `Backlog writes:` for refactor's closing commit instead of committing them), commit as `test(<scope>):`. This is the same in-run fix rule Phase 3.5 applies
    to bugs: a gap you surfaced and parked is not dispositioned, it is deferred onto the user, who
    finds it two weeks later on a "files without tests" list.
-3. Only these defer, and only **named** in the backlog: a module whose test needs files outside the
-   scope fence, or one the user explicitly declined. Size, lateness and "the facade covers it" are
-   not reasons.
+3. Only these defer, and only **named**: a module whose test needs files outside the scope fence, or
+   one the user explicitly declined. Size, lateness and "the facade covers it" are not reasons. Record
+   each module once with `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source refactor --file "$F" --line 1 --title "$T" --evidence "$E"`
+   (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**): `F` the module, `T` starting "Whole file: …", `E` the reason it defers, and no
+   `--anchor`; assign `"$R"`, `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 4. Record `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` — e.g. `"7/7:fixed-in-run"`,
    `"7/5:2-backlogged-out-of-fence"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
+   `backlogged` in that value means recorded (backlog-add prints whether it went to the backlog or the
+   ledger; a TEST-GAP like item 3's stays in the ledger), so the Post-Completion Summary names each F-id.
 
 **Both this field and `prove.test_quality` are read by the git hook at `git push`, not at commit** —
 they cannot exist earlier, since Phase 3.5 commits before this phase runs. Both are checked against
@@ -142,7 +146,7 @@ artifacts rather than trusted: the `test_quality` report path must EXIST on disk
 count in `split_coverage` must equal the number of entries in `modules_created` recorded back in
 Phase 3. `"N/A"` after a split that created modules is therefore a block, not an escape.
 
-Gap remaining after the cap → `WARN` + per-module backlog entry, never silence. The specs written
+Gap remaining after the cap → `WARN`, each uncovered module recorded as item 3 prints it (`backlog-add`), never silence. The specs written
 here are part of `TEST_SCOPE` below, so they get audited in the same run rather than next quarter.
 
 **Step 1 — the characterization proof.** Run the gate from `../../../shared/includes/test-quality-gate.md` with:
@@ -156,7 +160,9 @@ The include dispatches the REAL `Skill(zuvo:test-audit …)` on that scope, fixe
 tier A in-run (separate `test:` commit, suites re-run green), re-audits (max 2 iterations), and
 prints `[GATE: test-quality] PASS|WARN|N/A` with the on-disk `zuvo/audits/` report path as proof
 of dispatch. Record `prove.test_quality = "<PASS|WARN|N/A>:<worst tier>:<report path>"` in the
-CONTRACT. Below-A after the cap → WARN + per-file backlog, never silence. Skip only in
+CONTRACT. Below-A after the cap → WARN, each below-A file recorded with `--source refactor` as the
+gate's steps 2 and 5 print it (`backlog-protocol.md` "Filing from a skill": **Generic write** for a
+Q-gate pinned to a line, "The location rule", **whole-file** for the file's tier), never silence. Skip only in
 `plan-only` / VERIFY_COMPILATION runs (nothing test-shaped happened) — and say so.
 
 ---
@@ -220,7 +226,14 @@ unparsable files, that cover every audited file: `scope` is `full`, or `scope` i
 audited file lies under it, or each audited file is a `files[].path` entry.
 Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
 No candidate → the field cannot be filled: re-run Step 2 over the audited files. A missing artifact has no `N/A`.
-Never from memory. `WARN` when gaps remain after the fix loop, with a per-file backlog entry naming each.
+Never from memory. `WARN` when gaps remain after the fix loop, each surviving mutant recorded with
+`~/.zuvo/backlog-add --repo "$R" --class MUTATION --conf <N> --source refactor --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`
+(`backlog-protocol.md` "Filing from a skill", **Generic write**): `F`, `<n>` and `A` the mutated
+production line, `M` the assertion the tests lack. A survivor the artifact gives no line for is a
+whole-file record (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**): `--line 1`, a title starting "Whole file: …"
+that names the artifact's mutant id, and no `--anchor`, since MUTATION, like TEST-GAP, requires none.
+Assign `"$R"`, `"$F"`, `"$M"` and `"$T"` before the call, and `"$A"` only when you pass
+`--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
 `plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is
 a score with no digit in it: `WARN:substituted-inline` is a real value a field run once invented

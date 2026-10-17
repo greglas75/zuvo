@@ -187,6 +187,12 @@ WORK_FILES = <files being touched>
 
 ---
 
+## Backlog Snapshot
+
+Once, at the run's original start, before any `backlog-add` call: `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout being fixed (a linked worktree's own root), assigned in the same shell call. Print the output under a `backlog-snapshot:` heading and save it the same way, verbatim, as a fenced block under that heading below the table in `memory/fix-tests-progress.md`, the resume state (an empty snapshot is an empty block; never collapse it onto one line or a table row). A resumed run (or a Codex/Cursor restart per pattern) reads that block and never takes a new snapshot (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**); if the block is missing or the snapshot command fails, the run stages nothing at the end and lists its `wrote=` paths, as the protocol's failed-snapshot rule says.
+
+---
+
 ## Step 1: Triage
 
 Scan for all supported patterns using grep (or CodeSift search_text). Report counts per pattern before doing any fixing.
@@ -302,7 +308,7 @@ mapping of its terms:
 - **Stacked commits** — commit 1: the strengthened test as written against current behavior; commit 2: the production fix + the assertion flipped. Never one hidden edit.
 - **After the fix** — re-run the modified test files (the write-tests manifest re-freeze has no analogue here) and count the file under `Needs review` only if something genuinely remains out of scope.
 
-`memory/backlog.md` receives only what is genuinely out-of-scope or user-declined.
+Only what is genuinely out-of-scope or user-declined is recorded through `backlog-add` (Backlog Persistence below).
 
 ### Step 5b: Adversarial Review (MANDATORY — do NOT skip)
 
@@ -335,12 +341,12 @@ If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; th
 
 Wait for complete output. Handle findings by severity:
 - **CRITICAL** — confirm it first: two or more lanes in its `.agreement` group, or your own check (a failing test, a reproduced input, the cited code read and the defect traced). Confirmed → fix immediately. A single-lane CRITICAL you cannot confirm is triaged as a WARNING and reported as `[CRITICAL→WARNING single-lane]` (`adversarial-loop.md` Step 4).
-- **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
+- **WARNING** — fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source fix-tests --file "$F" --line <n> [--anchor "$A"] --title "$T"` (**Adversarial review**, `backlog-protocol.md` "Filing from a skill").
 - **INFO** — known concerns (max 3, one line each).
 
 Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
 
-"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
+"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:fix-tests --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`drive-by-findings.md`). The adversarial review found a real problem — don't dismiss it just because it existed before your changes. Assign `"$R"`, `"$F"` and `"$T"` in the same shell call as each command (a later call starts with none of them), and `"$A"` only when you pass `--anchor` (required for BUG, SEC or DATA), as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 
 ---
 
@@ -365,9 +371,11 @@ Update `memory/fix-tests-progress.md` with the results.
 
 Read `../../shared/includes/backlog-protocol.md`.
 
-Persist any production bugs discovered during fixing, or files that could not be fixed automatically, to `memory/backlog.md`.
+Record through `backlog-add`, one call per finding, when it arises (`backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here): a production bug discovered during fixing that was not fixed in-run (an out-of-scope escalation, a user-declined fix), and a file that could not be fixed automatically. That is a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source fix-tests --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `BUG` only when it names the input and the wrong output (it needs `--anchor "$A"`), else `CQ`. A file that could not be fixed has no line of its own: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). Assign `"$R"`, `"$F"` and `"$T"` in the same shell call as each command, and `"$A"` only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand. A bug fixed in-run gets no call (**Closing, not removing**).
 
 **Drive-by findings:** follow `../../shared/includes/drive-by-findings.md` with `<skill> = fix-tests` — backlog the problems noticed OUTSIDE the fixed pattern in code the run read (record only), list every `SEC` one in the report, then ALWAYS run `~/.zuvo/log-drive-by --skill fix-tests --sec <a> --bug <b> …` (all zeros is an honest outcome).
+
+**Closing commit.** After the run's last `backlog-add` call (this section's and the drive-by step's, for the last pattern), the run makes the one closing commit, as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**, says, against the `backlog-snapshot:` taken before Step 1. The stacked commits of Step 5a never stage a `wrote=` path. Run by another skill, it makes no commit and prints one line in the report, `Backlog writes: <path>, …` (or `Backlog writes: none`).
 
 ### Knowledge Curation
 
@@ -400,7 +408,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran (--mode test)
 [ ] Every production bug surfaced by a strengthened assertion was FIXED in-run (test-bugfix-protocol.md) or escalated loudly with file:line — a backlog row for an in-scope bug is an incomplete run
 [ ] fix-tests-progress.md updated
-[ ] Backlog holds only genuinely out-of-scope or user-declined items
+[ ] Only genuinely out-of-scope or user-declined items were recorded through backlog-add, each B- or F-id reported or named under NOT PERSISTED (<reason>); the closing commit made, or none: nothing to stage, or the `Backlog writes:` line printed (run by another skill)
 [ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Run: line printed and appended to log
 ```
@@ -410,7 +418,7 @@ FIX-TESTS SESSION COMPLETE
 -----
 Patterns fixed:  [list]
 Total files:     [N] fixed, [N] skipped
-Bugs discovered: [N] (see backlog)
+Bugs discovered: [N] ([K] findings that got a B- or F-id, listed in the report; NOT PERSISTED named separately)
 Run: <ISO-8601-Z>	fix-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```

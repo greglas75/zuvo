@@ -144,7 +144,7 @@ For each held trigger, resolve the tool in this order — abort ONLY at the last
    On genuine failure:
    - Print `[ABORT] Required tool '<name>' not reachable after reveal attempt. db-audit cannot produce a valid report without it.`
    - Do NOT proceed with grep fallback. The audit is incomplete by definition.
-   - Exit with status `INCOMPLETE` and add a backlog item: `[BLOCKER] db-audit needs <tool> on <project>`.
+   - Exit with status `INCOMPLETE` and record the `blocker` **Process item** (`../../shared/includes/backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source db-audit --target subject:db-audit-blocker --title "$T"`, with `T` the fixed title `db-audit INCOMPLETE: a required tool is not reachable`, the same words on every run, no date and no tool name; the tool and the project go in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in `backlog-protocol.md` "Filing from a skill" says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed; name its F-id in the report.
 
 ### Required POSTAMBLE — retrospective append (NOT optional)
 
@@ -188,7 +188,7 @@ At the end of the audit, before emitting the status block:
 3. If ANY required tool is missing for a held trigger:
    - Override the verdict to `INCOMPLETE` regardless of finding count.
    - Print: `[VALIDITY GATE FAIL] <tool> required by <trigger>, not called. Audit cannot be trusted.`
-   - Add the gap to the backlog as `B-db-audit-incomplete-<date>`.
+   - Record the `incomplete` **Process item** (`../../shared/includes/backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source db-audit --target subject:db-audit-incomplete --title "$T"`, with `T` the fixed title `db-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; the missing tool goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in `backlog-protocol.md` "Filing from a skill" says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it once per run, here, before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line. The final Validity Gate files it only if this step did not (a `postamble` field that fails after the report is saved), and otherwise cites this call's F-id; that block carries the F-id on a line `incomplete-item: <F-id>` and, for a late call, its paths on a line `Backlog writes (gate): <path>, … | none`.
 
 A db-audit that says "0 critical findings" while skipping `sql_audit` on a project with 34 migrations is **lying**, not passing. The completion gate exists to catch that.
 
@@ -214,7 +214,7 @@ A db-audit that says "0 critical findings" while skipping `sql_audit` on a proje
 
 ### GATE 1 -- Read-Only
 
-This audit is **read-only**. The only write target is `zuvo/audits/`.
+This audit is **read-only**. The only write target is `zuvo/audits/`, plus the `memory/` paths `~/.zuvo/backlog-add` writes (the backlog, its archive and the findings ledger) for the process items at the missing-tool and validity-gate steps and for the Backlog Entries, and the one tick a closed backlog entry takes (**Closing, not removing**). It writes nothing else in the repository, and never touches the database.
 
 FORBIDDEN:
 - Running any migration
@@ -1024,8 +1024,14 @@ Actionable commands for findings that require zero design decisions — just exe
 List only findings with effort=S. If none qualify, omit this section.
 
 ## Backlog Entries
-[/backlog add commands for HIGH+ findings]
+[for each HIGH+ finding, the B- or F-id the helper printed, or NOT PERSISTED (<reason>)]
 ````
+
+**Backlog Entries.** Every HIGH+ finding (`critical` or `high`) is recorded through `backlog-add` before this section is written, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars and the dedupe are the protocol's and are not restated here). A **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source db-audit --file "$F" --line <n> [--anchor "$A"] --severity <level> --title "$T"`. `<level>` is `critical` or `high`. `<C>` is `PERF` for DB1, DB2, DB4 and DB7-DB9 (query, index, pool, cache and ORM performance), `DATA` for DB5, DB6, DB11 and DB13 (a mutation or migration that can leave or lose wrong data), `SEC` for DB12, `CQ` for DB3 (schema design: normalization, enums, timestamps, naming; a maintainability gap, not a wrong result) and DB10 (observability: no query logging or slow-query alerting; the CLI has no monitoring class, `ADVISORY` is never filed, and a missing log changes no result, so the ledger-only `CQ` fits), and `BUG` only when the finding names the input and the wrong output. BUG, SEC and DATA take `--anchor "$A"`, copied from the line that shows the defect or, for something absent (no index, no constraint, no transaction), from the line of the query, model or schema definition that lacks it; a schema-wide DATA finding cites the schema or model definition line ("The location rule"). A schema-wide `CQ` or `PERF` finding (missing indexes on foreign keys across the schema, mixed naming) cites the schema or model definition line of the first affected table or model in path order, the same way, and lists the others in `--evidence "$E"`; it takes no `--anchor`. Assign "$R", "$F" and "$T" before each call, "$A" only when you pass `--anchor`, "$E" only when you pass `--evidence`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+**Resolved entries** (**Closing, not removing**): a finding gets no call only when this run verified that its cited defect is fixed now (RESOLVED against the prior audit means the code is fixed, not that an older audit said so); a finding still present now is recorded even if an earlier audit marked it resolved. An open entry from an earlier audit that this run re-read and found fixed is closed, never removed: in one edit tick its box (`- [x]`) and append its resolution marker (`[FIXED <sha7>]`), as `backlog-protocol.md` "How to Persist Findings" step 3 says. That tick is the one hand edit the protocol sanctions (no helper ticks), and it is not a `wrote=` path: this audit does not stage it and names each ticked entry in its report. Moving a closed entry to the archive is the helper's job (`~/.zuvo/backlog-archive.py archive`, which `append-runlog` runs at the end of the run), never done by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ### Report Validation
 
@@ -1074,7 +1080,7 @@ COMPLETION GATE CHECK
 [ ] Migration safety audit ran (DB6)
 [ ] Critical gates printed: DB1, DB2, DB4, DB6, DB7, DB10, DB11
 [ ] Report saved to zuvo/audits/
-[ ] Backlog updated for HIGH+ findings
+[ ] HIGH+ findings recorded through backlog-add (Backlog Entries), each B- or F-id reported or named under NOT PERSISTED (<reason>); `Backlog writes:` line printed
 [ ] Run: line printed and appended to log
 ```
 
@@ -1119,7 +1125,7 @@ VALIDITY GATE
 
 **The Validity Gate must be printed AFTER step 6 of the Required POSTAMBLE (after retros append), not before.** Printing it before retro append guarantees `retros_*_appended: NOT_APPENDED`.
 
-If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item.
+If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** unless step 3 of "Audit completion verification" above already did (it gives the command and the fixed title; one item per run), and print its F-id in this block on a line `incomplete-item: <F-id>` (with `Backlog writes (gate):` for a late call, as step 3 says).
 
 Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 

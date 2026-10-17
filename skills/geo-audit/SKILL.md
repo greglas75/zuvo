@@ -131,7 +131,7 @@ This audit is read-only against source code.
 
 **Allowed write targets:**
 - `zuvo/audits/` for the report file (`.md` and `.json`)
-- `memory/backlog.md` only when `--persist-backlog` is explicitly enabled
+- `memory/backlog.md` and `memory/findings/` (written by `backlog-add`) only when `--persist-backlog` is explicitly enabled
 
 **FORBIDDEN:**
 - Writing to any source/production file
@@ -155,7 +155,7 @@ If `--live-url` is provided, follow the live probe consent protocol from env-com
 | `--cms` / `--no-cms` | Override CMS detection |
 | `--live-url URL` | Enable live checks (G1 HTTP status, content negotiation) |
 | `--lang LANG` | Anti-pattern language: `en` (default), `pl` |
-| `--persist-backlog` | Persist findings to `memory/backlog.md` |
+| `--persist-backlog` | Record findings through `backlog-add` (Phase 6) |
 
 Default: code-only audit of current directory, auto-detect profile and CMS.
 
@@ -745,18 +745,19 @@ GEO-AUDIT-RESULT: PASS|FAIL|PROVISIONAL score=NN tier=X critical=none|GCG-N
 
 **Activated with `--persist-backlog` flag.**
 
-Follow `../../shared/includes/backlog-protocol.md` for the full persistence contract.
-
-Emit entries to `memory/backlog.md` for findings that meet at least one condition:
+Record each finding that meets at least one of these conditions through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the conditions are this audit's own selection, while the bars, the dedupe and the confidence routing are the protocol's and are not restated here):
 - Priority >= 2.0
 - Any Critical Gate = FAIL
 
-Fingerprint format: `{file}|{dimension}|{check}` (e.g., `public/robots.txt|G1|retrieval-bots-blocked`).
-Same format used by geo-fix for backlog updates. Deduplicate against existing entries.
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source geo-audit --file "$F" --line <n> [--anchor "$A"] [--evidence "$E"] --title "$T"` when a repository file causes it (a template, a config, a content file). A finding on a live page or host with no repository file causing it (a response header, a status code, a rendered tag) takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`, whatever the class: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source geo-audit --target "$U" --evidence "$E" --title "$T"`, `U` the page URL or the host. A live defect that a repository file causes is filed by that file (the file form), with the URL in `--evidence "$E"`; the target form is only for a finding with no repository file causing it. `<N>` is your confidence that the finding is real. This audit files `CQ` or `BUG` only: `<C>` is `CQ` for a failed check and `BUG` only when the finding names the input and the wrong output; BUG takes `--anchor "$A"`, copied from the line that shows the defect ("The location rule"). `T` starts with the finding's `check` ID, `<check-id>: <title>` (e.g. `schema-id-disconnected`), so a later run can find the entry. A check that fails for the whole file is a whole-file finding: `--line 1`, a "Whole file: ..." title (after the check ID), and no `--anchor`; a whole-file BUG is filed at the line that shows the defect instead, with `--anchor "$A"` copied from it, never at line 1. Assign "$R" and "$T" before each call, "$F" only for a file finding, "$U" and "$E" only for a target finding (or "$E" alone when a file record carries the URL as evidence), "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+An open entry is closed, never removed (**Closing, not removing**), when this run re-read its cited code and found it fixed. Close each open entry with the same file (or target) and the same title check ID whose cited code this run re-read and found fixed (for a file entry, its line and anchor); leave every other entry with that file and check ID open. A target (live-page) entry is closed only by a later live audit that re-reads the page, never by a source-file patch alone. A legacy entry written in the old `{file}|{dimension}|{check}` fingerprint format is matched by that fingerprint's file and check segments.
+
+Recording findings through `backlog-add` commits and stages nothing. This audit lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ### Next-Action Suggestion
 
-After backlog persistence, suggest the next skill to run:
+After the findings are recorded through `backlog-add`, suggest the next skill to run:
 
 ```
 Suggested next step: zuvo:geo-fix

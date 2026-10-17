@@ -10,12 +10,12 @@ A READ OPENS FIRST AND CHECKS WHAT IT OPENED: the inode read must be the one the
 after the open, inside the repo, so a symlink re-pointed after normalize_path cannot aim the read
 outside; O_NONBLOCK, so a FIFO at the cited path is refused instead of blocking backlog-add.
 
-THE TAG is the downstream intake's contract (tgm-caretaker 2af315d): `[pr:N]` waits for the PR, and
-`[branch:name]` is resolved to the branch's newest PR. Branch names outside `[A-Za-z0-9._/-]` are
-never rewritten into a name the intake could not resolve; with no PR they are `untaggable`, and the
-CLI decides what that means per class. gh is asked only when origin names github.com as its HOST,
-and is pinned to that `owner/repo`: origin comes from a cloned .git/config, and gh carries the user's
-token to whatever repo it resolves.
+THE TAG is the downstream intake's contract (tgm-caretaker 2af315d): `[pr:N]` (1–6 digits, no leading
+zero) waits for the PR, and `[branch:name]` (1–200 characters) is resolved to the branch's newest PR.
+Branch names outside `[A-Za-z0-9._/-]{1,200}` are never rewritten into a name the intake could not
+resolve; with no PR they are `untaggable`, and the CLI decides what that means per class. gh is asked
+only when origin names github.com as its HOST, and is pinned to that `owner/repo`: origin comes from a
+cloned .git/config, and gh carries the user's token to whatever repo it resolves.
 
 EVERY SUBPROCESS HAS A TIMEOUT, and runs in its own session so a timeout kills the whole group: a
 `gh` wrapper script leaves a grandchild holding stdout, and waiting for EOF would outlast the timeout.
@@ -48,8 +48,11 @@ ANCHOR_WINDOW = 3
 
 TAG_NONE, TAG_PR, TAG_BRANCH, TAG_UNTAGGABLE = "none", "pr", "branch", "untaggable"
 
-_BRANCH_OK_RE = re.compile(r"[A-Za-z0-9._/-]+")      # the intake's allowed characters, exactly
-_PR_RE = re.compile(r"[1-9][0-9]{0,8}")
+PR_PATTERN = r"[1-9][0-9]{0,5}"                 # the intake's PR number: 1–6 digits
+BRANCH_PATTERN = r"[A-Za-z0-9._/-]{1,200}"      # the intake's branch characters and length, exactly
+_BRANCH_OK_RE = re.compile(BRANCH_PATTERN)
+_PR_RE = re.compile(PR_PATTERN)
+_PR_OVERSIZE_RE = re.compile(r"[1-9][0-9]{6,}")          # a real PR the intake cannot take
 # The three shapes whose HOST is github.com: https://[userinfo@]github.com[:port]/, ssh://git@github.com
 # [:port]/ and scp-style git@github.com:. Groups: owner, repo. Anything else (`evil.com/github.com/…`,
 # `github.com.evil.com`, `github.com@evil.com`, file://, http://) never reaches gh.
@@ -60,7 +63,7 @@ _GITHUB_RE = re.compile(r"(?:https://(?:[^@/?#\s]*@)?github\.com(?::[0-9]{1,5})?
 _GIT_LOCATION_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_OBJECT_DIRECTORY",
                      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES")
 # epoch \t sha256(owner/repo) \t branch \t pr-or-empty; anything else in the cache file is skipped
-_CACHE_ROW_RE = re.compile(r"([0-9]{1,12})\t([0-9a-f]{64})\t([^\t]+)\t([1-9][0-9]{0,8})?")
+_CACHE_ROW_RE = re.compile(r"([0-9]{1,12})\t([0-9a-f]{64})\t([^\t]+)\t(%s)?" % _PR_RE.pattern)
 _HUNK_RE = re.compile(r"^@@ -[0-9,]+ \+([0-9]+)(?:,([0-9]+))? @@", re.MULTILINE)
 
 
@@ -254,7 +257,7 @@ def resolve_tag(repo: str, pr_arg: Optional[str]) -> Tag:
     ZUVO_BACKLOG_PR, then the open PR gh reports for the branch (github.com remotes only, cached), then
     `[branch:<name>]`. A detached HEAD elsewhere has no branch to name: `--pr`/env, else untaggable. A
     name outside the intake's charset with no PR is untaggable, never renamed.
-    Raises ValueError when `--pr` or ZUVO_BACKLOG_PR is given and is not a positive integer."""
+    Raises ValueError when `--pr` or ZUVO_BACKLOG_PR is given and is not 1–6 digits without a leading zero."""
     pr = _explicit_pr(pr_arg, "--pr") or _explicit_pr(os.environ.get("ZUVO_BACKLOG_PR"), "ZUVO_BACKLOG_PR")
     default = default_branch(repo)
     branch = current_branch(repo)
@@ -304,14 +307,17 @@ def _looked_up_pr(repo: str, branch: str) -> Optional[str]:
 
 
 def _own_pr(out: str) -> Optional[str]:
-    """The newest same-repo PR in gh's JSON list, "" when there is none, None for anything else. `--head`
-    matches the branch NAME, so a fork's PR from an equally named branch is listed too; only
+    """The newest same-repo PR in gh's JSON list, "" when there is none or it is past the intake's 6 digits
+    (cached like no PR, so gh is not asked on every add; the entry waits as `[branch:<name>]`), None for anything
+    else. `--head` matches the branch NAME, so a fork's PR from an equally named branch is listed too; only
     `isCrossRepository: false` is this branch's (that already pins the head owner to the base repo's)."""
     try:
         own = [str(p.get("number")) for p in json.loads(out) if p.get("isCrossRepository") is False]
     except (ValueError, TypeError, AttributeError):     # not JSON, not a list, not a list of objects
         return None
-    return "" if not own else own[0] if _PR_RE.fullmatch(own[0]) else None
+    if not own or _PR_OVERSIZE_RE.fullmatch(own[0]):
+        return ""
+    return own[0] if _PR_RE.fullmatch(own[0]) else None
 
 
 # ── PR cache: $HOME/.zuvo/cache/backlog-add-pr.tsv, rows `epoch \t sha256(owner/repo) \t branch \t pr`.

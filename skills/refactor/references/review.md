@@ -186,7 +186,7 @@ If a CRITICAL cannot be proven fixed by its regression test, that CRITICAL count
 | **CRITICAL** | Introduced/worsened: fix and re-test. Verified baseline debt: disclose under `change-assessment.md`; unproven comparison blocks. |
 | **WARNING — real bug, one clearly-correct fix** | Fix it in Phase 3.5 (the fix commit). **Size is irrelevant** — a 40-line mechanical bug is still fix-now. Never park a bug just because the fix is large. |
 | **WARNING — needs a behavior/product DECISION** (e.g. on total failure: partial result vs hard error) | Not a bug, a choice. Interactive → ask the user (Phase 3.5 decision gate, ≤1 question). Batch/`--auto`/`no-pause` → pick the safe default, log `[DECISION-DEFAULT: …]`, surface in report. |
-| **WARNING — fix needs files OUTSIDE the scope fence** | Backlog with file:line — genuinely out of this contract's reach. |
+| **WARNING — fix needs files OUTSIDE the scope fence** | Recorded in Phase 4 through `backlog-add` with `--source refactor` at its file and line (`backlog-protocol.md` "Filing from a skill": **Generic write** for a deferred finding, **Process item** for a declined decision; the commands are in `completion.md` "Backlog Persistence") — genuinely out of this contract's reach. |
 | **INFO** | Known concerns (max 3, one line each). |
 | **0 findings** | Early exit — stop passes, code is clean. |
 

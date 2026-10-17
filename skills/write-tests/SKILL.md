@@ -70,6 +70,7 @@ program, not the writer's own claim.
 | `--dry-run` | Run Phase 0 + Step 1 for all files, print plan, stop |
 | `--no-cache` | Re-run discovery/classification from scratch: ignore any cached CodeSift index answer and any previously built queue for this run |
 | `--resume <basename>` | Resume ONE file from its persisted checkpoint: load `contracts/<basename>.coverage.json` + `contracts/<basename>.contract.md`, verify `production_sha256` against the file on disk (mismatch → refuse and demand re-inventory — the existing hash rule), take classification from the contract (skip Phase 0.5/Step 1 re-derivation), then jump by state: manifest `inventory` + contract present → Step 2; `final` → Step 3; `final` with Q-scores synced → Step 3.3 |
+| `--invoked-by <skill>` | Run on behalf of the named skill (refactor's Phase 3.6 Step 0, for one): no snapshot, no closing commit, and the report ends with `Backlog writes: <path>, …` (or `Backlog writes: none`) for that skill's closing commit. Without it the run is standalone and commits its own writes |
 | `--resume-run <ledger>` | Resume an auto-mode queue from its run ledger (see **Auto-mode context boundary**): reload run-level facts + remaining queue, continue with the next file in a clean window |
 
 `--no-cache` forces Step 7's queue build to re-derive from a fresh scan rather than reusing a queue computed earlier in the session. (It used to promise clearing a "project-profile cache" that no step in this skill ever reads or writes — a dead flag until 2026-08-02.)
@@ -252,7 +253,7 @@ and report its actual independence or an unmet requirement.
    - **D3 test setup (STANDARD+; skip if CLAUDE.md or exemplar covers it):** `search_text` for `setupFiles`/`_bootstrap`/`conftest` config; read setup outlines.
    - **D4 hub signatures (STANDARD+/COMPONENT):** `search_symbols` (bare names, `detail_level: "compact"`, `include_source: true`, `token_budget: 800`) for the target's imported utilities. Never `get_symbols()` on bare names.
    - On repo/index errors run the `codesift-setup.md` recovery loop once; on `Transport closed` abandon CodeSift for the rest of the run. Without CodeSift: skip all dimensions, print `[CONTEXT] CodeSift unavailable — using legacy detection.`
-6. **Test runner refinement:** read the nearest manifest/config; detect runner (vitest/jest/phpunit/pytest) and existing test conventions. If the repo carries a runner-by-extension table (ADR/CLAUDE.md), it is BINDING per the Runtime axis above — the extension selects the runner, and the written file's extension must match the intended runtime. No manifest → infer from extension; still unknown → mark file `FAILED`, backlog the environment issue. For JS/TS COMPONENT/HOOK targets check DOM-matcher registration and cleanup globality; reuse the exemplar's local pattern when global setup is absent.
+6. **Test runner refinement:** read the nearest manifest/config; detect runner (vitest/jest/phpunit/pytest) and existing test conventions. If the repo carries a runner-by-extension table (ADR/CLAUDE.md), it is BINDING per the Runtime axis above — the extension selects the runner, and the written file's extension must match the intended runtime. No manifest → infer from extension; still unknown → mark file `FAILED` and record the `runner` process item (once per run; the file goes in the report, "Filing findings"). For JS/TS COMPONENT/HOOK targets check DOM-matcher registration and cleanup globality; reuse the exemplar's local pattern when global setup is absent.
 7. **Build queue:** explicit mode = user's targets. ALWAYS exclude from auto-discovery:
 `**/migrations/**`, `*.sql`, `prisma/migrations/**`, `supabase/migrations/**` (route: `zuvo:db-audit`
 — print the excluded count), and build artifacts `storage/**`, `bootstrap/cache/**`, `**/.next/**`,
@@ -262,10 +263,31 @@ source), and server-rendered views/templates (`**/views/**/*.php`, `*.blade.php`
 excluded count. **0-symbol guard:** extraction returning 0 symbols for a file over ~30 LOC means the
 EXTRACTOR failed (non-ASCII docblocks are a known cause), never "nothing to test" — mark the file
 MUST-VERIFY-MANUALLY and read it raw. Auto mode with CodeSift: gather dead/leaf candidates, 90-day hotspots, test-reference counts, role signals; 0 test refs = UNCOVERED; priority hub > high-churn > leaf; degraded discovery falls back to the manifest-root glob. Auto mode without CodeSift: glob production files under the source root; files without matching tests = UNCOVERED.
-8. **Baseline test run** (once per run, after queue, before loop): record pre-existing failures — they are ignored in verification. Remote execution (rt farm) follows env-compat **Remote / Queued Execution**: blocking attach with an upfront deadline, and a result without the runner's own summary + `executed=true` evidence is a failure re-dispatched to the farm — never a PASS and never re-run here. **Skip in `--dry-run`.** Runner/config unavailable → backlog one run-level environment issue, mark every queued file `FAILED` (`Blind Audit=skipped`, `Adversarial=not_run`), stop.
-   - **Schema-drift pre-probe** (only when queue has an ORM-DB target or DB test helper): run one seed/schema probe; `column/relation/table does not exist` = run-level ENV blocker — backlog, mark every DB-backed file `FAILED`, stop. Skip in `--dry-run`.
+8. **Baseline test run** (once per run, after queue, before loop): record pre-existing failures — they are ignored in verification. Remote execution (rt farm) follows env-compat **Remote / Queued Execution**: blocking attach with an upfront deadline, and a result without the runner's own summary + `executed=true` evidence is a failure re-dispatched to the farm — never a PASS and never re-run here. **Skip in `--dry-run`.** Runner/config unavailable → record the `baseline` process item ("Filing findings"), mark every queued file `FAILED` (`Blind Audit=skipped`, `Adversarial=not_run`), stop.
+   - **Schema-drift pre-probe** (only when queue has an ORM-DB target or DB test helper): run one seed/schema probe; `column/relation/table does not exist` = run-level ENV blocker — record the `schema-drift` process item ("Filing findings"), mark every DB-backed file `FAILED`, stop. Skip in `--dry-run`.
 
 **`--dry-run`:** after the queue is built, run Step 1 (Analyze) per file, print the classification table, STOP. Never run suite-mutating commands.
+
+---
+
+## Filing findings (`backlog-add`)
+
+Every finding this run defers is recorded through `backlog-add`, one call per finding, at the step that finds it, so a file that ends `FAILED` has recorded its findings too (`backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here). Read that section before the first call. The reviewer and auditor sub-agents the run dispatches (the blind audit, the adversarial review, the test audit) return their findings in their reports and never call `backlog-add`; the run files them. A `--resume-run` instance of write-tests is the run for its one file: it files that file's findings itself and ends its report with `Backlog writes: <path>, …` (or `Backlog writes: none`), and the coordinator appends each such line's paths to `<ledger path>.backlog-writes` as the file returns.
+
+- **A finding in a file under test or in its tests** (an adversarial WARNING of more than 10 lines, since up to 10 lines is fixed now, an unresolved CRITICAL after the final pass, a security-context INFO the run rejects, a duplicate suite, an extraction a view needs): a **Generic write**, `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source write-tests --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `CQ`, or `BUG` only when it names the input and the wrong output (BUG, SEC and DATA need `--anchor "$A"`), or the class the finding is (`DUP`, `TEST-GAP`, `SEC`). A finding about the whole file cites `--line 1` with a "Whole file: …" title and no `--anchor` ("The location rule"). When the run names an assertion the tests lack on a production line it changed, add it: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source write-tests --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
+- **An environment blocker or a skipped gate** is a process item (**Process item**): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source write-tests --target subject:write-tests-<gate> --title "$T"`, with `<gate>` and `T` from the table, the same words on every run. A gate item is one per run, however many files the gate fails: this run's reason and every file it marked `FAILED` or `BLOCKED_INFRA` go in the report entry, never in the title; name the F-id there. A file a run-level gate failed (`runner`, `baseline`, `schema-drift`) was never analysed, so it has no gaps to record yet: the gate's item stands for it and the report entry names it.
+
+| `<gate>` | `T` (fixed title) | Raised at |
+|----------|-------------------|-----------|
+| `runner` | write-tests: test runner could not be determined, file FAILED | Phase 0 step 6 |
+| `baseline` | write-tests: baseline test run could not execute, queue FAILED | Phase 0 step 8 |
+| `schema-drift` | write-tests: DB schema drift blocks DB-backed tests, files FAILED | Phase 0 step 8 |
+| `blind-audit-budget` | write-tests: blind audit still FIX or REWRITE after two passes, files FAILED | Step 3.5 |
+| `blind-audit-unavailable` | write-tests: no blind-audit reviewer available, file BLOCKED_INFRA | Step 3.5 |
+
+Assign `"$R"`, `"$T"` and, for a file finding, `"$F"` before each call, `"$A"` only when you pass `--anchor`, `"$M"` only when you pass `--missing-assertion`, and `"$E"` only when you pass `--evidence`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand. A bug fixed in Step 4.5 gets no call (**Closing, not removing**).
+
+**Snapshot.** Once, at the run's original start, before Phase 0 step 6, the first step that can call `backlog-add`: `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout under test (a linked worktree's own root), assigned in the same shell call. Save the output verbatim as a fenced block in the sidecar `<ledger path>.backlog-snapshot` beside the run ledger (an empty snapshot is an empty block; never one line), and write a `backlog-snapshot:` line in `contracts/<basename>.contract.md` when Step 1.6 writes the contract that names the sidecar's path, not its content. A resumed run reuses the saved one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**): `--resume-run <ledger>` without a file argument reads `<ledger path>.backlog-snapshot`, `--resume <basename>` follows the contract's line to the sidecar. When neither is found the run takes no new snapshot, stages nothing at the end and lists its `wrote=` paths, as the protocol's failed-snapshot rule says. A `--resume-run` sub-agent (a file argument) commits nothing and needs none, and neither does a run with `--invoked-by <skill>` (refactor's Phase 3.6 Step 0 dispatch passes it): the calling skill's snapshot stands for it (**Closing commit for backlog-add's writes** below).
 
 ---
 
@@ -309,13 +331,13 @@ Production file already read/classified. **If a test file exists, read it now** 
 - **Exists, quality OK** (behavioral assertions, no anti-patterns) → ADD TO
 - **Exists, quality BAD** (fragile string tests, tautological oracles, security theatre, duplicated positives, structural duplicates) → **REWRITE** the whole file. Net test count MAY decrease. **Do NOT add good tests on top of bad tests.**
 
-**Duplicate test files:** search sibling/legacy trees for other test files targeting the same module. 2+ active → print `[DUPLICATE] ...`, read all, prefer the co-located file as canonical; never silently extend a second overlapping suite. Unconsolidatable overlap → `FAILED` + backlog `duplicate-test-suite`.
+**Duplicate test files:** search sibling/legacy trees for other test files targeting the same module. 2+ active → print `[DUPLICATE] ...`, read all, prefer the co-located file as canonical; never silently extend a second overlapping suite. Unconsolidatable overlap → the queued file is `FAILED`, and a whole-file `DUP` finding (`--class DUP`, `--line 1`) is recorded on the non-canonical suite (the same file when the queued file is it; "Filing findings").
 
 **Worth Gate first** (`test-code-types-core.md` § Worth Gate): if the file is a NO_BEHAVIOUR shape —
 presentational component, server-rendered view/template/widget HTML, wiring, library-only DTO, pure
 delegation, constants — write NO tests. Record `Status=SKIPPED_NO_BEHAVIOUR`, `Tests=0`, `Q Score=N/A`,
 `Blind Audit=skipped`, `Adversarial=not_run`, print `[NO_BEHAVIOUR] {file}: {shape}`. Business logic
-found inside a view → print `[EXTRACT] {file}:{line} {what}` and backlog the extraction; the test belongs
+found inside a view → print `[EXTRACT] {file}:{line} {what}` and record the extraction ("Filing findings", `--class CQ` at that line); the test belongs
 to the extracted unit, never to the view. A contract on the file (bot `data-*`, export layout, payload
 shape) is tested on its own and does not make the rest of the file test-worthy. An existing suite on a
 NO_BEHAVIOUR file is not extended; delete it only when the user asked for cleanup.
@@ -496,7 +518,7 @@ because a project-wide `tsc --noEmit` is the reflex. On the file under test that
 nothing: the project carries **6050 pre-existing type errors**, so the run drowned its own two
 diagnostics in somebody else's debt. The helper runs it once per pass against the tsconfig that
 OWNS the file, incrementally (57s cold, 16s warm), and reports only errors in the spec you wrote.
-Errors in the production file are printed as context and backlogged — they are not this run's gaps.
+Errors in the production file are printed as context and recorded as a whole-file finding for that file ("Filing findings"; the distinct errors in `--evidence "$E"`), not one call per error. Each distinct error is filed once: a later pass files only errors it had not seen before, so an error a Step 4.5 fix introduced is still filed and a repeat of one already filed makes no call. They are not this run's gaps.
 
 **Mutation waits for COVERAGE, not for the manifest gate.** The helper defers StrykerJS until
 the suite is green and scoped coverage is adequate, because mutation is the most expensive
@@ -739,7 +761,7 @@ Read `../../shared/includes/blind-coverage-audit.md` now — it is the audit pro
 
 Strict contract-blind isolation is required for a passing audit. The audit is production-first (inventory → ownership → evidence mapping → verdict `CLEAN|FIX|REWRITE` → one highest-value missing test). Thin delegators audited on forwarding contract only; barrels out of scope; rendered a11y fallbacks are owned behavior.
 
-**Pass budget: max 2 — and it counts FIX/REWRITE ITERATIONS, not invocations.** Pass 1 audits current files; `FIX` → patch tests, rerun tests, rerun audit once; `REWRITE` → rewrite from Step 2, rerun Step 3 chain, audit once. Still FIX/REWRITE after pass 2 → `FAILED`, backlog, no Step 4.
+**Pass budget: max 2 — and it counts FIX/REWRITE ITERATIONS, not invocations.** Pass 1 audits current files; `FIX` → patch tests, rerun tests, rerun audit once; `REWRITE` → rewrite from Step 2, rerun Step 3 chain, audit once. Still FIX/REWRITE after pass 2 → `FAILED`, record the `blind-audit-budget` process item once per run, by the first file that exhausts the budget, and name every such file in its report entry ("Filing findings": a gate item is one per run), and the open gaps as a whole-file `TEST-GAP` (`--line 1`, a "Whole file: …" title, the gaps in `--evidence "$E"`), no Step 4.
 
 **A confirmation pass forced by the freshness guard is not an iteration.** When Step 4 or Step 4.5 changes the pair — an adversarial fix, a production defect repaired in-run — the freshness guard below invalidates the prior `CLEAN` by construction. Re-auditing then is not the audit↔rework loop this budget exists to stop; it is the only way the shipped pair is one an auditor ever saw. So:
 
@@ -759,14 +781,14 @@ This resolves a contradiction that was hit repeatedly: Step A2 mandates re-runni
 | `3` | `Audit panel: degraded` + `CLEAN` (exactly 1 valid panel answer) — proceed | `clean:degraded` | adversarial compensates |
 | `FIX` pass 1 (any panel state) | Block; patch + rerun once | `fix:<n>` | resume at Step 3.5 |
 | `REWRITE` pass 1 (any panel state) | Block; rewrite, Step 3 chain, rerun once | `rewrite` | resume at Step 2 |
-| `FIX`/`REWRITE` pass 2 | No Step 4; `FAILED`, `Adversarial=blocked` | `fix:<n>`/`rewrite` | skip after backlog |
+| `FIX`/`REWRITE` pass 2 | No Step 4; `FAILED`, `Adversarial=blocked` | `fix:<n>`/`rewrite` | skip once recorded |
 | `1` | no provider lane after exclusion — fall back to `blind-coverage-auditor` (or `blind-coverage-auditor-alt` on the `review-alt` route — see `test-reviewer-routing.md`); its own verdict then follows the rows above: CLEAN proceeds exactly like exit 3 (adversarial compensates), FIX/REWRITE follow their own rows | per the fallback's own verdict, per the rows above | per the fallback verdict's row above |
 | `2` | no valid panel answer — fall back to `blind-coverage-auditor` (or `blind-coverage-auditor-alt` on the `review-alt` route — see `test-reviewer-routing.md`); its own verdict then follows the rows above: CLEAN proceeds exactly like exit 3 (adversarial compensates), FIX/REWRITE follow their own rows | per the fallback's own verdict, per the rows above | per the fallback verdict's row above |
 | `124` | all providers timed out, or the whole-run deadline fired — fall back same as exit 1/2 (a timeout says nothing about the input; same fallback agent, including the `review-alt` variant); its own verdict then follows the rows above the same way | per the fallback's own verdict, per the rows above | per the fallback verdict's row above |
 | `125` | the HOST slept mid-run; providers never had a chance — re-run the panel once; the RE-RUN's exit is then handled by this same table (a second `125` → fall back same as exit 1/2/124) | n/a until re-run/fallback | resume at Step 3.5 |
 | `5` | empty or unauditable production/test file — fix the input, not a reviewer failure | n/a until rerun | resume at Step 3.5 |
 | `6` | input over the byte cap — fix the input (split/shrink), not a reviewer failure | n/a until rerun | resume at Step 3.5 |
-| Fallback also unavailable (`routing-failed`; or preflight `no-provider`/`canary-failed` where the out-of-band check also finds nothing; or the fallback agent missing/invalid) | No Step 4; `BLOCKED_INFRA`, `Adversarial=blocked` | `skipped` + failure cause | skip after backlog |
+| Fallback also unavailable (`routing-failed`; or preflight `no-provider`/`canary-failed` where the out-of-band check also finds nothing; or the fallback agent missing/invalid) | No Step 4; `BLOCKED_INFRA`, `Adversarial=blocked`; record the `blind-audit-unavailable` process item ("Filing findings") | `skipped` + failure cause | skip once recorded |
 
 **Freshness guard (semantic):** before each pass record the production file's sha256 AND the test file's normalized hash (`test-coverage-gate.py normhash --file <test>`). A result is valid only for that exact pair. A later edit whose normhash is UNCHANGED (comments/whitespace/line-wrap/trailing-comma only — the program proves it) does NOT invalidate a CLEAN; any production sha change or test normhash change does. Never widen this by judgment — the normhash decides, not intent. Emit the exact table schema from `blind-coverage-audit.md`; summary prose is not enough.
 
@@ -801,12 +823,12 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
 | Finding | Action |
 |---------|--------|
 | CRITICAL | Fix immediately, re-run tests |
-| WARNING <10 lines | Fix immediately |
-| WARNING >10 lines | Backlog with file:line |
-| INFO on security-context file (lines 1-5 contain `CQ4`,`CQ5`,`GDPR`,`PII`,`auth`,`token`,`password`,`secret`) | Treat as WARNING; rejection requires backlog entry |
+| WARNING ≤10 lines | Fix immediately |
+| WARNING >10 lines | Record with file:line ("Filing findings") |
+| INFO on security-context file (lines 1-5 contain `CQ4`,`CQ5`,`GDPR`,`PII`,`auth`,`token`,`password`,`secret`) | Treat as WARNING; a rejection is itself recorded ("Filing findings") |
 | INFO otherwise | Known concerns (max 3), rejectable with justification |
 | 0 findings | Early exit — clean |
-| Unresolved CRITICAL after final pass | `FAILED` + backlog |
+| Unresolved CRITICAL after final pass | `FAILED`; record it ("Filing findings") |
 | No provider on all passes + no fallback-local | `SKIPPED_REVIEW` |
 
 High-confidence production bugs found here: verify against source, then route to Step 4.5 — fix in-run, never `FAILED`-and-hand-off for an in-scope fix. **Context discipline:** carry forward only the verdict + findings list; the audit transcript is spent once findings are extracted (the adversarial review in this same step follows the rule too).
@@ -841,8 +863,8 @@ Per-file summary print (`adversarial:` = the Adversarial value above, verbatim):
 
 ## Completion (after queue empty)
 
-1. **Backlog persistence:** unfixed out-of-scope issues → `memory/backlog.md`
-1b. **Drive-by findings:** follow `../../shared/includes/drive-by-findings.md` with `<skill> = write-tests` — backlog the problems noticed OUTSIDE the files under test in code the run read (record only), list every `SEC` one in the completion summary, then ALWAYS run `~/.zuvo/log-drive-by --skill write-tests --sec <a> --bug <b> …` (all zeros is an honest outcome).
+1. **Backlog persistence:** unfixed out-of-scope issues were recorded through `backlog-add` where they arose ("Filing findings"); the closing commit follows the Final Test Quality Audit below.
+1b. **Drive-by findings:** follow `../../shared/includes/drive-by-findings.md` with `<skill> = write-tests` — record the problems noticed OUTSIDE the files under test in code the run read (record only), each with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:write-tests --file "$F" --line <n> [--anchor "$A"] --title "$T"` (`--anchor "$A"` is required for BUG, SEC and DATA and optional otherwise; the variables are assigned as in "Filing findings"), list every `SEC` one in the completion summary, then ALWAYS run `~/.zuvo/log-drive-by --skill write-tests --sec <a> --bug <b> …` (all zeros is an honest outcome).
 2. **Knowledge curation** per `knowledge-curate.md`
 2b. **Content-keyed review artifact (success only):** if the run modified any **production** file (incl. Step 4.5 fixes), write `memory/reviews/<base7>..<head7>-<slug>.md` with `range:`/`files:` headers per `review-artifact.md` — this run's blind audit + adversarial already reviewed that content, so pipeline gates accept it without a redundant `zuvo:review`. Skip when only test/docs files changed. **If the reviewed production edits are NOT yet committed** (no-commit session), HEAD cannot content-key them: write the PROVISIONAL form from `review-artifact.md` (working-tree blob hashes, `status: PROVISIONAL`) — it grants no coverage until the upgrade step after commit verifies the blobs and rewrites the range. Never write a normal-form artifact whose head does not contain the reviewed blobs.
 
@@ -863,7 +885,7 @@ substituted gate = INVALID.
 
 **Step A2 — Fix to Tier A** per the include (target: Tier A per file, ≥82% +
 all critical gates; strengthening only, test files only, max 2 fix→re-audit
-iterations, below-A after the cap = loud WARN + backlog, never silence). Two
+iterations, below-A after the cap = loud WARN with each file recorded once as the include's step 5 says, never silence). Two
 write-tests-specific additions on top of the include:
 
 - Tier D (AP13/AP16) on a PRE-EXISTING file is a rewrite, not a patch: route
@@ -884,6 +906,10 @@ write-tests-specific additions on top of the include:
 Print the include's `[GATE: test-quality]` line and record
 `test_quality=<PASS|WARN|N/A>:<worst tier>:<report path>` in the run telemetry.
 
+### Closing commit for backlog-add's writes
+
+After the run's last `backlog-add` call (the per-file steps, the drive-by step above and the include's steps 2 and 5), make the one closing commit, as `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**, says, against the snapshot saved beside the run ledger. This is the only commit that stages a `wrote=` path: the stacked commits of Step 4.5 and `FIX_COMMIT_PREFIX` never do. With no path left, there is no commit and the report reads `none: nothing to stage`. A run entered through `--resume-run` with a file argument makes no commit; it ends its report with one line, `Backlog writes: <path>, …` (or `Backlog writes: none`), and the coordinator's closing commit stages the union of those lines (read from `<ledger path>.backlog-writes`) and its own `wrote=` paths. With no saved snapshot found the coordinator stages nothing and lists that union as not committed (no snapshot). A run with `--invoked-by <skill>` makes no commit either and ends its report with the same `Backlog writes:` line; the calling skill's closing commit carries those paths.
+
 ### Retrospective (REQUIRED)
 
 Follow `retrospective.md`: gate check → structured questions → TSV emit → markdown append. Write the retro BEFORE the terminal report.
@@ -903,7 +929,8 @@ COMPLETION GATE CHECK
 [ ] Step 4: adversarial ran (clean|Nfindings|skipped|blocked|not_run)
 [ ] Step 4.5: every confirmed in-scope production bug FIXED in-run; escalations loud
 [ ] Step 5: coverage.md rows fully populated (Status+Gate+Blind+Adversarial)
-[ ] Step A1/A2: [GATE: test-quality] emitted from a REAL zuvo:test-audit dispatch (on-disk zuvo/audits report) over touched + pre-existing in-scope test files; sub-A files fixed (or WARN + backlog); validator + blind audit re-run for A2-modified files
+[ ] Step A1/A2: [GATE: test-quality] emitted from a REAL zuvo:test-audit dispatch (on-disk zuvo/audits report) over touched + pre-existing in-scope test files; sub-A files fixed (or WARN with each file recorded through backlog-add); validator + blind audit re-run for A2-modified files
+[ ] Every finding the run did not fix recorded through backlog-add, each B- or F-id reported or named under NOT PERSISTED (<reason>), at the step that found it; the closing commit made, or none: nothing to stage ("Committing what backlog-add wrote"), or the `Backlog writes:` line printed (a `--resume-run` sub-agent)
 [ ] Step 2b: review artifact written IF production files changed
 [ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
 [ ] Final test run: all tests pass (N/N)
@@ -956,7 +983,7 @@ On start, read `memory/coverage.md` AND glob `$ZUVO_DIR/contracts/*.coverage.jso
 | Status | Blind Audit | Adversarial | Resume action |
 |--------|-------------|-------------|---------------|
 | PASS | `clean:strict` | present | Skip |
-| FAILED | any | any | Skip (already backlogged) |
+| FAILED | any | any | Skip (recorded, or listed NOT PERSISTED) |
 | BLOCKED_INCOMPLETE | any | `blocked`/`not_run` | Resume at Step 2.5, close every uncovered row |
 | BLOCKED_INFRA | `skipped` | `blocked` | Re-run preflight; resume at Step 3.5 when infrastructure is back |
 | SKIPPED_REVIEW | `clean:strict` | `skipped` | Re-process Step 4 only |

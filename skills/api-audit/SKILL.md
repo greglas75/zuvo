@@ -496,13 +496,13 @@ CQ Overlap: {CQ IDs or "none -- cross-endpoint only"}
 
 **Default: off.** Activate with `--persist-backlog` flag or explicit user request.
 
-When active, persist findings (confidence 26+) to `memory/backlog.md`:
+When active, every finding of confidence 26+ goes through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; confidence 0-25 is DISCARD, and the bars, the dedupe and the routing are the protocol's and are not restated here).
 
-1. Read `memory/backlog.md`. If missing, create with template.
-2. Fingerprint: `file|dimension|endpoint-signature`. Dedup: existing = increment `Seen`.
-3. Delete resolved items. Confidence 0-25 = DISCARD.
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source api-audit --file "$F" --line <n> [--anchor "$A"] --severity <level> --title "$T"`. `<C>` is `SEC` for a D9 (auth), D12 (BOLA, BFLA, BOPLA, mass assignment, JWT) or D8 (rate limiting: an absent limit lets credentials, OTPs or tokens be brute-forced) finding, and for a D1 (input validation) finding where unvalidated input reaches an injection sink (SQL, command, template, SSRF), any other D1 finding being `CQ`, `BUG` only when the finding names the input and the wrong output, else `CQ`; BUG and SEC take `--anchor "$A"`, copied from the line that shows the defect or, for something absent (no auth or ownership check), from the handler line that lacks it ("The location rule"). `F` and `n` are the handler's file and that line; a finding across several endpoints cites one representative handler, the affected handler with the lowest `path:line`, so its identity is the same on every run, and lists the others in `--evidence "$E"` (it is closed only when every handler listed is fixed), and a CQ finding about the whole file is `--line 1` with a "Whole file: ..." title and no `--anchor`. `<level>` is the finding's severity (`critical`, `high`, `medium` or `low`). Assign "$R", "$F", "$T" and "$E" (only when you pass `--evidence`) before each call, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
 
-Full protocol: `../../shared/includes/backlog-protocol.md`.
+**Resolved entries** (**Closing, not removing**): a finding this run fixed gets no call. An open entry from an earlier audit that this run re-read and found fixed is closed, never removed: in one edit tick its box (`- [x]`) and append its resolution marker (`[FIXED <sha7>]`), as `backlog-protocol.md` "How to Persist Findings" step 3 says. That tick is the one hand edit the protocol sanctions (no helper ticks), and it is not a `wrote=` path: this audit does not stage it and names each ticked entry in its report. Moving a closed entry to the archive is the helper's job (`~/.zuvo/backlog-archive.py archive`, which `append-runlog` runs at the end of the run), never done by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ## Phase 6: Next-Action Routing
 

@@ -560,13 +560,17 @@ Save to: `zuvo/audits/structure-audit-YYYY-MM-DD.md` — at the **project root**
 
 ### 5.3 Backlog Integration
 
-For HIGH and CRITICAL findings, persist to `memory/backlog.md` — resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (the checkout's own copy when git tracks it, else the MAIN checkout root; never an untracked worktree-local copy):
-- Fingerprint format: `file|SA-dimension|check-id`
-- Deduplicate against existing entries
+Every HIGH and CRITICAL finding goes through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the checkout the helper writes to, the bars and the dedupe are the protocol's, so compute no fingerprint and restate nothing).
+
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source structure-audit --file "$F" --line <n> [--anchor "$A"] --severity <level> --title "$T"`. `<level>` is `critical` or `high`, the finding's own severity. `<N>` is 85 for a HIGH-confidence finding (tool-confirmed, or read and verified) and 60 for a MEDIUM-confidence one (a grep-based fallback, as 1.2 labels it). `<C>` is the finding's own class: `SIZE` (SA7, a file over its size limit), `DUP` (SA10), `CPLX` (SA9, SA13), `DEAD` (unused exports and dead files, SA5), and `CQ` for every other dimension: SA1-SA4, SA6 (layer violations, a critical gate), SA8 (circular dependencies, a critical gate), SA11 and SA12. None of these takes an `--anchor`. Where the finding sits: a layer violation (SA6) cites the file and line of the offending import; a cycle (SA8) cites the first file of the cycle in path order and lists the others in `--evidence "$E"`; a directory-level finding (SA1-SA4, SA11, SA12) cites the first affected path in path order, `--line 1`, with a "Whole file: ..." or "Directory: ..." title ("The location rule"). A finding that is a defect with a wrong output rather than a structure problem is a `BUG`, which takes `--anchor "$A"`, copied from the line that shows it. Assign "$R", "$F" and "$T" before each call, "$A" only when you pass `--anchor` and "$E" only when you pass `--evidence`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+**Resolved entries** (**Closing, not removing**): with `--fix`, run 5.4 BEFORE these calls and file only the findings it left unresolved (the calls need the cited file to exist, and a file 5.4 deleted or renamed would leave an entry pointing nowhere). An open entry from an earlier audit that this run re-read and found fixed is closed, never removed. `--fix` does not commit, so there is no `<sha7>` to write: leave such an entry open, note the fix in the report, and let whoever commits the fix close it (`backlog-protocol.md` "How to Persist Findings" step 3: tick the box `- [x]` and append `[FIXED <sha7>]`, the one hand edit the protocol sanctions; no helper ticks). When the fix is already committed, that tick is a single edit, it is not a `wrote=` path, this audit does not stage it, and the report names each ticked entry. Moving a closed entry to the archive is the helper's job (`~/.zuvo/backlog-archive.py archive`, which `append-runlog` runs at the end of the run), never done by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ### 5.4 Auto-Fix Mode (--fix)
 
-**Only if `--fix` argument was provided.** After report generation:
+**Only if `--fix` argument was provided.** After the report is saved, and before the 5.3 backlog calls:
 
 | Fix Type | Condition | Action |
 |----------|-----------|--------|
@@ -647,7 +651,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item `B-structure-audit-incomplete-<date>`.
+If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source structure-audit --target subject:structure-audit-incomplete --title "$T"`, with `T` the fixed title `structure-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
 
 The Validity Gate must be printed **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`). Printing it before guarantees `NOT_APPENDED`.
 

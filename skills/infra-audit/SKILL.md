@@ -102,7 +102,7 @@ If any Stage 1 file is missing, STOP.
 ### Stage 2 — Before Phase 3 (report writing)
 
 ```text
-  5. ../../shared/includes/backlog-protocol.md       -- [READ | MISSING]   (findings → backlog entries)
+  5. ../../shared/includes/backlog-protocol.md       -- [READ | MISSING -> STOP]   (findings are recorded through backlog-add)
   6. ../../shared/includes/run-logger.md             -- [READ | MISSING]   (Run: line + append-runlog)
   7. ../../shared/includes/retrospective.md          -- [READ | MISSING]   (RETRO: marker + retros.log/.md append)
   8. ../../shared/includes/report-output-location.md -- [READ | MISSING]   (canonical $ZUVO_DIR — output MUST go to zuvo/audits/)
@@ -247,8 +247,8 @@ if ! { [ -f "$GITIGNORE" ] && grep -qE '^/?zuvo/?$' "$GITIGNORE"; }; then
 fi
 ```
 
-The ONLY write outside `RUN_DIR` permitted by the whole run is this one-time
-`zuvo/` line (AC10 exemption).
+The ONLY writes outside `RUN_DIR` permitted by the whole run are this one-time
+`zuvo/` line (AC10 exemption) and, through `backlog-add`, `memory/backlog.md` and `memory/findings/`.
 
 ### Phase 0.3 — Target source resolution + first-run scaffold (DD-2)
 
@@ -617,6 +617,16 @@ host gets `coverage_mode: FULL`.
 | web01 | OK | B | 0 | 2 | proxy | FULL |
 | db01  | UNREACHABLE | - | - | - | - | - |     # unreachable hosts still listed (AC1)
 ```
+
+### Phase 3.6 — Backlog Persistence
+
+This audit has no flag for it, so it files only the CRITICAL and HIGH findings of the run, after the fleet-summary is written, one `backlog-add` call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars and the dedupe are the protocol's, so compute no fingerprint and restate nothing). `<level>` is `critical` or `high`.
+
+A **Generic write** per finding. A host has no repository file, so the record is a target record, which takes no anchor: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source infra-audit --target "$U" --evidence "$E" --severity <level> --title "$T"`. `U` is the host's address or name, without the `user@` part. `<C>` is `SEC` for a security finding and `CQ` for an operational-hygiene finding with no security impact. `E` is the check id and the grounding line from the bundle, already redacted at the collector (IC-5); a secret or user data is never copied into a record (`backlog-protocol.md` "Filing from a skill", "The location rule", the secrets sentence), and `U` has no query string.
+
+Assign "$R", "$U", "$E" and "$T" before each call, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+
+This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
 ---
 

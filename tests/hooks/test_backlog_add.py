@@ -3,6 +3,9 @@ ledger. Every test drives the LAUNCHER as a subprocess in a temp `git init` repo
 temp directory (one in-process row aside, for a git answer no fixture can provoke), and asserts what a
 caller sees and what is left on disk: the one verdict line, the exit code, the backlog text and the
 folded ledger. Each test names the defect it catches.
+
+Test level: medium (subprocesses, a temp git repo and file locks; no network). The lock tests use the
+real clock on purpose: the contention they prove is between real processes.
 """
 
 import contextlib
@@ -318,6 +321,9 @@ class VerdictTests(AddCase):
         ("an --also with no `:LINE` is kept as a site with no line", ("--also", "src/a.py"), "bad-path"),
         ("an --also with a non-integer line is kept or crashes", ("--also", "src/a.py:x"),
          "line-out-of-range"),
+        # Last: when it is wrongly accepted, its write must not fail the rows above for the wrong reason.
+        ("a 7-digit --pr is written as [pr:1000000], past the intake's 1–6 digits", ("--pr", "1000000"),
+         "bad-pr"),
     ]
 
     def test_refusals_exit_three_and_write_nothing(self) -> None:
@@ -509,21 +515,77 @@ class RoutingTests(AddCase):
                      "--title", "review incomplete", "--source", "review")
         self.assertEqual((p.returncode, self.verdict(p)[0]), (0, "LEDGER"))
 
+    LIVE_PAGE_CQ = ("--class", "CQ", "--conf", "70", "--target", "https://example.com/pricing",
+                    "--evidence", "no h1 on the page", "--title", "pricing page has no h1",
+                    "--source", "seo-audit")
+
+    def test_live_page_finding_of_a_report_only_class_goes_to_the_ledger(self) -> None:
+        # Defect: a live-URL finding of any class but BUG/SEC/DATA is refused, so an SEO/a11y audit of a
+        # live page keeps nothing; or it leaks into the backlog the intake tickets.
+        r = self.repo()
+        before = snapshot(r)["memory/backlog.md"]
+        p = self.add(r, *self.LIVE_PAGE_CQ)
+        kind, _, f_id = self.verdict(p)
+        records, _ = self.folded(r)
+        self.assertEqual((p.returncode, kind), (0, "LEDGER"))
+        self.assertIn(f"LEDGER {f_id} reason=class-report-only ", p.stdout)
+        self.assertEqual(snapshot(r)["memory/backlog.md"], before)
+        self.assertEqual(records[f_id].fields["class"], "CQ")
+
+    def test_forced_live_page_finding_is_filed_in_a_line_the_bump_parser_reads(self) -> None:
+        # Defect: a URL-target line of a report-only class renders in a shape `parse_own` cannot read
+        # back, so a re-sighting could never bump it.
+        r = self.repo()
+        p = self.add(r, *self.LIVE_PAGE_CQ, ZUVO_BACKLOG_ADMIT="1")
+        kind, b_id, _ = self.verdict(p)
+        (line,) = self.entries(r, b_id)
+        own = ent.parse_own(line)
+        self.assertEqual((p.returncode, kind), (0, "ACCEPTED"))
+        assert own is not None
+        self.assertEqual((own.b_id, own.sources, own.seen), (b_id, ("seo-audit",), 1))
+
+    def test_url_query_fragment_and_path_parameters_never_reach_the_ledger(self) -> None:
+        # Defect: a credential in a crawled URL's query or fragment, or a session id in its `;` path
+        # parameter, is written to the shared ledger because `_finding` passes --target on unstripped.
+        r = self.repo()
+        p = self.add(r, "--class", "CQ", "--conf", "70", "--target",
+                     "https://example.com/p;jsessionid=S1D?token=abc#frag",
+                     "--evidence", "e", "--title", "page has no h1", "--source", "seo-audit")
+        _, _, f_id = self.verdict(p)
+        records, _ = self.folded(r)
+        self.assertEqual(records[f_id].fields["target"], "https://example.com/p")
+        ledger = "".join(path.read_text(encoding="utf-8") for path in r.glob("memory/**/*.jsonl"))
+        self.assertIn("https://example.com/p", ledger)
+        self.assertNotIn("token", ledger)
+        self.assertNotIn("jsessionid", ledger)
+
+    def test_credentials_before_the_host_are_still_refused_when_a_query_follows(self) -> None:
+        # Defect: the query strip runs first and a `user:pw@` URL is stored without anyone refusing it.
+        r = self.repo()
+        p = self.add(r, "--class", "CQ", "--conf", "70", "--target", "https://u:pw@example.com/p?a=1",
+                     "--evidence", "e", "--title", "page has no h1", "--source", "seo-audit")
+        self.assertEqual((p.returncode, p.stdout), (3, "REFUSED secret-like-value\n"))
+
     UNTAGGABLE = [
         ("a non-SEC entry on an unresolvable branch lands untagged", "BUG", "LEDGER"),
         ("a SEC entry on an unresolvable branch is held back from the backlog", "SEC", "ACCEPTED"),
     ]
 
+    # A name outside the intake's charset, and one past its 200 characters (tagged, the intake never
+    # resolves it and holds the entry for ever).
+    UNRESOLVABLE = [("feat/a+b", "a"), ("feat/" + "x" * 196, "b")]
+
     def test_unresolvable_branch_keeps_non_sec_in_the_ledger_and_files_sec_untagged(self) -> None:
-        r = self.repo(branch="feat/a+b")
-        for name, cls, want in self.UNTAGGABLE:
-            with self.subTest(name):
-                p = self.add(r, "--class", cls, *BUG[2:])
-                kind, _, f_id = self.verdict(p)
-                records, _ = self.folded(r)
-                self.assertEqual((p.returncode, kind), (0, want))
-                self.assertEqual(records[f_id].fields["reason"], "branch-untaggable")
-                self.assertNotIn("[branch:", self.backlog(r))
+        for branch, repo_name in self.UNRESOLVABLE:
+            r = self.repo(name=repo_name, branch=branch)
+            for name, cls, want in self.UNTAGGABLE:
+                with self.subTest(f"{name} ({len(branch)}-character {branch[:8]}…)"):
+                    p = self.add(r, "--class", cls, *BUG[2:])
+                    kind, _, f_id = self.verdict(p)
+                    records, _ = self.folded(r)
+                    self.assertEqual((p.returncode, kind), (0, want))
+                    self.assertEqual(records[f_id].fields["reason"], "branch-untaggable")
+                    self.assertNotIn("[branch:", self.backlog(r))
 
     PROMOTION = [
         ("a gap on a line the branch changed is never promoted", "5", "ACCEPTED", r"B-a-BUG-[0-9a-f]{8}"),

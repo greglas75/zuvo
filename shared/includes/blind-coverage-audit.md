@@ -113,7 +113,7 @@ If critical blind-audit findings persist after pass 2, the caller must mark the 
 - Do not call a row `FULL` if the test only asserts a mock return value and never verifies forwarded args with `CalledWith`.
 - Do not downgrade owned accessibility fallbacks just because they look "small". If the screen reader-visible fallback can regress, it must be audited.
 - Do not confuse "rendered something" with "proved the fallback path". That is `STRUCTURAL_ONLY`, not `FULL`.
-- When a Suspense/loading fallback is structurally unobservable because all lazy children are mocked synchronously (`vi.mock` + `React.lazy` in Vitest), do not mark the row `NONE`. Use `PARTIAL`, explain the sync-mock limitation, and backlog it only if the project needs stronger fallback observability.
+- When a Suspense/loading fallback is structurally unobservable because all lazy children are mocked synchronously (`vi.mock` + `React.lazy` in Vitest), do not mark the row `NONE`. Use `PARTIAL`, explain the sync-mock limitation, and record it only if the project needs stronger fallback observability, with `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`backlog-protocol.md` "Filing from a skill", **Generic write**; `<skill>` is the calling skill; assign `"$R"`, `"$F"`, `"$A"` and `"$T"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)).
 
 ## Required Output
 
