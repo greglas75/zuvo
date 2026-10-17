@@ -417,9 +417,13 @@ def _advise_similar(c: _Call) -> None:
     say that an existing finding may be the same defect. Advisory ONLY — it writes nothing, decides
     nothing, and `zuvo_backlog_similar.advise` returns None on every failure, so this line changes
     no verdict and cannot fail the call. It runs HERE, before the lock, because it makes a network
-    call and the lock budget is the write path for every other writer on the machine."""
+    call and the lock budget is the write path for every other writer on the machine. A --dry-run
+    makes no call at all: "writes nothing" is read as "changes nothing anywhere", and a dry run that
+    quietly shipped the finding's title and evidence to a third party would break that reading."""
     if c.d.route != adm.ROUTE_BACKLOG:
         return                                  # the ledger route files no entry: nothing to split
+    if c.dry:
+        return                                  # --dry-run sends nothing anywhere, network included
     line = sim.advise(c.ledger, c.f, c.d, c.fid)
     if line:
         print(f"backlog-add: {line}", file=sys.stderr)

@@ -8,6 +8,9 @@ test names the defect it catches. No test reaches a real network: the unit specs
 transport seam, and the two launcher specs run a stub HTTP server on loopback.
 """
 
+import contextlib
+import http.client
+import io
 import json
 import os
 import shutil
@@ -15,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,6 +34,7 @@ import zuvo_backlog_findings as fnd  # noqa: E402
 import zuvo_backlog_similar as sim  # noqa: E402
 
 NOW = "2026-10-17T10:00:00+00:00"
+DUP_KEY = "DUP"
 KEY = "sk-or-fixture"
 ANCHOR_A = "if total > limit:"
 ANCHOR_B = "return total - limit"
@@ -40,6 +45,7 @@ SCRUB = ("ZUVO_BACKLOG_PR", "ZUVO_BACKLOG_ADMIT", "ZUVO_LOCK_WAIT", "ZUVO_BACKLO
          "ZUVO_BACKLOG_SIMILAR_THRESHOLD", "ZUVO_BACKLOG_SIMILAR_TIMEOUT", "OPENROUTER_API_KEY",
          "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
          "GIT_PREFIX", "GIT_CEILING_DIRECTORIES")
+PROXY_VARS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"})
 
 
 def finding(anchor: str = ANCHOR_A, cls: str = "BUG", path: Optional[str] = "src/a.py",
@@ -62,8 +68,14 @@ def records_of(*findings: adm.Finding) -> Dict[str, fnd.Record]:
 
 
 def scrubbed_env() -> Dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+    """The launcher's environment, minus everything that would change what these specs see. The
+    proxy variables are part of that: `urllib` honours them for 127.0.0.1 too, so on a host with a
+    proxy configured the stub would never be reached and the specs that assert it WAS reached would
+    fail for a reason that has nothing to do with the code."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in SCRUB and k.upper() not in PROXY_VARS}
     env.update(HERMETIC_GIT)
+    env["NO_PROXY"] = env["no_proxy"] = "127.0.0.1,localhost"
     return env
 
 
@@ -124,6 +136,8 @@ class GateCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.f = finding()
         self.calls: List[Any] = []
+        self.empty_home = self.tmp / "empty-home"
+        self.empty_home.mkdir()
 
     def advise(self, **env: str) -> Optional[str]:
         """`advise` over a ledger holding ONE same-file same-class finding with another anchor, with
@@ -131,7 +145,7 @@ class GateCase(unittest.TestCase):
         other = finding(anchor=ANCHOR_B, line=4)
         with mock.patch.object(sim, "_post", side_effect=lambda *a, **k: self.calls.append(a)), \
              mock.patch.object(fnd, "fold", return_value=(records_of(other), [])), \
-             mock.patch.dict(os.environ, {k: v for k, v in env.items()}, clear=False):
+             mock.patch.dict(os.environ, {"HOME": str(self.empty_home), **env}, clear=False):
             for name in SCRUB:
                 if name not in env:
                     os.environ.pop(name, None)
@@ -151,9 +165,14 @@ class GateCase(unittest.TestCase):
 
     def test_no_key_is_a_silent_no_op(self) -> None:
         """Defect: a machine with the flag but no key gets a warning (or a traceback) on every
-        ACCEPT — stderr nagging on the one write path trains callers to stop reading it."""
-        self.assertIsNone(self.advise(ZUVO_BACKLOG_SIMILAR="1"))
+        ACCEPT — stderr nagging on the one write path trains callers to stop reading it. HOME is a
+        fresh empty directory here: `api_key` also reads ~/.zuvo/openrouter.key, so without that
+        isolation this spec passes on CI and fails on exactly the machines that have a key."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(self.advise(ZUVO_BACKLOG_SIMILAR="1"))
         self.assertEqual(self.calls, [])
+        self.assertEqual(err.getvalue(), "", "the no-key path said something on stderr")
 
     def test_a_key_file_readable_by_others_is_not_used(self) -> None:
         """Defect: the hint reads a key the adversarial driver refuses, so tightening the mode in one
@@ -272,6 +291,61 @@ class AnswerCase(unittest.TestCase):
             with self.subTest(exc=type(exc).__name__):
                 self.assertIsNone(self.advise(mock.Mock(side_effect=exc)))
 
+    def test_a_probability_that_is_not_one_is_refused(self) -> None:
+        """Defect: NaN fails every comparison, so an unchecked NaN slides past `p < THRESHOLD` and
+        the caller is told `SIMILAR F-… p=nan`; a bool or an out-of-range number is not a
+        probability either, and `{"DUP": true}` reading as 1.0 would flag every pair."""
+        for value in (float("nan"), float("inf"), -0.5, 1.5, True, "0.9", None):
+            with self.subTest(value=value):
+                self.assertIsNone(self.advise(self.answering({"probabilities": {DUP_KEY: value}})))
+
+    def test_the_whole_advisory_stops_at_one_deadline(self) -> None:
+        """Defect: the per-call timeout multiplies by the candidate count, so five candidates and a
+        degraded endpoint stall the caller for 5 x 8 s before the verdict appears. The lock is not
+        held, which was the point — but the human waiting for the verdict is."""
+        rows = {}
+        for i in range(sim.MAX_CANDIDATES):
+            other = finding(anchor=f"anchor {i}")
+            rows[adm.fingerprint(other)] = record(other, ts=f"2026-10-{i + 1:02d}T10:00:00+00:00")
+        seen: List[float] = []
+
+        def slow(key: str, state: str, timeout: float) -> Any:
+            seen.append(timeout)
+            time.sleep(0.25)
+            raise TimeoutError("slow")
+
+        with mock.patch.object(sim, "_post", slow), \
+             mock.patch.object(fnd, "fold", return_value=(rows, [])), \
+             mock.patch.dict(os.environ, {"ZUVO_BACKLOG_SIMILAR": "1", "OPENROUTER_API_KEY": KEY,
+                                          "ZUVO_BACKLOG_SIMILAR_BUDGET": "1",
+                                          "ZUVO_BACKLOG_SIMILAR_TIMEOUT": "8"}):
+            started = time.monotonic()
+            self.assertIsNone(sim.advise(self.tmp, self.f, decision(self.f), adm.fingerprint(self.f)))
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 4.0, f"the budget did not stop the calls ({elapsed:.1f}s)")
+        self.assertLess(len(seen), sim.MAX_CANDIDATES, "every candidate was asked despite the budget")
+        self.assertTrue(all(t <= 8.0 for t in seen), seen)
+
+    def test_a_dropped_or_truncated_response_is_silent(self) -> None:
+        """Defect: `http.client` failures are neither OSError nor ValueError, so a truncated body
+        (IncompleteRead) or a dropped connection (RemoteDisconnected) raises straight through the
+        advisory and out of the one locked write path."""
+        for exc in (http.client.IncompleteRead(b""), http.client.BadStatusLine(""),
+                    http.client.RemoteDisconnected("closed"), UnicodeDecodeError("utf-8", b"", 0, 1, "bad")):
+            with self.subTest(exc=type(exc).__name__):
+                self.assertIsNone(self.advise(mock.Mock(side_effect=exc)))
+
+    def test_the_candidate_is_described_by_the_file_it_matched_on(self) -> None:
+        """Defect: a record citing several files is SELECTED on the file that matches and then
+        DESCRIBED by its first one, so the model is shown a different place than the one that made
+        the pair a candidate."""
+        rec = record(finding(anchor=ANCHOR_B))
+        rec.fields["files"] = [{"path": "src/other.py", "line": 9, "note": ""},
+                               {"path": "src/a.py", "line": 4, "note": ""}]
+        text = sim._candidate_text(rec, "src/a.py")
+        self.assertIn("src/a.py:4", text)
+        self.assertNotIn("src/other.py", text)
+
     def test_the_question_never_carries_the_fingerprint(self) -> None:
         """Defect: the F-id is pasted into the prompt, so the model answers 'different' from the
         hash of the very fields it is being asked to compare, and the hint silently measures the
@@ -362,8 +436,10 @@ class LauncherCase(unittest.TestCase):
         self.assertIn("SIMILAR F-", run.stderr)
         self.assertIn("p=0.93", run.stderr)
         after = (self.repo / "memory" / "backlog.md").read_text(encoding="utf-8")
-        self.assertEqual(after.count("\n- [ ] "), before.count("\n- [ ] ") + 1,
-                         "the advisory changed what was written")
+        added = after[len(before):]
+        self.assertTrue(after.startswith(before), "the advisory rewrote what was already there")
+        self.assertEqual(added.count("\n"), 1, f"one appended entry expected, got {added!r}")
+        self.assertIn("[BUG]", added)
 
     def test_an_endpoint_that_fails_changes_nothing_a_caller_sees(self) -> None:
         """Defect: a 500 from the endpoint fails the add — the advisory becomes a dependency of the
@@ -373,9 +449,22 @@ class LauncherCase(unittest.TestCase):
             run = self.add(*self.second_args(), ZUVO_BACKLOG_SIMILAR="1", OPENROUTER_API_KEY=KEY,
                            ZUVO_BACKLOG_SIMILAR_URL=stub.url)
         self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertTrue(stub.bodies, "the endpoint was never called, so the 500 path is untested")
         self.assertTrue(run.stdout.startswith("ACCEPTED "), run.stdout)
         self.assertNotIn("SIMILAR", run.stderr)
         self.assertNotIn("Traceback", run.stderr)
+
+    def test_a_dry_run_sends_nothing_to_the_endpoint(self) -> None:
+        """Defect: `--dry-run` means "writes nothing", and a caller reads that as "changes nothing
+        anywhere". Shipping the finding's title, evidence and anchor to a third party on a dry run
+        breaks that reading in the one direction nobody checks."""
+        self.file_one()
+        with StubDecisions() as stub:
+            run = self.add(*self.second_args(), "--dry-run", ZUVO_BACKLOG_SIMILAR="1",
+                           OPENROUTER_API_KEY=KEY, ZUVO_BACKLOG_SIMILAR_URL=stub.url)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(stub.bodies, [], "a dry run reached the network")
+        self.assertNotIn("SIMILAR", run.stderr)
 
     def test_the_default_run_reaches_no_endpoint(self) -> None:
         """Defect: the flag is read somewhere else (or defaulted on), so an ordinary `backlog-add`

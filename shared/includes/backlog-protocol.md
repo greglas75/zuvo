@@ -176,9 +176,14 @@ backlog-add: SIMILAR F-1a2b3c4d5e6f p=0.87 (advisory: nothing was changed by thi
 What it is, exactly: a hint for whoever reads the output. It writes nothing, decides nothing, and
 changes no verdict or exit code. Every failure — no key, no candidate, a timeout, an HTTP error, an
 unknown response shape — is silent, because this runs on the write path and a nag there teaches
-callers to stop reading stderr. The call is made BEFORE the lock is taken: the lock budget
-(`ZUVO_LOCK_WAIT`, 30 s) guards the only write path for the backlog and the ledger on the machine,
-and a third party must never sit inside it.
+callers to stop reading stderr. `--dry-run` makes no call at all: it means "changes nothing
+anywhere", and that has to include not shipping the finding's text to a third party.
+
+Two deadlines, and they protect different people. The call is made BEFORE the lock is taken, because
+the lock budget (`ZUVO_LOCK_WAIT`, 30 s) guards the only write path for the backlog and the ledger on
+the machine and a third party must never sit inside it. The advisory then has its OWN overall budget,
+because a per-call timeout multiplied by five candidates would stall the caller for 40 s before the
+verdict is printed — the lock being free is no comfort to the human waiting for the line.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -186,6 +191,8 @@ and a third party must never sit inside it.
 | `ZUVO_BACKLOG_SIMILAR_MODEL` | `perplexity/pplx-decider-v1.1-27b` | the decisions model to ask |
 | `ZUVO_BACKLOG_SIMILAR_THRESHOLD` | `0.55` | the probability at or above which the line is printed |
 | `ZUVO_BACKLOG_SIMILAR_TIMEOUT` | `8` | seconds per call |
+| `ZUVO_BACKLOG_SIMILAR_BUDGET` | `12` | seconds for the WHOLE advisory; candidates left when it runs out are not asked |
+| `ZUVO_BACKLOG_SIMILAR_DEBUG` | unset | `1` prints why the advisory gave up, for when no hint appears and you need to know whether that is an answer or a failure |
 | `ZUVO_BACKLOG_SIMILAR_URL` | OpenRouter's decisions endpoint | overridden by the tests' stub server |
 
 The model and the threshold are the measured operating point, not a preference: over

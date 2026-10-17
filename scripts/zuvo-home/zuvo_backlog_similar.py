@@ -38,9 +38,12 @@ REVISIONS of one entry) and are a LOWER bound, not a promise.
 
 from __future__ import annotations
 
+import http.client
 import json
+import math
 import os
 import stat
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -64,6 +67,16 @@ THRESHOLD_ENV = "ZUVO_BACKLOG_SIMILAR_THRESHOLD"
 THRESHOLD = 0.55
 TIMEOUT_ENV = "ZUVO_BACKLOG_SIMILAR_TIMEOUT"
 TIMEOUT_S = 8.0
+# The deadline for the WHOLE advisory, not one call. Without it the per-call timeout multiplies by
+# the number of candidates (5 x 8 s = 40 s) and a degraded endpoint stalls the caller before the
+# verdict is printed — the lock is safe, the human is not. Calls stop when the budget is spent; the
+# answers already in hand are still used.
+BUDGET_ENV = "ZUVO_BACKLOG_SIMILAR_BUDGET"
+BUDGET_S = 12.0
+# A response larger than this is not read. The body is a handful of probabilities; anything bigger
+# is a broken or hostile endpoint, and `read()` with no limit would hold whatever it sends in memory.
+MAX_RESPONSE_BYTES = 64 * 1024
+DEBUG_ENV = "ZUVO_BACKLOG_SIMILAR_DEBUG"
 
 # The label whose probability is read. `criteria` names both sides, so the model answers a two-way
 # choice and `probabilities` carries both; only DUP is thresholded.
@@ -101,6 +114,16 @@ def _env_float(name: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _debug(what: str, detail: Any) -> None:
+    """Say why the advisory gave up, but only when asked. Fail-open silence is the right default on
+    the write path and the wrong default when someone is trying to work out why no hint appears, and
+    `except Exception: return None` with no way to see the exception is how a feature quietly dies
+    and nobody notices for a month."""
+    if os.environ.get(DEBUG_ENV, "").strip() == "1":
+        import sys as _sys
+        print(f"backlog-add: similar: {what}: {detail}", file=_sys.stderr)
+
+
 def enabled() -> bool:
     return os.environ.get(ENABLE_ENV, "").strip() == "1"
 
@@ -136,12 +159,15 @@ def _describe(cls: str, title: str, how: str, anchor: str, path: str, line: Any)
     return "\n".join(f"{name}: {_cap(value)}" for name, value in rows if _cap(value))
 
 
-def _candidate_text(rec: fnd.Record) -> str:
-    files = rec.fields.get("files") or []
-    first = files[0] if isinstance(files, list) and files and isinstance(files[0], Mapping) else {}
+def _candidate_text(rec: fnd.Record, path: str = "") -> str:
+    """One ledger finding as the question sees it. `path` is the file the candidate filter matched
+    on: a record citing several files would otherwise be DESCRIBED by its first one while having
+    been SELECTED by another, and the model would be comparing two different places."""
+    files = [e for e in (rec.fields.get("files") or []) if isinstance(e, Mapping)]
+    cited = next((e for e in files if str(e.get("path") or "") == path), None) or (files[0] if files else {})
     return _describe(str(rec.fields.get("class") or ""), str(rec.fields.get("title") or ""),
                      str(rec.fields.get("how") or ""), str(rec.fields.get("anchor") or ""),
-                     str(first.get("path") or ""), first.get("line"))
+                     str(cited.get("path") or ""), cited.get("line"))
 
 
 def _finding_text(f: adm.Finding, d: adm.Decision) -> str:
@@ -186,8 +212,15 @@ def _probability(payload: Any) -> Optional[float]:
         node = stack.pop(0)
         if isinstance(node, Mapping):
             probs = node.get("probabilities")
-            if isinstance(probs, Mapping) and isinstance(probs.get(DUP), (int, float)):
-                return float(probs[DUP])
+            value = probs.get(DUP) if isinstance(probs, Mapping) else None
+            # bool is an int: `{"DUP": true}` is a label, not a probability, and must not read as 1.0.
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                p = float(value)
+                # NaN fails every comparison, so an unchecked NaN slips past the threshold test and
+                # prints `p=nan`; a value outside [0, 1] is not a probability whatever it is.
+                if math.isfinite(p) and 0.0 <= p <= 1.0:
+                    return p
+                return None
             stack.extend(node.values())
         elif isinstance(node, list):
             stack.extend(node)
@@ -206,7 +239,7 @@ def _post(key: str, state: str, timeout: float) -> Any:
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                  "X-Title": "zuvo-backlog-similar"})
     with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read(), strict=False)
+        return json.loads(response.read(MAX_RESPONSE_BYTES), strict=False)
 
 
 def ask(key: str, existing: str, new: str, timeout: Optional[float] = None) -> Optional[float]:
@@ -214,14 +247,26 @@ def ask(key: str, existing: str, new: str, timeout: Optional[float] = None) -> O
     state = f"EXISTING FINDING\n{existing}\n\nNEW FINDING\n{new}"
     try:
         return _probability(_post(key, state, timeout or _env_float(TIMEOUT_ENV, TIMEOUT_S)))
-    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+    except Exception as exc:                     # noqa: BLE001 — see FAIL-OPEN, ALWAYS above
+        # Not OSError|ValueError: a truncated body raises http.client.IncompleteRead and a dropped
+        # connection RemoteDisconnected, both HTTPException, which is neither of those.
+        _debug("call failed", exc)
         return None
 
 
-def _best(key: str, rows: List[Tuple[str, fnd.Record]], new: str) -> Optional[Tuple[str, float]]:
+def _best(key: str, rows: List[Tuple[str, fnd.Record]], new: str, path: str) -> Optional[Tuple[str, float]]:
+    """The highest-scoring candidate, within one overall deadline. Candidates are asked in order
+    (newest first), so a budget that runs out drops the least likely ones, and whatever was answered
+    before it ran out still counts."""
+    per_call = _env_float(TIMEOUT_ENV, TIMEOUT_S)
+    deadline = time.monotonic() + _env_float(BUDGET_ENV, BUDGET_S)
     scored: List[Tuple[str, float]] = []
     for other, rec in rows:
-        p = ask(key, _candidate_text(rec), new)
+        left = deadline - time.monotonic()
+        if left <= 0.5:                          # too little left to be worth a connection
+            _debug("budget spent", f"{len(scored)}/{len(rows)} candidates asked")
+            break
+        p = ask(key, _candidate_text(rec, path), new, timeout=min(per_call, left))
         if p is not None:
             scored.append((other, p))
     if not scored:
@@ -250,14 +295,15 @@ def advise(ledger: Path, f: adm.Finding, d: adm.Decision, fid: str) -> Optional[
         rows = candidates(records, f, fid)
         if not rows:
             return None
-        best = _best(key, rows, _finding_text(f, d))
+        best = _best(key, rows, _finding_text(f, d), f.file or "")
         if best is None:
             return None
         other, p = best
         if p < _env_float(THRESHOLD_ENV, THRESHOLD):
             return None
         return f"SIMILAR {other} p={p:.2f} (advisory: nothing was changed by this)"
-    except (KeyboardInterrupt, SystemExit):
-        raise
-    except BaseException:                        # noqa: BLE001 — see FAIL-OPEN, ALWAYS above
+    except Exception as exc:                     # noqa: BLE001 — see FAIL-OPEN, ALWAYS above
+        # KeyboardInterrupt and SystemExit are BaseException, not Exception, so they are not caught
+        # here: a caller interrupting `backlog-add` must not be told it was an advisory hiccup.
+        _debug("advisory failed", exc)
         return None
