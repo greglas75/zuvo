@@ -1,5 +1,8 @@
 """release-autoinstall and key-sync (scripts/zuvo-home): the two jobs that replace hand installs and hand
-key copies. Real git repositories in a temp dir; install.sh, `claude` and `op` are stub scripts."""
+key copies.
+
+Test level: medium — real git repositories and files in a per-test temp dir, stub scripts for install.sh,
+`claude` and `op`; no network, and key-sync's clock is fixed (unittest.mock), never the wall clock."""
 import contextlib
 import fcntl
 import importlib.machinery
@@ -7,11 +10,12 @@ import importlib.util
 import io
 import json
 import os
+import random
 import stat
 import subprocess
 import tempfile
-import time
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,6 +30,10 @@ def load(name):
 
 
 RA, KS = load("release-autoinstall"), load("key-sync")
+NOW = 1_800_000_000.0                       # key-sync's fixed clock
+WITHIN_A_DAY = NOW - KS.RETRY_AFTER_S + 3600
+OVER_A_DAY = NOW - KS.RETRY_AFTER_S - 3600
+REAL_LISTING = os.path.join(ROOT, "tests", "hooks", "fixtures", "claude-plugin-list.txt")
 
 LISTING = """Installed plugins:
 
@@ -89,6 +97,21 @@ class TagAndListing(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(RA.newest(tags), "v1.2.3")
 
+    def test_newest_is_the_numeric_maximum_of_any_shuffled_tag_set(self):
+        # invariant over generated inputs (seed 1017): the pick never depends on order or on text sorting
+        rng = random.Random(1017)
+        for _ in range(200):
+            versions = {tuple(rng.randrange(0, 30) for _ in range(3)) for _ in range(rng.randrange(1, 12))}
+            tags = [f"v{a}.{b}.{c}" for a, b, c in versions] + ["build-x", "v1.2"]
+            rng.shuffle(tags)
+            want = max(versions)
+            self.assertEqual(RA.newest(tags), f"v{want[0]}.{want[1]}.{want[2]}", tags)
+
+    def test_plugin_state_reads_a_real_claude_plugin_list(self):
+        # contract: output recorded from Claude Code 2026-10-17, three project-scope pins beside the user one
+        with open(REAL_LISTING, encoding="utf-8") as f:
+            self.assertEqual(RA.plugin_state(f.read()), ("1.6.87", True))
+
     def test_newest_of_no_release_is_none(self):
         self.assertIsNone(RA.newest(["build-1", ""]))
 
@@ -131,7 +154,8 @@ class Release(Env):
         os.environ.update(ZUVO_RELEASE_REPO=self.origin, ZUVO_CLAUDE_BIN=self.claude)
 
     def set_claude(self, update_rc):
-        sh(self.claude, f'''p="{self.plugin}"; read v s e < "$p"
+        self.claude_calls = os.path.join(self.tmp, "claude-calls")
+        sh(self.claude, f'''echo "$1 $2" >> "{self.claude_calls}"; p="{self.plugin}"; read v s e < "$p"
 case "$1 $2" in
   "plugin list") printf '  ❯ zuvo@zuvo-marketplace\\n    Version: %s\\n' "$v"
                  printf '    Scope: user\\n    Status: %s %s\\n' "$s" "$e" ;;
@@ -140,6 +164,13 @@ case "$1 $2" in
   "plugin enable") echo "$v ✔ enabled" > "$p" ;;
 esac
 ''')
+
+    def calls(self):
+        try:
+            with open(self.claude_calls) as f:
+                return f.read().splitlines()
+        except FileNotFoundError:
+            return []
 
     def installs(self):
         try:
@@ -154,8 +185,10 @@ esac
         self.assertEqual(RA.read_state()["installed"], "v1.0.0")
         with open(self.plugin) as f:
             self.assertEqual(f.read().split()[0], "1.0.0")
+        open(self.claude_calls, "w").close()
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), "an installed release is installed once")
+        self.assertEqual(self.calls(), ["plugin list"], "a plugin already on the release is not updated")
 
     def test_a_tag_off_main_is_skipped_and_the_newest_main_release_installed(self):
         # catches installing a tag pushed on a review branch, and such a tag blocking every release below it
@@ -232,10 +265,54 @@ esac''')
         self.assertEqual((rc, self.installs()), (0, []), out)
         self.assertIn("another pass is running", out)
 
+    def test_an_installed_key_sync_runs_first_and_its_lines_are_logged(self):
+        with open(os.path.join(self.home, "key-sync"), "w") as f:   # run by the job's own Python
+            f.write("print('zai.key: written from 1Password (mode 600)')\n")
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertIn("key-sync: zai.key: written from 1Password", out)
+
+    def test_an_unsaved_state_still_reports_the_install_and_redoes_it_next_pass(self):
+        # catches a state-write OSError aborting the pass as a traceback after a good install
+        os.makedirs(os.path.join(self.home, "release-autoinstall.state"))
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
+        self.assertIn("WARN state not saved", out)
+
+    def test_a_lock_that_cannot_be_opened_is_a_failure_not_a_crash(self):
+        os.makedirs(os.path.join(self.home, "release-autoinstall.lock"))
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (1, []), out)
+        self.assertIn("lock not opened", out)
+
+    def test_status_reports_the_recorded_install(self):
+        self.quiet(RA.locked_pass)
+        rc, out = self.quiet(RA.main, ["--status"])
+        self.assertEqual(rc, 0)
+        self.assertIn("installed: v1.0.0", out)
+        self.assertIn("newest tag in the clone: v1.0.0", out)
+
+    def test_an_unknown_argument_is_a_usage_error_that_installs_nothing(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc, _ = self.quiet(RA.main, ["--now"])
+        self.assertEqual((rc, self.installs()), (2, []))
+
     def test_pause_file_stops_a_pass(self):
         open(os.path.join(self.home, "release-autoinstall.pause"), "w").close()
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual((rc, self.installs()), (0, []), out)
+
+
+class Timeout(unittest.TestCase):
+    def test_a_timeout_kills_what_the_command_started(self):
+        # catches install.sh's children surviving the timeout and running on after the lock is released
+        with tempfile.TemporaryDirectory() as d:
+            pidfile = os.path.join(d, "pid")
+            r = RA.run(["sh", "-c", f'sh -c \'echo $$ > "{pidfile}"; exec sleep 60\' & wait'], timeout=1)
+            with open(pidfile) as f:
+                child = int(f.read())
+        self.assertEqual(r.returncode, 124)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(child, 0)
 
 
 class KeySync(Env):
@@ -246,6 +323,9 @@ class KeySync(Env):
         self.set_op('printf "abc.def"')
         os.environ["ZUVO_OP_BIN"] = self.op
         self.conf("zai.key\top://Hetzner/Api z.ai/password\n")
+        clock = mock.patch.object(KS.time, "time", return_value=NOW)
+        clock.start()
+        self.addCleanup(clock.stop)
 
     def set_op(self, body):
         sh(self.op, f'echo "$@" >> "{self.calls}"\n{body}\n')
@@ -287,6 +367,12 @@ class KeySync(Env):
         self.assertEqual((rc, self.op_calls()), (1, []), out)
         self.assertIn("not a regular file", out)
 
+    def test_a_failure_within_a_day_is_not_retried(self):
+        with open(os.path.join(self.home, "key-sync.failures"), "w") as f:
+            json.dump({"zai.key": WITHIN_A_DAY}, f)
+        rc, out = self.quiet(KS.main, [])
+        self.assertEqual((rc, self.op_calls()), (1, []), out)
+
     def test_a_failed_op_is_not_retried_within_a_day(self):
         # catches a desktop 1Password prompting on every pass
         self.set_op("echo 'not signed in' >&2; exit 1")
@@ -298,7 +384,7 @@ class KeySync(Env):
 
     def test_a_failure_older_than_a_day_is_retried(self):
         with open(os.path.join(self.home, "key-sync.failures"), "w") as f:
-            json.dump({"zai.key": time.time() - 90000}, f)
+            json.dump({"zai.key": OVER_A_DAY}, f)
         rc, out = self.quiet(KS.main, [])
         self.assertEqual((rc, len(self.op_calls())), (0, 1), out)
 
@@ -326,7 +412,7 @@ class KeySync(Env):
         left = os.path.join(self.home, ".zai.key.x1.keysync-tmp")
         with open(left, "w") as f:
             f.write("old-secret")
-        os.utime(left, (time.time() - 7200, time.time() - 7200))
+        os.utime(left, (NOW - 2 * KS.STALE_TMP_S, NOW - 2 * KS.STALE_TMP_S))
         self.quiet(KS.main, [])
         self.assertEqual([n for n in os.listdir(self.home) if n.endswith(".keysync-tmp")], [])
 
@@ -349,6 +435,19 @@ class KeySync(Env):
         with open(self.key()) as f:
             self.assertEqual(f.read(), "theirs", out)
         self.assertIn("appeared while fetching", out)
+
+    def test_a_fresh_temp_file_of_a_concurrent_run_is_kept(self):
+        # catches cleanup deleting a temp another run is about to link
+        fresh = os.path.join(self.home, ".zai.key.x2.keysync-tmp")
+        open(fresh, "w").close()
+        os.utime(fresh, (NOW, NOW))
+        self.quiet(KS.main, [])
+        self.assertTrue(os.path.exists(fresh))
+
+    def test_an_unknown_argument_is_a_usage_error(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc, _ = self.quiet(KS.main, ["--force"])
+        self.assertEqual((rc, self.op_calls()), (2, []))
 
     def test_check_lists_missing_files_without_calling_op(self):
         rc, out = self.quiet(KS.main, ["--check"])
