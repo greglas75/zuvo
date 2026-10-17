@@ -55,6 +55,13 @@ def sh(path, body):
     os.chmod(path, 0o755)
 
 
+def keypair(d, name):
+    """A real ed25519 key in `d`; returns the public key's path (the private half beside it)."""
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", os.path.join(d, name)],
+                   check=True)
+    return os.path.join(d, name + ".pub")
+
+
 def git(cwd, *args):
     subprocess.run(["git", "-C", cwd, *args], check=True, capture_output=True,
                    env={**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_AUTHOR_NAME": "t",
@@ -115,6 +122,20 @@ class TagAndListing(unittest.TestCase):
     def test_newest_of_no_release_is_none(self):
         self.assertIsNone(RA.newest(["build-1", ""]))
 
+    def test_only_an_ssh_signed_tag_naming_itself_is_accepted(self):
+        # catches a PGP-signed tag verified against GnuPG's keyring, and an old tag replayed under a new ref
+        ssh = "-----BEGIN SSH SIGNATURE-----\nx\n-----END SSH SIGNATURE-----\n"
+        pgp = "-----BEGIN PGP SIGNATURE-----\nx\n-----END PGP SIGNATURE-----\n"
+        head = "object abc\ntype commit\ntag v1.0.0\ntagger t\n\nmsg\n"
+        cases = {"ssh, own name": (head + ssh, "v1.0.0", True),
+                 "pgp": (head + pgp, "v1.0.0", False),
+                 "ssh and pgp": (head + ssh + pgp, "v1.0.0", False),
+                 "other name": (head + ssh, "v9.9.9", False),
+                 "unsigned": (head, "v1.0.0", False)}
+        for name, (body, tag, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(RA.ssh_signed_as(body, tag), want)
+
     def test_plugin_state_reads_the_user_scope_not_a_project_pin(self):
         self.assertEqual(RA.plugin_state(LISTING.format(v="1.6.86", s="✔ enabled")), ("1.6.86", True))
 
@@ -153,7 +174,10 @@ class Release(Env):
            f'git -C "$(dirname "$0")/.." describe --tags >> "{self.marker}"\n')
         git(self.origin, "add", ".")
         git(self.origin, "commit", "-qm", "one")
-        git(self.origin, "tag", "v1.0.0")
+        self.key = keypair(self.tmp, "release")
+        with open(self.key) as f, open(os.path.join(self.home, "release-signers"), "w") as out:
+            out.write(f'release namespaces="git" {f.read()}')
+        self.tag("v1.0.0")
         self.plugin = os.path.join(self.tmp, "plugin")   # what the stub `claude` reports
         with open(self.plugin, "w") as f:
             f.write("0.0.0 ✔ enabled")
@@ -173,6 +197,10 @@ case "$1 $2" in
   "plugin enable") echo "$v ✔ enabled" > "$p" ;;
 esac
 ''')
+
+    def tag(self, name, key=None):
+        git(self.origin, "-c", "gpg.format=ssh", "-c", f"user.signingkey={key or self.key}",
+            "tag", "-s", "-m", name, name)
 
     def calls(self):
         try:
@@ -203,17 +231,55 @@ esac
         # catches installing a tag pushed on a review branch, and such a tag blocking every release below it
         git(self.origin, "checkout", "-qb", "side")
         git(self.origin, "commit", "-q", "--allow-empty", "-m", "side")
-        git(self.origin, "tag", "v9.0.0")
+        self.tag("v9.0.0")
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
         self.assertIn("skipped v9.0.0: not on origin/main", out)
+
+    def test_an_unsigned_tag_is_skipped_and_the_newest_signed_one_installed(self):
+        # catches installing a tag nobody with a release key made (anyone with push access can tag)
+        git(self.origin, "commit", "-q", "--allow-empty", "-m", "two")
+        git(self.origin, "tag", "v1.0.1")
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
+        self.assertIn("skipped v1.0.1: no valid signature", out)
+
+    def test_a_tag_signed_by_a_key_not_in_release_signers_is_skipped(self):
+        git(self.origin, "commit", "-q", "--allow-empty", "-m", "two")
+        self.tag("v1.0.1", key=keypair(self.tmp, "stranger"))
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
+        self.assertIn("skipped v1.0.1: no valid signature", out)
+
+    def test_an_old_signed_tag_under_a_newer_name_is_skipped(self):
+        # catches replay: the signature covers the name inside the tag, not the ref it is pushed under
+        tag_object = subprocess.run(["git", "-C", self.origin, "rev-parse", "refs/tags/v1.0.0"],
+                                    capture_output=True, text=True, check=True).stdout.strip()
+        git(self.origin, "update-ref", "refs/tags/v9.9.9", tag_object)
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
+        self.assertIn("skipped v9.9.9: no valid signature", out)
+
+    def test_a_trust_list_others_can_write_is_refused(self):
+        # catches trusting keys another local user could have added
+        os.chmod(os.path.join(self.home, "release-signers"), 0o666)
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (1, []), out)
+        self.assertIn("writable by no one else", out)
+
+    def test_without_release_signers_nothing_is_installed(self):
+        # catches a machine with no trust list treating every tag as trusted
+        os.remove(os.path.join(self.home, "release-signers"))
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (1, []), out)
+        self.assertIn("nothing trusted", out)
 
     def test_a_failed_install_is_not_recorded_and_is_retried(self):
         # catches state written before the install.sh exit code is checked: a failed install skipped forever
         script = os.path.join(self.origin, "scripts", "install.sh")
         sh(script, f'echo x >> "{self.marker}"; exit 7\n')
         git(self.origin, "commit", "-qam", "broken")
-        git(self.origin, "tag", "v1.0.1")
+        self.tag("v1.0.1")
         rc1, out = self.quiet(RA.locked_pass)
         rc2, _ = self.quiet(RA.locked_pass)
         got = (rc1, rc2, len(self.installs()), RA.read_state().get("installed"))
@@ -230,7 +296,7 @@ esac
         git(self.origin, "tag", "-d", "v1.0.0")
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual((rc, self.installs()), (1, []), out)
-        self.assertIn("no release tag", out)
+        self.assertIn("no signed release tag", out)
 
     def test_a_plugin_that_stays_on_an_older_version_is_reported(self):
         # catches "update exited 0" taken as success while the marketplace still serves the old version
@@ -370,6 +436,63 @@ exit 0
         open(os.path.join(self.home, "release-autoinstall.pause"), "w").close()
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual((rc, self.installs()), (0, []), out)
+
+
+class ReleaseTag(Env):
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "commit", "-q", "--allow-empty", "-m", "one")
+        self.key = keypair(self.tmp, "release")
+
+    def make(self, *args, key=None):
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_COMMITTER_NAME": "t",
+               "GIT_COMMITTER_EMAIL": "t@t", "ZUVO_RELEASE_SIGNING_KEY": key or self.key}
+        return subprocess.run(["bash", os.path.join(ROOT, "scripts", "release-tag.sh"), *args],
+                              cwd=self.repo, env=env, capture_output=True, text=True)
+
+    def verify(self, tag):
+        signers = os.path.join(self.tmp, "signers")
+        with open(self.key) as f, open(signers, "w") as out:
+            out.write(f'release namespaces="git" {f.read()}')
+        return subprocess.run(["git", "-C", self.repo, "-c", f"gpg.ssh.allowedSignersFile={signers}",
+                               "verify-tag", tag], capture_output=True).returncode
+
+    def test_with_a_key_the_release_tag_is_signed_and_verifies(self):
+        r = self.make("v1.0.0", "HEAD")
+        self.assertEqual((r.returncode, self.verify("v1.0.0")), (0, 0), r.stderr)
+
+    def test_without_a_key_the_tag_is_unsigned_and_says_it_will_not_install(self):
+        # catches a release that silently ships a tag no machine will install
+        r = self.make("v1.0.0", "HEAD", key=os.path.join(self.tmp, "absent.pub"))
+        self.assertEqual((r.returncode, self.verify("v1.0.0")), (3, 1))
+        self.assertIn("will not install v1.0.0", r.stderr)
+
+    def test_a_configured_key_that_cannot_sign_creates_no_tag(self):
+        # catches a signing failure degrading to an unsigned tag that looks like a release
+        lone_pub = os.path.join(self.tmp, "lone.pub")   # public half only: ssh-keygen cannot sign
+        with open(self.key) as f, open(lone_pub, "w") as out:
+            out.write(f.read())
+        r = self.make("v1.0.0", "HEAD", key=lone_pub)
+        tags = subprocess.run(["git", "-C", self.repo, "tag"], capture_output=True, text=True).stdout
+        self.assertEqual((r.returncode, tags), (1, ""), r.stderr)
+        self.assertIn("no tag created", r.stderr)
+
+    def test_an_existing_tag_is_left_alone(self):
+        # catches the failure path deleting a tag this run did not create
+        git(self.repo, "tag", "v1.0.0")
+        r = self.make("v1.0.0", "HEAD", key=os.path.join(self.tmp, "absent.pub"))
+        tags = subprocess.run(["git", "-C", self.repo, "tag"], capture_output=True, text=True).stdout
+        self.assertEqual((r.returncode, tags), (1, "v1.0.0\n"), r.stderr)
+
+    def test_a_missing_argument_is_a_usage_error_that_tags_nothing(self):
+        r = self.make("v1.0.0")
+        r2 = self.make("1.0.0", "HEAD")
+        self.assertEqual(r2.returncode, 2)
+        tags = subprocess.run(["git", "-C", self.repo, "tag"], capture_output=True, text=True).stdout
+        self.assertEqual((r.returncode, tags), (2, ""))
 
 
 class Timeout(unittest.TestCase):

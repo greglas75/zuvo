@@ -11,17 +11,21 @@ USAGE = """usage:
     release-autoinstall --status   what is installed, the newest tag, the schedule
 
 A pass installs from its own clone (~/.zuvo/release-src), never from a shared checkout, and only a tag
-vX.Y.Z on origin/main. Then it updates the Claude Code plugin until it reports that version, enabled.
+vX.Y.Z on origin/main signed by a key listed in ~/.zuvo/release-signers. Then it updates the Claude Code
+plugin until it reports that version, enabled.
 Log: ~/.zuvo/release-autoinstall.log. Pause: touch ~/.zuvo/release-autoinstall.pause.
 Env: ZUVO_HOME, ZUVO_RELEASE_REPO, ZUVO_CLAUDE_BIN."""
 import contextlib
 import datetime
 import fcntl
+import grp
 import json
 import os
+import pwd
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 
@@ -31,6 +35,7 @@ TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)", re.ASCII)
 PLUGIN = "zuvo@zuvo-marketplace"
 GIT_TIMEOUT, INSTALL_TIMEOUT, CLAUDE_TIMEOUT, KEY_SYNC_TIMEOUT = 300, 1200, 300, 300
 MARKETPLACE = "zuvo-marketplace"
+SIGNERS = "release-signers"   # allowed_signers format, one trusted release key per line
 DEFAULT_REPO = "https://github.com/greglas75/zuvo.git"
 ERR_CHARS = 300
 
@@ -88,13 +93,58 @@ def on_main(src, tag):
     return r.returncode == 0
 
 
+def signed_by_trusted(src, tag):
+    """The tag carries a valid signature by a key in this machine's own ~/.zuvo/release-signers. The list
+    lives outside the repository on purpose: anyone who can push could also edit a list kept in it."""
+    body = git(src, "cat-file", "tag", f"refs/tags/{tag}").stdout
+    if not ssh_signed_as(body, tag):
+        return False
+    r = git(src, "-c", f"gpg.ssh.allowedSignersFile={path(SIGNERS)}", "verify-tag", f"refs/tags/{tag}")
+    return r.returncode == 0
+
+
+def ssh_signed_as(body, tag):
+    """The tag names itself `tag` (no old tag replayed under a newer ref) and carries only an SSH signature
+    (verify-tag would check a PGP one against GnuPG's keyring, not release-signers)."""
+    head = body.split("\n\n", 1)[0]
+    return (f"\ntag {tag}\n" in f"\n{head}\n" and "-----BEGIN SSH SIGNATURE-----" in body
+            and "-----BEGIN PGP" not in body and "-----BEGIN SIGNED MESSAGE-----" not in body)
+
+
+def private_group(gid):
+    """The group is this user's own (named after them, as Linux user private groups are) — macOS's shared
+    `staff` is not."""
+    try:
+        return grp.getgrgid(gid).gr_name == pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return False
+
+
+def signers_problem(p):
+    """Why the trust list cannot be used, "" when it can: it must be a regular file this user owns that
+    no one else may write — whoever can edit it decides which code this job runs."""
+    try:
+        st = os.lstat(p)
+    except FileNotFoundError:
+        return f"no {p}"
+    except OSError as ex:
+        return f"{p} unreadable ({type(ex).__name__})"
+    shared_group = st.st_mode & 0o020 and not private_group(st.st_gid)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o002 or shared_group:
+        return f"{p} must be a regular file owned by you, writable by no one else"
+    return ""
+
+
 def newest_on_main(src):
-    """The highest release tag whose commit is on origin/main; a tag pushed elsewhere is skipped, so it
-    can neither be installed nor block the releases below it."""
+    """The highest release tag whose commit is on origin/main and whose signature is trusted; any other
+    tag is skipped, so it can neither be installed nor block the releases below it."""
     for tag in by_version(git(src, "tag", "--list", "v*").stdout.splitlines()):
-        if on_main(src, tag):
+        if not on_main(src, tag):
+            log(f"skipped {tag}: not on origin/main")
+        elif not signed_by_trusted(src, tag):
+            log(f"skipped {tag}: no valid signature from a key in {SIGNERS}")
+        else:
             return tag
-        log(f"skipped {tag}: not on origin/main")
     return None
 
 
@@ -205,6 +255,10 @@ def one_pass():
         log("paused (release-autoinstall.pause) — nothing done")
         return 0
     key_sync()
+    why = signers_problem(path(SIGNERS))
+    if why:
+        log(f"FAIL {why} — nothing trusted, nothing installed (docs/runbook/release-signing.md)")
+        return 1
     src = path("release-src")
     err = fetch(src, os.environ.get("ZUVO_RELEASE_REPO") or DEFAULT_REPO)
     if err:
@@ -212,7 +266,7 @@ def one_pass():
         return 1
     tag = newest_on_main(src)
     if not tag:
-        log("FAIL no release tag vX.Y.Z on origin/main")
+        log("FAIL no signed release tag vX.Y.Z on origin/main")
         return 1
     state = read_state()
     if is_newer(tag, state.get("installed")):
