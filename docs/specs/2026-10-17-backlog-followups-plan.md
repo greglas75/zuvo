@@ -15,9 +15,9 @@
 
 | Open question | Decision |
 |---|---|
-| 1. Where build keeps its snapshot and `backlog-writes:` | A sidecar, `zuvo/context/build-backlog.md`, written beside the plan block, so a compacted run still commits what it wrote |
+| 1. Where build keeps its snapshot and `backlog-writes:` | A sidecar, `zuvo/context/build-backlog.md`, written beside the plan block, so a compacted run still commits what it wrote. As built it is one file per run, `$ZUVO_DIR/context/build-backlog-<run>.md` (`skills/build/SKILL.md` Phase 0 step 4), so two runs on one branch never share it |
 | 2. A pending-close marker for fixed, uncommitted entries | None. The fix skills already list `Close after commit: B-…`, and the commit that carries the fix closes them (the `Fixes #N` convention). No format change |
-| 3. An `image:` target kind | Yes: `image:<reference>`. `redis:7` is no longer read as host `redis`, port 7, and two images never share a hand-made slug |
+| 3. An `image:` target kind | Yes: `image:<reference>`. `image:redis:7` is not read as host `redis`, port 7 (bare `redis:7` stays a host), and two images never share a hand-made slug |
 | 4. `ZUVO_BACKLOG_ADMIT` for humans only | Not changed. The backlog skill's `add` mode is an agent acting on the user's own request, and nothing in a shell can tell who typed it. It stays env-only and visible (`forced: true` on every record it forces) |
 
 Phase 1: direct (small/light scope).
@@ -66,7 +66,7 @@ shared/includes/backlog-protocol.md, skills/container-audit/SKILL.md
 **Dependencies:** none
 **Failure:** halt
 
-- [ ] Change: Phase 0 step 4 also writes the snapshot to `zuvo/context/build-backlog.md`
+- [ ] Change: Phase 0 step 4 also writes the snapshot to `zuvo/context/build-backlog.md` (as built: `build-backlog-<run>.md`, one per run)
   (`branch:`, `base:` and the fenced snapshot), overwritten only at a run's original start; every
   `wrote=` path is appended there as it is printed. The closing commit reads the plan block, or this
   file when the plan block is no longer in context.

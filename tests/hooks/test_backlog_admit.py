@@ -608,6 +608,10 @@ class ImageTargetGroomingTests(unittest.TestCase):
          "image:reg.io/team/web.ui@" + DIGEST),
         ("repository named like a source file (`next.js`) read as a deleted repo file",
          "image:ghcr.io/org/next.js:1"),
+        ("registry with a port read as the repo path `5000/org/my.app` after its colon",
+         "image:localhost:5000/org/my.app:1"),
+        ("undotted registry with a port read as a repo path after its colon",
+         "image:myreg:5000/team/web.ui@" + DIGEST),
     ]
 
     def test_an_image_target_is_not_a_cited_path(self):
