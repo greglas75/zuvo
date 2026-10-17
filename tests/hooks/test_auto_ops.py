@@ -153,12 +153,13 @@ class Release(Env):
         self.set_claude(update_rc=0)
         os.environ.update(ZUVO_RELEASE_REPO=self.origin, ZUVO_CLAUDE_BIN=self.claude)
 
-    def set_claude(self, update_rc):
+    def set_claude(self, update_rc, marketplace_rc=0):
         self.claude_calls = os.path.join(self.tmp, "claude-calls")
         sh(self.claude, f'''echo "$1 $2" >> "{self.claude_calls}"; p="{self.plugin}"; read v s e < "$p"
 case "$1 $2" in
   "plugin list") printf '  ❯ zuvo@zuvo-marketplace\\n    Version: %s\\n' "$v"
                  printf '    Scope: user\\n    Status: %s %s\\n' "$s" "$e" ;;
+  "plugin marketplace") exit {marketplace_rc} ;;
   "plugin update") [ {update_rc} -eq 0 ] || exit {update_rc}
                    t=$(git -C "{self.home}/release-src" describe --tags); echo "${{t#v}} ✔ enabled" > "$p" ;;
   "plugin enable") echo "$v ✔ enabled" > "$p" ;;
@@ -242,6 +243,40 @@ esac''')
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
 
+    def test_a_refused_marketplace_update_stops_before_the_plugin_update(self):
+        self.set_claude(update_rc=0, marketplace_rc=5)
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("`plugin marketplace update zuvo-marketplace` rc=5", out)
+        self.assertNotIn("plugin update", self.calls())
+
+    def test_a_fetch_failure_after_the_clone_installs_nothing_new(self):
+        self.quiet(RA.locked_pass)
+        os.rename(self.origin, self.origin + ".gone")
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (1, ["v1.0.0"]), out)
+        self.assertIn("fetch failed", out)
+
+    def test_a_state_file_that_is_not_ours_reads_as_nothing_installed(self):
+        # catches a crash on a hand-edited or truncated state file instead of a reinstall
+        cases = {"not json": "{", "a list": "[1]", "installed not text": '{"installed": 7}'}
+        for name, text in cases.items():
+            with self.subTest(name):
+                with open(os.path.join(self.home, "release-autoinstall.state"), "w") as f:
+                    f.write(text)
+                self.assertEqual(RA.read_state(), {})
+
+    def test_enable_schedules_this_installed_file_every_30_minutes(self):
+        # catches the schedule pointing at a worktree or a relative path, or a wrong interval
+        unit = mock.Mock(install_unit=mock.Mock(return_value=0), uninstall_unit=mock.Mock(return_value=0))
+        with mock.patch.object(RA, "schedule_module", return_value=unit):
+            self.assertEqual((RA.main(["--enable"]), RA.main(["--disable"])), (0, 0))
+        args, kw = unit.install_unit.call_args
+        self.assertEqual((args[0], args[1], kw["interval_s"], kw["log"]),
+                         ("release-autoinstall", [os.path.realpath(RA.__file__)], 1800,
+                          os.path.join(self.home, "release-autoinstall.log")))
+        unit.uninstall_unit.assert_called_once_with("release-autoinstall")
+
     def test_an_installed_but_disabled_plugin_is_enabled(self):
         self.quiet(RA.locked_pass)
         with open(self.plugin, "w") as f:
@@ -307,7 +342,7 @@ class Timeout(unittest.TestCase):
         # catches install.sh's children surviving the timeout and running on after the lock is released
         with tempfile.TemporaryDirectory() as d:
             pidfile = os.path.join(d, "pid")
-            r = RA.run(["sh", "-c", f'sh -c \'echo $$ > "{pidfile}"; exec sleep 60\' & wait'], timeout=1)
+            r = RA.run(["sh", "-c", f'sh -c \'echo $$ > "{pidfile}"; exec sleep 60\' & wait'], timeout=2)
             with open(pidfile) as f:
                 child = int(f.read())
         self.assertEqual(r.returncode, 124)

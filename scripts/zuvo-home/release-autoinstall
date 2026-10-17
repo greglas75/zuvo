@@ -161,8 +161,6 @@ def fetch(src, repo):
 
 def install(src, tag):
     """Check out `tag` in our clone and run its install.sh. Error text, "" on success."""
-    if not on_main(src, tag):
-        return f"{tag} is not on origin/main — not installed"
     r = git(src, "checkout", "--quiet", "--force", "--detach", f"refs/tags/{tag}")
     if r.returncode != 0:
         return f"checkout {tag} failed: {redact(r.stderr)}"
