@@ -808,6 +808,49 @@ fi
 return 0
 }
 
+# ar_skip_stopped_lanes — leave out, BEFORE the fan-out draw, every lane with a stop already on record that would end
+# in "not run — not held against the lane": muse's spent window, BytePlus out of quota with no Token Plan stand-in,
+# OpenRouter over today's spend cap. Local state only, no request. WHY: the draw used to pick them and not backfill —
+# rdesigner #4111 (2026-10-17) drew 5 of 8, 4 of the 5 were known stops, one lane ran, exit 3 (single provider) and
+# the caretaker's repair ended without a push while byteplus-alt, qwen and claude were working and undrawn.
+# A stop first found DURING the run (the day's first 429) still ends that lane as not run; the next run skips it.
+# When every lane is stopped the list is left alone, so each one still says why. Skipped for an explicit --provider.
+_ar_lane_stop() {   # <lane> — prints why the lane cannot run now; status 1 when nothing on record stops it
+  local lane="$1" until fb spent
+  case "$lane" in
+    muse)
+      until="$(_muse_quota_until)" || return 1
+      echo "muse quota until $(_ar_epoch_text "$until")" ;;
+    byteplus|byteplus-alt|byteplus-3)
+      until="$(byteplus_quota_until)" || return 1
+      fb="$(byteplus_fallback_model "$lane" "$(lane_model "$lane")")"
+      if [[ -z "$fb" ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), no Token Plan stand-in"
+      elif [[ "${ZUVO_ADV_QWEN:-0}" != 1 ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), stand-in $fb needs ZUVO_ADV_QWEN=1"
+      else return 1; fi ;;
+    openrouter|openrouter-alt|openrouter-3|openrouter-4)
+      # A base URL on a prepaid plan host is not OpenRouter's money.
+      [[ -n "$(_plan_endpoint "$lane" "${ZUVO_OPENROUTER_BASE_URL:-}" 2>/dev/null)" ]] && return 1
+      spent="$(openrouter_budget_spent)" || return 1
+      echo "OpenRouter daily budget \$${spent% *}/\$${spent#* }" ;;
+    *) return 1 ;;
+  esac
+}
+ar_skip_stopped_lanes() {
+  [[ -z "$PROVIDER" && -n "$PROVIDERS" ]] || return 0
+  local p why kept="" stopped=""
+  for p in $PROVIDERS; do
+    if why="$(_ar_lane_stop "$p")"; then stopped+="${stopped:+, }$p ($why)"; else kept+="${kept:+ }$p"; fi
+  done
+  [[ -n "$stopped" ]] || return 0
+  if [[ -z "$kept" ]]; then
+    echo "  NOTE: every lane has a known stop ($stopped) — running them anyway, each says why" >&2
+    return 0
+  fi
+  PROVIDERS="$kept"
+  echo "  Known stops, left out before the fan-out draw: $stopped" >&2
+  return 0
+}
+
 # _ar_rows <rows> <match col> <set> <in|out> <print col> — the <print col> of each "<index><TAB><name>" row
 # whose <match col> is (in) or is not (out) one of <set> (words separated by blanks or commas).
 _ar_rows() {

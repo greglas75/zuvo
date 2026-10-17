@@ -513,3 +513,27 @@ sys.exit(0 if line is not None and all(0x20 <= c <= 0x7e for c in line) else 1)
 else
   fail "HTTP 502 with an HTML body fails the lane and names the HTTP status" "reviewed=$_or_reviewed kept=[$_or_kept] out: $(printf '%s' "$_out" | tail -2)"
 fi
+
+# ─── Case STOP: lanes with a known stop are not drawn ────────────────────────
+# Bug caught: rdesigner #4111 (2026-10-17) — the draw took 5 of 8, four of them already on record as stopped
+# (OpenRouter budget, BytePlus quota without a stand-in, muse's window); one lane ran, exit 3 single provider,
+# while working lanes sat undrawn. Ranked pick makes it deterministic: without the filter the first two
+# drawn are muse and byteplus-3.
+start_test "CAP.STOP lanes with a known stop are left out before the draw; working lanes fill the cap"
+_st="$HERE/.tmp/capstop.$$"; mkdir -p "$_st"
+_later=$(( $(date +%s) + 86400 ))
+printf '%s\tmuse\n' "$_later" > "$_st/muse"
+printf '%s\n' "$_later" > "$_st/bp"
+printf '%s 11.0000\n' "$(date +%s)" > "$_st/or"
+out=$(ZUVO_REVIEW_PROVIDER_PICK=ranked ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_OPENROUTER_DAILY_USD=5 \
+  ZUVO_MUSE_QUOTA_FILE="$_st/muse" ZUVO_BYTEPLUS_QUOTA_FILE="$_st/bp" ZUVO_OPENROUTER_USAGE_FILE="$_st/or" \
+  ZUVO_ADV_QWEN=0 ZUVO_REVIEW_TEST_PROVIDERS="muse byteplus-3 openrouter-alt openrouter-3 byteplus-alt mock-success mock-success" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$_st/err")
+err=$(cat "$_st/err")
+assert_contains "$err" "Known stops, left out before the fan-out draw" "the stopped lanes are named"
+assert_eq "2 2" "$(printf '%s' "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("attempted_count"),d.get("provider_count"))' 2>/dev/null)" \
+  "both slots go to working lanes, and both review"
+# The run's dispatched list (JSON), not a stderr phrase: a reworded log line cannot turn this into a pass.
+_ran=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("providers_used","?"))' 2>/dev/null)
+assert_eq "mock-success, mock-success" "$_ran" "only the working lanes ran"
+rm -rf "$_st"

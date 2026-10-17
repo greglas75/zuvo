@@ -336,12 +336,24 @@ openrouter_review_text() {
 # through $ZUVO_HOME/openrouter-usage. Fails CLOSED: this is a money check. A soft cap: lanes already in flight when
 # the day crosses it finish, so the overshoot is bounded by one round of calls, not a reservation. The test harness skips it unless the
 # cap is set explicitly — its fake curls answer every URL with a review.
+# _openrouter_daily_cap [warn] — the daily cap in USD on stdout; status 1 when there is none ("off", or the test
+# harness without an explicit cap). Not a number → 5 (with a WARN when asked). One copy for the check and the draw.
+_openrouter_daily_cap() {
+  local cap="${ZUVO_OPENROUTER_DAILY_USD-5}"
+  [[ "$cap" == off ]] && return 1
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENROUTER_DAILY_USD+x}" ]] && return 1
+  if [[ ! "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    [[ "${1:-}" == warn ]] && echo "  WARN: ZUVO_OPENROUTER_DAILY_USD='$cap' is not a number — using 5" >&2
+    cap=5
+  fi
+  printf '%s\n' "$cap"
+}
+_openrouter_usage_file() { printf '%s\n' "${ZUVO_OPENROUTER_USAGE_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/openrouter-usage}"; }
+
 openrouter_budget_ok() {
-  local lane="$1" key="$2" cap="${ZUVO_OPENROUTER_DAILY_USD-5}" f ttl now at="" used="" cfg body
-  [[ "$cap" == off ]] && return 0
-  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENROUTER_DAILY_USD+x}" ]] && return 0
-  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "  WARN: ZUVO_OPENROUTER_DAILY_USD='$cap' is not a number — using 5" >&2; cap=5; }
-  f="${ZUVO_OPENROUTER_USAGE_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/openrouter-usage}"
+  local lane="$1" key="$2" cap f ttl now at="" used="" cfg body
+  cap="$(_openrouter_daily_cap warn)" || return 0
+  f="$(_openrouter_usage_file)"
   ttl="${ZUVO_OPENROUTER_USAGE_TTL:-120}"
   [[ "$ttl" =~ ^[0-9]{1,6}$ ]] || ttl=120
   now=$(date +%s)
@@ -367,6 +379,22 @@ openrouter_budget_ok() {
     return 1
   fi
   return 0
+}
+
+# openrouter_budget_spent — status 0 (printing "<spent> <cap>") when the cached reading of today's OpenRouter spend
+# already meets the cap: read from openrouter_budget_ok's cache only, no request. The TTL is deliberately ignored —
+# usage_daily only grows within a UTC day, so a same-day reading at or over the cap stays true until midnight. For
+# the fan-out (ar_skip_stopped_lanes): a lane that cannot spend is not drawn. Status 1 when unknown or under.
+openrouter_budget_spent() {
+  local cap f at="" used="" now
+  cap="$(_openrouter_daily_cap)" || return 1
+  f="$(_openrouter_usage_file)"
+  { read -r at used _ < "$f"; } 2>/dev/null || true   # a last line without a newline still fills the fields
+  [[ "$at" =~ ^[0-9]{1,12}$ && "$used" =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
+  now=$(date +%s)
+  (( at <= now && at / 86400 == now / 86400 )) || return 1
+  awk -v u="$used" -v c="$cap" 'BEGIN{exit !(u >= c)}' || return 1
+  printf '%s %s\n' "$used" "$cap"
 }
 
 run_openrouter() {

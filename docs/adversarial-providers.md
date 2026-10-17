@@ -240,6 +240,15 @@ the host reviewer was removed. `--provider <name>` bypasses it. Raise it with
 `ZUVO_REVIEW_MAX_PROVIDERS=5`; a non-numeric or zero value warns and falls back to 3 rather than
 filtering the list to nothing.
 
+**Known stops are left out before the draw** (`ar_skip_stopped_lanes`, 2026-10-17). Some lanes would only
+end as "not run — not held against the lane": muse inside a spent window, a BytePlus lane while the plan is
+out of quota with no Token Plan stand-in it can use (none mapped, or `ZUVO_ADV_QWEN` not 1), an OpenRouter lane once today's spend has reached
+`ZUVO_OPENROUTER_DAILY_USD`. Those are removed from the pool first, from local state only (no request), and
+named on stderr (`Known stops, left out before the fan-out draw: …`), so the cap's slots go to lanes that can
+answer. Before this, rdesigner #4111 drew 5 of 8, four were known stops, and the run ended single-provider
+(exit 3) while three working lanes sat undrawn. A stop first hit during a run still ends that lane; the next
+run skips it. When every lane has a stop, none is removed, so each one still says why.
+
 **The cap freezes the data that justifies it.** Capped-out providers stop appearing in
 `~/.zuvo/adversarial.log` entirely, so the ranking above cannot refresh itself and a provider that
 improves (or one that quietly rots) will never show it. Before re-ranking, run a sampling window
