@@ -1,0 +1,296 @@
+#!/bin/sh
+# Polyglot sh/python header (as in bill): /bin/sh re-execs this file with Python 3.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""release-autoinstall — install each new zuvo release on this machine without a person, so no machine
+keeps running a driver its release already fixed."""
+
+USAGE = """usage:
+    release-autoinstall            one pass: key-sync, then install the newest release tag if it is newer
+    release-autoinstall --enable   run a pass every 30 minutes (launchd on macOS, systemd user timer on Linux)
+    release-autoinstall --disable  remove that schedule
+    release-autoinstall --status   what is installed, the newest tag, the schedule
+
+A pass installs from its own clone (~/.zuvo/release-src), never from a shared checkout, and only a tag
+vX.Y.Z on origin/main. Then it updates the Claude Code plugin until it reports that version, enabled.
+Log: ~/.zuvo/release-autoinstall.log. Pause: touch ~/.zuvo/release-autoinstall.pause.
+Env: ZUVO_HOME, ZUVO_RELEASE_REPO, ZUVO_CLAUDE_BIN."""
+import contextlib
+import datetime
+import fcntl
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+
+LABEL = "release-autoinstall"
+INTERVAL_S = 1800
+TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)", re.ASCII)
+PLUGIN = "zuvo@zuvo-marketplace"
+GIT_TIMEOUT, INSTALL_TIMEOUT, CLAUDE_TIMEOUT, KEY_SYNC_TIMEOUT = 300, 1200, 300, 300
+MARKETPLACE = "zuvo-marketplace"
+DEFAULT_REPO = "https://github.com/greglas75/zuvo.git"
+ERR_CHARS = 300
+
+
+def home():
+    return os.environ.get("ZUVO_HOME") or os.path.join(os.path.expanduser("~"), ".zuvo")
+
+
+def path(name):
+    return os.path.join(home(), name)
+
+
+def log(msg):
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"{stamp} {msg}", flush=True)
+
+
+def run(argv, timeout, cwd=None):
+    """The command's result; a missing binary or a timeout reads as exit 127 / 124, never a traceback.
+    Each command gets its own process group, so a timeout also kills what install.sh started."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        p = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, encoding="utf-8", errors="replace", env=env,
+                             start_new_session=True)
+    except OSError as ex:
+        return subprocess.CompletedProcess(argv, 127, "", f"{type(ex).__name__}: {ex}")
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(OSError):
+            os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        return subprocess.CompletedProcess(argv, 124, "", f"timed out after {timeout}s")
+    return subprocess.CompletedProcess(argv, p.returncode, out, err)
+
+
+def tag_key(tag):
+    m = TAG.fullmatch(tag.strip())
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def newest(tags):
+    """The highest vX.Y.Z of `tags`; anything else (a build-* tag, v1.2) is ignored. None: no release."""
+    found = by_version(tags)
+    return found[0] if found else None
+
+
+def by_version(tags):
+    return [t for _, t in sorted(((tag_key(t), t.strip()) for t in tags if tag_key(t)), reverse=True)]
+
+
+def on_main(src, tag):
+    r = git(src, "merge-base", "--is-ancestor", f"refs/tags/{tag}", "refs/remotes/origin/main")
+    return r.returncode == 0
+
+
+def newest_on_main(src):
+    """The highest release tag whose commit is on origin/main; a tag pushed elsewhere is skipped, so it
+    can neither be installed nor block the releases below it."""
+    for tag in by_version(git(src, "tag", "--list", "v*").stdout.splitlines()):
+        if on_main(src, tag):
+            return tag
+        log(f"skipped {tag}: not on origin/main")
+    return None
+
+
+def plugin_state(listing):
+    """(version, enabled) of the user-scope zuvo entry in `claude plugin list` output; (None, False) when
+    there is none. A project-scope entry never counts: it is a repo's own pin, not this machine's install."""
+    for block in re.split(r"\n\s*(?=❯)", listing):
+        if PLUGIN in block and re.search(r"Scope:\s*user\b", block):
+            v = re.search(r"Version:\s*(\S+)", block)
+            return (v.group(1) if v else None), bool(re.search(r"Status:\s*\S*\s*enabled", block))
+    return None, False
+
+
+def read_state():
+    """The recorded install, {} when there is none or it is not ours to trust (a reinstall, not a crash)."""
+    try:
+        with open(path(f"{LABEL}.state"), encoding="utf-8") as f:
+            s = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return s if isinstance(s, dict) and isinstance(s.get("installed", ""), str) else {}
+
+
+def write_state(state):
+    """"" on success, else why — the install still happened, only the next pass will redo it."""
+    tmp = path(f"{LABEL}.state.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(tmp, path(f"{LABEL}.state"))
+    except OSError as ex:
+        return f"state not saved ({type(ex).__name__}: {ex})"
+    return ""
+
+
+def git(src, *args, timeout=GIT_TIMEOUT):
+    return run(["git", "-C", src, *args], timeout)
+
+
+def redact(text):
+    """git's error text with any user:token@ in a URL masked, cut to 300 characters."""
+    return re.sub(r"://[^/@\s]+@", "://***@", text.strip())[:ERR_CHARS]
+
+
+def is_newer(tag, installed):
+    """True when `tag` should be installed over `installed`: nothing known installed, or a higher version.
+    A lower one (a tag deleted on origin) is never installed: a downgrade is a person's decision."""
+    have = tag_key(installed or "")
+    return have is None or tag_key(tag) > have
+
+
+def fetch(src, repo):
+    """Our own clone, current with origin's tags and main. Returns an error text, "" on success."""
+    if os.path.isdir(src) and not os.path.isdir(os.path.join(src, ".git")):
+        shutil.rmtree(src)   # our own clone, left half-made by a killed run: start it again
+    if not os.path.isdir(os.path.join(src, ".git")):
+        r = run(["git", "clone", "--quiet", "--no-checkout", "--", repo, src], GIT_TIMEOUT)
+        if r.returncode != 0:
+            return f"clone failed rc={r.returncode}: {redact(r.stderr)}"
+    r = git(src, "fetch", "--quiet", "--force", "--tags", "--prune", "--prune-tags", "origin",
+            "+refs/heads/main:refs/remotes/origin/main")
+    return "" if r.returncode == 0 else f"fetch failed rc={r.returncode}: {redact(r.stderr)}"
+
+
+def install(src, tag):
+    """Check out `tag` in our clone and run its install.sh. Error text, "" on success."""
+    if not on_main(src, tag):
+        return f"{tag} is not on origin/main — not installed"
+    r = git(src, "checkout", "--quiet", "--force", "--detach", f"refs/tags/{tag}")
+    if r.returncode != 0:
+        return f"checkout {tag} failed: {redact(r.stderr)}"
+    git(src, "clean", "-fdxq")
+    r = run(["bash", os.path.join(src, "scripts", "install.sh")], INSTALL_TIMEOUT, cwd=src)
+    tail = " | ".join((r.stdout + r.stderr).strip().splitlines()[-3:])
+    return "" if r.returncode == 0 else f"install.sh rc={r.returncode}: {redact(tail)}"
+
+
+def update_plugin(tag):
+    """Bring the Claude Code plugin to `tag` and enabled. Error text, "" when it already is or now is."""
+    claude = os.environ.get("ZUVO_CLAUDE_BIN") or "claude"
+    want = tag[1:]
+    version, enabled = plugin_state(run([claude, "plugin", "list"], CLAUDE_TIMEOUT).stdout)
+    if version != want:
+        for argv in ([claude, "plugin", "marketplace", "update", MARKETPLACE],
+                     [claude, "plugin", "update", PLUGIN]):
+            r = run(argv, CLAUDE_TIMEOUT)
+            if r.returncode != 0:
+                return f"`{' '.join(argv[1:])}` rc={r.returncode}: {redact(r.stderr)}"
+        version, enabled = plugin_state(run([claude, "plugin", "list"], CLAUDE_TIMEOUT).stdout)
+    if version == want and not enabled:
+        run([claude, "plugin", "enable", PLUGIN], CLAUDE_TIMEOUT)
+        version, enabled = plugin_state(run([claude, "plugin", "list"], CLAUDE_TIMEOUT).stdout)
+    if version != want or not enabled:
+        state = "enabled" if enabled else "disabled"
+        return f"plugin is {version or 'absent'}, {state} — want {want}, enabled"
+    return ""
+
+
+def key_sync():
+    if not os.path.isfile(path("key-sync")):
+        log("key-sync: not installed beside this job — skipped")
+        return
+    r = run([sys.executable, path("key-sync")], KEY_SYNC_TIMEOUT)
+    for line in (r.stdout + r.stderr).strip().splitlines():
+        log(f"key-sync: {line}")
+
+
+def one_pass():
+    if os.path.exists(path(f"{LABEL}.pause")):
+        log("paused (release-autoinstall.pause) — nothing done")
+        return 0
+    key_sync()
+    src = path("release-src")
+    err = fetch(src, os.environ.get("ZUVO_RELEASE_REPO") or DEFAULT_REPO)
+    if err:
+        log(f"FAIL {err}")
+        return 1
+    tag = newest_on_main(src)
+    if not tag:
+        log("FAIL no release tag vX.Y.Z on origin/main")
+        return 1
+    state = read_state()
+    if is_newer(tag, state.get("installed")):
+        log(f"installing {tag} (was {state.get('installed') or 'unknown'})")
+        err = install(src, tag)
+        if err:
+            log(f"FAIL {err}")
+            return 1
+        state.update(installed=tag, sha=git(src, "rev-parse", "HEAD").stdout.strip(),
+                     at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+        err = write_state(state)
+        log(f"OK install.sh {tag}" + (f" — WARN {err}" if err else ""))
+    elif tag != state.get("installed"):
+        log(f"WARN newest tag {tag} is older than the installed {state['installed']} — kept, not downgraded")
+    tag = state.get("installed") or tag
+    err = update_plugin(tag)
+    if err:
+        log(f"WARN Claude Code plugin: {err} — retried next pass")
+        return 1
+    log(f"OK {tag} installed, plugin {tag[1:]} enabled")
+    return 0
+
+
+def locked_pass():
+    """One pass at a time: a second one started while install.sh runs exits 0 at once."""
+    try:
+        os.makedirs(home(), exist_ok=True)
+        lock = open(path(f"{LABEL}.lock"), "w")   # noqa: SIM115 — held for the whole pass
+    except OSError as ex:
+        log(f"FAIL lock not opened ({type(ex).__name__}: {ex})")
+        return 1
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            log("another pass is running — skipped")
+            return 0
+        return one_pass()
+
+
+def schedule_module():
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    import zuvo_bill_schedule  # noqa: PLC0415 — Bill's launchd/systemd writer, installed beside this file
+    return zuvo_bill_schedule
+
+
+def status():
+    s = read_state()
+    print(f"installed: {s.get('installed') or 'unknown'} ({s.get('at') or 'never by this job'})")
+    src = path("release-src")
+    if os.path.isdir(src):
+        tags = git(src, "tag", "--list", "v*").stdout.splitlines()
+        print(f"newest tag in the clone: {newest(tags) or 'none'}")
+    sched = (os.path.expanduser(f"~/Library/LaunchAgents/com.zuvo.{LABEL}.plist") if sys.platform == "darwin"
+             else os.path.expanduser(f"~/.config/systemd/user/zuvo-{LABEL}.timer"))
+    print(f"schedule: {'on' if os.path.exists(sched) else 'off'} ({sched})")
+    print(f"paused: {'yes' if os.path.exists(path(f'{LABEL}.pause')) else 'no'}")
+    print(f"log: {path(f'{LABEL}.log')}")
+    return 0
+
+
+def main(argv):
+    if argv == ["--enable"]:
+        return schedule_module().install_unit(
+            LABEL, [os.path.realpath(__file__)], interval_s=INTERVAL_S, log=path(f"{LABEL}.log"),
+            description="zuvo — install new releases",
+            timer_description="zuvo release check every 30 minutes")
+    if argv == ["--disable"]:
+        return schedule_module().uninstall_unit(LABEL)
+    if argv == ["--status"]:
+        return status()
+    if argv:
+        print(USAGE, file=sys.stderr)
+        return 2
+    return locked_pass()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
