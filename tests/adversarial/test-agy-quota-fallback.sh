@@ -40,6 +40,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 printf '%s\n' "$model" >> "$MOCK_AGY_CALLS"
+# After an account switch (the rotate seam touches $MOCK_AGY_FLAG) the new account has quota.
+[ -n "${MOCK_AGY_FLAG:-}" ] && [ -f "$MOCK_AGY_FLAG" ] && MOCK_AGY_MODE=ok
 n=$(grep -c . "$MOCK_AGY_CALLS")
 case "${MOCK_AGY_MODE:-ok}" in
   ok)
@@ -269,3 +271,36 @@ assert_eq "Gemini 3.8 Flash (High)|high" "$(agy_effort_row "$LOGF")" "row: the p
 agy11
 assert_eq "0" "$(grep -c . "$CALLS")" "premise: the second run tried no model (both on cooldown)"
 assert_eq "Gemini 3.8 Flash (High)|" "$(agy_effort_row "$LOGF")" "row: the primary, effort empty — nothing ran"
+
+# agy_token <file> <email> — an agy login whose id_token names <email> (header.payload.signature, base64url).
+agy_token() {
+  local p; p=$(printf '{"email":"%s"}' "$2" | base64 | tr -d '=\n' | tr '/+' '_-')
+  printf '{"auth_method":"oauth","token":{},"id_token":"h.%s.s"}' "$p" > "$1"
+}
+
+# Bug caught (2026-10-17): the owner moved agy to a fresh account and the old account's stops (until 10-20) kept
+# Gemini out of every review until someone moved them away by hand.
+start_test "agy.12 a quota stop left by another account does not stop the live one"
+reset_calls
+agy_token "$AGYHOME/tok-new" "new@example.com"
+for slug in $(printf '%s' "Gemini 3.8 Flash (High)" | tr 'A-Z ()' 'a-z---' | tr -cd 'a-z0-9.-'); do
+  printf '%s old@example.com\n' "$(( $(date +%s) + 86400 ))" > "$AGYHOME/agy-cooldown-$slug"
+done
+out=$(ZUVO_AGY_TOKEN_FILE="$AGYHOME/tok-new" run_adv ok)
+assert_eq "Gemini 3.8 Flash (High)" "$(head -1 "$CALLS")" "the primary is called on the new account"
+printf '%s new@example.com\n' "$(( $(date +%s) + 86400 ))" > "$AGYHOME/agy-cooldown-$slug"
+: > "$CALLS"
+out=$(ZUVO_AGY_TOKEN_FILE="$AGYHOME/tok-new" ZUVO_AGY_ROTATE=0 run_adv ok)
+assert_eq "Mock Fallback (Test)" "$(head -1 "$CALLS")" "control: the live account's own stop still holds"
+
+# Bug caught: one spent account taking Gemini out of every review while the owner's other accounts sit unused.
+start_test "agy.13 a spent primary switches to another stored account and asks the primary again"
+reset_calls
+agy_token "$AGYHOME/tok-live" "spent@example.com"; rm -f "$AGYHOME/flag13"
+agy_token "$AGYHOME/tok-fresh" "fresh@example.com"
+printf '#!/usr/bin/env bash\ntouch "%s"; cp "%s" "%s"\n' "$AGYHOME/flag13" "$AGYHOME/tok-fresh" "$AGYHOME/tok-live" > "$AGYHOME/rotate13"
+chmod +x "$AGYHOME/rotate13"
+out=$(ZUVO_AGY_TOKEN_FILE="$AGYHOME/tok-live" MOCK_AGY_FLAG="$AGYHOME/flag13" ZUVO_AGY_ROTATE_CMD="$AGYHOME/rotate13" \
+  run_adv quota-primary)
+assert_eq "Gemini 3.8 Flash (High)|Gemini 3.8 Flash (High)" "$(tr '\n' '|' < "$CALLS" | sed 's/|$//')" "the primary twice: spent, then on the new account — never the fallback"
+assert_contains "$out" "mock finding from Gemini 3.8 Flash (High)" "the review is the primary's"

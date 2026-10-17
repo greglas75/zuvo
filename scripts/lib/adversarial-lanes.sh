@@ -269,19 +269,47 @@ _agy_cooldown_file() {
   printf '%s/agy-cooldown-%s' "${ZUVO_HOME:-$HOME/.zuvo}" "${slug:-unknown}"
 }
 
-_agy_on_cooldown() {   # 0 = still cooling down
-  local f until
-  f=$(_agy_cooldown_file "$1")
-  [[ -f "$f" ]] || return 1
-  until="$(ar_decimal "$(cat "$f" 2>/dev/null || true)" "")"
-  [[ -n "$until" ]] || return 1
-  [[ "$(date +%s)" -lt "$until" ]]
+# The account agy is logged into: the email in its id_token. A stop belongs to that account — Gemini's quota is
+# metered per account — so a new login (cswap agy switch, or by hand) lifts every stop the old account left.
+# 2026-10-17: the owner switched to a fresh account with 100% left, and six stops of the old one (until 10-20)
+# kept agy out of every review until they were moved away by hand. Empty when the token cannot be read.
+_agy_account() {
+  local tf="${ZUVO_AGY_TOKEN_FILE:-$HOME/.gemini/antigravity-cli/antigravity-oauth-token}"
+  [[ -r "$tf" ]] || return 0
+  python3 - "$tf" <<'PY' 2>/dev/null || true
+import base64, json, sys
+try:
+    tok = json.load(open(sys.argv[1])).get("id_token", "")
+    part = tok.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    print(str(claims.get("email", "")).strip().lower())
+except Exception:
+    pass
+PY
 }
 
+_agy_on_cooldown() {   # 0 = still cooling down
+  local f until who now_who
+  f=$(_agy_cooldown_file "$1")
+  [[ -f "$f" ]] || return 1
+  { read -r until who _ < "$f"; } 2>/dev/null || return 1
+  until="$(ar_decimal "${until:-}" "")"
+  [[ -n "$until" ]] || return 1
+  [[ "$(date +%s)" -lt "$until" ]] || return 1
+  # Another account than the one that hit the quota (or a stop written before stops named one): not ours.
+  now_who="$(_agy_account)"
+  if [[ -n "$now_who" && "$now_who" != "${who:-}" ]]; then
+    echo "  NOTE: agy: the quota stop for '$1' belongs to ${who:-an earlier login}, not $now_who — ignored" >&2
+    return 1
+  fi
+  return 0
+}
 _agy_start_cooldown() {  # $1 model, $2 seconds
   local f; f=$(_agy_cooldown_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
-  printf '%s\n' "$(( $(date +%s) + $2 ))" > "$f" 2>/dev/null || true
+  # Temp + rename: a write that fails half-way must not truncate a stop that is already there.
+  { printf '%s %s\n' "$(( $(date +%s) + $2 ))" "$(_agy_account)" > "$f.$$" && mv -f "$f.$$" "$f"; } 2>/dev/null \
+    || rm -f "$f.$$" 2>/dev/null || true
 }
 
 # The quota error carries its own reset time. Parsing it beats any constant we could pick:
@@ -376,6 +404,32 @@ _agy_emit() {   # $1 = model used, $2 = primary
   cat "$_AGY_BODY_FILE"
 }
 
+# _agy_rotate_account — the live account is spent: let cswap switch to the first stored account that answers
+# (`cswap agy auto --once`). Status 0 when the account agy is logged into changed. The owner buys several Google
+# accounts; one spent account must not take Gemini out of every review while the others sit unused (2026-10-17).
+# ZUVO_AGY_ROTATE=0 turns it off; ZUVO_AGY_ROTATE_CMD replaces the command (the tests' seam). A test-harness run
+# never rotates a real login unless it sets the command.
+_agy_rotate_account() {
+  [[ "${ZUVO_AGY_ROTATE:-1}" != 0 ]] || return 1
+  local cmd="${ZUVO_AGY_ROTATE_CMD:-}" before after
+  if [[ -z "$cmd" ]]; then
+    [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" != 1 ]] || return 1
+    command -v cswap >/dev/null 2>&1 || return 1
+    cmd="cswap agy auto --once"
+  fi
+  # Within the lane's budget: what is left minus a call's worth, never more than 90 s.
+  local cap=90 left=$(( ${PROVIDER_TIMEOUT:-300} - 15 ))
+  (( left < cap )) && cap=$left
+  (( cap >= 5 )) || return 1
+  before="$(_agy_account)"
+  timeout "$cap" bash -c "$cmd" </dev/null >/dev/null 2>&1 \
+    || echo "  NOTE: agy: account rotation ($cmd) did not finish cleanly within ${cap}s" >&2
+  after="$(_agy_account)"
+  [[ -n "$after" && "$after" != "$before" ]] || return 1
+  echo "  NOTE: agy: ${before:-the live account} is out of quota — switched to $after (cswap agy)" >&2
+  return 0
+}
+
 run_agy() {
   # Antigravity CLI (agy) — Google's SANCTIONED headless channel via the paid Antigravity auth.
   # Two invocation facts, both verified on 2026-07-11:
@@ -385,8 +439,14 @@ run_agy() {
   # --dangerously-skip-permissions is required so a headless run never blocks on a permission
   # prompt. Override with ZUVO_AGY_MODEL; the fallback with ZUVO_AGY_FALLBACK_MODEL ("" disables).
   local primary fallback m attempted=0 cooled=0 cd t0=$SECONDS left tried_primary=0
+  _AGY_CLASS=""
+  local _AGY_ROTATED=""   # one account switch per lane call
   primary="$(lane_model agy)"
   fallback="${ZUVO_AGY_FALLBACK_MODEL-${ZUVO_MODEL_AGY_FALLBACK-}}"
+  # The primary is spent on the live account: another stored account first, the fallback model only after.
+  if [[ -z "${_AGY_ROTATED:-}" ]] && _agy_on_cooldown "$primary" 2>/dev/null; then
+    _AGY_ROTATED=1; _agy_rotate_account || true
+  fi
   # The effort column describes the model in the row's model column, and only once that model was tried.
   record_lane_effort agy ""
 
@@ -446,6 +506,21 @@ run_agy() {
       [[ -n "$cd" ]] || cd="$(ar_env_int ZUVO_AGY_SILENT_COOLDOWN 3600)"
       _agy_start_cooldown "$m" "$cd"
       echo "  WARN: agy model '$m' is out of quota — cooling it down for $((cd / 60)) min" >&2
+      if [[ "$m" == "$primary" && -z "${_AGY_ROTATED:-}" ]] && _ar_lane_budget "$t0" >/dev/null; then
+        _AGY_ROTATED=1
+        if _agy_rotate_account && left="$(_ar_lane_budget "$t0")"; then
+          if PROVIDER_TIMEOUT="$left" _agy_attempt "$m"; then
+            _agy_emit "$m" "$primary"
+            return 0
+          fi
+          # The new account is spent too: its own stop, so the next run does not ask it again.
+          if [[ "$_AGY_CLASS" == quota ]]; then
+            cd=$(printf '%s' "$_AGY_ERR_TEXT" | _agy_reset_seconds)
+            [[ -n "$cd" ]] || cd="$(ar_env_int ZUVO_AGY_SILENT_COOLDOWN 3600)"
+            _agy_start_cooldown "$m" "$cd"
+          fi
+        fi
+      fi
     else
       echo "  WARN: agy failed on '$m': $(printf '%s' "$_AGY_ERR_TEXT" | _ar_quote_line first -)" >&2
     fi
@@ -459,6 +534,44 @@ run_agy() {
   if [[ "$tried_primary" -eq 1 ]]; then record_lane_effort agy "$(effort_in_model_name "$primary")"
   else record_lane_effort agy ""; fi
   return 1
+}
+
+# Muse's subscription has usage windows. A spent one answers every call with
+#   API error 429 … Subscription quota exhausted. Your usage window resets at 2026-10-19T00:00:00Z.
+# on stderr, AFTER a "workspace root: …" banner line — so the lane's WARN, which quotes the first stderr line,
+# reported a workspace problem for two days while the real cause was the quota (2026-10-16/17). The reset is
+# kept in $ZUVO_HOME/muse-quota-until and the lane is not run until then: not asked, not held against it.
+_muse_quota_file() {
+  if [[ -n "${ZUVO_MUSE_QUOTA_FILE:-}" ]]; then printf '%s\n' "$ZUVO_MUSE_QUOTA_FILE"; return 0; fi
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 ]] && return 1
+  printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/muse-quota-until"
+}
+_muse_quota_until() {   # prints the stop epoch while it is ahead; status 1 otherwise
+  local f until
+  f="$(_muse_quota_file)" || return 1
+  [[ -f "$f" ]] || return 1
+  { read -r until _ < "$f"; } 2>/dev/null || return 1
+  [[ "$until" =~ ^[0-9]{9,11}$ ]] && (( until > $(date +%s) )) || return 1
+  printf '%s\n' "$until"
+}
+_muse_quota_record() {  # $1 = the error text; prints the recorded epoch
+  local iso until now f
+  now=$(date +%s)
+  iso=$(printf '%s' "$1" | sed -n 's/.*resets at \([0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\)Z.*/\1/p' | head -1)
+  until=""
+  if [[ -n "$iso" ]]; then
+    until=$(date -u -d "${iso}Z" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%S' "$iso" +%s 2>/dev/null) || until=""
+  fi
+  # Unparseable, already past, or implausibly far (> 40 days): an hour, then ask again.
+  if ! [[ "$until" =~ ^[0-9]+$ ]] || (( until <= now || until > now + 40 * 86400 )); then until=$(( now + 3600 )); fi
+  if f="$(_muse_quota_file)"; then
+    mkdir -p -- "${f%/*}" 2>/dev/null || true
+    if ! { printf '%s\tmuse\n' "$until" > "$f.$$" && mv -f -- "$f.$$" "$f"; } 2>/dev/null; then
+      rm -f -- "$f.$$" 2>/dev/null
+      echo "  WARN: muse: the quota stop could not be written to $f — later runs will call muse again" >&2
+    fi
+  fi
+  printf '%s\n' "$until"
 }
 
 run_muse() {
@@ -505,6 +618,11 @@ run_muse() {
   # model_id=muse-spark-1.3 — and "correct by coincidence" is the agy-fallback defect with a
   # longer fuse.)
   local model; model="$(provider_model muse)"
+  local until
+  if until="$(_muse_quota_until)"; then
+    lane_not_run muse "Muse subscription quota exhausted until $(_ar_epoch_text "$until")"
+    return 1
+  fi
   local ws="$JSON_TMPDIR/muse_ws"
   local pf="$JSON_TMPDIR/muse_prompt.txt"
   local out_file="$JSON_TMPDIR/raw_muse.txt"
@@ -522,12 +640,24 @@ run_muse() {
     > "$out_file" 2>"$err_file" || status=$?
   result="$(cat "$out_file" 2>/dev/null)"
   if [[ $status -ne 0 || -z "$result" ]]; then
+    local errtext; errtext="$(cat "$err_file" 2>/dev/null)"
+    if [[ "$errtext" == *"Subscription quota exhausted"* ]]; then
+      until="$(_muse_quota_record "$errtext")"
+      lane_not_run muse "Muse subscription quota exhausted until $(_ar_epoch_text "$until") (API 429)"
+      return 1
+    fi
     lane_exit_warn muse "$status" 124 "$err_file"
     [[ $status -eq 0 ]] && status=1
     return "$status"
   fi
   # Error-as-output guard, the agy lesson: an exit-0 body carrying a quota/auth message would
   # otherwise travel downstream as a CLEAN review with zero findings — a false-clean pass.
+  # The same spent window can arrive as an exit-0 body: recorded like the stderr one.
+  if [[ "$result" == *"Subscription quota exhausted"* && ${#result} -lt 600 ]]; then
+    until="$(_muse_quota_record "$result")"
+    lane_not_run muse "Muse subscription quota exhausted until $(_ar_epoch_text "$until")"
+    return 1
+  fi
   if lane_error_text muse "$result" > /dev/null; then
     echo "  WARN: muse unusable (auth/quota), not a review: $(printf '%s' "$result" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
     return 1

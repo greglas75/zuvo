@@ -365,9 +365,12 @@ detect_providers() {
   # per call (byteplus-alt on BytePlus, the qwen lane's Token Plan); OpenRouter keeps only the cheap lane.
   # 2026-10-16, later: four cheap OpenRouter lanes so the pool never runs dry (models: model-registry.sh), all
   # behind the daily spend cap ZUVO_OPENROUTER_DAILY_USD (openrouter_budget_ok) — the cap bounds the bill.
+  # 2026-10-17: openrouter (glm-5.3-flashx) and openrouter-4 (inkling-small) left the default again, by the owner's
+  # decision: in their first production hour they cost $2.32 and $1.22 — glm runs on the zai plan anyway. Kept: mimo
+  # ($0.11/h) and ling-3.1-flash ($0.35/h). Both others stay reachable by ZUVO_ADV_OPENROUTER_LANES or --provider.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter openrouter-alt openrouter-3 openrouter-4}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
