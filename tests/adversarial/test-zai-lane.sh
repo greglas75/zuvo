@@ -108,6 +108,11 @@ assert_eq "glm-5.3-flash" "$(jq -r '.model' "$ZTMP/c5/payload.json" 2>/dev/null)
 assert_eq "disabled" "$(jq -r '.thinking.type' "$ZTMP/c5/payload.json" 2>/dev/null)" "reasoning is switched off"
 assert_eq "true" "$(jq -r '.stream' "$ZTMP/c5/payload.json" 2>/dev/null)" "streamed, like the BytePlus plan lanes"
 
+# Bug caught: the opt-back-in switch ignored, so reasoning could never be turned on again for a bench.
+start_test "zai.5b ZUVO_ZAI_THINKING=on sends thinking enabled"
+ZUVO_ZAI_THINKING=on run_zai c5b "" >/dev/null
+assert_eq "enabled" "$(jq -r '.thinking.type' "$ZTMP/c5b/payload.json" 2>/dev/null)" "reasoning is back on"
+
 # The driver's own fallback (adversarial-dispatch.sh) for a copy that finds no model-registry.sh.
 start_test "zai.6 without a registry the driver's own default is still the plan"
 . "$ROOT/tests/lib/adversarial-driver.sh"

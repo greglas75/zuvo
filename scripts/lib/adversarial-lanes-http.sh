@@ -483,9 +483,11 @@ run_openrouter() {
   # timeouts in a row benched the lane for 6 h. With thinking disabled the same review came back in 11 s.
   local _or_extra=""
   if [[ "$_lane" == zai ]]; then
-    case "${ZUVO_ZAI_THINKING:-disabled}" in
-      enabled) _or_extra='{"thinking":{"type":"enabled"}}' ;;
-      *)       _or_extra='{"thinking":{"type":"disabled"}}' ;;
+    case "$(printf '%s' "${ZUVO_ZAI_THINKING:-disabled}" | tr 'A-Z' 'a-z')" in
+      enabled|on|1|true)    _or_extra='{"thinking":{"type":"enabled"}}' ;;
+      disabled|off|0|false) _or_extra='{"thinking":{"type":"disabled"}}' ;;
+      *) echo "  WARN: ZUVO_ZAI_THINKING='$ZUVO_ZAI_THINKING' is not enabled/disabled — thinking stays off" >&2
+         _or_extra='{"thinking":{"type":"disabled"}}' ;;
     esac
   fi
   chat_payload "$payload_file" "$model" 0.2 "$_or_stream" "$_or_extra" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
