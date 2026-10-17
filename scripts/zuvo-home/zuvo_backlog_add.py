@@ -80,6 +80,7 @@ import zuvo_backlog_findings as fnd
 import zuvo_backlog_io as zio
 import zuvo_backlog_lookup as lk
 import zuvo_backlog_parse as zb
+import zuvo_backlog_similar as sim
 import zuvo_backlog_vcs as vcs
 
 # The verdict keywords, in the order the protocol documents them. `main` prints no other first word.
@@ -411,10 +412,24 @@ def _ready() -> None:
             fh.write(f"{os.getpid()}\n")
 
 
+def _advise_similar(c: _Call) -> None:
+    """Stage 1 of B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS: when the structural key is about to miss,
+    say that an existing finding may be the same defect. Advisory ONLY — it writes nothing, decides
+    nothing, and `zuvo_backlog_similar.advise` returns None on every failure, so this line changes
+    no verdict and cannot fail the call. It runs HERE, before the lock, because it makes a network
+    call and the lock budget is the write path for every other writer on the machine."""
+    if c.d.route != adm.ROUTE_BACKLOG:
+        return                                  # the ledger route files no entry: nothing to split
+    line = sim.advise(c.ledger, c.f, c.d, c.fid)
+    if line:
+        print(f"backlog-add: {line}", file=sys.stderr)
+
+
 def _execute(a: argparse.Namespace, repo: str) -> Result:
     c = _prepare(a, repo)
     if isinstance(c, Result):
         return c
+    _advise_similar(c)
     memdir = os.path.dirname(c.real)
     if c.dry and not os.path.isdir(memdir):
         return _locked(c)                       # nothing to read and nothing to race with
