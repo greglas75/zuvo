@@ -322,7 +322,7 @@ class AnswerCase(unittest.TestCase):
         # "" is not a refusal: an unset or empty override means "no override", and the default
         # endpoint is the https one.
         allowed = ("https://openrouter.ai/api/alpha/decisions", "http://127.0.0.1:8080/x",
-                   "http://localhost:8080/x", "")
+                   "http://127.0.0.2:8080/x", "http://[::1]:8080/x", "http://localhost:8080/x", "")
         refused = ("http://example.com/x", "file:///etc/passwd", "ftp://example.com/x",
                    "example.com/x", "http://10.0.0.5/x")
         for url in allowed:

@@ -39,6 +39,7 @@ REVISIONS of one entry) and are a LOWER bound, not a promise.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -158,6 +159,18 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _is_loopback(host: str) -> bool:
+    """Whether `host` cannot leave the machine. Decided by `ipaddress`, not by a literal: the
+    literal form covers one spelling of a /8 and none of IPv6, and this file is also held to the
+    repo rule that no versioned `scripts/zuvo-home` helper embeds an address."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _checked_url() -> Optional[str]:
     """The endpoint, if sending a bearer key to it is defensible. `ZUVO_BACKLOG_SIMILAR_URL` exists
     so the specs can point this at a loopback stub, but it is an ordinary environment variable and
@@ -168,7 +181,7 @@ def _checked_url() -> Optional[str]:
     parts = urllib.parse.urlsplit(url)
     if parts.scheme == "https":
         return url
-    if parts.scheme == "http" and (parts.hostname or "") in ("127.0.0.1", "::1", "localhost"):
+    if parts.scheme == "http" and _is_loopback(parts.hostname or ""):
         return url
     _debug("endpoint refused", f"{parts.scheme}://{parts.hostname} would receive the API key")
     return None
