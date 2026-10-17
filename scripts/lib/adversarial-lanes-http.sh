@@ -484,10 +484,16 @@ run_openrouter() {
   # budget (thinking.budget_tokens) is ignored by the API (106 s).
   local _or_extra=""
   if [[ "$_lane" == zai ]]; then
-    case "$(printf '%s' "${ZUVO_ZAI_REASONING:-low}" | tr 'A-Z' 'a-z')" in
-      low|medium|high) _or_extra="{\"reasoning_effort\":\"$(printf '%s' "${ZUVO_ZAI_REASONING:-low}" | tr 'A-Z' 'a-z')\"}" ;;
-      off|disabled|0)  _or_extra='{"thinking":{"type":"disabled"}}' ;;
-      *) echo "  WARN: ZUVO_ZAI_REASONING='$ZUVO_ZAI_REASONING' is not low/medium/high/off — using low" >&2
+    # ZUVO_ZAI_THINKING (v1.6.91, on/off) still counts when the new name is unset: off → off, on → high.
+    local _zr="${ZUVO_ZAI_REASONING:-}"
+    if [[ -z "$_zr" && -n "${ZUVO_ZAI_THINKING:-}" ]]; then
+      case "$(printf '%s' "$ZUVO_ZAI_THINKING" | tr 'A-Z' 'a-z')" in enabled|on|1|true) _zr=high ;; *) _zr=off ;; esac
+    fi
+    _zr="$(printf '%s' "${_zr:-low}" | tr 'A-Z' 'a-z')"
+    case "$_zr" in
+      low|medium|high) _or_extra="{\"reasoning_effort\":\"$_zr\"}" ;;
+      off|disabled|0|false|no) _or_extra='{"thinking":{"type":"disabled"}}' ;;
+      *) echo "  WARN: ZUVO_ZAI_REASONING='$_zr' is not low/medium/high/off — using low" >&2
          _or_extra='{"reasoning_effort":"low"}' ;;
     esac
   fi
