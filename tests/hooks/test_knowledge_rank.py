@@ -330,7 +330,7 @@ class KnowledgeRankTest(unittest.TestCase):
         self.assertEqual((rows, stub.requests), ([], 0))
 
     def test_glob_boost_does_not_beat_a_stronger_rerank_score(self) -> None:
-        # Catches GLOB_BOOST blown up: 0.44 + boost (0.1 x 0.50) stays under 0.50; a boost of 0.07+ fails.
+        # Catches GLOB_BOOST blown up: 0.44 + 0.1 x 0.50 stays under 0.50; GLOB_BOOST 0.14+ would fail it.
         self.write_store("codebase-facts.jsonl", [
             {"id": "fact-glob", "type": "codebase-fact", "fact": "beta widget", "affectedFiles": ["src/**"]},
             {"id": "fact-strong", "type": "codebase-fact", "fact": "alpha widget"}])
@@ -515,7 +515,7 @@ class KnowledgeRankTest(unittest.TestCase):
         self.assertEqual((rows[0]["id"], rows[0]["score"]), ("ap-shell-eval", 0.95))
 
     def test_step3_block_does_not_execute_shell_syntax_in_the_filled_in_values(self) -> None:
-        # Catches the placeholders sitting in double quotes or $'...': a keyword or path taken from task text
+        # Catches the placeholders sitting in double quotes or bare: a keyword or path taken from task text
         # holding $(...) or a backtick would run as a command before the helper starts.
         self.stub({"": 0.5})
         marks = [self.main_root.parent / "pwned-subst", self.main_root.parent / "pwned-tick"]

@@ -46,11 +46,12 @@ class ProblemCellTests(unittest.TestCase):
         self.assertEqual(zd.table_signature(one("| B-1 | 🔴 HIGH | NPE | src/a.py:10 |\n")), "a.py|npe")
 
     FALLBACKS = [
-        ("a row with no path cell takes a basename from another cell", "| B-1 | NPE on save | HIGH |\n",
+        ("no path cell: an empty basename, never one borrowed from another cell",
+         "| B-1 | NPE on save | HIGH |\n",
          "|npe on save"),
-        ("a path only inside the problem text loses the basename",
+        ("a path only inside the problem text still yields its basename",
          "| B-1 | NPE when src/a.py:10 saves | HIGH |\n", "a.py|npe when src a py 10 saves"),
-        ("a row with only metadata reads a metadata cell as the problem",
+        ("a metadata-only row: an empty problem, never a metadata cell read as one",
          "| B-1 | src/a.py:10 | HIGH | open |\n", "a.py|"),
     ]
 

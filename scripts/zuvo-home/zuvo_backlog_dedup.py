@@ -101,7 +101,7 @@ class Candidate(NamedTuple):
     b_id: str
     score: float
     band: str                   # "strong" (>= HIGH) or "weak" (>= LOW)
-    digest: str                 # of the body that was scored, so `recheck` sees a rewrite
+    digest: str                 # of the candidate's whole body, so `confirm` sees a rewrite under the lock
 
 
 def digest(body: str) -> str:
