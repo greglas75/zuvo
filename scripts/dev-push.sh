@@ -448,7 +448,11 @@ if existing_tag_sha=$(git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}^
     warn "tag v${NEW_VERSION} already exists on ${existing_tag_sha:0:7}, not on this release commit ${NEW_SHA:0:7} — leaving it alone; move it by hand if that is wrong"
   fi
 else
-  git tag "v${NEW_VERSION}" "$NEW_SHA" || warn "could not create tag v${NEW_VERSION}"
+  # Signed when this machine has a release key: release-autoinstall installs only signed tags.
+  _trc=0; bash "$(dirname "$0")/release-tag.sh" "v${NEW_VERSION}" "$NEW_SHA" || _trc=$?
+  if [[ "$_trc" != 0 && "$_trc" != 3 ]]; then
+    fail "tag v${NEW_VERSION} not created (signing failed, see above). main is pushed; fix the key, then: bash scripts/release-tag.sh v${NEW_VERSION} ${NEW_SHA} && git push origin refs/tags/v${NEW_VERSION}"
+  fi
 fi
 # This release's tag only. `--tags` also pushed every local reviewed/<hash> audit tag (225 on origin by 1.6.83).
 git push origin "refs/tags/v${NEW_VERSION}" 2>/dev/null || true

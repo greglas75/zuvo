@@ -58,7 +58,7 @@ This does everything: version bump, commit, push, tag, marketplace SHA update. U
 |---------------|---------|
 | Push + sync everything (dev) | `./scripts/dev-push.sh "description"` then restart Claude/Codex |
 | Test changes locally (dev) | `./scripts/install.sh` then restart Claude/Codex/Cursor/Kimi |
-| Install every release on this machine by itself | `~/.zuvo/release-autoinstall --enable` (every 30 min: own clone, newest `vX.Y.Z` on main, install.sh, plugin update + enabled check, `~/.zuvo/key-sync`; `--status`, log `~/.zuvo/release-autoinstall.log`) |
+| Install every release on this machine by itself | `~/.zuvo/release-autoinstall --enable` (every 30 min: own clone, newest `vX.Y.Z` on main, install.sh, plugin update + enabled check, `~/.zuvo/key-sync`; `--status`, log `~/.zuvo/release-autoinstall.log`). Installs only tags SSH-signed by a key in `~/.zuvo/release-signers` — `docs/runbook/release-signing.md` |
 | Release to users | `./scripts/release.sh patch "msg"` |
 | Verify release works | `claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo` then new session |
 | User first install | `claude plugin marketplace add greglas75/zuvo-marketplace && claude plugin install zuvo` |
