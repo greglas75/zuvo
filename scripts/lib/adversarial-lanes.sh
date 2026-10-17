@@ -461,6 +461,41 @@ run_agy() {
   return 1
 }
 
+# Muse's subscription has usage windows. A spent one answers every call with
+#   API error 429 … Subscription quota exhausted. Your usage window resets at 2026-10-19T00:00:00Z.
+# on stderr, AFTER a "workspace root: …" banner line — so the lane's WARN, which quotes the first stderr line,
+# reported a workspace problem for two days while the real cause was the quota (2026-10-16/17). The reset is
+# kept in $ZUVO_HOME/muse-quota-until and the lane is not run until then: not asked, not held against it.
+_muse_quota_file() {
+  if [[ -n "${ZUVO_MUSE_QUOTA_FILE:-}" ]]; then printf '%s\n' "$ZUVO_MUSE_QUOTA_FILE"; return 0; fi
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 ]] && return 1
+  printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/muse-quota-until"
+}
+_muse_quota_until() {   # prints the stop epoch while it is ahead; status 1 otherwise
+  local f until
+  f="$(_muse_quota_file)" || return 1
+  [[ -f "$f" ]] || return 1
+  { read -r until _ < "$f"; } 2>/dev/null || return 1
+  [[ "$until" =~ ^[0-9]{9,11}$ ]] && (( until > $(date +%s) )) || return 1
+  printf '%s\n' "$until"
+}
+_muse_quota_record() {  # $1 = the error text; prints the recorded epoch
+  local iso until now f
+  now=$(date +%s)
+  iso=$(printf '%s' "$1" | sed -n 's/.*resets at \([0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\)Z.*/\1/p' | head -1)
+  until=""
+  if [[ -n "$iso" ]]; then
+    until=$(date -u -d "${iso}Z" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%S' "$iso" +%s 2>/dev/null) || until=""
+  fi
+  # Unparseable, already past, or implausibly far (> 40 days): an hour, then ask again.
+  if ! [[ "$until" =~ ^[0-9]+$ ]] || (( until <= now || until > now + 40 * 86400 )); then until=$(( now + 3600 )); fi
+  if f="$(_muse_quota_file)"; then
+    mkdir -p -- "${f%/*}" 2>/dev/null || true
+    { printf '%s\tmuse\n' "$until" > "$f.$$" && mv -f -- "$f.$$" "$f"; } 2>/dev/null || rm -f -- "$f.$$" 2>/dev/null
+  fi
+  printf '%s\n' "$until"
+}
+
 run_muse() {
   # Muse Code (`muse`) — an interactive coding agent with a headless `exec` mode. Two things
   # about it are not like the other CLI lanes and both are deliberate here:
@@ -505,6 +540,11 @@ run_muse() {
   # model_id=muse-spark-1.3 — and "correct by coincidence" is the agy-fallback defect with a
   # longer fuse.)
   local model; model="$(provider_model muse)"
+  local until
+  if until="$(_muse_quota_until)"; then
+    lane_not_run muse "Muse subscription quota exhausted until $(_ar_epoch_text "$until")"
+    return 1
+  fi
   local ws="$JSON_TMPDIR/muse_ws"
   local pf="$JSON_TMPDIR/muse_prompt.txt"
   local out_file="$JSON_TMPDIR/raw_muse.txt"
@@ -522,6 +562,12 @@ run_muse() {
     > "$out_file" 2>"$err_file" || status=$?
   result="$(cat "$out_file" 2>/dev/null)"
   if [[ $status -ne 0 || -z "$result" ]]; then
+    local errtext; errtext="$(cat "$err_file" 2>/dev/null)"
+    if [[ "$errtext" == *"Subscription quota exhausted"* ]]; then
+      until="$(_muse_quota_record "$errtext")"
+      lane_not_run muse "Muse subscription quota exhausted until $(_ar_epoch_text "$until") (API 429)"
+      return 1
+    fi
     lane_exit_warn muse "$status" 124 "$err_file"
     [[ $status -eq 0 ]] && status=1
     return "$status"

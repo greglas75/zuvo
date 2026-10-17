@@ -329,7 +329,7 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter openrouter-alt openrouter-3 openrouter-4` (ZUVO_ADV_OPENROUTER_LANES overrides, e.g.
+                           Adds `openrouter-alt openrouter-3` (ZUVO_ADV_OPENROUTER_LANES overrides, e.g.
                            "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, z-ai/glm-5.3-flashx)
@@ -346,7 +346,7 @@ Environment variables:
   ZUVO_ADV_ZAI=1           Opt IN to the `zai` lane: Z.ai GLM Coding Plan (prepaid). Key in ZAI_API_KEY or
                            ~/.zuvo/zai.key (ZUVO_ZAI_KEY_FILE; mode 600/400, the full {id}.{secret}). Key
                            presence alone does NOT enable it — the plan's quota is shared.
-  ZUVO_ZAI_MODEL           zai lane model (default: ZUVO_MODEL_ZAI from model-registry.sh, glm-5.2)
+  ZUVO_ZAI_MODEL           zai lane model (default: ZUVO_MODEL_ZAI from model-registry.sh, glm-5.3)
   ZUVO_ZAI_BASE_URL        zai endpoint (default: https://api.z.ai/api/coding/paas/v4). Any other z.ai or
                            bigmodel.cn path is refused: it is not the plan.
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
