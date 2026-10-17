@@ -346,7 +346,7 @@ Environment variables:
   ZUVO_ADV_ZAI=1           Opt IN to the `zai` lane: Z.ai GLM Coding Plan (prepaid). Key in ZAI_API_KEY or
                            ~/.zuvo/zai.key (ZUVO_ZAI_KEY_FILE; mode 600/400, the full {id}.{secret}). Key
                            presence alone does NOT enable it — the plan's quota is shared.
-  ZUVO_ZAI_MODEL           zai lane model (default: ZUVO_MODEL_ZAI from model-registry.sh, glm-5.2)
+  ZUVO_ZAI_MODEL           zai lane model (default: ZUVO_MODEL_ZAI from model-registry.sh, glm-5.3)
   ZUVO_ZAI_BASE_URL        zai endpoint (default: https://api.z.ai/api/coding/paas/v4). Any other z.ai or
                            bigmodel.cn path is refused: it is not the plan.
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)

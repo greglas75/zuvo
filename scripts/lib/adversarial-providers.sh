@@ -621,7 +621,7 @@ lane_model() {
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
-    zai)          echo "${ZUVO_ZAI_MODEL:-${ZUVO_MODEL_ZAI:-glm-5.2}}" ;;
+    zai)          echo "${ZUVO_ZAI_MODEL:-${ZUVO_MODEL_ZAI:-glm-5.3}}" ;;
     muse)        echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
     qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
