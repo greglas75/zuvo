@@ -330,7 +330,7 @@ class KnowledgeRankTest(unittest.TestCase):
         self.assertEqual((rows, stub.requests), ([], 0))
 
     def test_glob_boost_does_not_beat_a_stronger_rerank_score(self) -> None:
-        # Catches GLOB_BOOST blown up: 0.44 + 0.1 x 0.50 stays under 0.50; GLOB_BOOST 0.14+ would fail it.
+        # Catches GLOB_BOOST blown up: 0.44 + 0.1 x 0.50 stays under 0.50; GLOB_BOOST above 0.12 fails it.
         self.write_store("codebase-facts.jsonl", [
             {"id": "fact-glob", "type": "codebase-fact", "fact": "beta widget", "affectedFiles": ["src/**"]},
             {"id": "fact-strong", "type": "codebase-fact", "fact": "alpha widget"}])

@@ -331,6 +331,17 @@ class ClientTest(Base):
         self.assertIsNone(rr.rerank(MODEL, "q", DOCS, caller="t"))
         self.assertEqual((stub.requests, self.last_outcome()), (0, "disabled"))
 
+    def test_a_fifo_key_file_is_refused_without_blocking(self) -> None:
+        # A plain O_RDONLY open of a FIFO waits for a writer forever: one bad key file hangs every run.
+        fifo = self.home / "key.fifo"
+        os.mkfifo(fifo, 0o600)
+        os.environ.update(OPENROUTER_API_KEY="", ZUVO_OR_KEY_FILE=str(fifo))
+        worker = threading.Thread(target=rio.key, daemon=True)
+        worker.start()
+        worker.join(2.0)
+        self.assertFalse(worker.is_alive(), "key() blocked on a FIFO")
+        self.assertIsNone(rio.key())
+
     def test_a_home_without_a_path_is_no_key_not_a_crash(self) -> None:
         # Path.home() raises RuntimeError with no HOME and no passwd entry; key() must read that as no key.
         os.environ.pop("OPENROUTER_API_KEY")

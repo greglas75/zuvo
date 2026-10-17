@@ -21,6 +21,7 @@ from __future__ import annotations
 import ipaddress
 import math
 import os
+import stat
 import threading
 import time
 import urllib.parse
@@ -44,14 +45,19 @@ def env_num(name: str, default: float) -> float:
 def key() -> str | None:
     k = os.environ.get("OPENROUTER_API_KEY", "")
     if not k:
-        try:  # Path.home() raises RuntimeError with no HOME and no passwd entry
+        try:
             kf = Path(os.environ.get("ZUVO_OR_KEY_FILE") or Path.home() / ".zuvo" / "openrouter.key")
-            # mode checked on the OPEN file (fstat), so a swap between check and read cannot slip in
-            with os.fdopen(os.open(kf, os.O_RDONLY)) as fh:
-                if os.fstat(fh.fileno()).st_mode & 0o777 not in (0o600, 0o400):
+        except RuntimeError:  # Path.home() with no HOME and no passwd entry
+            return None
+        try:
+            # O_NONBLOCK: a FIFO would otherwise wait for a writer forever. Mode and type are checked on
+            # the OPEN file (fstat), so a swap between check and read cannot slip in.
+            with os.fdopen(os.open(kf, os.O_RDONLY | os.O_NONBLOCK)) as fh:
+                st = os.fstat(fh.fileno())
+                if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o777 not in (0o600, 0o400):
                     return None
                 k = fh.read().rstrip("\n")
-        except (OSError, UnicodeDecodeError, RuntimeError):
+        except (OSError, UnicodeDecodeError):
             return None
     if not k or any(c in k for c in "\"'\\\n\r"):
         return None
