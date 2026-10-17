@@ -292,9 +292,10 @@ ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}"
 
 # ── Z.ai GLM Coding Plan (lane `zai`, opt-in ZUVO_ADV_ZAI=1): /api/coding/paas/v4 is the plan, /api/paas/v4 meters ──
 ZUVO_ZAI_BASE_URL="${ZUVO_ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
-# glm-5.3: the newest full model the plan lists (GET /models), and the best OpenRouter reviewer above,
-# dropped there only for its price. A plan without it refuses with 1311; ZUVO_ZAI_MODEL picks another.
-ZUVO_MODEL_ZAI="${ZUVO_MODEL_ZAI:-glm-5.3}"
+# glm-5.3-flash (owner's choice 2026-10-18), sent with thinking OFF (run_openrouter, ZUVO_ZAI_THINKING): with
+# thinking on, glm-5.3 and the flash both reasoned past the 300 s lane budget on real diffs. glm-5.3-flashx is not
+# in this plan (1311). ZUVO_ZAI_MODEL picks another.
+ZUVO_MODEL_ZAI="${ZUVO_MODEL_ZAI:-glm-5.3-flash}"
 
 # ── Cursor ──────────────────────────────────────────────────────────
 # A named model, not `auto`: on `auto` Cursor's router picks per request and the client never says
