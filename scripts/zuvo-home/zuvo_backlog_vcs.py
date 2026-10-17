@@ -195,8 +195,8 @@ def check_site(repo: str, path: str, line: int, anchor: Optional[str]) -> Option
 
 
 def check_target(target: str) -> Optional[str]:
-    """`bad-target` unless the target is a URL, a hostname or `subject:<slug>` (the shapes live in
-    zuvo_backlog_admit.target_kind, the one home of them)."""
+    """`bad-target` unless the target is a URL, a hostname, `image:<reference>` or `subject:<slug>` (the
+    shapes live in zuvo_backlog_admit.target_kind, the one home of them)."""
     return None if adm.target_kind(target) is not None else "bad-target"
 
 

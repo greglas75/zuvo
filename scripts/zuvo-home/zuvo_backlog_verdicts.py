@@ -61,9 +61,12 @@ VERIFIED_BY = "deterministic:%s"          # `_BY_RE`'s shape; a free-form proven
                                           # what the cross-model spot check asks
 
 # See the module docstring for why every restriction here is in place. The `(?![\w/])` tail stops a
-# directory being harvested out of the middle of a longer path.
+# directory being harvested out of the middle of a longer path. Match it only through `cited_paths`,
+# which blanks `image:` targets first (`_IMAGE_TARGET_RE`).
 _CITED_RE = re.compile(
     r"(?<![\w./@~*?+-])([\w.@-]+(?:/[\w.@-]+)*/[\w.@-]*[\w@-]\.[a-z][a-z0-9]{0,4})(?::(\d+))?(?![\w/])")
+# `image:` targets are not repo files, and a registry port restarts a match; a chained `,path` survives.
+_IMAGE_TARGET_RE = re.compile(r"\bimage:[\w.:/@-]+")
 # A `path:line` inside a QUOTED clause would be a second citation, and then "every location in this
 # evidence resolves" becomes a claim about text the entry happened to contain rather than about the
 # citation this module made. The line number is dropped from the quote; the path is kept, so the quote
@@ -110,7 +113,7 @@ class Verdict(NamedTuple):
 def cited_paths(body: str) -> List[str]:
     """The repo-relative paths an entry is ABOUT, in order, deduplicated. See the docstring."""
     out: List[str] = []
-    for m in _CITED_RE.finditer(body):
+    for m in _CITED_RE.finditer(_IMAGE_TARGET_RE.sub(" ", body)):
         path = m.group(1)
         if path.startswith(("http", "www.")) or path in out:
             continue

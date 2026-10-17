@@ -46,8 +46,8 @@ Every agent report must follow this structure:
 
 [Issues outside your scope, one per line, formatted as:]
 - [CLASS] conf: NN | file_path:line | anchor: `<text copied from that line>` | evidence: <what proves it> | severity: <critical|high|medium|low> | <the defect, one sentence>
-[or, for a finding of any class with no repository file (a live URL or host):]
-- [CLASS] conf: NN | target: <https://… or hostname> | evidence: <what proves it> | severity: <critical|high|medium|low> | <the defect, one sentence>
+[or, for a finding of any class with no repository file (a live URL, a host or a container image):]
+- [CLASS] conf: NN | target: <https://…, hostname, or image:<reference>> | evidence: <what proves it> | severity: <critical|high|medium|low> | <the defect, one sentence>
 [optional fields, appended before the defect when you have them:]
   | fix: <the remedy> | also: <file_path:line of another site, DUP; repeat for each>
 [`anchor` may be omitted for tags other than SEC and BUG.]

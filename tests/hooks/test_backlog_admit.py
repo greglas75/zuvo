@@ -17,6 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "scripts", "zuvo-home"))
 import zuvo_backlog_admit as adm  # noqa: E402
 import zuvo_backlog_parse as zb  # noqa: E402
+import zuvo_backlog_verdicts as zv  # noqa: E402
 
 # The class vocabulary as the skills spell it, retyped here so a class dropped from the module fails.
 ALL_CLASSES = ("BUG", "SEC", "DATA", "DUP", "CPLX", "SIZE", "PERF", "DEAD", "READ", "CQ",
@@ -25,6 +26,7 @@ REPORT_ONLY = ("DUP", "CPLX", "SIZE", "PERF", "DEAD", "READ", "CQ", "TEST-GAP", 
 LOW_PREFIX = "(low confidence — verify manually) "
 CHANGED = frozenset({42})
 URL = "https://api.example.com/v1/orders"
+DIGEST = "sha256:" + "a" * 64
 
 BASE = adm.Finding(cls="BUG", conf=85, source="review", title="total is NaN when the cart is empty",
                    file="src/cart.ts", line=42, anchor="const total = sum(cart.items)")
@@ -111,6 +113,26 @@ class TargetKindTests(unittest.TestCase):
         ("URL whose host urlsplit cannot read named a url", "https://[::1/x", None),
         ("URL not recognised", URL, "url"),
         ("subject not recognised", "subject:review-incomplete", "subject"),
+        ("image reference read as host `redis`, port 7", "image:redis:7", "image"),
+        ("unprefixed `redis:7` no longer a host, breaking every live-host target", "redis:7", "host"),
+        ("registry with a port and a digest refused",
+         "image:registry.local:5000/team/app:1.2@" + DIGEST, "image"),
+        ("uppercase repository accepted although registries refuse it", "image:Org/App:1", None),
+        ("empty tag accepted", "image:nginx:", None),
+        ("uppercase first component taken for a registry (a registry has a `.`, a port or is `localhost`)",
+         "image:Org/app:1", None),
+        ("`localhost:5000` registry refused", "image:localhost:5000/app:1", "image"),
+        ("truncated digest accepted", "image:nginx@sha256:abc", None),
+        ("space in an image reference accepted", "image:nginx 1", None),
+        ("a numeric repository after `image:` read as a host named `image`", "image:80", "image"),
+        ("registry port past 65535 accepted", "image:localhost:99999/app:1", None),
+        ("undotted registry's port past 65535 accepted (the `port2` branch unchecked)",
+         "image:myhost:99999/app:1", None),
+        ("registry port 65535 refused by an off-by-one bound", "image:localhost:65535/app:1", "image"),
+        ("registry port 65536 accepted by an off-by-one bound", "image:localhost:65536/app:1", None),
+        ("a repository name past OCI's 255 characters accepted", "image:" + "a" * 256, None),
+        ("a 255-character name refused for counting its tag and digest too",
+         "image:" + "a" * 255 + ":" + "t" * 128 + "@" + DIGEST, "image"),
     ]
 
     def test_target_kind_names_the_one_shape_or_none(self):
@@ -285,6 +307,14 @@ class ValidationTests(unittest.TestCase):
          tgt("https://user:p@ss@api.example.com/", evidence="e"), "secret-like-value"),
         ("subject BUG accepted", tgt("subject:x"), "bad-combination"),
         ("subject PROCESS refused", tgt("subject:review-incomplete", cls="PROCESS"), None),
+        ("image target without evidence accepted", tgt("image:redis:7", cls="SEC"), "missing-field:evidence"),
+        ("image digest's `@` refused as credentials", tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e"),
+         None),
+        ("credentials in an image-shaped target stored",
+         tgt("image:admin:hunter2@db.internal", cls="SEC", evidence="e"), "secret-like-value"),
+        ("image CQ refused although an image takes any class",
+         tgt("image:nginx:1.25", cls="CQ", evidence="e"),
+         None),
         ("URL PROCESS refused although any class may name a live URL", tgt(URL, cls="PROCESS", evidence="x"),
          None),
         ("URL READ finding kept without the evidence that proves the page was seen", tgt(URL, cls="READ"),
@@ -428,6 +458,22 @@ class FingerprintTests(unittest.TestCase):
          tgt("https://example.com/x", evidence="e")),
         ("same page split into two records by a tracking parameter",
          tgt(URL + "?utm_source=mail#top", cls="CQ", evidence="e"), tgt(URL, cls="CQ", evidence="e")),
+        ("Docker Hub's implied `docker.io/library/` split one image",
+         tgt("image:docker.io/library/nginx:1.25", cls="SEC", evidence="e"),
+         tgt("image:nginx:1.25", cls="SEC", evidence="e")),
+        ("the implied `latest` tag split one image", tgt("image:nginx", cls="SEC", evidence="e"),
+         tgt("image:nginx:latest", cls="SEC", evidence="e")),
+        ("registry case split one image", tgt("image:MyReg:5000/app:1", cls="SEC", evidence="e"),
+         tgt("image:myreg:5000/app:1", cls="SEC", evidence="e")),
+        ("a zero-padded registry port split one image",
+         tgt("image:reg.io:00080/app:1", cls="SEC", evidence="e"),
+         tgt("image:reg.io:80/app:1", cls="SEC", evidence="e")),
+        ("Docker Hub's `library/` namespace split one image",
+         tgt("image:library/nginx:1", cls="SEC", evidence="e"),
+         tgt("image:nginx:1", cls="SEC", evidence="e")),
+        ("a tag beside a digest split one image (the digest names it)",
+         tgt("image:nginx:1.25@" + DIGEST, cls="SEC", evidence="e"),
+         tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e")),
     ]
     DIFFERENT = [
         ("same basename in two directories merged", f(file="lib/cart.ts"), BASE),
@@ -438,6 +484,27 @@ class FingerprintTests(unittest.TestCase):
          dataclasses.replace(TITLED, title="Сумма заказа неверна")),
         ("wordless title hashed as an empty string", dataclasses.replace(TITLED, title="!!!"),
          dataclasses.replace(TITLED, title="???")),
+        ("`org/app` and `org-app` merged, as a hand-made slug merges them",
+         tgt("image:org/app:1", cls="SEC", evidence="e"), tgt("image:org-app:1", cls="SEC", evidence="e")),
+        ("tag case folded, merging `v1` and `V1`", tgt("image:app:v1", cls="SEC", evidence="e"),
+         tgt("image:app:V1", cls="SEC", evidence="e")),
+        ("`library/` dropped from a three-component Hub name, merging `docker.io/library/a/b` with `a/b`",
+         tgt("image:docker.io/library/a/b:1", cls="SEC", evidence="e"),
+         tgt("image:a/b:1", cls="SEC", evidence="e")),
+        ("`library/` dropped under a registry other than Docker Hub",
+         tgt("image:ghcr.io/library/nginx:1", cls="SEC", evidence="e"),
+         tgt("image:ghcr.io/nginx:1", cls="SEC", evidence="e")),
+        ("digest left out of the key, merging two pinned builds",
+         tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e"),
+         tgt("image:nginx@sha256:" + "b" * 64, cls="SEC", evidence="e")),
+        ("a digest-pinned image merged with a tag-only one",
+         tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e"),
+         tgt("image:nginx:1.25", cls="SEC", evidence="e")),
+        ("registry port left out of the key", tgt("image:reg.io:80/app:1", cls="SEC", evidence="e"),
+         tgt("image:reg.io:8080/app:1", cls="SEC", evidence="e")),
+        ("registry left out of the key, merging one repository on two registries",
+         tgt("image:ghcr.io/org/app:1", cls="SEC", evidence="e"),
+         tgt("image:quay.io/org/app:1", cls="SEC", evidence="e")),
     ]
 
     def test_one_defect_one_id(self):
@@ -510,6 +577,8 @@ class BIdTests(unittest.TestCase):
          tgt("https://[::1]/x", evidence="e"), "B-1-BUG-80957004"),
         ("subject target stemmed with its `subject:` prefix",
          tgt("subject:review-incomplete", cls="PROCESS"), "B-review-incomplete-PROCESS-0e8ef327"),
+        ("image target stemmed on its registry or tag instead of its repository",
+         tgt("image:ghcr.io/org/app:1.2", cls="SEC", evidence="e"), "B-app-SEC-c89b8107"),
     ]
 
     def test_b_id_is_a_descriptive_definition_id(self):
@@ -526,6 +595,42 @@ class BIdTests(unittest.TestCase):
         # passing the B-id or a raw hash would mint an id the ledger cannot link back
         with self.assertRaisesRegex(ValueError, r"^b_id: 'B-cart-BUG-1234' is not an F-id \(F- \+ 12 hex\)$"):
             adm.b_id(BASE, adm.decide(BASE, CHANGED, False), "B-cart-BUG-1234")
+
+
+class ImageTargetGroomingTests(unittest.TestCase):
+    """The backlog line an `image:` target writes, as grooming's verdict pass reads it back."""
+
+    LINE = "- [ ] B-my.app-SEC-0a1b2c3d {} — [SEC] image runs as root | evidence: seen on the host"
+    NOT_PATHS = [
+        ("repository ending in `.app` read as a deleted repo file, so a live finding goes STALE-OBSOLETE",
+         "image:ghcr.io/org/my.app:1"),
+        ("digest-pinned dotted repository read as a deleted repo file",
+         "image:reg.io/team/web.ui@" + DIGEST),
+        ("repository named like a source file (`next.js`) read as a deleted repo file",
+         "image:ghcr.io/org/next.js:1"),
+        ("registry with a port read as the repo path `5000/org/my.app` after its colon",
+         "image:localhost:5000/org/my.app:1"),
+        ("undotted registry with a port read as a repo path after its colon",
+         "image:myreg:5000/team/web.ui@" + DIGEST),
+    ]
+
+    def test_an_image_target_is_not_a_cited_path(self):
+        for name, target in self.NOT_PATHS:
+            with self.subTest(name):
+                self.assertEqual([], zv.cited_paths(self.LINE.format(target)))
+
+    # An exemption wide enough to swallow the path after it drops a live citation, and with one path
+    # fewer "every cited path is gone" can turn true for an entry whose code is still there.
+    BESIDE = [
+        ("a path after a space swallowed with the image", "image:ghcr.io/org/my.app:1 deploy/compose.yml:4"),
+        ("a path chained by a comma swallowed with the image", "image:alpine:3.19,deploy/compose.yml:4"),
+        ("a path chained by a semicolon swallowed with the image", "image:org/my.app:1;deploy/compose.yml:4"),
+    ]
+
+    def test_a_real_path_beside_an_image_target_is_still_cited(self):
+        for name, text in self.BESIDE:
+            with self.subTest(name):
+                self.assertEqual(["deploy/compose.yml"], zv.cited_paths(self.LINE.format(text)))
 
 
 if __name__ == "__main__":
