@@ -130,6 +130,14 @@ class TagAndListing(unittest.TestCase):
     def test_plugin_state_without_a_user_install_is_absent(self):
         self.assertEqual(RA.plugin_state(LISTING.split("  ❯")[0]), (None, False))
 
+    def test_plugin_state_of_a_user_entry_without_a_version_has_none(self):
+        # catches a missing Version line read as some version, so a broken install looks current
+        listing = "  ❯ zuvo@zuvo-marketplace\n    Scope: user\n    Status: ✔ enabled\n"
+        self.assertEqual(RA.plugin_state(listing), (None, True))
+
+    def test_a_missing_command_reads_as_127_not_a_crash(self):
+        self.assertEqual(RA.run([os.path.join(ROOT, "no-such-binary")], timeout=5).returncode, 127)
+
     def test_plugin_state_sees_a_disabled_user_install(self):
         self.assertEqual(RA.plugin_state(LISTING.format(v="1.6.86", s="✘ disabled")), ("1.6.86", False))
 
@@ -243,6 +251,25 @@ esac''')
         rc, out = self.quiet(RA.locked_pass)
         self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
 
+    def test_a_plugin_that_stays_disabled_is_reported(self):
+        self.quiet(RA.locked_pass)
+        with open(self.plugin, "w") as f:
+            f.write("1.0.0 ✘ disabled")
+        sh(self.claude, f'''p="{self.plugin}"; read v s e < "$p"
+[ "$1 $2" = "plugin list" ] && printf '  ❯ zuvo@zuvo-marketplace\\n    Version: %s\\n' "$v" &&
+  printf '    Scope: user\\n    Status: %s %s\\n' "$s" "$e"
+exit 0
+''')
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("plugin is 1.0.0, disabled — want 1.0.0, enabled", out)
+
+    def test_a_half_made_clone_is_started_again(self):
+        # catches a killed first clone (a directory without .git) failing every pass forever
+        os.makedirs(os.path.join(self.home, "release-src", "partial"))
+        rc, out = self.quiet(RA.locked_pass)
+        self.assertEqual((rc, self.installs()), (0, ["v1.0.0"]), out)
+
     def test_a_refused_marketplace_update_stops_before_the_plugin_update(self):
         self.set_claude(update_rc=0, marketplace_rc=5)
         rc, out = self.quiet(RA.locked_pass)
@@ -326,6 +353,12 @@ esac''')
         self.assertIn("installed: v1.0.0", out)
         self.assertIn("newest tag in the clone: v1.0.0", out)
 
+    def test_status_before_any_pass_says_nothing_is_installed(self):
+        rc, out = self.quiet(RA.main, ["--status"])
+        self.assertEqual(rc, 0)
+        self.assertIn("installed: unknown", out)
+        self.assertNotIn("newest tag", out)
+
     def test_an_unknown_argument_is_a_usage_error_that_installs_nothing(self):
         with contextlib.redirect_stderr(io.StringIO()):
             rc, _ = self.quiet(RA.main, ["--now"])
@@ -346,8 +379,9 @@ class Timeout(unittest.TestCase):
             with open(pidfile) as f:
                 child = int(f.read())
         self.assertEqual(r.returncode, 124)
-        with self.assertRaises(ProcessLookupError):
-            os.kill(child, 0)
+        # gone, or a zombie nobody reaps yet (pid 1 in a container) — never still running
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(child)], capture_output=True, text=True).stdout
+        self.assertIn(state.strip()[:1], ("", "Z"))
 
 
 class KeySync(Env):
