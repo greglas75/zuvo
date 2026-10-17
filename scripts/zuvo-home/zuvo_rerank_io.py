@@ -4,8 +4,9 @@ Split from zuvo_rerank.py so the client stays inside the utility file limit; not
 called by anything but zuvo_rerank.
 
 KEY      OPENROUTER_API_KEY, else ZUVO_OR_KEY_FILE, else $HOME/.zuvo/openrouter.key — the rule of
-         adversarial-lanes-http.sh: a file is read only at mode 600/400, and an empty key or one holding a
-         quote, backslash or line break is refused.
+         adversarial-lanes-http.sh: a file is read only if it is a regular file at mode 600/400 (POSIX;
+         Windows has no mode bits), and an empty key or one holding a quote, backslash or line break is
+         refused.
 URL      the OpenRouter key goes ONLY to https://openrouter.ai or to a loopback IP literal (IPv4 127/8, ::1;
          the test stub; http allowed there). Refused before any request: `bad-url` (does not parse, not
          http(s), or carries userinfo `user[:pw]@`), `insecure-url` (cleartext http to another host),
@@ -50,12 +51,14 @@ def key() -> str | None:
         except RuntimeError:  # Path.home() with no HOME and no passwd entry
             return None
         try:
-            # O_NONBLOCK (absent on Windows, which has no FIFOs): a FIFO would otherwise wait forever.
-            # Mode and type are checked on the OPEN file (fstat), so a swap between check and read cannot
-            # slip in.
+            # O_NONBLOCK, where the OS has one (Windows has neither it nor FIFOs): a FIFO would otherwise
+            # wait forever. Mode and type are checked on the OPEN file (fstat), so a swap between check and
+            # read cannot slip in. Windows reports 0o666/0o444 for every file — its ACLs are not mode
+            # bits — so the 0600/0400 rule applies only on POSIX.
             with os.fdopen(os.open(kf, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))) as fh:
                 st = os.fstat(fh.fileno())
-                if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o777 not in (0o600, 0o400):
+                private = os.name == "nt" or st.st_mode & 0o777 in (0o600, 0o400)
+                if not stat.S_ISREG(st.st_mode) or not private:
                     return None
                 k = fh.read().rstrip("\n")
         except (OSError, UnicodeDecodeError):
