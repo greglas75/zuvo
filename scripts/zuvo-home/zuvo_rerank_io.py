@@ -50,9 +50,10 @@ def key() -> str | None:
         except RuntimeError:  # Path.home() with no HOME and no passwd entry
             return None
         try:
-            # O_NONBLOCK: a FIFO would otherwise wait for a writer forever. Mode and type are checked on
-            # the OPEN file (fstat), so a swap between check and read cannot slip in.
-            with os.fdopen(os.open(kf, os.O_RDONLY | os.O_NONBLOCK)) as fh:
+            # O_NONBLOCK (absent on Windows, which has no FIFOs): a FIFO would otherwise wait forever.
+            # Mode and type are checked on the OPEN file (fstat), so a swap between check and read cannot
+            # slip in.
+            with os.fdopen(os.open(kf, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))) as fh:
                 st = os.fstat(fh.fileno())
                 if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o777 not in (0o600, 0o400):
                     return None

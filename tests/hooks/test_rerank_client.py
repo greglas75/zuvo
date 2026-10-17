@@ -342,6 +342,17 @@ class ClientTest(Base):
         self.assertFalse(worker.is_alive(), "key() blocked on a FIFO")
         self.assertIsNone(rio.key())
 
+    def test_a_key_file_is_read_where_os_has_no_o_nonblock(self) -> None:
+        # Windows has no os.O_NONBLOCK: using it unguarded raised AttributeError and lost every file key.
+        kf = self.home / "openrouter.key"
+        kf.write_text("sk-file-key\n")
+        kf.chmod(0o600)
+        os.environ.update(OPENROUTER_API_KEY="", ZUVO_OR_KEY_FILE=str(kf))
+        saved = os.O_NONBLOCK
+        delattr(os, "O_NONBLOCK")
+        self.addCleanup(setattr, os, "O_NONBLOCK", saved)
+        self.assertEqual(rio.key(), "sk-file-key")
+
     def test_a_home_without_a_path_is_no_key_not_a_crash(self) -> None:
         # Path.home() raises RuntimeError with no HOME and no passwd entry; key() must read that as no key.
         os.environ.pop("OPENROUTER_API_KEY")
