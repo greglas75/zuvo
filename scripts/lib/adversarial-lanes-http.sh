@@ -9,11 +9,13 @@
 # tests/hooks/test-adversarial-driver-modules.sh runs shellcheck on the driver with every module inlined.
 
 
-# chat_payload <file> <model> [<temperature>] [<stream 1|0>] — the OpenAI-style chat request for REVIEW_PROMPT, written by
-# jq into <file> (a file, never argv: a large prompt would hit ARG_MAX). One builder for the three HTTP lanes.
+# chat_payload <file> <model> [<temperature>] [<stream 1|0>] [<extra JSON object>] — the OpenAI-style chat request for
+# REVIEW_PROMPT, written by jq into <file> (a file, never argv: a large prompt would hit ARG_MAX). One builder for the
+# three HTTP lanes; <extra> is merged in last (a vendor field such as Z.ai's `thinking`).
 chat_payload() {
   local extra='{}'
   [[ "${4:-0}" != 1 ]] || extra='{"stream":true,"stream_options":{"include_usage":true}}'
+  [[ -z "${5:-}" ]] || extra="$(jq -cn --argjson a "$extra" --argjson b "$5" '$a + $b')" || return 1
   if [[ -n "${3:-}" ]]; then
     printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$2" --argjson t "$3" --argjson x "$extra" \
       '{model:$m, messages:[{role:"user", content:.}], temperature:$t} + $x' > "$1"
@@ -475,7 +477,20 @@ run_openrouter() {
   # for several. Lane-tied so an exported ZUVO_OR_STREAM=1 leaves OpenRouter on its measured non-stream path.
   local _or_stream=0
   [[ "${ZUVO_OR_STREAM:-0}" == "1" && ( "$_lane" == byteplus* || "$_lane" == zai ) ]] && _or_stream=1
-  chat_payload "$payload_file" "$model" 0.2 "$_or_stream" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
+  # Z.ai: thinking OFF by default (ZUVO_ZAI_THINKING=enabled turns it back on). Measured 2026-10-18 on the plan:
+  # glm-5.3 and glm-5.3-flash spent ~150 s reasoning on a 3k-char diff before the first answer token (8,000
+  # reasoning chunks to 480 of content), and on real review prompts every 300 s lane budget ran out — four
+  # timeouts in a row benched the lane for 6 h. With thinking disabled the same review came back in 11 s.
+  local _or_extra=""
+  if [[ "$_lane" == zai ]]; then
+    case "$(printf '%s' "${ZUVO_ZAI_THINKING:-disabled}" | tr 'A-Z' 'a-z')" in
+      enabled|on|1|true)    _or_extra='{"thinking":{"type":"enabled"}}' ;;
+      disabled|off|0|false) _or_extra='{"thinking":{"type":"disabled"}}' ;;
+      *) echo "  WARN: ZUVO_ZAI_THINKING='$ZUVO_ZAI_THINKING' is not enabled/disabled — thinking stays off" >&2
+         _or_extra='{"thinking":{"type":"disabled"}}' ;;
+    esac
+  fi
+  chat_payload "$payload_file" "$model" 0.2 "$_or_stream" "$_or_extra" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
   local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"
   curl_auth_config "$curl_cfg" "$_lane" "$key" "X-Title: zuvo-adversarial-review" || return 1

@@ -97,14 +97,21 @@ for url in "https://api.z.ai./api/paas/v4" "https://api.xyz.ai/v1" "https://api.
 done
 
 # ─── 5. defaults: the plan, the plan key, the registry model, streaming ───
-start_test "zai.5 an unset base URL sends one streamed glm-5.3 request to the plan, with the plan key"
+start_test "zai.5 an unset base URL sends one streamed glm-5.3-flash request, thinking off, to the plan, with the plan key"
 OPENROUTER_API_KEY=sk-or-must-not-leak run_zai c5 "" >/dev/null
 sent_to_plan c5
 cfg="$(cat "$ZTMP/c5/curl.cfg" 2>/dev/null)"
 assert_contains "$cfg" "zai-id.zai-secret-for-test" "the key file's key is the one sent"
 case "$cfg" in *sk-or-must-not-leak*) fail "the OpenRouter key reached Z.ai" ;; *) pass "the OpenRouter key is never sent to Z.ai" ;; esac
-assert_eq "glm-5.3" "$(jq -r '.model' "$ZTMP/c5/payload.json" 2>/dev/null)" "the registry's model"
+assert_eq "glm-5.3-flash" "$(jq -r '.model' "$ZTMP/c5/payload.json" 2>/dev/null)" "the registry's model"
+# Bug caught: reasoning left on — every real review ran out the 300 s lane budget (2026-10-17, 4 timeouts, 6 h bench).
+assert_eq "disabled" "$(jq -r '.thinking.type' "$ZTMP/c5/payload.json" 2>/dev/null)" "reasoning is switched off"
 assert_eq "true" "$(jq -r '.stream' "$ZTMP/c5/payload.json" 2>/dev/null)" "streamed, like the BytePlus plan lanes"
+
+# Bug caught: the opt-back-in switch ignored, so reasoning could never be turned on again for a bench.
+start_test "zai.5b ZUVO_ZAI_THINKING=on sends thinking enabled"
+ZUVO_ZAI_THINKING=on run_zai c5b "" >/dev/null
+assert_eq "enabled" "$(jq -r '.thinking.type' "$ZTMP/c5b/payload.json" 2>/dev/null)" "reasoning is back on"
 
 # The driver's own fallback (adversarial-dispatch.sh) for a copy that finds no model-registry.sh.
 start_test "zai.6 without a registry the driver's own default is still the plan"
@@ -113,7 +120,7 @@ adv_driver_copy "$ADV" "$ZTMP/noreg/adversarial-review.sh" || fail "premise: cop
 cp "$ROOT/scripts/lib/model-subprocess.sh" "$ZTMP/noreg/lib/model-subprocess.sh"
 run_zai c6 "" "$ZTMP/noreg/adversarial-review.sh" >/dev/null
 sent_to_plan c6
-assert_eq "glm-5.3" "$(jq -r '.model' "$ZTMP/c6/payload.json" 2>/dev/null)" "lane_model's own fallback model"
+assert_eq "glm-5.3-flash" "$(jq -r '.model' "$ZTMP/c6/payload.json" 2>/dev/null)" "lane_model's own fallback model"
 
 # ─── 7. opt-in: a key on disk is not consent to spend a shared plan ───────
 start_test "zai.7 the key alone does not enable the lane; ZUVO_ADV_ZAI=1 does"
