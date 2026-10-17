@@ -307,7 +307,9 @@ _agy_on_cooldown() {   # 0 = still cooling down
 _agy_start_cooldown() {  # $1 model, $2 seconds
   local f; f=$(_agy_cooldown_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
-  printf '%s %s\n' "$(( $(date +%s) + $2 ))" "$(_agy_account)" > "$f" 2>/dev/null || true
+  # Temp + rename: a write that fails half-way must not truncate a stop that is already there.
+  { printf '%s %s\n' "$(( $(date +%s) + $2 ))" "$(_agy_account)" > "$f.$$" && mv -f "$f.$$" "$f"; } 2>/dev/null \
+    || rm -f "$f.$$" 2>/dev/null || true
 }
 
 # The quota error carries its own reset time. Parsing it beats any constant we could pick:
@@ -415,8 +417,13 @@ _agy_rotate_account() {
     command -v cswap >/dev/null 2>&1 || return 1
     cmd="cswap agy auto --once"
   fi
+  # Within the lane's budget: what is left minus a call's worth, never more than 90 s.
+  local cap=90 left=$(( ${PROVIDER_TIMEOUT:-300} - 15 ))
+  (( left < cap )) && cap=$left
+  (( cap >= 5 )) || return 1
   before="$(_agy_account)"
-  timeout 90 bash -c "$cmd" </dev/null >/dev/null 2>&1 || true
+  timeout "$cap" bash -c "$cmd" </dev/null >/dev/null 2>&1 \
+    || echo "  NOTE: agy: account rotation ($cmd) did not finish cleanly within ${cap}s" >&2
   after="$(_agy_account)"
   [[ -n "$after" && "$after" != "$before" ]] || return 1
   echo "  NOTE: agy: ${before:-the live account} is out of quota — switched to $after (cswap agy)" >&2
@@ -501,9 +508,17 @@ run_agy() {
       echo "  WARN: agy model '$m' is out of quota — cooling it down for $((cd / 60)) min" >&2
       if [[ "$m" == "$primary" && -z "${_AGY_ROTATED:-}" ]] && _ar_lane_budget "$t0" >/dev/null; then
         _AGY_ROTATED=1
-        if _agy_rotate_account && left="$(_ar_lane_budget "$t0")" && PROVIDER_TIMEOUT="$left" _agy_attempt "$m"; then
-          _agy_emit "$m" "$primary"
-          return 0
+        if _agy_rotate_account && left="$(_ar_lane_budget "$t0")"; then
+          if PROVIDER_TIMEOUT="$left" _agy_attempt "$m"; then
+            _agy_emit "$m" "$primary"
+            return 0
+          fi
+          # The new account is spent too: its own stop, so the next run does not ask it again.
+          if [[ "$_AGY_CLASS" == quota ]]; then
+            cd=$(printf '%s' "$_AGY_ERR_TEXT" | _agy_reset_seconds)
+            [[ -n "$cd" ]] || cd="$(ar_env_int ZUVO_AGY_SILENT_COOLDOWN 3600)"
+            _agy_start_cooldown "$m" "$cd"
+          fi
         fi
       fi
     else
@@ -638,7 +653,7 @@ run_muse() {
   # Error-as-output guard, the agy lesson: an exit-0 body carrying a quota/auth message would
   # otherwise travel downstream as a CLEAN review with zero findings — a false-clean pass.
   # The same spent window can arrive as an exit-0 body: recorded like the stderr one.
-  if [[ "$result" == *"Subscription quota exhausted"* && ${#result} -lt 2000 ]]; then
+  if [[ "$result" == *"Subscription quota exhausted"* && ${#result} -lt 600 ]]; then
     until="$(_muse_quota_record "$result")"
     lane_not_run muse "Muse subscription quota exhausted until $(_ar_epoch_text "$until")"
     return 1
