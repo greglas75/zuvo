@@ -386,7 +386,7 @@ exit 0
         self.assertEqual(RA.read_state()["installed"], "v2.0.0")
 
     def test_tags_at_or_below_the_installed_release_are_not_examined(self):
-        # catches every pass re-verifying and logging all old unsigned tags, every 30 minutes
+        # catches every pass re-verifying and logging all old unsigned tags
         # the state right after signing began: every tag unsigned, the installed one among them
         git(self.origin, "tag", "-d", "v1.0.0")
         git(self.origin, "tag", "v1.0.0")
