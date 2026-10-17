@@ -293,7 +293,7 @@ ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}"
 # ── Z.ai GLM Coding Plan (lane `zai`, opt-in ZUVO_ADV_ZAI=1): /api/coding/paas/v4 is the plan, /api/paas/v4 meters ──
 ZUVO_ZAI_BASE_URL="${ZUVO_ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}"
 # glm-5.3: the newest full model the plan lists (GET /models), and the best OpenRouter reviewer above,
-# dropped there only for its price. A request for glm-5.2 is answered by glm-5.3 anyway.
+# dropped there only for its price. A plan without it refuses with 1311; ZUVO_ZAI_MODEL picks another.
 ZUVO_MODEL_ZAI="${ZUVO_MODEL_ZAI:-glm-5.3}"
 
 # ── Cursor ──────────────────────────────────────────────────────────
