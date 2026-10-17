@@ -97,21 +97,21 @@ for url in "https://api.z.ai./api/paas/v4" "https://api.xyz.ai/v1" "https://api.
 done
 
 # ─── 5. defaults: the plan, the plan key, the registry model, streaming ───
-start_test "zai.5 an unset base URL sends one streamed glm-5.3-flash request, thinking off, to the plan, with the plan key"
+start_test "zai.5 an unset base URL sends one streamed glm-5.3-flash request, reasoning effort low, to the plan, with the plan key"
 OPENROUTER_API_KEY=sk-or-must-not-leak run_zai c5 "" >/dev/null
 sent_to_plan c5
 cfg="$(cat "$ZTMP/c5/curl.cfg" 2>/dev/null)"
 assert_contains "$cfg" "zai-id.zai-secret-for-test" "the key file's key is the one sent"
 case "$cfg" in *sk-or-must-not-leak*) fail "the OpenRouter key reached Z.ai" ;; *) pass "the OpenRouter key is never sent to Z.ai" ;; esac
 assert_eq "glm-5.3-flash" "$(jq -r '.model' "$ZTMP/c5/payload.json" 2>/dev/null)" "the registry's model"
-# Bug caught: reasoning left on — every real review ran out the 300 s lane budget (2026-10-17, 4 timeouts, 6 h bench).
-assert_eq "disabled" "$(jq -r '.thinking.type' "$ZTMP/c5/payload.json" 2>/dev/null)" "reasoning is switched off"
+# Bug caught: default reasoning — every real review ran out the 300 s lane budget (2026-10-17, 4 timeouts, 6 h bench).
+assert_eq "low" "$(jq -r '.reasoning_effort' "$ZTMP/c5/payload.json" 2>/dev/null)" "reasoning effort is low"
 assert_eq "true" "$(jq -r '.stream' "$ZTMP/c5/payload.json" 2>/dev/null)" "streamed, like the BytePlus plan lanes"
 
-# Bug caught: the opt-back-in switch ignored, so reasoning could never be turned on again for a bench.
-start_test "zai.5b ZUVO_ZAI_THINKING=on sends thinking enabled"
-ZUVO_ZAI_THINKING=on run_zai c5b "" >/dev/null
-assert_eq "enabled" "$(jq -r '.thinking.type' "$ZTMP/c5b/payload.json" 2>/dev/null)" "reasoning is back on"
+# Bug caught: the switch ignored, so a bench could never compare reasoning levels.
+start_test "zai.5b ZUVO_ZAI_REASONING=off disables thinking"
+ZUVO_ZAI_REASONING=off run_zai c5b "" >/dev/null
+assert_eq "disabled null" "$(jq -r '"\(.thinking.type) \(.reasoning_effort)"' "$ZTMP/c5b/payload.json" 2>/dev/null)" "thinking off, no effort field"
 
 # The driver's own fallback (adversarial-dispatch.sh) for a copy that finds no model-registry.sh.
 start_test "zai.6 without a registry the driver's own default is still the plan"
