@@ -1,0 +1,52 @@
+Installed plugins:
+
+  ❯ clangd-lsp@claude-plugins-official
+    Version: 1.0.0
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ context7@claude-plugins-official
+    Version: unknown
+    Scope: project
+    Status: ✘ disabled
+
+  ❯ frontend-design@claude-plugins-official
+    Version: unknown
+    Scope: project
+    Status: ✘ disabled
+
+  ❯ frontend-design@claude-plugins-official
+    Version: ea10b213686c
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ pyright-lsp@claude-plugins-official
+    Version: 1.0.0
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ tgm-utilities@tgm-marketplace
+    Version: 0.1.0
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ zuvo@zuvo-marketplace
+    Version: 1.6.87
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ zuvo@zuvo-marketplace
+    Version: 1.6.83
+    Scope: project
+    Status: ✔ enabled
+
+  ❯ zuvo@zuvo-marketplace
+    Version: 1.6.83
+    Scope: project
+    Status: ✔ enabled
+
+  ❯ zuvo@zuvo-marketplace
+    Version: 1.6.83
+    Scope: project
+    Status: ✔ enabled
+

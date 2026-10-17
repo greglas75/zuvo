@@ -1,0 +1,173 @@
+#!/bin/sh
+# Polyglot sh/python header (as in bill): /bin/sh re-execs this file with Python 3.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""key-sync — write a lane's missing key file from 1Password, so a new machine needs no hand copy."""
+
+USAGE = """usage:
+    key-sync          write every missing file listed in ~/.zuvo/key-sync.conf; never prints a secret
+    key-sync --check  only say which listed files are missing
+
+~/.zuvo/key-sync.conf: one key per line, <name>.key TAB op://vault/item/field, # starts a comment.
+An existing file is never read or overwritten. A failed `op read` waits a day before the next try.
+Exit 0 when every listed file exists afterwards. Env: ZUVO_HOME, ZUVO_OP_BIN."""
+import contextlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.key")
+REF = re.compile(r"op://[^\t\n]+/[^\t\n]+/[^\t\n]+")
+OP_TIMEOUT = 30
+RETRY_AFTER_S = 86400
+STALE_TMP_S = 3600
+
+
+def home():
+    return os.environ.get("ZUVO_HOME") or os.path.join(os.path.expanduser("~"), ".zuvo")
+
+
+def parse_conf(text):
+    """([(file name, reference)], [problems]); a malformed line is reported, never guessed at."""
+    entries, problems = [], []
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.rstrip("\r")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2 or not NAME.fullmatch(parts[0].strip()) or not REF.fullmatch(parts[1].strip()):
+            problems.append(f"key-sync.conf:{n}: not '<name>.key<TAB>op://vault/item/field' — skipped")
+            continue
+        entries.append((parts[0].strip(), parts[1].strip()))
+    return entries, problems
+
+
+def read_failures(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def fetch(ref):
+    """(secret, "") or ("", why). The secret is one line; anything else is refused, not written."""
+    try:
+        r = subprocess.run([os.environ.get("ZUVO_OP_BIN") or "op", "read", "--no-newline", ref],
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=OP_TIMEOUT,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return "", f"op read timed out after {OP_TIMEOUT}s"
+    except OSError as ex:
+        return "", f"op not runnable ({type(ex).__name__})"
+    if r.returncode != 0:
+        first = (r.stderr.strip().splitlines() or [""])[0]
+        return "", f"op read rc={r.returncode}: {first[:120]}"
+    secret = r.stdout.strip()
+    if not secret or "\n" in secret:
+        return "", "op returned an empty or multi-line value"
+    return secret, ""
+
+
+def write_new(target, secret):
+    """Create `target` with mode 600 holding `secret`, only if it still does not exist (link fails then).
+    The temp file is removed on every path; one a killed run left (older than an hour, so never a
+    concurrent run's) is removed by the next."""
+    d, base = os.path.split(target)
+    for old in os.listdir(d):
+        stale = os.path.join(d, old)
+        if old.startswith(f".{base}.") and old.endswith(".keysync-tmp"):
+            with contextlib.suppress(OSError):
+                if time.time() - os.lstat(stale).st_mtime > STALE_TMP_S:
+                    os.unlink(stale)
+    fd, tmp = tempfile.mkstemp(prefix=f".{base}.", suffix=".keysync-tmp", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(secret)
+            f.flush()
+            os.fsync(f.fileno())   # a crash must not leave an empty key that reads as present forever
+        os.link(tmp, target)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
+def save_failures(path, failures):
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(failures, f)
+        os.replace(tmp, path)
+    except OSError as ex:
+        print(f"key-sync.failures not saved ({type(ex).__name__}) — a failed op may be retried sooner")
+
+
+def sync_one(name, ref, failures, check):
+    """True when `name` is in place afterwards. Updates `failures` (name -> time of the last failed op)."""
+    target = os.path.join(home(), name)
+    if os.path.lexists(target):
+        failures.pop(name, None)
+        if not os.path.isfile(target) or os.path.islink(target):
+            print(f"{name}: present but not a regular file — left alone, the lane will not read it")
+            return False
+        return True
+    if check:
+        print(f"{name}: missing")
+        return False
+    last, now = failures.get(name), time.time()
+    if isinstance(last, (int, float)) and now - last < RETRY_AFTER_S:
+        print(f"{name}: missing; op failed {int((now - last) // 3600)} h ago — next try after 24 h")
+        return False
+    secret, why = fetch(ref)
+    if why:
+        failures[name] = now
+        print(f"{name}: not written — {why}")
+        return False
+    try:
+        write_new(target, secret)
+    except FileExistsError:
+        print(f"{name}: appeared while fetching — left as it is")
+        return True
+    except OSError as ex:
+        print(f"{name}: not written — {type(ex).__name__}")
+        return False
+    failures.pop(name, None)
+    print(f"{name}: written from 1Password (mode 600)")
+    return True
+
+
+def main(argv):
+    if argv not in ([], ["--check"]):
+        print(USAGE, file=sys.stderr)
+        return 2
+    conf = os.path.join(home(), "key-sync.conf")
+    try:
+        with open(conf, encoding="utf-8", errors="replace") as f:
+            entries, problems = parse_conf(f.read())
+    except FileNotFoundError:
+        print(f"no {conf} — nothing to sync")
+        return 0
+    except OSError as ex:
+        print(f"{conf} not readable ({type(ex).__name__})")
+        return 1
+    for p in problems:
+        print(p)
+    check = argv == ["--check"]
+    fail_path = os.path.join(home(), "key-sync.failures")
+    failures = read_failures(fail_path)
+    before = dict(failures)
+    ok = not problems
+    for name, ref in entries:
+        ok = sync_one(name, ref, failures, check) and ok
+        if not check and failures != before:
+            save_failures(fail_path, failures)
+            before = dict(failures)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

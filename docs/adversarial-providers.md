@@ -108,6 +108,8 @@ default BytePlus set the same day (owner's decision); it stays reachable by `--p
 
 ```bash
 ( umask 077; pbpaste > ~/.zuvo/zai.key )   # the FULL key, {API Key ID}.{secret} — Z.ai shows it once
+# or, from 1Password on every machine: a line in ~/.zuvo/key-sync.conf, then ~/.zuvo/key-sync
+#   zai.key<TAB>op://Hetzner/Api z.ai/password
 export ZUVO_ADV_ZAI=1                      # opt-in: the plan's 5-hour/weekly quota is shared
 ~/.zuvo/adversarial-review --doctor        # zai must answer
 ```
