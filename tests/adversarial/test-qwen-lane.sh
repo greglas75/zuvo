@@ -32,6 +32,7 @@ printf '%s' "${OPENAI_BASE_URL-<unset>}" > "$d/openai_base_url"
 pwd > "$d/cwd"
 if [ -n "${QWEN_HOME:-}" ]; then cp "$QWEN_HOME/settings.json" "$d/qhome_settings.json"; fi
 printf '%s' "${BAILIAN_CODING_PLAN_API_KEY-<unset>}" > "$d/key_env"
+printf '%s' "${QWEN_FAKE_EXTRA_ENV-<unset>}" > "$d/extra_env"
 case "${FAKE_QWEN_MODE:-ok}" in
   ok)    printf '[{"type":"system"},{"type":"result","subtype":"success","is_error":false,"result":"SEVERITY: CRITICAL\\nFILE: input.py:2\\nISSUE: division by zero QWEN-FAKE-FINDING"}]\n' ;;
   error) printf '[{"type":"result","subtype":"error_during_execution","is_error":true,"error":{"message":"Arrearage: plan quota exhausted QWEN-FAKE-ERR"}}]\n' ;;
@@ -240,7 +241,7 @@ write_settings_env() { # the owner's real shape: the plan key in an env block
   cat > "$1" <<EOF
 {"modelProviders":{"openai":[{"id":"qwen3.8-flash","baseUrl":"https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1","envKey":"BAILIAN_CODING_PLAN_API_KEY"},
  {"id":"deepseek-v4.1-flash","baseUrl":"https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1","envKey":"BAILIAN_CODING_PLAN_API_KEY"}]},
- "env":{"BAILIAN_CODING_PLAN_API_KEY":"k-test-plan"},"hooks":{"x":1},"\$version":4}
+ "env":{"BAILIAN_CODING_PLAN_API_KEY":"k-test-plan","QWEN_FAKE_EXTRA_ENV":"leaked"},"hooks":{"x":1},"\$version":4}
 EOF
 }
 SE="$QTMP/settings-env.json"; write_settings_env "$SE"
@@ -251,6 +252,8 @@ run_qwen_case cap1 "$SE" >/dev/null
 assert_eq "8000" "$(jq -r '.modelProviders.openai[] | select(.id=="qwen3.8-flash") | .generationConfig.extra_body.thinking_budget' "$QTMP/cap1/qhome_settings.json" 2>/dev/null)" "the cap is on the model's entry"
 assert_eq "null null" "$(jq -r '"\(.env) \(.hooks)"' "$QTMP/cap1/qhome_settings.json" 2>/dev/null)" "no env block (key) and no hooks in the per-call copy"
 assert_eq "k-test-plan" "$(cat "$QTMP/cap1/key_env" 2>/dev/null)" "the plan key reaches the CLI through its env"
+# Bug caught (review): the whole env block was exported, so a PATH or LD_PRELOAD there reached the call.
+assert_eq "<unset>" "$(cat "$QTMP/cap1/extra_env" 2>/dev/null)" "only the plan key is exported, nothing else from the env block"
 
 # Bug caught: deepseek capped with thinking_budget, which the Token Plan ignores (15.8k reasoning for a 2k budget).
 start_test "qw.cap2 deepseek-v4.1-flash gets reasoning_effort low, not a thinking budget"
