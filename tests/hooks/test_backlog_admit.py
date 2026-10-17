@@ -312,7 +312,8 @@ class ValidationTests(unittest.TestCase):
          None),
         ("credentials in an image-shaped target stored",
          tgt("image:admin:hunter2@db.internal", cls="SEC", evidence="e"), "secret-like-value"),
-        ("image CQ refused although an image takes any class", tgt("image:nginx:1.25", cls="CQ", evidence="e"),
+        ("image CQ refused although an image takes any class",
+         tgt("image:nginx:1.25", cls="CQ", evidence="e"),
          None),
         ("URL PROCESS refused although any class may name a live URL", tgt(URL, cls="PROCESS", evidence="x"),
          None),
@@ -464,12 +465,15 @@ class FingerprintTests(unittest.TestCase):
          tgt("image:nginx:latest", cls="SEC", evidence="e")),
         ("registry case split one image", tgt("image:MyReg:5000/app:1", cls="SEC", evidence="e"),
          tgt("image:myreg:5000/app:1", cls="SEC", evidence="e")),
-        ("a zero-padded registry port split one image", tgt("image:reg.io:00080/app:1", cls="SEC", evidence="e"),
+        ("a zero-padded registry port split one image",
+         tgt("image:reg.io:00080/app:1", cls="SEC", evidence="e"),
          tgt("image:reg.io:80/app:1", cls="SEC", evidence="e")),
-        ("Docker Hub's `library/` namespace split one image", tgt("image:library/nginx:1", cls="SEC", evidence="e"),
+        ("Docker Hub's `library/` namespace split one image",
+         tgt("image:library/nginx:1", cls="SEC", evidence="e"),
          tgt("image:nginx:1", cls="SEC", evidence="e")),
         ("a tag beside a digest split one image (the digest names it)",
-         tgt("image:nginx:1.25@" + DIGEST, cls="SEC", evidence="e"), tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e")),
+         tgt("image:nginx:1.25@" + DIGEST, cls="SEC", evidence="e"),
+         tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e")),
     ]
     DIFFERENT = [
         ("same basename in two directories merged", f(file="lib/cart.ts"), BASE),
@@ -485,7 +489,22 @@ class FingerprintTests(unittest.TestCase):
         ("tag case folded, merging `v1` and `V1`", tgt("image:app:v1", cls="SEC", evidence="e"),
          tgt("image:app:V1", cls="SEC", evidence="e")),
         ("`library/` dropped from a three-component Hub name, merging `docker.io/library/a/b` with `a/b`",
-         tgt("image:docker.io/library/a/b:1", cls="SEC", evidence="e"), tgt("image:a/b:1", cls="SEC", evidence="e")),
+         tgt("image:docker.io/library/a/b:1", cls="SEC", evidence="e"),
+         tgt("image:a/b:1", cls="SEC", evidence="e")),
+        ("`library/` dropped under a registry other than Docker Hub",
+         tgt("image:ghcr.io/library/nginx:1", cls="SEC", evidence="e"),
+         tgt("image:ghcr.io/nginx:1", cls="SEC", evidence="e")),
+        ("digest left out of the key, merging two pinned builds",
+         tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e"),
+         tgt("image:nginx@sha256:" + "b" * 64, cls="SEC", evidence="e")),
+        ("a digest-pinned image merged with a tag-only one",
+         tgt("image:nginx@" + DIGEST, cls="SEC", evidence="e"),
+         tgt("image:nginx:1.25", cls="SEC", evidence="e")),
+        ("registry port left out of the key", tgt("image:reg.io:80/app:1", cls="SEC", evidence="e"),
+         tgt("image:reg.io:8080/app:1", cls="SEC", evidence="e")),
+        ("registry left out of the key, merging one repository on two registries",
+         tgt("image:ghcr.io/org/app:1", cls="SEC", evidence="e"),
+         tgt("image:quay.io/org/app:1", cls="SEC", evidence="e")),
     ]
 
     def test_one_defect_one_id(self):
@@ -587,6 +606,8 @@ class ImageTargetGroomingTests(unittest.TestCase):
          "image:ghcr.io/org/my.app:1"),
         ("digest-pinned dotted repository read as a deleted repo file",
          "image:reg.io/team/web.ui@" + DIGEST),
+        ("repository named like a source file (`next.js`) read as a deleted repo file",
+         "image:ghcr.io/org/next.js:1"),
     ]
 
     def test_an_image_target_is_not_a_cited_path(self):
