@@ -110,9 +110,14 @@ default BytePlus set the same day (owner's decision); it stays reachable by `--p
 ( umask 077; pbpaste > ~/.zuvo/zai.key )   # the FULL key, {API Key ID}.{secret} — Z.ai shows it once
 # or, from 1Password on every machine: a line in ~/.zuvo/key-sync.conf, then ~/.zuvo/key-sync
 #   zai.key<TAB>op://Hetzner/Api z.ai/password
-export ZUVO_ADV_ZAI=1                      # opt-in: the plan's 5-hour/weekly quota is shared
+echo ZUVO_ADV_ZAI=1 >> ~/.zuvo/review-lanes.conf   # opt-in: the plan's 5-hour/weekly quota is shared
 ~/.zuvo/adversarial-review --doctor        # zai must answer
 ```
+
+**Opt-ins belong in `~/.zuvo/review-lanes.conf`, not only in a shell profile** (since 2026-10-18). The
+driver reads that file itself, so a cron job, a systemd timer or an agent session started without the
+variables still gets the plan lanes; an `export` reaches only the processes that inherit it. One
+`ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER=0|1` per line; a variable set in the environment wins over the file.
 
 - Endpoint `https://api.z.ai/api/coding/paas/v4` (`ZUVO_ZAI_BASE_URL`). Any other `z.ai` /
   `bigmodel.cn` path, e.g. the metered `/api/paas/v4`, is refused before a request is sent — the same

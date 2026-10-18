@@ -434,15 +434,20 @@ record_provider_health() {
     models="${models}${_rn}	$(ledger_model "$_rn")
 "
   done
-  printf '%s' "$models" | awk -F'\t' -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" \
-      -v hf="$PROVIDER_HEALTH_FILE" '
+  # SIXTH column (only when set): the strike group of the last write (ZUVO_ADV_STRIKE_GROUP — minted by the
+  # chunk launcher for the parts of one review, and honoured only in such a part: ZUVO_ADV_CHUNK set). Parallel parts of one review are one sample, not three. Read through ENVIRON (awk -v would turn a literal \n into a row break) and
+  # stripped of tabs, newlines and carriage returns.
+  local _sgrp=""; [[ -n "${ZUVO_ADV_CHUNK:-}" ]] && _sgrp="${ZUVO_ADV_STRIKE_GROUP:-}"
+  printf '%s' "$models" | ZUVO_ADV_STRIKE_GROUP="$_sgrp" awk -F'\t' \
+      -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" -v hf="$PROVIDER_HEALTH_FILE" '
     BEGIN{
+      grp=ENVIRON["ZUVO_ADV_STRIKE_GROUP"]; gsub(/[\t\n\r]/, "", grp)
       n=split(outcomes, pp, ",")
       for(i=1;i<=n;i++){ split(pp[i], kv, ":")
         if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified" && kv[2]!="no-runner" && kv[2]!="no-key") seen[kv[1]]=kv[2] }
       while((getline l < hf) > 0){ k=split(l, f, "\t"); if(k<4) continue
         key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4]
-        last[key]=(k>=5 ? f[5] : "") }
+        last[key]=(k>=5 ? f[5] : ""); sg[key]=(k>=6 ? f[6] : "") }
       close(hf)
     }
     NF>=2 { model[$1]=$2 }
@@ -450,12 +455,17 @@ record_provider_health() {
       for(p in seen){
         if(!(p in model)) continue
         key = p SUBSEP model[p]
+        # A failure of a group that already decided this lane (it struck, or another part answered) within
+        # the hour changes nothing — not the count, the class or the time: whichever order the parts end in,
+        # a review with any answering part leaves 0, one with none leaves exactly one strike.
+        if(seen[p]!="ok" && grp != "" && sg[key] == grp && now >= ts[key] && now - ts[key] <= 3600) continue
         if(seen[p]=="ok"){ cnt[key]=0; last[key]="ok" }
         else             { cnt[key]=((key in cnt) ? cnt[key] : 0) + 1; last[key]=seen[p] }
+        sg[key]=grp
         ts[key]=now
       }
       for(key in cnt){ split(key, kk, SUBSEP)
-        print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] "\t" ((key in last) ? last[key] : "") }
+        print kk[1] "\t" kk[2] "\t" cnt[key] "\t" ts[key] "\t" ((key in last) ? last[key] : "") ((sg[key] != "") ? "\t" sg[key] : "") }
     }' > "$tmp" 2>/dev/null && mv -f "$tmp" "$PROVIDER_HEALTH_FILE" || rm -f "$tmp"
   _ar_unlock "${PROVIDER_HEALTH_FILE}.lock"
 }

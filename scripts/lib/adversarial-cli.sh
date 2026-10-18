@@ -323,6 +323,8 @@ Environment variables:
   MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
   ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
+  ~/.zuvo/review-lanes.conf  Machine-wide opt-ins, one ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER=0|1 per line,
+                           read by the driver whoever starts it (cron, timers, agents); the environment wins
   ZUVO_ADV_QWEN=1          Opt IN to the `qwen` lane: Qwen Code CLI on an Alibaba Token/Coding Plan. Set
                            it up once with `qwen` → /auth → the plan you bought. The lane refuses any model
                            whose configured baseUrl is not a plan endpoint (anything else bills per token).
@@ -392,7 +394,36 @@ if [[ -z "$PROVIDER" && -n "${ZUVO_REVIEW_PROVIDER:-}" && "$REVIEW_MODE" == blin
 else
   PROVIDER="${PROVIDER:-${ZUVO_REVIEW_PROVIDER:-}}"
 fi
+_ar_load_lane_optins
 return 0
+}
+
+# _ar_load_lane_optins — the owner's machine-wide lane opt-ins (ZUVO_ADV_QWEN/ZAI/BYTEPLUS/OPENROUTER=0|1) from
+# ${ZUVO_HOME:-~/.zuvo}/review-lanes.conf, for each one the environment leaves unset.
+# 2026-10-18: the opt-ins lived only in environment variables. A session, a cron job or a timer started
+# without them (environment.d reaches systemd user units only, and only those started after it changed) got a
+# panel without the plan lanes — agents reviewing PRs kept ending up with one reviewer. The file is read by the
+# driver itself, whoever starts it; the environment still wins, so `ZUVO_ADV_QWEN=0` turns a lane off for one run.
+_ar_load_lane_optins() {
+  local f="${ZUVO_REVIEW_LANES_FILE:-${ZUVO_HOME:-${HOME:-}/.zuvo}/review-lanes.conf}" k v env_set=" "
+  [[ -f "$f" && -r "$f" ]] || return 0
+  # Which ones the environment set (non-empty), taken BEFORE the file: the last line for a key wins.
+  for k in ZUVO_ADV_QWEN ZUVO_ADV_ZAI ZUVO_ADV_BYTEPLUS ZUVO_ADV_OPENROUTER; do
+    [[ -n "${!k:-}" ]] && env_set+="$k "
+  done
+  while IFS='=' read -r k v || [[ -n "$k" ]]; do
+    k="${k%%#*}"; k="${k#"${k%%[![:space:]]*}"}"; k="${k#export }"; k="${k//[[:space:]]/}"
+    [[ -n "$k" ]] || continue
+    v="${v%%#*}"; v="${v//[[:space:]]/}"; v="${v//\"/}"; v="${v//\'/}"
+    case "$k" in
+      ZUVO_ADV_QWEN|ZUVO_ADV_ZAI|ZUVO_ADV_BYTEPLUS|ZUVO_ADV_OPENROUTER) ;;
+      *) echo "  WARN: $f: '$k' is not a lane opt-in (ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER) — ignored" >&2; continue ;;
+    esac
+    [[ "$env_set" == *" $k "* ]] && continue
+    [[ "$v" == 0 || "$v" == 1 ]] || { echo "  WARN: $f: $k='$v' is not 0 or 1 — ignored" >&2; continue; }
+    export "$k=$v"
+  done < "$f"
+  return 0
 }
 
 # ar_validate_mode — an unknown or unsubstituted --mode exits 2 instead of falling back to `code`.
