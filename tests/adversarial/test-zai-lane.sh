@@ -132,6 +132,18 @@ zai_listed() { # zai_listed <ZUVO_ADV_ZAI value> -> "zai" when detection offers 
 assert_eq "" "$(zai_listed 0)" "without ZUVO_ADV_ZAI=1 the lane is not detected"
 assert_eq "zai" "$(zai_listed 1)" "with it (and the key) the lane is"
 
+# Bug caught: the opt-in lived only in the environment, so a cron job, a timer or an older session started
+# without it reviewed with the plan lanes missing — agents' PR panels down to one reviewer (2026-10-18).
+start_test "zai.7b the owner's opt-in file enables the lane for a process without the variable; the variable still wins"
+mkdir -p "$ZTMP/c7b"
+printf '# owner\nZUVO_ADV_ZAI = 1  # plan paid\nPATH=/nowhere\n' > "$ZTMP/c7b/review-lanes.conf"
+zai_conf() { # zai_conf [VAR=value…] -> "zai" when detection offers the lane, the opt-in file in place
+  env -u ZAI_API_KEY -u ZUVO_ADV_ZAI ZUVO_ZAI_KEY_FILE="$KEYFILE" HOME="$ZTMP/c7b" ZUVO_HOME="$ZTMP/c7b" "$@" \
+    bash "$ADV" --list-providers 2>/dev/null | awk '$1 == "zai"' | tr -d '\n'
+}
+assert_eq "zai" "$(zai_conf)" "no variable: the file turns the lane on"
+assert_eq "" "$(zai_conf ZUVO_ADV_ZAI=0)" "ZUVO_ADV_ZAI=0 overrides the file"
+
 # ─── 8-9. a spent plan is not asked again; a rate limit is ────────────────
 start_test "zai.8 a spent 5-hour window (code 1308) is one request, not retried"
 out=$(Z_CODE=429 Z_BODY='{"error":{"code":"1308","message":"Usage limit reached for 5 hour. Your limit will reset at 2026-10-17 03:00:00"}}' run_zai c8 "$PLAN_URL")
