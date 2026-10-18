@@ -434,14 +434,15 @@ record_provider_health() {
     models="${models}${_rn}	$(ledger_model "$_rn")
 "
   done
-  # SIXTH column (only when set): the strike group (ZUVO_ADV_STRIKE_GROUP, set for the parts of one chunked review) of the
-  # last failure. A failure in the group that already struck the lane updates the row but does not count
-  # again — parallel parts of one review are one sample, not three.
-  local grp
-  grp="$(printf '%s' "${ZUVO_ADV_STRIKE_GROUP:-}" | tr -d '\t\n')"
-  printf '%s' "$models" | awk -F'\t' -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" \
-      -v hf="$PROVIDER_HEALTH_FILE" -v grp="$grp" '
+  # SIXTH column (only when set): the strike group (ZUVO_ADV_STRIKE_GROUP, minted for the parts of one chunked
+  # review) that last struck the lane. A failure in that group, written within the hour, updates the row but
+  # does not count again — even after a success of another part in between: parallel parts of one review are
+  # one sample, not three. Read through ENVIRON (awk -v would turn a literal \n into a row break) and
+  # stripped of tabs, newlines and carriage returns.
+  printf '%s' "$models" | ZUVO_ADV_STRIKE_GROUP="${ZUVO_ADV_STRIKE_GROUP:-}" awk -F'\t' \
+      -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" -v hf="$PROVIDER_HEALTH_FILE" '
     BEGIN{
+      grp=ENVIRON["ZUVO_ADV_STRIKE_GROUP"]; gsub(/[\t\n\r]/, "", grp)
       n=split(outcomes, pp, ",")
       for(i=1;i<=n;i++){ split(pp[i], kv, ":")
         if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified" && kv[2]!="no-runner" && kv[2]!="no-key") seen[kv[1]]=kv[2] }
@@ -455,10 +456,10 @@ record_provider_health() {
       for(p in seen){
         if(!(p in model)) continue
         key = p SUBSEP model[p]
-        if(seen[p]=="ok"){ cnt[key]=0; last[key]="ok"; sg[key]="" }
+        if(seen[p]=="ok"){ cnt[key]=0; last[key]="ok" }
         else {
-          if(!(grp != "" && (key in cnt) && cnt[key] > 0 && sg[key] == grp)) cnt[key]=((key in cnt) ? cnt[key] : 0) + 1
-          last[key]=seen[p]; sg[key]=grp
+          if(!(grp != "" && sg[key] == grp && now - ts[key] <= 3600)) { cnt[key]=((key in cnt) ? cnt[key] : 0) + 1; sg[key]=grp }
+          last[key]=seen[p]
         }
         ts[key]=now
       }

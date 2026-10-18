@@ -200,3 +200,15 @@ bench_run ZUVO_ADV_STRIKE_GROUP=g2
 assert_eq "2 empty" "$(fail_row)" "the next review strikes again"
 bench_run
 assert_eq "3 empty" "$(fail_row)" "a review without a group counts as before"
+
+start_test "bench.13b a success inside the group does not re-arm it; an hour-old strike or another group does"
+NOW=$(date +%s)
+seed "mock-fail\tunknown\t0\t$NOW\tok\tg1\n"
+bench_run ZUVO_ADV_STRIKE_GROUP=g1
+assert_eq "0 empty" "$(fail_row)" "a part failing after another part's success: no second strike"
+seed "mock-fail\tunknown\t1\t$NOW\tempty\tg1\n"
+bench_run ZUVO_ADV_STRIKE_GROUP=g2
+assert_eq "2 g2" "$(awk -F'\t' '$1 == "mock-fail" { print $3, $6 }' "$HF")" "another review strikes, and its group is recorded"
+seed "mock-fail\tunknown\t1\t$(( NOW - 7200 ))\tempty\tg1\n"
+bench_run ZUVO_ADV_STRIKE_GROUP=g1
+assert_eq "2 empty" "$(fail_row)" "a group whose strike is two hours old counts again"

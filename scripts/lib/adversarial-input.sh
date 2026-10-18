@@ -750,8 +750,9 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   # One review, one strike: the parts run side by side, so one account hiccup failed all three in the same
   # second and the ledger read three consecutive failures — a 6 h bench for claude (2026-10-17, RD-1340,
   # twice; the same parts passed in 60-165 s an hour later). The parts share this group, and the ledger
-  # counts at most one failure per lane per group. An outer caller's group is kept.
-  _ck_strike="${ZUVO_ADV_STRIKE_GROUP:-chunks-$$-$(date +%s)}"
+  # counts at most one failure per lane per group. Minted here for every chunked review, never taken from
+  # the caller: a static group would hide every later failure of a dead lane.
+  _ck_strike="chunks-$$-$(date +%s)-$RANDOM"
   # _ck_collect — wait for the oldest uncollected part, print it, count its exit code.
   _ck_collect() {
     local j=$_ck_next p="${_ck_pids[$_ck_next]:-}" crc=0
