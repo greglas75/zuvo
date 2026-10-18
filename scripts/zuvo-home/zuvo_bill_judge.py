@@ -14,7 +14,7 @@ from typing import Any, NamedTuple
 import zuvo_bill_config as C
 from zuvo_review_classes import CLASSES
 from zuvo_review_ledger import split_file
-from zuvo_review_llm import run_claude
+from zuvo_review_llm import run_model
 
 API = 3
 # `lessons` may be absent: a review with nothing to learn from is still judged (lessons read as []).
@@ -24,7 +24,7 @@ VERDICTS = frozenset({"real", "false_positive", "uncertain"})
 # context size, every try.
 DIFF_CAP_BYTES = 200_000
 # Matched against the CLI's own error text only — never a parse error, whose "column 1429" matched "429".
-LIMIT_RE = re.compile(r"\b(rate|usage)[ -]limit|\b429\b|hit your limit", re.I)
+LIMIT_RE = re.compile(r"\b(rate|usage)[ -]limit|\b429\b|(hit|reached|exceeded) your [\w -]{0,40}(limit|quota)|quota exceeded", re.I)
 
 # git C-quotes a path holding a quote, a backslash, a control or (core.quotepath) a non-ASCII byte.
 _QUOTED_END = re.compile(r'"(?:[^"\\]|\\.)*"$')
@@ -266,8 +266,8 @@ def judge(item: Item) -> tuple[dict[str, Any], list[Row]]:
                            "diff_chars": len(diff.text), "diff_bytes": diff.size,
                            "diff_bytes_sent": diff.sent, "diff_added": added, "diff_removed": removed,
                            "lanes": len({x["lane"] for x in rows})}
-    res = run_claude(build_prompt(rows, diff.text), C.model(), C.effort(), timeout=C.CALL_TIMEOUT,
-                     expect_keys=EXPECT_KEYS)
+    res = run_model(build_prompt(rows, diff.text), C.model(), C.effort(), timeout=C.CALL_TIMEOUT,
+                    expect_keys=EXPECT_KEYS)
     rec.update(secs=res.secs, rc=res.rc)
     if res.usage:
         rec.update(usd=res.usage.get("usd"), tokens_in=res.usage.get("tokens_in", 0),

@@ -548,7 +548,7 @@ class EnvInts(BillTestCase):
         # bug: BILL_MAX_TRIES=0 or BILL_WORKERS=-1 silently meant 1 (one try, one worker) — a typo
         # changed how Bill pays without a word
         import zuvo_bill_config as C
-        table = [("BILL_MAX_TRIES", C.max_tries, "0", 3), ("BILL_WORKERS", C.workers, "-1", 3),
+        table = [("BILL_MAX_TRIES", C.max_tries, "0", 3), ("BILL_WORKERS", C.workers, "-1", 5),
                  ("BILL_TICK_SECONDS", C.budget, "x", 540), ("BILL_MAX_AGE_HOURS", C.max_age_h, "5", 5)]
         for var, read, raw, expected in table:
             with self.subTest(var=var, raw=raw):
@@ -606,15 +606,12 @@ class DiffCounts(BillTestCase):
         self.assertLess(log["diff_bytes_sent"], log["diff_bytes"])
 
 
-# sha256 of the units `bill --install-schedule` wrote before install_unit existed, with this test's temp
-# directory written as <TMP> (HOME=<TMP>/home, ZUVO_HOME=<TMP>/home/.zuvo, PATH=<TMP>/bin:/usr/bin:/bin).
+# sha256 of the service unit `bill --install-schedule` wrote before install_unit existed, with this test's
+# temp directory written as <TMP> (HOME=<TMP>/home, ZUVO_HOME=<TMP>/home/.zuvo, PATH=<TMP>/bin:/usr/bin:/bin).
+# The timer and the plist changed on purpose (owner 2026-10-18: a minute between ticks, not ten).
 TODAY_UNITS = {
-    ("darwin", "Library/LaunchAgents/com.zuvo.bill.plist"):
-        "32a32c205b2551ffdcfa29c342f06bb05300d9499921a947f639f15ea1133c47",
     ("linux", ".config/systemd/user/zuvo-bill.service"):
         "efc40180f0fc1151f03627ec13a3f649b9f9a9d2924000684866349dbcb4d9eb",
-    ("linux", ".config/systemd/user/zuvo-bill.timer"):
-        "8fff88d26370c43b2b8455ba816d7a4e7c2224c368326e22b4b0ced6a88f6503",
 }
 
 
@@ -639,7 +636,7 @@ class UnitCase(BillTestCase):
 
 
 class Units(UnitCase):
-    def test_the_ten_minute_job_is_written_byte_for_byte_as_before(self) -> None:
+    def test_the_job_service_is_written_byte_for_byte_as_before(self) -> None:
         # bug: moving the writer behind install_unit changed the live job's unit text — a reinstall on
         # either host reschedules (or breaks) Bill
         import zuvo_bill_schedule
@@ -648,6 +645,16 @@ class Units(UnitCase):
                 self.assertEqual(self.on(platform, zuvo_bill_schedule.install_schedule), 0)
                 text = self.unit_text(rel).replace(self.tmp, "<TMP>")
                 self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digest)
+
+    def test_the_next_tick_starts_a_minute_after_the_last(self) -> None:
+        # bug: ten idle minutes after every 9-minute tick — Bill worked half the time while the queue of
+        # unjudged reviews grew past the 48 h window (2026-10-18: 205 queued, ~2 900 judged a day of ~6 000)
+        import zuvo_bill_schedule
+        self.assertEqual(self.on("linux", zuvo_bill_schedule.install_schedule), 0)
+        self.assertIn("OnUnitInactiveSec=1min\n", self.unit_text(".config/systemd/user/zuvo-bill.timer"))
+        self.assertEqual(self.on("darwin", zuvo_bill_schedule.install_schedule), 0)
+        plist = plistlib.loads(self.unit_text("Library/LaunchAgents/com.zuvo.bill.plist").encode())
+        self.assertEqual(plist["StartInterval"], 60)
 
     def test_a_calendar_unit_is_well_formed_for_both_schedulers(self) -> None:
         # bug: the weekly curation unit (Mon 06:00) written with an interval key, a malformed plist, or
@@ -934,9 +941,9 @@ class UnitChecks(UnitCase):
         # bug: install_unit's ValueError escaped `bill --install-schedule` as a traceback
         import zuvo_bill_schedule as S
         err = io.StringIO()
-        with mock.patch.object(S, "MIN_INTERVAL_S", 601), contextlib.redirect_stderr(err):
+        with mock.patch.object(S, "MIN_INTERVAL_S", 61), contextlib.redirect_stderr(err):
             self.assertEqual(S.install_schedule(), 1)
-        self.assertIn("schedule not installed — install_unit: interval_s 600", err.getvalue())
+        self.assertIn("schedule not installed — install_unit: interval_s 60 ", err.getvalue())
 
     def test_a_percent_in_a_systemd_value_is_escaped(self) -> None:
         # bug: systemd reads % as a specifier — "50% of runs" or a log path with % became another text
@@ -985,3 +992,79 @@ class StatusInput(BillTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodexJudge(BillTestCase):
+    """BILL_MODEL gpt-* runs through `codex exec --json` (owner 2026-10-18: Bill on gpt-6.1-sol high)."""
+
+    def codex(self, events: list[dict[str, Any]], rc: int = 0) -> str:
+        """A fake `codex` printing `events` as JSONL; it logs its argv and the CODEX_HOME config it got."""
+        out = self.write("codex.out", "".join(json.dumps(e) + "\n" for e in events))
+        log = os.path.join(self.tmp, "codex.log")
+        self.fake_exe("codex", f'cat >/dev/null; echo "$*" >> "{log}"; cat "$CODEX_HOME/config.toml" >> "{log}"\n'
+                               f'ls "$CODEX_HOME" >> "{log}"; cat "{out}"; exit {rc}\n')
+        self.setenv(BILL_MODEL="gpt-6.1-sol", BILL_EFFORT="high", CODEX_HOME=self.write_dir("codex-src"))
+        self.write(os.path.join(self.tmp, "codex-src", "auth.json"), "{}")
+        return log
+
+    def write_dir(self, name: str) -> str:
+        path = os.path.join(self.tmp, name)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def test_gpt_model_verdicts_land_through_codex_with_its_model_and_effort(self) -> None:
+        # bug: Bill hardwired to claude — BILL_MODEL=gpt-6.1-sol still called claude (or nothing)
+        self.queue_review("r-1", ["a.py:1:x"], hours=2)
+        self.fake_driver()
+        answer = {"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}], "lessons": []}
+        log = self.codex([{"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(answer)}},
+                          {"type": "turn.completed", "usage": {"input_tokens": 900, "output_tokens": 70}}])
+        import zuvo_bill_tick
+        self.assertEqual(zuvo_bill_tick.tick(False), 0)
+        seen = open(log, encoding="utf-8").read()
+        self.assertIn('model = "gpt-6.1-sol"', seen)
+        self.assertIn('model_reasoning_effort = "high"', seen)
+        self.assertIn("--disable shell_tool", seen)
+        self.assertIn("auth.json", seen)
+        rec = json.loads(self.read_lines(os.path.join(self.zuvo, "bill-data", "bill.log"))[-1])
+        self.assertEqual((rec.get("error"), rec["recorded"], rec["tokens_in"], rec["tokens_out"]),
+                         (None, True, 900, 70))
+
+    def test_a_reconnect_codex_recovered_from_does_not_fail_the_verdict(self) -> None:
+        # bug: codex reports "Reconnecting... 1/5" as an `error` event and then answers with rc 0 — read
+        # as a failure, the paid verdict was thrown away and the review retried
+        self.queue_review("r-1", ["a.py:1:x"], hours=2)
+        self.fake_driver()
+        answer = {"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}], "lessons": []}
+        self.codex([{"type": "error", "message": "Reconnecting... 1/5 (stream disconnected)"},
+                    {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(answer)}}])
+        import zuvo_bill_tick
+        self.assertEqual(zuvo_bill_tick.tick(False), 0)
+        rec = json.loads(self.read_lines(os.path.join(self.zuvo, "bill-data", "bill.log"))[-1])
+        self.assertEqual((rec.get("error"), rec["recorded"]), (None, True))
+
+    def test_codex_usage_limit_event_stops_the_tick_without_using_a_try(self) -> None:
+        # bug: a codex limit arrives as a JSONL `error` event, not on stderr — read as an ordinary failure
+        # it burned every queued review's tries while the account was out
+        self.queue_review("r-1", ["a.py:1:x"], hours=2)
+        self.codex([{"type": "error", "message": "You've hit your usage limit. Try again at 7:05 PM."}], rc=1)
+        self.setenv(BILL_WORKERS="1")
+        import zuvo_bill_tick
+        self.assertEqual(zuvo_bill_tick.tick(False), 0)
+        with open(os.path.join(self.zuvo, "bill-data", "attempts.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {})
+
+
+class LimitText(BillTestCase):
+    def test_weekly_and_session_limits_are_limits(self) -> None:
+        # bug: "You've hit your weekly limit" / "session limit" did not match — 1 215 + 1 500 reviews on
+        # ryzen-dev (2026-10) used up their tries on an account that was out, then aged out unjudged
+        import zuvo_bill_judge as J
+        for text, limited in (("You've hit your weekly limit · resets Oct 22", True),
+                              ("You've hit your session limit · resets 4:30", True),
+                              ("You've hit your limit", True), ("You've reached your 5-hour limit", True),
+                              ("You've hit your model usage limit", True),
+                              ("You have exceeded your monthly quota", True), ("Quota exceeded", True),
+                              ("no JSON object in the reply", False)):
+            with self.subTest(text=text):
+                self.assertEqual(bool(J.LIMIT_RE.search(text)), limited)
