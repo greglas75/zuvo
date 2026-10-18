@@ -135,7 +135,7 @@ def _parse_codex(rc: int, out: str, err: str, secs: int, keys: tuple[str, ...]) 
     `error` / `turn.failed` events and error items fail the call only when no usable reply came: codex
     reports a reconnect it recovered from as an `error` event too. A failed call's events and any
     non-JSON stdout go to cli_error, where a limit check reads them."""
-    text, usage, failures, prose = "", {}, [], []
+    replies, usage, failures, prose = [], {}, [], []
     for line in out.splitlines():
         try:
             ev = json.loads(line)
@@ -147,7 +147,7 @@ def _parse_codex(rc: int, out: str, err: str, secs: int, keys: tuple[str, ...]) 
         item = ev.get("item")
         if ev.get("type") == "item.completed" and isinstance(item, dict):
             if item.get("type") == "agent_message":
-                text = str(item.get("text") or "")
+                replies.append(str(item.get("text") or ""))
             elif item.get("type") == "error":
                 failures.append(str(item.get("message") or item))
         elif ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
@@ -156,6 +156,7 @@ def _parse_codex(rc: int, out: str, err: str, secs: int, keys: tuple[str, ...]) 
         elif ev.get("type") in ("error", "turn.failed"):
             e = ev.get("error")
             failures.append(str(ev.get("message") or (e.get("message") if isinstance(e, dict) else e) or ev))
+    text = "\n".join(replies)   # the verdict need not be the last message
     answer, error = None, ""
     try:
         answer = _first_object(text, keys)

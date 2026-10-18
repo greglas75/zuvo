@@ -1064,6 +1064,7 @@ class LimitText(BillTestCase):
                               ("You've hit your session limit · resets 4:30", True),
                               ("You've hit your limit", True), ("You've reached your 5-hour limit", True),
                               ("You've hit your model usage limit", True),
+                              ("You have exceeded your monthly quota", True), ("Quota exceeded", True),
                               ("no JSON object in the reply", False)):
             with self.subTest(text=text):
                 self.assertEqual(bool(J.LIMIT_RE.search(text)), limited)
