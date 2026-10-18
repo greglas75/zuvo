@@ -169,6 +169,52 @@ writes (a `--target` finding puts the target where `<path>:<line>` is):
 - [ ] B-<stem>-<CLASS>-<fp8> <path>:<line> — [<CLASS>] <title> | evidence: <how> | fix: <fix> | severity: <sev> | source: <src> | conf: NN | seen: N | ledger: F-<12> | <YYYY-MM-DD> [pr:N]
 ```
 
+### The SIMILAR advisory (off by default)
+
+`backlog-add`'s identity is structural — `CLASS | where | anchor` — and the anchor is free choice
+within ±3 lines of `--line`. Two sessions describing ONE defect but quoting different anchor lines
+therefore file two entries. With `ZUVO_BACKLOG_SIMILAR=1` **and** an OpenRouter key present, a run
+whose fingerprint is new asks a decision model whether the candidate is the same defect as a
+same-class, same-file finding already in the ledger, and prints one line on **stderr**:
+
+```
+backlog-add: SIMILAR F-1a2b3c4d5e6f p=0.87 (advisory: nothing was changed by this)
+```
+
+What it is, exactly: a hint for whoever reads the output. It writes nothing, decides nothing, and
+changes no verdict or exit code. Every failure — no key, no candidate, a timeout, an HTTP error, an
+unknown response shape — is silent, because this runs on the write path and a nag there teaches
+callers to stop reading stderr. `--dry-run` makes no call at all: it means "changes nothing
+anywhere", and that has to include not shipping the finding's text to a third party.
+
+Two deadlines, and they protect different people. The call is made BEFORE the lock is taken, because
+the lock budget (`ZUVO_LOCK_WAIT`, 30 s) guards the only write path for the backlog and the ledger on
+the machine and a third party must never sit inside it. The advisory then has its OWN overall budget,
+because a per-call timeout multiplied by five candidates would stall the caller for 40 s before the
+verdict is printed — the lock being free is no comfort to the human waiting for the line.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ZUVO_BACKLOG_SIMILAR` | unset | `1` — and only exactly `1` — enables the advisory |
+| `ZUVO_BACKLOG_SIMILAR_MODEL` | `perplexity/pplx-decider-v1.1-27b` | the decisions model to ask |
+| `ZUVO_BACKLOG_SIMILAR_THRESHOLD` | `0.55` | the probability at or above which the line is printed |
+| `ZUVO_BACKLOG_SIMILAR_TIMEOUT` | `8` | seconds per call |
+| `ZUVO_BACKLOG_SIMILAR_BUDGET` | `12` | seconds for the WHOLE advisory; candidates left when it runs out are not asked |
+| `ZUVO_BACKLOG_SIMILAR_DEBUG` | unset | `1` prints why the advisory gave up, for when no hint appears and you need to know whether that is an answer or a failure |
+| `ZUVO_BACKLOG_SIMILAR_URL` | OpenRouter's decisions endpoint | overridden by the tests' stub server; **https anywhere, plain http only to loopback** — whatever this names receives the API key, and redirects are not followed |
+
+What leaves the machine when it is on: the candidate's and the new finding's class, cited file and
+line, anchor line, title and evidence — the fields the question is about, capped, with the F-id
+deliberately left out. That is the same provider the adversarial lanes already use, but it is worth
+knowing before enabling it on a finding whose evidence quotes a credential.
+
+The model and the threshold are the measured operating point, not a preference: over
+`tests/lib/dedup-corpus.py`, `pplx-decider-v1.1-27b` held AUC 0.919 / 0.913 / 0.923 across three
+corpus versions, best balanced accuracy 0.856 at p ≥ 0.55. That corpus is a hard, small subset
+(18 positives, all revisions of one entry), so those numbers are a lower bound. Until the flag's
+precision is measured on real pairs, nothing should depend on it —
+B-20261015-DEDUP-ANCHOR-CHOICE-SPLITS stage 3 is where acting on it would be decided.
+
 ### Verdicts and exit codes
 
 One line on stdout; `--json` prints the same fields as one object, and `--dry-run` appends ` dry-run`.

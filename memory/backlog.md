@@ -5088,10 +5088,14 @@ identity) manufactured positives; `git log` is newest-first, so the "newest revi
 the oldest draft; negatives were grouped by BASENAME, pairing `src/index.ts` with `tests/index.ts`; and a pair whose own
 text says "dup of B-…" shipped as a NEGATIVE because `deident` had already erased the evidence.
 **Fix — staged, and nothing changes behaviour before stage 3.**
-1. ADVISORY ONLY: when the structural key MISSES, `backlog-add` asks `perplexity/pplx-decider-v1.1-27b` about the
-   candidate against same-file, same-class findings from the ledger and prints `SIMILAR F-… p=0.87` on stderr. Writes
-   nothing, decides nothing. Off unless `ZUVO_BACKLOG_SIMILAR=1` and a key is present; fail-open on any error, with the
-   call made BEFORE the lock is taken (the lock budget is 30 s and a network call must never sit inside it).
+1. ADVISORY ONLY — **BUILT 2026-10-17**, `scripts/zuvo-home/zuvo_backlog_similar.py`, called from
+   `zuvo_backlog_add._advise_similar` before `zio.Lock`. When the structural key MISSES, `backlog-add` asks
+   `perplexity/pplx-decider-v1.1-27b` about the candidate against same-file, same-class findings from the ledger and
+   prints `SIMILAR F-… p=0.87` on stderr. Writes nothing, decides nothing. Off unless `ZUVO_BACKLOG_SIMILAR=1` and a
+   key is present; fail-open on any error, with the call made BEFORE the lock is taken (the lock budget is 30 s and a
+   network call must never sit inside it). `tests/hooks/test_backlog_similar.py` holds the guards, including the one
+   that fails when the call is moved inside the lock — the ready-file `backlog-add` writes immediately before it
+   requests the lock does not exist yet when the stub endpoint is hit.
 2. MEASURE IN THE WILD: record each verdict and what the caller did next, so precision is computed on real pairs
    instead of this proxy corpus. **Already being produced elsewhere — do not build a second recording path.**
    Task 5's acceptance report (`feat/rerank-knowledge-backlog`) counts how many `possible-dup-of` flags land
@@ -5112,7 +5116,15 @@ text says "dup of B-…" shipped as a NEGATIVE because `deident` had already era
    `dedup: <model> p=…` on the entry so it is auditable and reversible.
    The deterministic `CLASS | file | anchor` key stays the identity throughout: the model is consulted only on a miss,
    and never gets to overrule a structural match.
-**NOT OURS TO BUILD — stage 1's insertion point already has an owner (2026-10-15).** Session
+**THE OWNER LEFT; STAGE 1 WAS BUILT HERE (2026-10-17).** What follows is the 2026-10-15 reading, kept
+because its technical content still holds — but its conclusion does not. Checked on 2026-10-17:
+`docs/specs/2026-10-15-rerank-knowledge-backlog-plan.md` is still Approved and still untouched, no PR-A1
+or PR-A2 was ever opened, `origin/main` carries no rerank client, and session `zuvo-plugin-ec` has moved
+to another repository. A scope freeze whose owner has gone is not a reason to leave a measured, approved,
+advisory-only change unbuilt, and two sessions writing two documents about who may touch one function is
+worse than one of them touching it. If that plan is ever picked up, Task 5 meets a `SIMILAR` hint that is
+already there, off by default, writing nothing — it has to be reconciled with, not worked around.
+The 2026-10-15 reading: session
 `zuvo-plugin-ec` (Mac) carries `docs/specs/2026-10-15-rerank-knowledge-backlog-plan.md` (rev 6,
 status Reviewed, 6 tasks) whose **Task 5** is this exact change: a pre-lock dedup candidate in
 `zuvo_backlog_add._execute`, re-checked in `_backlog_route`'s double-ABSENT branch, same lock-budget
@@ -5132,10 +5144,15 @@ over after the structural key — a different anchor within +/-3 lines, a differ
 legacy/hand-written entries. The decision-model calibration step is accepted as a follow-up but
 deliberately NOT added mid-execution (their scope freeze); it returns as its own proposal after
 PR-A2 lands, and this entry is where its numbers live until then.
-**Their gold set is not fetchable into this repo.** It sits in a Mac scratchpad and contains entry
-text from TGM repositories, so it stays out of public `zuvo-plugin`. Scoring the six decision models
-against it would send client finding text to OpenRouter -> the provider: that is an egress decision
-for the owner, not something this entry authorises. | severity: low | category: Tooling | conf: 85
+**The egress note written here on 2026-10-15 was WRONG, and is corrected rather than deleted so it is
+not re-derived.** It called the gold set's finding text "client data" and made scoring it an egress
+decision for the owner. There is no third-party client: the code is TGM's own and the owner IS TGM. Worse,
+it was inconsistent — this fleet sends diffs from these same repositories to OpenRouter on every
+adversarial review, which is the same provider and a far larger payload, and five PRs merged the day
+after that note added OpenRouter lanes and a spend cap for exactly that traffic. Holding back 38 pairs
+while shipping whole diffs was not caution. Scoring the gold set needs no separate authorisation. What
+still limits it is mundane: the set lives in a Mac scratchpad, so it has to be fetched before it can be
+scored, and it stays out of this public repo's git history. | severity: low | category: Tooling | conf: 85
 
 
 
