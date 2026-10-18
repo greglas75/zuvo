@@ -747,6 +747,11 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   # shared --artifact races, and part 1 (which replaces the file) finishing last would erase the others.
   _ck_par="$(ar_env_int ZUVO_ADV_CHUNK_PARALLEL 3 1)"
   _ck_pids=(); _ck_next=1
+  # One review, one strike: the parts run side by side, so one account hiccup failed all three in the same
+  # second and the ledger read three consecutive failures — a 6 h bench for claude (2026-10-17, RD-1340,
+  # twice; the same parts passed in 60-165 s an hour later). The parts share this group, and the ledger
+  # counts at most one failure per lane per group. An outer caller's group is kept.
+  _ck_strike="${ZUVO_ADV_STRIKE_GROUP:-chunks-$$-$(date +%s)}"
   # _ck_collect — wait for the oldest uncollected part, print it, count its exit code.
   _ck_collect() {
     local j=$_ck_next p="${_ck_pids[$_ck_next]:-}" crc=0
@@ -811,7 +816,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     _ck_note=$(_ck_build_chunk_note "$_ck_fence" "$_ck_i" "$_ck_n" "$_ck_dir/cnote-${_ck##*/chunk-}")
     _ck_args+=(--context "${CONTEXT_HINT:+$CONTEXT_HINT }${_ck_note}")
     [[ -z "$ARTIFACT_PATH" ]] || _ck_args+=(--artifact "$_ck_dir/art-${_ck_i}")
-    env ${_ck_env[@]+"${_ck_env[@]}"} ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
+    env ${_ck_env[@]+"${_ck_env[@]}"} ZUVO_ADV_STRIKE_GROUP="$_ck_strike" ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
       < "$_ck" > "$_ck_dir/out-${_ck_i}" 2> "$_ck_dir/err-${_ck_i}" &
     _ck_pids[$_ck_i]=$!
   done

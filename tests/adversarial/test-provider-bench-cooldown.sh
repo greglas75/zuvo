@@ -188,3 +188,15 @@ not_benched_and_ran 1
 bench_run ZUVO_PROVIDER_HEALTH_FILE="$BENCH_HOME/new-dir/health.tsv"
 assert_exit_code "0" "$BENCH_RC" "the run completed"
 assert_eq "1 empty" "$(fail_row "$BENCH_HOME/new-dir/health.tsv")" "the missing ledger was created and records this run"
+
+# ─── 13. parts of one chunked review strike a lane once ───────────────────
+# Bug caught: three parallel parts of one review hit one account hiccup in the same second and the ledger
+# read three consecutive failures — claude benched for 6 h (2026-10-17, RD-1340).
+start_test "bench.13 failures sharing a strike group count once; separate reviews each count"
+: > "$HF"
+bench_run ZUVO_ADV_STRIKE_GROUP=g1; bench_run ZUVO_ADV_STRIKE_GROUP=g1; bench_run ZUVO_ADV_STRIKE_GROUP=g1
+assert_eq "1 empty" "$(fail_row)" "three parts of one review: one strike"
+bench_run ZUVO_ADV_STRIKE_GROUP=g2
+assert_eq "2 empty" "$(fail_row)" "the next review strikes again"
+bench_run
+assert_eq "3 empty" "$(fail_row)" "a review without a group counts as before"
