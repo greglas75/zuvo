@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# mock-probe-ok — answers the --doctor probe the way a working client does.
+cat >/dev/null
+echo "PROVIDER-OK"
+exit 0

@@ -115,7 +115,8 @@ if [[ "$DOCTOR" == "true" ]]; then
     p_out="$(cat "$JSON_TMPDIR/doctor_$p.out" 2>/dev/null)" || p_out=""
     # R-17: WORKING requires the actual probe echo, not just any non-empty exit-0 output —
     # an exit-0 error body (the agy failure mode) must read FAILED here.
-    if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* ]]; then
+    # The prompt itself carries PROVIDER-OK, so a client that echoes its input is not an answer.
+    if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* && "$p_out" != *"Reply with exactly"* ]]; then
       printf '  %-14s WORKING (%ss, model: %s)\n' "$p" "$p_secs" "$(provider_model "$p")"
       working=$((working+1)); _doc_ok="${_doc_ok:+$_doc_ok,}$p:ok"
     elif [[ $p_rc -eq 0 && -n "$p_out" ]]; then
@@ -130,11 +131,12 @@ if [[ "$DOCTOR" == "true" ]]; then
   done
   # A lane that answers the probe is healthy NOW: it leaves the bench. 2026-10-18 the owner added a Cursor
   # account in cswap and cursor-agent answered the doctor in 12 s, yet stayed out of every review for hours —
-  # 217 empties on the spent account had benched it. Only answers are recorded: a 60 s probe that fails says
-  # nothing a real review has not already said.
-  if [[ -n "$_doc_ok" ]]; then
+  # 217 empties on the spent account had benched it. Only answers are recorded: a short probe that fails says
+  # nothing a real review has not already said. A lane that fails its next real review is benched again
+  # after the usual threshold.
+  if [[ -n "$_doc_ok" && "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -n "${PROVIDER_HEALTH_FILE:-}" ]]; then
     PROVIDER_OUTCOMES="$_doc_ok" record_provider_health
-    echo "  (lanes that answered are off the provider-health bench)"
+    echo "  (provider-health ledger: lanes that answered are recorded ok, off the bench)"
   fi
   echo "  ---"
   echo "  usable providers: $working / $_doc_total"

@@ -223,9 +223,10 @@ assert_eq "2 empty" "$(fail_row)" "outside a chunk part a group in the environme
 # Bug caught: a new Cursor account in cswap, cursor-agent answering the doctor in 12 s, and the lane still out
 # of every review for hours — 217 empties on the spent account had benched it (2026-10-18).
 start_test "bench.14 --doctor takes a lane that answers off the bench; a failing probe changes nothing"
-seed "mock-echo-prompt\tunknown\t9\t$(( $(date +%s) - 60 ))\ttimeout\nmock-fail\tunknown\t9\t$(( $(date +%s) - 60 ))\ttimeout\n"
+seed "mock-probe-ok\tunknown\t9\t$(( $(date +%s) - 60 ))\ttimeout\nmock-fail\tunknown\t9\t$(( $(date +%s) - 60 ))\ttimeout\n"
 env PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
-  ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt mock-fail" ZUVO_DOCTOR_TIMEOUT=5 \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-probe-ok mock-echo-prompt mock-fail" ZUVO_DOCTOR_TIMEOUT=5 \
   bash "$ADV" --doctor >/dev/null 2>&1
-assert_eq "0 ok" "$(awk -F'\t' '$1 == "mock-echo-prompt" { print $3, $5 }' "$HF")" "the lane that answered: count 0, last ok"
+assert_eq "0 ok" "$(awk -F'\t' '$1 == "mock-probe-ok" { print $3, $5 }' "$HF")" "the lane that answered: count 0, last ok"
 assert_eq "9 timeout" "$(fail_row)" "the lane whose probe failed keeps its row"
+assert_eq "" "$(awk -F'\t' '$1 == "mock-echo-prompt"' "$HF")" "a client that only echoes the probe prompt is not recorded as an answer"
