@@ -77,7 +77,7 @@ if [[ "$DOCTOR" == "true" ]]; then
   echo "PROVIDER DOCTOR (auth + dispatch probe, ${_doc_timeout}s timeout each)"
   REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"
   PROVIDER_TIMEOUT="$_doc_timeout"
-  working=0
+  working=0; _doc_ok=""
   _doc_list="${ALL_DETECTED_PROVIDERS:-$PROVIDERS}"
   _doc_total=$(printf '%s' "$_doc_list" | wc -w | tr -d ' ')
   # Every lane is probed at once, as --multi dispatches them, each into its own files; the report reads them
@@ -115,9 +115,10 @@ if [[ "$DOCTOR" == "true" ]]; then
     p_out="$(cat "$JSON_TMPDIR/doctor_$p.out" 2>/dev/null)" || p_out=""
     # R-17: WORKING requires the actual probe echo, not just any non-empty exit-0 output —
     # an exit-0 error body (the agy failure mode) must read FAILED here.
-    if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* ]]; then
+    # The prompt itself carries PROVIDER-OK, so a client that echoes its input is not an answer.
+    if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* && "$p_out" != *"$REVIEW_PROMPT"* ]]; then
       printf '  %-14s WORKING (%ss, model: %s)\n' "$p" "$p_secs" "$(provider_model "$p")"
-      working=$((working+1))
+      working=$((working+1)); _doc_ok="${_doc_ok:+$_doc_ok,}$p:ok"
     elif [[ $p_rc -eq 0 && -n "$p_out" ]]; then
       printf '  %-14s SUSPECT (%ss, replied but without probe echo: %s)\n' "$p" "$p_secs" \
         "$(printf '%s' "$p_out" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")"
@@ -128,6 +129,15 @@ if [[ "$DOCTOR" == "true" ]]; then
         "$(_ar_quote_line first "$JSON_TMPDIR/doctor_$p.err")"
     fi
   done
+  # A lane that answers the probe is healthy NOW: it leaves the bench. 2026-10-18 the owner added a Cursor
+  # account in cswap and cursor-agent answered the doctor in 12 s, yet stayed out of every review for hours —
+  # 217 empties on the spent account had benched it. Only answers are recorded: a short probe that fails says
+  # nothing a real review has not already said. A lane that fails its next real review is benched again
+  # after the usual threshold.
+  if [[ -n "$_doc_ok" && "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -n "${PROVIDER_HEALTH_FILE:-}" ]]; then
+    PROVIDER_OUTCOMES="$_doc_ok" record_provider_health
+    echo "  (provider-health ledger: lanes that answered are recorded ok, off the bench)"
+  fi
   echo "  ---"
   echo "  usable providers: $working / $_doc_total"
   [[ $working -ge 1 ]] && exit 0 || exit 1
