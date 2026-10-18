@@ -218,3 +218,14 @@ assert_eq "2 empty" "$(fail_row)" "a strike dated in the future does not suppres
 seed "mock-fail\tunknown\t1\t$NOW\tempty\tg1\n"
 bench_run ZUVO_ADV_STRIKE_GROUP=g1
 assert_eq "2 empty" "$(fail_row)" "outside a chunk part a group in the environment is ignored"
+
+# ─── 14. a lane that answers --doctor leaves the bench ────────────────────
+# Bug caught: a new Cursor account in cswap, cursor-agent answering the doctor in 12 s, and the lane still out
+# of every review for hours — 217 empties on the spent account had benched it (2026-10-18).
+start_test "bench.14 --doctor takes a lane that answers off the bench; a failing probe changes nothing"
+seed "mock-echo-prompt\tunknown\t9\t$(( $(date +%s) - 60 ))\ttimeout\nmock-fail\tunknown\t9\t$(( $(date +%s) - 60 ))\ttimeout\n"
+env PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-prompt mock-fail" ZUVO_DOCTOR_TIMEOUT=5 \
+  bash "$ADV" --doctor >/dev/null 2>&1
+assert_eq "0 ok" "$(awk -F'\t' '$1 == "mock-echo-prompt" { print $3, $5 }' "$HF")" "the lane that answered: count 0, last ok"
+assert_eq "9 timeout" "$(fail_row)" "the lane whose probe failed keeps its row"
