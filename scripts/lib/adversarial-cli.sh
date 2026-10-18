@@ -394,17 +394,17 @@ if [[ -z "$PROVIDER" && -n "${ZUVO_REVIEW_PROVIDER:-}" && "$REVIEW_MODE" == blin
 else
   PROVIDER="${PROVIDER:-${ZUVO_REVIEW_PROVIDER:-}}"
 fi
-ar_load_lane_optins
+_ar_load_lane_optins
 return 0
 }
 
-# ar_load_lane_optins — the owner's machine-wide lane opt-ins (ZUVO_ADV_QWEN/ZAI/BYTEPLUS/OPENROUTER=0|1) from
+# _ar_load_lane_optins — the owner's machine-wide lane opt-ins (ZUVO_ADV_QWEN/ZAI/BYTEPLUS/OPENROUTER=0|1) from
 # ${ZUVO_HOME:-~/.zuvo}/review-lanes.conf, for each one the environment leaves unset.
 # 2026-10-18: the opt-ins lived only in environment variables. A session, a cron job or a timer started
 # without them (environment.d reaches systemd user units only, and only those started after it changed) got a
 # panel without the plan lanes — agents reviewing PRs kept ending up with one reviewer. The file is read by the
 # driver itself, whoever starts it; the environment still wins, so `ZUVO_ADV_QWEN=0` turns a lane off for one run.
-ar_load_lane_optins() {
+_ar_load_lane_optins() {
   local f="${ZUVO_REVIEW_LANES_FILE:-${ZUVO_HOME:-${HOME:-}/.zuvo}/review-lanes.conf}" k v env_set=" "
   [[ -f "$f" && -r "$f" ]] || return 0
   # Which ones the environment set (non-empty), taken BEFORE the file: the last line for a key wins.
