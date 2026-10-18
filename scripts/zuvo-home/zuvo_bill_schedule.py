@@ -57,9 +57,9 @@ def _write(path: str, text: str, written: Written) -> None:
 
 def install_schedule() -> int:
     try:
-        return install_unit("bill", [os.path.join(C.home(), "bill")], interval_s=600,
+        return install_unit("bill", [os.path.join(C.home(), "bill")], interval_s=60,
                             description="zuvo Bill — judge adversarial findings",
-                            timer_description="zuvo Bill every 10 minutes")
+                            timer_description="zuvo Bill, a minute after each tick")
     except ValueError as ex:
         print(f"bill: schedule not installed — {ex}", file=sys.stderr)
         return 1

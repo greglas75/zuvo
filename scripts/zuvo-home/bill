@@ -17,13 +17,13 @@ USAGE
     bill                  one tick: start judging the newest unjudged reviews until the time budget runs out
                           (calls already in flight finish, each within CALL_TIMEOUT)
     bill --dry-run        list what a tick would judge, call nothing
-    bill --install-schedule   every 10 minutes: launchd on macOS, a systemd user timer on Linux
+    bill --install-schedule   a minute after each tick: launchd on macOS, a systemd user timer on Linux
     bill --status [--by-lane] [--by-agreement]   judged reviews, verdict counts, cost of the last 24 h;
                           + Bill's precision per lane / per number of lanes raising a defect
 
 ENV
 
-    BILL_MODEL (claude-opus-5-5)  BILL_EFFORT (xhigh)  BILL_WORKERS (3)  BILL_TICK_SECONDS (540)
+    BILL_MODEL (gpt-6.1-sol; claude-* runs through claude)  BILL_EFFORT (high)  BILL_WORKERS (5)  BILL_TICK_SECONDS (540)
     BILL_MAX_AGE_HOURS (48)  BILL_MIN_AGE_MINUTES (30)  BILL_MAX_TRIES (3)  ZUVO_HOME (~/.zuvo)
     touch ~/.zuvo/bill-data/PAUSE to stop it without unscheduling
 """

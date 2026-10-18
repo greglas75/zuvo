@@ -1,4 +1,5 @@
-"""The one headless claude call the review-learning helpers make.
+"""The one headless model call the review-learning helpers make: claude (`run_claude`) or codex
+(`run_codex`); `run_model` picks the CLI from the model id.
 
 Hygiene every scripted `claude -p` needs: `--strict-mcp-config` with an EMPTY server list (else the
 CLI starts the user's MCP servers, orphaned when a call is killed); `--tools ""` (it never touches
@@ -14,8 +15,10 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from typing import Any, NamedTuple
 
@@ -60,6 +63,100 @@ def run_claude(prompt: str, model: str, effort: str, timeout: int = CALL_TIMEOUT
     with contextlib.suppress(OSError):  # children the finished call left behind
         os.killpg(proc.pid, signal.SIGKILL)
     return _parse(proc.returncode, out or "", err or "", round(time.monotonic() - t0), expect_keys)
+
+
+def run_model(prompt: str, model: str, effort: str, timeout: int = CALL_TIMEOUT,
+              expect_keys: tuple[str, ...] = ()) -> ClaudeResult:
+    """A claude-* model through claude, anything else (gpt-*) through codex."""
+    run = run_claude if model.startswith("claude") else run_codex
+    return run(prompt, model, effort, timeout=timeout, expect_keys=expect_keys)
+
+
+def codex_argv() -> list[str]:
+    """No shell, no exec, no image viewer, read-only sandbox: the prompt is everything it sees."""
+    return ["codex", "exec", "--skip-git-repo-check", "--json", "-s", "read-only", "--disable", "shell_tool",
+            "--disable", "unified_exec", "--disable", "view_image", "-"]
+
+
+def _codex_home(model: str, effort: str) -> str:
+    """A throwaway CODEX_HOME (mode 700): the account's auth.json copied (mode 600) from ${CODEX_HOME:-~/.codex}
+    — read per call, so an account switch (cswap) takes effect on the next call — and a config naming only
+    the model, effort, sandbox and approval: none of the user's MCP servers, profiles or instructions."""
+    home = tempfile.mkdtemp(prefix="zuvo-codex.")
+    src = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "auth.json")
+    if os.path.isfile(src):
+        dst = os.path.join(home, "auth.json")
+        shutil.copyfile(src, dst)
+        os.chmod(dst, 0o600)
+    lines = [f"model = {json.dumps(model)}", 'sandbox_mode = "read-only"', 'approval_policy = "never"']
+    if effort:
+        lines.append(f"model_reasoning_effort = {json.dumps(effort)}")
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.mkdir(os.path.join(home, "cwd"))
+    return home
+
+
+def run_codex(prompt: str, model: str, effort: str, timeout: int = CALL_TIMEOUT,
+              expect_keys: tuple[str, ...] = ()) -> ClaudeResult:
+    """`run_claude`'s contract through `codex exec --json`, in an isolated CODEX_HOME removed after the call
+    (it holds the auth.json copy) and its own process group, killed whole after every call."""
+    t0 = time.monotonic()
+    proc: subprocess.Popen[str] | None = None
+    home = ""
+    try:
+        home = _codex_home(model, effort)
+        proc = subprocess.Popen(codex_argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
+                                cwd=os.path.join(home, "cwd"), env={**os.environ, "CODEX_HOME": home},
+                                start_new_session=True)
+        out, err = proc.communicate(prompt, timeout=timeout)
+    except BaseException as ex:
+        if proc is not None:
+            _kill_group(proc)
+        if home:
+            shutil.rmtree(home, ignore_errors=True)
+        if not isinstance(ex, Exception):
+            raise
+        seen = f"{_partial(getattr(ex, 'stderr', None))} {_partial(getattr(ex, 'output', None))[-CLI_TAIL:]}"
+        return ClaudeResult(None, None, {}, _err(ex), seen.strip(), round(time.monotonic() - t0))
+    with contextlib.suppress(OSError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    shutil.rmtree(home, ignore_errors=True)
+    return _parse_codex(proc.returncode, out or "", err or "", round(time.monotonic() - t0), expect_keys)
+
+
+def _parse_codex(rc: int, out: str, err: str, secs: int, keys: tuple[str, ...]) -> ClaudeResult:
+    """The JSONL event stream: the last agent_message is the reply, turn.completed carries the usage, an
+    `error` / `turn.failed` event is the CLI's own failure (a usage limit arrives that way)."""
+    text, usage, failures = "", {}, []
+    for line in out.splitlines():
+        try:
+            ev = json.loads(line)
+        except _PARSE_ERRORS:
+            continue
+        if not isinstance(ev, dict):
+            continue
+        item = ev.get("item")
+        if ev.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
+            text = str(item.get("text") or "")
+        elif ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
+            u = {k: v for k, v in ev["usage"].items() if isinstance(v, int) and not isinstance(v, bool)}
+            usage = {"tokens_in": u.get("input_tokens", 0), "tokens_out": u.get("output_tokens", 0), "usd": None}
+        elif ev.get("type") in ("error", "turn.failed"):
+            e = ev.get("error")
+            failures.append(str(ev.get("message") or (e.get("message") if isinstance(e, dict) else e) or ev))
+    cli_error, answer, error = " ".join([err[-CLI_TAIL:], *failures]).strip(), None, ""
+    if failures:
+        error = f"CLIError: {failures[-1][:ERROR_TAIL]}"
+    else:
+        try:
+            answer = _first_object(text, keys)
+        except _PARSE_ERRORS as ex:
+            error = f"{_err(ex)} | {(text or err or out)[-ERROR_TAIL:]}"
+    if rc != 0:
+        error = f"exit {rc}: {error or (err or out)[-ERROR_TAIL:]}"
+    return ClaudeResult(rc, None if error else answer, usage, error, cli_error, secs)
 
 
 class CLIError(ValueError):

@@ -65,15 +65,15 @@ def ledger() -> str:
 
 
 def model() -> str:
-    return os.environ.get("BILL_MODEL", "claude-opus-5-5")
+    return os.environ.get("BILL_MODEL", "gpt-6.1-sol")
 
 
 def effort() -> str:
-    return os.environ.get("BILL_EFFORT", "xhigh")
+    return os.environ.get("BILL_EFFORT", "high")
 
 
 def workers() -> int:
-    return env_int("BILL_WORKERS", 3)
+    return env_int("BILL_WORKERS", 5)
 
 
 def budget() -> int:

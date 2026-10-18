@@ -32,7 +32,9 @@ def ago(**delta: float) -> str:
 class BillTestCase(ReviewTestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.setenv(BILL_MAX_TRIES="3", BILL_MIN_AGE_MINUTES="30", BILL_MAX_AGE_HOURS="48")
+        # The fakes are a `claude`; the codex path has its own specs (CodexJudge).
+        self.setenv(BILL_MAX_TRIES="3", BILL_MIN_AGE_MINUTES="30", BILL_MAX_AGE_HOURS="48",
+                    BILL_MODEL="claude-opus-5-5")
 
     def diff(self, run: str, text: str = "+x = 1\n") -> str:
         return self.write(os.path.join(self.zuvo, "adversarial-inputs", run + ".diff"), text)
