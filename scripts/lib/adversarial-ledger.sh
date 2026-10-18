@@ -434,10 +434,8 @@ record_provider_health() {
     models="${models}${_rn}	$(ledger_model "$_rn")
 "
   done
-  # SIXTH column (only when set): the strike group (ZUVO_ADV_STRIKE_GROUP, minted for the parts of one chunked
-  # review) that last struck the lane. A failure in that group, written within the hour, updates the row but
-  # does not count again — even after a success of another part in between: parallel parts of one review are
-  # one sample, not three. Read through ENVIRON (awk -v would turn a literal \n into a row break) and
+  # SIXTH column (only when set): the strike group of the last write (ZUVO_ADV_STRIKE_GROUP — internal, minted
+  # by the chunk launcher for the parts of one review). Parallel parts of one review are one sample, not three. Read through ENVIRON (awk -v would turn a literal \n into a row break) and
   # stripped of tabs, newlines and carriage returns.
   printf '%s' "$models" | ZUVO_ADV_STRIKE_GROUP="${ZUVO_ADV_STRIKE_GROUP:-}" awk -F'\t' \
       -v outcomes="$PROVIDER_OUTCOMES" -v now="$now" -v hf="$PROVIDER_HEALTH_FILE" '
@@ -456,11 +454,13 @@ record_provider_health() {
       for(p in seen){
         if(!(p in model)) continue
         key = p SUBSEP model[p]
+        # A failure of a group that already decided this lane (it struck, or another part answered) within
+        # the hour changes nothing — not the count, the class or the time: whichever order the parts end in,
+        # a review with any answering part leaves 0, one with none leaves exactly one strike.
+        if(seen[p]!="ok" && grp != "" && sg[key] == grp && now >= ts[key] && now - ts[key] <= 3600) continue
         if(seen[p]=="ok"){ cnt[key]=0; last[key]="ok" }
-        else {
-          if(!(grp != "" && sg[key] == grp && now - ts[key] <= 3600)) { cnt[key]=((key in cnt) ? cnt[key] : 0) + 1; sg[key]=grp }
-          last[key]=seen[p]
-        }
+        else             { cnt[key]=((key in cnt) ? cnt[key] : 0) + 1; last[key]=seen[p] }
+        sg[key]=grp
         ts[key]=now
       }
       for(key in cnt){ split(key, kk, SUBSEP)
