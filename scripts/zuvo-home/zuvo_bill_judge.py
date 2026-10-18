@@ -24,7 +24,7 @@ VERDICTS = frozenset({"real", "false_positive", "uncertain"})
 # context size, every try.
 DIFF_CAP_BYTES = 200_000
 # Matched against the CLI's own error text only — never a parse error, whose "column 1429" matched "429".
-LIMIT_RE = re.compile(r"\b(rate|usage)[ -]limit|\b429\b|hit your (\w+ )?limit", re.I)
+LIMIT_RE = re.compile(r"\b(rate|usage)[ -]limit|\b429\b|(hit|reached) your [\w -]{0,40}limit", re.I)
 
 # git C-quotes a path holding a quote, a backslash, a control or (core.quotepath) a non-ASCII byte.
 _QUOTED_END = re.compile(r'"(?:[^"\\]|\\.)*"$')

@@ -83,17 +83,21 @@ def _codex_home(model: str, effort: str) -> str:
     — read per call, so an account switch (cswap) takes effect on the next call — and a config naming only
     the model, effort, sandbox and approval: none of the user's MCP servers, profiles or instructions."""
     home = tempfile.mkdtemp(prefix="zuvo-codex.")
-    src = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "auth.json")
-    if os.path.isfile(src):
-        dst = os.path.join(home, "auth.json")
-        shutil.copyfile(src, dst)
-        os.chmod(dst, 0o600)
-    lines = [f"model = {json.dumps(model)}", 'sandbox_mode = "read-only"', 'approval_policy = "never"']
-    if effort:
-        lines.append(f"model_reasoning_effort = {json.dumps(effort)}")
-    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-    os.mkdir(os.path.join(home, "cwd"))
+    try:
+        src = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "auth.json")
+        if os.path.isfile(src):
+            dst = os.path.join(home, "auth.json")
+            shutil.copyfile(src, dst)
+            os.chmod(dst, 0o600)
+        lines = [f"model = {json.dumps(model)}", 'sandbox_mode = "read-only"', 'approval_policy = "never"']
+        if effort:
+            lines.append(f"model_reasoning_effort = {json.dumps(effort)}")
+        with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.mkdir(os.path.join(home, "cwd"))
+    except BaseException:   # never leave the auth.json copy behind
+        shutil.rmtree(home, ignore_errors=True)
+        raise
     return home
 
 
@@ -127,35 +131,40 @@ def run_codex(prompt: str, model: str, effort: str, timeout: int = CALL_TIMEOUT,
 
 
 def _parse_codex(rc: int, out: str, err: str, secs: int, keys: tuple[str, ...]) -> ClaudeResult:
-    """The JSONL event stream: the last agent_message is the reply, turn.completed carries the usage, an
-    `error` / `turn.failed` event is the CLI's own failure (a usage limit arrives that way)."""
-    text, usage, failures = "", {}, []
+    """The JSONL event stream: the last agent_message is the reply, turn.completed carries the usage.
+    `error` / `turn.failed` events and error items fail the call only when no usable reply came: codex
+    reports a reconnect it recovered from as an `error` event too. A failed call's events and any
+    non-JSON stdout go to cli_error, where a limit check reads them."""
+    text, usage, failures, prose = "", {}, [], []
     for line in out.splitlines():
         try:
             ev = json.loads(line)
         except _PARSE_ERRORS:
+            prose.append(line)
             continue
         if not isinstance(ev, dict):
             continue
         item = ev.get("item")
-        if ev.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
-            text = str(item.get("text") or "")
+        if ev.get("type") == "item.completed" and isinstance(item, dict):
+            if item.get("type") == "agent_message":
+                text = str(item.get("text") or "")
+            elif item.get("type") == "error":
+                failures.append(str(item.get("message") or item))
         elif ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
             u = {k: v for k, v in ev["usage"].items() if isinstance(v, int) and not isinstance(v, bool)}
             usage = {"tokens_in": u.get("input_tokens", 0), "tokens_out": u.get("output_tokens", 0), "usd": None}
         elif ev.get("type") in ("error", "turn.failed"):
             e = ev.get("error")
             failures.append(str(ev.get("message") or (e.get("message") if isinstance(e, dict) else e) or ev))
-    cli_error, answer, error = " ".join([err[-CLI_TAIL:], *failures]).strip(), None, ""
-    if failures:
-        error = f"CLIError: {failures[-1][:ERROR_TAIL]}"
-    else:
-        try:
-            answer = _first_object(text, keys)
-        except _PARSE_ERRORS as ex:
-            error = f"{_err(ex)} | {(text or err or out)[-ERROR_TAIL:]}"
+    answer, error = None, ""
+    try:
+        answer = _first_object(text, keys)
+    except _PARSE_ERRORS as ex:
+        error = f"CLIError: {failures[-1][:ERROR_TAIL]}" if failures else \
+            f"{_err(ex)} | {(text or err or out)[-ERROR_TAIL:]}"
     if rc != 0:
         error = f"exit {rc}: {error or (err or out)[-ERROR_TAIL:]}"
+    cli_error = " ".join([err[-CLI_TAIL:], *failures, "\n".join(prose)[-CLI_TAIL:]]).strip() if error else ""
     return ClaudeResult(rc, None if error else answer, usage, error, cli_error, secs)
 
 

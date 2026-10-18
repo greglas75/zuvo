@@ -1030,6 +1030,19 @@ class CodexJudge(BillTestCase):
         self.assertEqual((rec.get("error"), rec["recorded"], rec["tokens_in"], rec["tokens_out"]),
                          (None, True, 900, 70))
 
+    def test_a_reconnect_codex_recovered_from_does_not_fail_the_verdict(self) -> None:
+        # bug: codex reports "Reconnecting... 1/5" as an `error` event and then answers with rc 0 — read
+        # as a failure, the paid verdict was thrown away and the review retried
+        self.queue_review("r-1", ["a.py:1:x"], hours=2)
+        self.fake_driver()
+        answer = {"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}], "lessons": []}
+        self.codex([{"type": "error", "message": "Reconnecting... 1/5 (stream disconnected)"},
+                    {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(answer)}}])
+        import zuvo_bill_tick
+        self.assertEqual(zuvo_bill_tick.tick(False), 0)
+        rec = json.loads(self.read_lines(os.path.join(self.zuvo, "bill-data", "bill.log"))[-1])
+        self.assertEqual((rec.get("error"), rec["recorded"]), (None, True))
+
     def test_codex_usage_limit_event_stops_the_tick_without_using_a_try(self) -> None:
         # bug: a codex limit arrives as a JSONL `error` event, not on stderr — read as an ordinary failure
         # it burned every queued review's tries while the account was out
@@ -1049,6 +1062,8 @@ class LimitText(BillTestCase):
         import zuvo_bill_judge as J
         for text, limited in (("You've hit your weekly limit · resets Oct 22", True),
                               ("You've hit your session limit · resets 4:30", True),
-                              ("You've hit your limit", True), ("no JSON object in the reply", False)):
+                              ("You've hit your limit", True), ("You've reached your 5-hour limit", True),
+                              ("You've hit your model usage limit", True),
+                              ("no JSON object in the reply", False)):
             with self.subTest(text=text):
                 self.assertEqual(bool(J.LIMIT_RE.search(text)), limited)
