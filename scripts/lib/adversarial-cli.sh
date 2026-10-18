@@ -405,13 +405,22 @@ return 0
 # panel without the plan lanes — agents reviewing PRs kept ending up with one reviewer. The file is read by the
 # driver itself, whoever starts it; the environment still wins, so `ZUVO_ADV_QWEN=0` turns a lane off for one run.
 ar_load_lane_optins() {
-  local f="${ZUVO_REVIEW_LANES_FILE:-${ZUVO_HOME:-$HOME/.zuvo}/review-lanes.conf}" k v
+  local f="${ZUVO_REVIEW_LANES_FILE:-${ZUVO_HOME:-${HOME:-}/.zuvo}/review-lanes.conf}" k v env_set=" "
   [[ -f "$f" && -r "$f" ]] || return 0
+  # Which ones the environment set (non-empty), taken BEFORE the file: the last line for a key wins.
+  for k in ZUVO_ADV_QWEN ZUVO_ADV_ZAI ZUVO_ADV_BYTEPLUS ZUVO_ADV_OPENROUTER; do
+    [[ -n "${!k:-}" ]] && env_set+="$k "
+  done
   while IFS='=' read -r k v || [[ -n "$k" ]]; do
-    k="${k//[[:space:]]/}"; v="${v%%#*}"; v="${v//[[:space:]]/}"
-    case "$k" in ZUVO_ADV_QWEN|ZUVO_ADV_ZAI|ZUVO_ADV_BYTEPLUS|ZUVO_ADV_OPENROUTER) ;; *) continue ;; esac
+    k="${k%%#*}"; k="${k#"${k%%[![:space:]]*}"}"; k="${k#export }"; k="${k//[[:space:]]/}"
+    [[ -n "$k" ]] || continue
+    v="${v%%#*}"; v="${v//[[:space:]]/}"; v="${v//\"/}"; v="${v//\'/}"
+    case "$k" in
+      ZUVO_ADV_QWEN|ZUVO_ADV_ZAI|ZUVO_ADV_BYTEPLUS|ZUVO_ADV_OPENROUTER) ;;
+      *) echo "  WARN: $f: '$k' is not a lane opt-in (ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER) — ignored" >&2; continue ;;
+    esac
+    [[ "$env_set" == *" $k "* ]] && continue
     [[ "$v" == 0 || "$v" == 1 ]] || { echo "  WARN: $f: $k='$v' is not 0 or 1 — ignored" >&2; continue; }
-    [[ -n "${!k+x}" ]] && continue
     export "$k=$v"
   done < "$f"
   return 0

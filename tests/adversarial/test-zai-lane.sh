@@ -136,13 +136,14 @@ assert_eq "zai" "$(zai_listed 1)" "with it (and the key) the lane is"
 # without it reviewed with the plan lanes missing — agents' PR panels down to one reviewer (2026-10-18).
 start_test "zai.7b the owner's opt-in file enables the lane for a process without the variable; the variable still wins"
 mkdir -p "$ZTMP/c7b"
-printf '# owner\nZUVO_ADV_ZAI = 1  # plan paid\nPATH=/nowhere\n' > "$ZTMP/c7b/review-lanes.conf"
+printf '# owner\nZUVO_ADV_ZAI=0\nexport ZUVO_ADV_ZAI = "1"  # plan paid; the last line wins\nPATH=/nowhere\n' > "$ZTMP/c7b/review-lanes.conf"
 zai_conf() { # zai_conf [VAR=value…] -> "zai" when detection offers the lane, the opt-in file in place
   env -u ZAI_API_KEY -u ZUVO_ADV_ZAI ZUVO_ZAI_KEY_FILE="$KEYFILE" HOME="$ZTMP/c7b" ZUVO_HOME="$ZTMP/c7b" "$@" \
     bash "$ADV" --list-providers 2>/dev/null | awk '$1 == "zai"' | tr -d '\n'
 }
 assert_eq "zai" "$(zai_conf)" "no variable: the file turns the lane on"
 assert_eq "" "$(zai_conf ZUVO_ADV_ZAI=0)" "ZUVO_ADV_ZAI=0 overrides the file"
+assert_eq "zai" "$(zai_conf ZUVO_ADV_ZAI=)" "an empty variable is unset, not a veto"
 
 # ─── 8-9. a spent plan is not asked again; a rate limit is ────────────────
 start_test "zai.8 a spent 5-hour window (code 1308) is one request, not retried"
