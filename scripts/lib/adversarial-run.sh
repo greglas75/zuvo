@@ -116,7 +116,7 @@ if [[ "$DOCTOR" == "true" ]]; then
     # R-17: WORKING requires the actual probe echo, not just any non-empty exit-0 output —
     # an exit-0 error body (the agy failure mode) must read FAILED here.
     # The prompt itself carries PROVIDER-OK, so a client that echoes its input is not an answer.
-    if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* && "$p_out" != *"Reply with exactly"* ]]; then
+    if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* && "$p_out" != *"$REVIEW_PROMPT"* ]]; then
       printf '  %-14s WORKING (%ss, model: %s)\n' "$p" "$p_secs" "$(provider_model "$p")"
       working=$((working+1)); _doc_ok="${_doc_ok:+$_doc_ok,}$p:ok"
     elif [[ $p_rc -eq 0 && -n "$p_out" ]]; then
