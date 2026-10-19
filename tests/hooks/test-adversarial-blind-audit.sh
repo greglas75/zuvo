@@ -546,11 +546,11 @@ case "$_e" in *[Tt][Rr][Uu][Nn][Cc][Aa][Tt]*|*[Cc][Hh][Uu][Nn][Kk]*) bad "C1 no 
   *) ok "C1 no truncation/chunk line on stderr" ;; esac
 if [ -s "$SD/agy.argv0" ]; then
   ok "C1 the agy spy ran (argv kept)"
-  { printf '%s\0' -p; printf '%s\n\n' "$AGY_PREFIX"; cat "$T/c-expected.prompt"; printf '\0%s\0%s\0' --model agy-test-model; } > "$T/c-agy.argv0"
+  { printf '%s\0' -p; printf '%s\n\n' "$AGY_PREFIX"; cat "$T/c-expected.prompt"; printf '\0%s\0%s\0%s\0%s\0' --model agy-test-model --output-format json; } > "$T/c-agy.argv0"
   if cmp -s "$T/c-agy.argv0" "$SD/agy.argv0"; then
-    ok "C1 agy argv is exactly: -p <no-tools line + blank line + the prompt> --model <model> (4 elements)"
+    ok "C1 agy argv is exactly: -p <no-tools line + blank line + the prompt> --model <model> --output-format json (6 elements)"
   else
-    bad "C1 agy argv differs from '-p <prefix+prompt> --model <model>': $(tr '\0' '\n' < "$SD/agy.argv0" | awk 'NR<=2 || /^--/' | head -8 | tr '\n' '|')"
+    bad "C1 agy argv differs from '-p <prefix+prompt> --model <model> --output-format json': $(tr '\0' '\n' < "$SD/agy.argv0" | awk 'NR<=2 || /^--/' | head -8 | tr '\n' '|')"
   fi
 else bad "C1 the agy spy never ran — $(err c1 | tail -3 | tr '\n' ' ')"; fi
 
@@ -758,7 +758,7 @@ if [ -s "$_r" ]; then
     case "$_el" in --dangerously-skip-permissions*|--sandbox*|--mode|--mode=*) _forb="$_forb ${_el%%[[:space:]]*}" ;; esac
   done < "$SD/agy.argv0"
   expect_eq "H agy: no argument starts with --dangerously-skip-permissions, --mode or --sandbox" "" "$_forb"
-  expect_eq "H agy: exactly 4 argv elements (-p <prompt> --model <model>)" "4" "$_n"
+  expect_eq "H agy: exactly 6 argv elements (-p <prompt> --model <model> --output-format json)" "6" "$_n"
   expect_eq "H agy: the first element is -p" "-p" "$(rec_args "$_r" | sed -n 1p)"
   if [ -f "$SD/agy.stdin" ] && [ ! -s "$SD/agy.stdin" ]; then ok "H agy: its stdin was empty (the prompt travels in its argument only)"
   else bad "H agy: its stdin was not empty ($(_sz "$SD/agy.stdin" 2>/dev/null || echo 'no record') bytes)"; fi

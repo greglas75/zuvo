@@ -236,7 +236,7 @@ run_cursor_agent() {
     || status=$?
   # JSON for the tokens: {"type":"result","result":"<the reply>","usage":{inputTokens (uncached), outputTokens,
   # cacheReadTokens, cacheWriteTokens}}. Output that is not that object (a crash, an error page) is read as text.
-  if jq -e 'type == "object"' "$out_file" >/dev/null 2>&1; then
+  if jq -e 'type == "object" and (has("type") or has("result") or has("is_error"))' "$out_file" >/dev/null 2>&1; then
     lane_usage_line "$(jq -r '.usage // {} | [
         (if .inputTokens == null then null
          else .inputTokens + (.cacheReadTokens // 0) + (.cacheWriteTokens // 0) end),
@@ -359,10 +359,12 @@ _ar_lane_budget() {
 
 # _agy_unpack <raw> — agy --output-format json: {"status","response":"<the reply>","error","usage":{input_tokens
 # (cached ones included), cache_read_tokens, output_tokens, thinking_tokens, total_tokens}}. The reply goes to
-# _AGY_BODY_FILE and the call's tokens to the lane; output that is not that object is the body as it came.
+# _AGY_BODY_FILE and the call's tokens to the lane.
 # Thinking counts as output, once: added only when total_tokens shows output_tokens left it out (Gemini's way).
 _agy_unpack() {
-  if jq -e 'type == "object"' "$1" >/dev/null 2>&1; then
+  # The envelope is an object with response/status/error; anything else (a reply that is itself JSON, an agy
+  # that ignored the flag) is the body as it came.
+  if jq -e 'type == "object" and (has("response") or has("status") or has("error"))' "$1" >/dev/null 2>&1; then
     # An object carrying an error, or no string .response, is no review: the body stays empty and the attempt
     # fails (its .error still reaches the classification through the raw file in _agy_attempt).
     jq -j 'if (.error // null) == null and (.response | type == "string") then .response else "" end' "$1" \
