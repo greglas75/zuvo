@@ -79,6 +79,8 @@ case "${MOCK_AGY_MODE:-ok}" in
     printf '{"status":"success","response":"SEVERITY: CRITICAL - mock json finding from %s","error":null,"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}\n' "$model" ;;
   json-error)
     printf '{"status":"error","response":null,"error":"MOCK-UNSEEN-ERROR something new broke"}\n' ;;
+  json-bare)
+    printf '{"status":"reviewed","error":"unchecked","note":"SEVERITY: CRITICAL - mock bare json finding"}\n' ;;
 esac
 MOCK
 chmod +x "$BIN/agy"
@@ -134,6 +136,12 @@ reset_calls
 out=$(FB= run_adv json-error)
 if [[ "$out" == *"MOCK-UNSEEN-ERROR"* ]]; then fail "an error object is not consumed as a review" "$out"
 else pass "an error object is not consumed as a review"; fi
+
+# Bug caught: a reply that is itself JSON with a "status"/"error" key taken for agy's envelope and emptied.
+start_test "agy.2d a JSON reply that is not agy's three-key envelope is the review as it came"
+reset_calls
+out=$(run_adv json-bare)
+assert_contains "$out" "mock bare json finding" "the reply's own JSON is kept as the review"
 
 # ─── 3. D1 HOLDS: a timeout is NOT retried ────────────────────────────────
 # This is the regression guard for the whole change. If a future edit retries on timeout, the

@@ -234,9 +234,11 @@ run_cursor_agent() {
     | timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" cursor-agent -p --model "$model" --mode ask --trust --workspace /tmp \
       --output-format json > "$out_file" 2>"$err_file" \
     || status=$?
-  # JSON for the tokens: {"type":"result","result":"<the reply>","usage":{inputTokens (uncached), outputTokens,
-  # cacheReadTokens, cacheWriteTokens}}. Output that is not that object (a crash, an error page) is read as text.
-  if jq -e 'type == "object" and (has("type") or has("result") or has("is_error"))' "$out_file" >/dev/null 2>&1; then
+  # JSON for the tokens: {"type":"result","is_error":…,"result":"<the reply>","usage":{inputTokens (uncached),
+  # outputTokens, cacheReadTokens, cacheWriteTokens}}. Only that signature (.type "result" AND an is_error key, as
+  # cursor-agent 2026-10 prints it, error replies included) is the envelope: a reply that is itself JSON with a
+  # "result" or "type" key, a crash, an error page are read as text.
+  if jq -e 'type == "object" and .type == "result" and has("is_error")' "$out_file" >/dev/null 2>&1; then
     lane_usage_line "$(jq -r '.usage // {} | [
         (if .inputTokens == null then null
          else .inputTokens + (.cacheReadTokens // 0) + (.cacheWriteTokens // 0) end),
@@ -362,9 +364,10 @@ _ar_lane_budget() {
 # _AGY_BODY_FILE and the call's tokens to the lane.
 # Thinking counts as output, once: added only when total_tokens shows output_tokens left it out (Gemini's way).
 _agy_unpack() {
-  # The envelope is an object with response/status/error; anything else (a reply that is itself JSON, an agy
-  # that ignored the flag) is the body as it came.
-  if jq -e 'type == "object" and (has("response") or has("status") or has("error"))' "$1" >/dev/null 2>&1; then
+  # The envelope carries all three of status, response and error (agy prints error: null on success and
+  # response: "" on failure); anything else (a reply that is itself JSON with one of those keys, an agy that ignored
+  # the flag) is the body as it came.
+  if jq -e 'type == "object" and has("status") and has("response") and has("error")' "$1" >/dev/null 2>&1; then
     # An object carrying an error, or no string .response, is no review: the body stays empty and the attempt
     # fails (its .error still reaches the classification through the raw file in _agy_attempt).
     jq -j 'if (.error // null) == null and (.response | type == "string") then .response else "" end' "$1" \
