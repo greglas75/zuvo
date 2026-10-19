@@ -64,9 +64,11 @@ run_codex() {
   # client's stdin is byte for byte what the old `printf '%s' "$REVIEW_PROMPT" |` fed it.
   local prompt_file="$JSON_TMPDIR/prompt_${provider_name}.txt"
   printf '%s' "$REVIEW_PROMPT" > "$prompt_file" || { echo "  WARN: ${provider_name}: cannot write the prompt file" >&2; return 2; }
-  local status=0
+  local status=0 usage_file="$JSON_TMPDIR/runner_usage_${provider_name}.txt"
   lane_runner "$provider_name" zms_run_codex --model "$model" --effort "$effort" "${access[@]}" \
-    --prompt-file "$prompt_file" --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
+    --prompt-file "$prompt_file" --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" \
+    --usage-file "$usage_file" || status=$?
+  lane_usage_take "$usage_file"
   # Token accounting. `codex exec` prints "tokens used" followed by the count on its own line,
   # to STDERR, at the very end — and that stderr lives in JSON_TMPDIR, which is deleted when the
   # run ends. So the one number that says what a review actually cost is discarded on every
@@ -207,7 +209,9 @@ run_claude() {
   # --mode blind-audit: no tools, no MCP, no session, a neutral cwd (the runner's access `none`).
   if [[ "$REVIEW_MODE" == blind-audit ]]; then access=(--access none); fi
   lane_runner claude zms_run_claude --model "$model" --effort "$effort" "${access[@]}" \
-    --prompt-file "$prompt_file" --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" || status=$?
+    --prompt-file "$prompt_file" --timeout "$PROVIDER_TIMEOUT" --stderr-file "$err_file" \
+    --usage-file "$JSON_TMPDIR/runner_usage_claude.txt" || status=$?
+  lane_usage_take "$JSON_TMPDIR/runner_usage_claude.txt"
   if [[ $status -ne 0 ]]; then
     lane_exit_warn claude "$status" 124 "$err_file" "$JSON_TMPDIR/runnererr_claude.txt"
     return "$status"
@@ -228,9 +232,20 @@ run_cursor_agent() {
   # whole review long past its budget (the 9.5h outlier). A plain > has no such reader.
   printf '%s' "$REVIEW_PROMPT" \
     | timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" cursor-agent -p --model "$model" --mode ask --trust --workspace /tmp \
-      > "$out_file" 2>"$err_file" \
+      --output-format json > "$out_file" 2>"$err_file" \
     || status=$?
-  result="$(cat "$out_file" 2>/dev/null)"
+  # JSON for the tokens: {"type":"result","result":"<the reply>","usage":{inputTokens (uncached), outputTokens,
+  # cacheReadTokens, cacheWriteTokens}}. Output that is not that object (a crash, an error page) is read as text.
+  if jq -e 'type == "object" and (.result | type == "string")' "$out_file" >/dev/null 2>&1; then
+    lane_usage_add $(jq -r '.usage // {} | [
+        (if .inputTokens == null then null
+         else .inputTokens + (.cacheReadTokens // 0) + (.cacheWriteTokens // 0) end),
+        .cacheReadTokens, .outputTokens, null]
+      | map(if type == "number" then floor | tostring else "-" end) | join(" ")' "$out_file" 2>/dev/null)
+    result="$(jq -r '.result' "$out_file" 2>/dev/null)"
+  else
+    result="$(cat "$out_file" 2>/dev/null)"
+  fi
   if [[ $status -ne 0 ]]; then
     lane_exit_warn cursor-agent "$status" 124 "$err_file"
     return "$status"
@@ -335,9 +350,27 @@ _ar_lane_budget() {
   printf '%s' "$left"
 }
 
+# _agy_unpack <raw> — agy --output-format json: {"status","response":"<the reply>","error","usage":{input_tokens
+# (cached ones included), cache_read_tokens, output_tokens, thinking_tokens, total_tokens}}. The reply goes to
+# _AGY_BODY_FILE and the call's tokens to the lane; output that is not that object is the body as it came.
+# Thinking counts as output, once: added only when total_tokens shows output_tokens left it out (Gemini's way).
+_agy_unpack() {
+  if jq -e 'type == "object" and (.response | type == "string")' "$1" >/dev/null 2>&1; then
+    jq -j '.response' "$1" > "$_AGY_BODY_FILE" 2>/dev/null || : > "$_AGY_BODY_FILE"
+    lane_usage_add $(jq -r '.usage // {} | [.input_tokens, .cache_read_tokens,
+        (if .output_tokens == null then null
+         elif (.thinking_tokens // 0) > 0 and .total_tokens == (.input_tokens // 0) + .output_tokens + .thinking_tokens
+         then .output_tokens + .thinking_tokens else .output_tokens end),
+        .thinking_tokens]
+      | map(if type == "number" then floor | tostring else "-" end) | join(" ")' "$1" 2>/dev/null)
+  else
+    cat "$1" > "$_AGY_BODY_FILE" 2>/dev/null || : > "$_AGY_BODY_FILE"
+  fi
+}
+
 _agy_attempt() {
   local model="$1" status=0 result err combined a0=$SECONDS
-  local err_file="$JSON_TMPDIR/err_agy.txt"
+  local err_file="$JSON_TMPDIR/err_agy.txt" raw_file="$JSON_TMPDIR/raw_agy.json"
   _AGY_BODY_FILE="$JSON_TMPDIR/raw_agy.txt"
   if [[ "$REVIEW_MODE" == blind-audit ]]; then
     # As the 2026-09-25 spike measured it: NEVER --dangerously-skip-permissions (with it agy read outside
@@ -345,14 +378,17 @@ _agy_attempt() {
     local ws="$JSON_TMPDIR/agy_ws"
     mkdir -p "$ws" 2>/dev/null || { _AGY_CLASS="failed"; _AGY_ERR_TEXT="cannot create $ws"; return 1; }
     (cd "$ws" && OLDPWD="$ws" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" agy -p "$BA_AGY_PREFIX"$'\n\n'"$REVIEW_PROMPT" \
-      --model "$model") < /dev/null > "$_AGY_BODY_FILE" 2>"$err_file" || status=$?
+      --model "$model" --output-format json) < /dev/null > "$raw_file" 2>"$err_file" || status=$?
   else
     timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
-      --model "$model" --dangerously-skip-permissions > "$_AGY_BODY_FILE" 2>"$err_file" || status=$?
+      --model "$model" --dangerously-skip-permissions --output-format json > "$raw_file" 2>"$err_file" || status=$?
   fi
+  _agy_unpack "$raw_file"
   result="$(cat "$_AGY_BODY_FILE" 2>/dev/null)"
   err="$(cat "$err_file" 2>/dev/null)"
+  # The raw reply too: an error the JSON carries in .error (quota, auth) must reach the classification below.
   combined="$err
+$(cat "$raw_file" 2>/dev/null)
 $result"
   _AGY_ERR_TEXT="$combined"
   if [[ $status -eq 124 ]]; then _AGY_CLASS="timeout"; return 1; fi
@@ -574,6 +610,26 @@ _muse_quota_record() {  # $1 = the error text; prints the recorded epoch
   printf '%s\n' "$until"
 }
 
+# _muse_usage <workspace> <marker> — the call's tokens from the session log muse keeps itself
+# (<data>/sessions/YYYY/MM/DD/<id>/session.jsonl; its text output carries none): every session written since
+# <marker> whose workspace_root is <workspace>, each model step's `usage` object — input_tokens (cached ones
+# included), cached_tokens, output_tokens (reasoning included), reasoning_tokens. Hidden view copies are skipped.
+_muse_usage() {
+  local ws="$1" marker="$2" phys root f
+  [[ -f "$marker" ]] || return 0
+  phys="$(cd -P -- "$ws" 2>/dev/null && pwd -P)" || phys="$ws"
+  for root in "${XDG_DATA_HOME:-$HOME/.local/share}/muse" "$HOME/Library/Application Support/muse"; do
+    [[ -d "$root/sessions" ]] || continue
+    while IFS= read -r f; do
+      grep -qF -e "\"workspace_root\":\"$ws\"" -e "\"workspace_root\":\"$phys\"" "$f" 2>/dev/null || continue
+      jq -c '.. | objects | .usage? | objects | select(has("input_tokens"))' "$f" 2>/dev/null \
+        | jq -r '[.input_tokens, .cached_tokens, .output_tokens, .reasoning_tokens]
+                 | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null \
+        | while read -r a b c d; do lane_usage_add "$a" "$b" "$c" "$d"; done
+    done < <(find "$root/sessions" -name session.jsonl -newer "$marker" -not -path "$root/sessions/.*" 2>/dev/null)
+  done
+}
+
 run_muse() {
   # Muse Code (`muse`) — an interactive coding agent with a headless `exec` mode. Two things
   # about it are not like the other CLI lanes and both are deliberate here:
@@ -636,8 +692,10 @@ run_muse() {
   args+=(--model "$model")
 
   local status=0 result
+  : > "$JSON_TMPDIR/muse_started" 2>/dev/null || true
   timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" muse "${args[@]}" \
     > "$out_file" 2>"$err_file" || status=$?
+  _muse_usage "$ws" "$JSON_TMPDIR/muse_started"
   result="$(cat "$out_file" 2>/dev/null)"
   if [[ $status -ne 0 || -z "$result" ]]; then
     local errtext; errtext="$(cat "$err_file" 2>/dev/null)"
@@ -756,6 +814,24 @@ PY
   )
 }
 
+# _qwen_usage <workspace> <call QWEN_HOME or ""> — the call's tokens from the record the qwen CLI appends to
+# usage_record.jsonl after every session ({"project":"<cwd>","models":{"<id>":{inputTokens (cached ones
+# included), cachedTokens, outputTokens (thoughts included), thoughtsTokens}}}). The workspace is this call's
+# alone, so its records are this call's. Looked for in the call's QWEN_HOME, the caller's, and ~/.qwen.
+_qwen_usage() {
+  local ws="$1" phys f seen=" "
+  phys="$(cd -P -- "$ws" 2>/dev/null && pwd -P)" || phys="$ws"
+  for f in ${2:+"$2/usage_record.jsonl"} ${QWEN_HOME:+"$QWEN_HOME/usage_record.jsonl"} "$HOME/.qwen/usage_record.jsonl"; do
+    [[ -s "$f" && "$seen" != *" $f "* ]] || continue
+    seen+="$f "
+    grep -F -e "\"project\":\"$ws\"" -e "\"project\":\"$phys\"" "$f" 2>/dev/null \
+      | jq -r --arg a "$ws" --arg b "$phys" 'select(.project == $a or .project == $b) | .models // {} | to_entries[] | .value
+               | [.inputTokens, .cachedTokens, .outputTokens, .thoughtsTokens]
+               | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null \
+      | while read -r a b c d; do lane_usage_add "$a" "$b" "$c" "$d"; done
+  done
+}
+
 run_qwen() {
   # Qwen Code CLI (`qwen`), headless. Verified against v0.20.0 with a local OpenAI-compatible
   # stub before any real call was made:
@@ -822,6 +898,7 @@ run_qwen() {
     qwen -p "Everything you need is in this message: the complete code under review is included above. Do NOT use any tool, do NOT read the filesystem, do NOT invoke any skill or slash command. Reply with the findings only." \
       -o json -m "$model" --safe-mode --max-tool-calls 0 \
       < "$pf" > "$out_file" 2>"$err_file") || status=$?
+  _qwen_usage "$ws" "$qhome"
   if [[ $status -eq 124 ]]; then
     echo "  WARN: qwen timed out after ${PROVIDER_TIMEOUT}s" >&2
     return 124
@@ -862,6 +939,24 @@ run_qwen() {
   esac
 }
 
+# _kimi_usage <marker> — the call's tokens from the session kimi keeps itself: the CLI runs in $JSON_TMPDIR, whose
+# sessions live in <home>/sessions/wd_<its basename>_<hash>/session_*/agents/*/wire.jsonl; each "usage.record"
+# line there is one model step — usage.inputOther (uncached), inputCacheRead, inputCacheCreation, output.
+_kimi_usage() {
+  local home="${KIMI_CODE_HOME:-$HOME/.kimi-code}" f
+  [[ -f "$1" && -d "$home/sessions" ]] || return 0
+  for f in "$home/sessions/wd_${JSON_TMPDIR##*/}_"*/session_*/agents/*/wire.jsonl; do
+    [[ -f "$f" && "$f" -nt "$1" ]] || continue
+    grep -F '"usage.record"' "$f" 2>/dev/null \
+      | jq -r '.usage // empty | select(type == "object")
+               | [(if .inputOther == null then null
+                   else .inputOther + (.inputCacheRead // 0) + (.inputCacheCreation // 0) end),
+                  .inputCacheRead, .output, null]
+               | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null \
+      | while read -r a b c d; do lane_usage_add "$a" "$b" "$c" "$d"; done
+  done
+}
+
 run_kimi() {
   # Moonshot Kimi CLI (kimi-code, OAuth) — headless -p mode. stream-json gives clean
   # {"role":"assistant","content":...} lines (plain text mode leaks reasoning bullets + a
@@ -900,9 +995,11 @@ KIMI_AGENT
   local raw_file="$JSON_TMPDIR/kimi_raw.jsonl"
   local err_file="$JSON_TMPDIR/err_kimi.txt"
   local status=0
+  : > "$JSON_TMPDIR/kimi_started" 2>/dev/null || true
   (cd "$JSON_TMPDIR" && KIMI_MODEL_THINKING_EFFORT="$effort" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
     kimi -p "$REVIEW_PROMPT" --output-format stream-json -m "$model_flag" --agent-file "$agent_file" \
     > "$raw_file" 2>"$err_file") || status=$?
+  _kimi_usage "$JSON_TMPDIR/kimi_started"
   if [[ $status -eq 124 ]]; then
     echo "  WARN: kimi timed out after ${PROVIDER_TIMEOUT}s" >&2
     return 124

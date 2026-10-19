@@ -48,7 +48,7 @@ out="$("$TOOL" --log "$LOG" 2>&1)"; rc=$?
 
 # Assert on --markdown cells: a vendor name with a different word count must not shift the fields.
 md0="$("$TOOL" --log "$LOG" --markdown 2>&1)"
-cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90 FIND CRIT FAILURES>
+cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90 FIND CRIT TOK/RUN CACHE% TOKENS FIND/1M FAILURES>
   printf '%s\n' "$md0" | awk -F' [|] ' -v lane="\`$1\`" -v n="$2" '{ sub(/^[|] /, ""); sub(/ [|]$/, "") } $1 == lane { print $n; exit }'
 }
 [ "$(cell byteplus-3 2)" = '`dola-seed-2.0-code`' ] && pass "a row names its lane AND its model" || bad "model cell: [$(cell byteplus-3 2)]"
@@ -58,7 +58,9 @@ cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90
 [ "$(cell byteplus-3 6)" = "100/200s" ] && pass "P50/P90 uses successful reviews only" || bad "P50/P90: [$(cell byteplus-3 6)]"
 [ "$(cell byteplus-3 7)" = "3.0" ] && [ "$(cell byteplus-3 8)" = "1.00" ] && pass "FIND/CRIT average over successful reviews only" \
   || bad "FIND/CRIT: [$(cell byteplus-3 7)]/[$(cell byteplus-3 8)]"
-[ "$(cell byteplus-3 9)" = "timeout 1" ] && pass "failures are listed by outcome" || bad "FAILURES: [$(cell byteplus-3 9)]"
+[ "$(cell byteplus-3 13)" = "timeout 1" ] && pass "failures are listed by outcome" || bad "FAILURES: [$(cell byteplus-3 13)]"
+[ "$(cell byteplus-3 9)" = "-" ] && [ "$(cell byteplus-3 11)" = "-" ] && pass "rows written before the token columns show no token figures, not zero" \
+  || bad "pre-token rows: TOK/RUN [$(cell byteplus-3 9)] TOKENS [$(cell byteplus-3 11)]"
 
 case "$out" in *mock-success*|*fake-model*) bad "a mock lane was counted" ;; *) pass "mock lanes are never counted" ;; esac
 case "$out" in *gpt-6-sol*) bad "a not-attempted row was counted" ;; *) pass "not-attempted rows are left out" ;; esac
@@ -162,6 +164,19 @@ mkdir -p "$TMP/zh"; cp "$LOG" "$TMP/zh/adversarial.log"
 outh="$(env -u ZUVO_ADVERSARIAL_LOG_FILE HOME="$TMP/emptyhome" ZUVO_HOME="$TMP/zh" "$TOOL" 2>&1)"
 case "$outh" in *dola-seed*) pass "\$ZUVO_HOME/adversarial.log is the fallback default" ;; *) bad "ZUVO_HOME ignored: $outh" ;; esac
 
+# Token columns 19-22. A failed call is billed too, so it counts toward TOK/RUN and TOKENS; FIND/1M divides
+# findings by tokens over the SAME rows (successful reviews that reported usage) — a row with findings but no
+# usage would otherwise inflate a lane's value; an empty cell is "not reported", never 0.
+tokrow() { # outcome findings tin tcached tout
+  printf '%s\trid\tcode\tm\t1\t1\t%s\t0\t0\t0\t1s\t0\t/x\tqwen\t%s\t5s\tprojA\thigh\t%s\t%s\t%s\t\n' "$T" "$2" "$1" "$3" "$4" "$5"
+}
+{ tokrow ok 3 1000 400 200; tokrow timeout 0 3000 0 600; tokrow ok 9 '' '' ''; } > "$TMP/tok.log"
+md0="$("$TOOL" --log "$TMP/tok.log" --markdown 2>&1)"
+[ "$(cell qwen 9)" = "2.0k/400" ] && pass "TOK/RUN averages over calls that reported usage, failed ones included" || bad "TOK/RUN: [$(cell qwen 9)]"
+[ "$(cell qwen 10)" = "10%" ] && pass "CACHE% is cached / input tokens" || bad "CACHE%: [$(cell qwen 10)]"
+[ "$(cell qwen 11)" = "4.8k" ] && pass "TOKENS totals input + output" || bad "TOKENS: [$(cell qwen 11)]"
+[ "$(cell qwen 12)" = "2500.0" ] && pass "FIND/1M leaves out findings of reviews that reported no usage" || bad "FIND/1M: [$(cell qwen 12)]"
+
 # Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
 # The writer's LOG_HEADER is in a module: hand python the program as one text (driver + modules).
 . "$ROOT/tests/lib/adversarial-driver.sh"
@@ -177,7 +192,8 @@ n_headers = len(re.findall(r'LOG_HEADER=\$\(printf ', src))
 m = re.search(r'LOG_HEADER=\$\(printf [^\n]*\\\n((?:\s*"[^\n]*\n)+)', src) if n_headers == 1 else None
 fields = re.findall(r'"([a-z_]+)"', m.group(1)) if m else []
 want = {"C_DATE": "date", "C_MODEL": "model", "C_FIND": "findings", "C_CRIT": "critical", "C_DUR": "duration",
-        "C_PROVIDER": "provider", "C_OUTCOME": "outcome", "C_PDUR": "provider_duration", "C_PROJECT": "project"}
+        "C_PROVIDER": "provider", "C_OUTCOME": "outcome", "C_PDUR": "provider_duration", "C_PROJECT": "project",
+        "C_TIN": "tokens_in", "C_TCACHED": "tokens_cached", "C_TOUT": "tokens_out", "C_TREASON": "tokens_reasoning"}
 bad = ["%s=%s is %r" % (k, g[k], fields[g[k]] if g[k] < len(fields) else None) for k, v in want.items()
        if g[k] >= len(fields) or fields[g[k]] != v]
 docs = open(sys.argv[3]).read()

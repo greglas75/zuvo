@@ -282,10 +282,18 @@ INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 #   effort    — column 18: the reasoning effort the lane ran at (provider_effort), empty when
 #               the lane sets none. The same model at two efforts is two different reviewers — codex-5.3 runs
 #               gpt-6.1-sol at `none`, the Opus reviewer runs at `high` — and nothing in the row said which.
-LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+#   tokens_in, tokens_cached, tokens_out, tokens_reasoning — columns 19-22, added 2026-10-19: what the lane's
+#               calls cost, as the vendor counted it (lane_usage_add). tokens_in counts every input token, cached
+#               ones included; tokens_cached is the part read from the cache; tokens_out counts every output
+#               token, reasoning included; tokens_reasoning is that part. Empty = the vendor reported none (a
+#               lane that never ran, a call killed before it answered). Every client returns these numbers,
+#               and until now each lane printed them to a stderr that is deleted when the run ends, so the
+#               cost of a lane could only be estimated from output_chars, which leaves reasoning out entirely
+#               (52k of 53k output tokens on a DeepSeek review).
+LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
   "date" "run_id" "mode" "model" "input_chars" "output_chars" "findings" "critical" \
   "warning" "info" "duration" "exit" "input_file" "provider" "outcome" "provider_duration" \
-  "project" "effort")
+  "project" "effort" "tokens_in" "tokens_cached" "tokens_out" "tokens_reasoning")
 return 0
 }
 
@@ -301,12 +309,60 @@ init_log_header() {
 adversarial_log_row() {
   local model="$1" duration="$2" exit_code="$3" out_chars="$4" c="$5" w="$6" i="$7" \
         provider="$8" outcome="$9" p_dur="${10}"
-  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\t%s\t%s\t%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "$model" \
     "${#INPUT}" "$out_chars" "${11:-$(( c + w + i ))}" "$c" "$w" "$i" \
     "$duration" "$exit_code" "$INPUT_FILE" "$provider" "$outcome" "$p_dur" \
-    "${LOG_PROJECT:-unknown}" "$(provider_effort "$provider")" \
+    "${LOG_PROJECT:-unknown}" "$(provider_effort "$provider")" "$(lane_usage_cols "$provider")" \
     >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# ─── Token usage per lane (columns 19-22) ───────────────────────────────────
+# Each lane records what its calls cost — one line per call, "<in> <cached> <out> <reasoning>", "-" for a number
+# the vendor did not report — in $JSON_TMPDIR/usage_<lane>.txt; the row sums them. ADV_USAGE_LANE names the
+# lane: dispatch_provider sets it in the lane's own subshell, so a stand-in (byteplus-alt through the qwen CLI,
+# kimi through kimi-api) is billed to the lane the row is for.
+
+# lane_usage_add <in> <cached> <out> <reasoning> — one call's tokens for the running lane; a no-op outside one.
+lane_usage_add() {
+  [[ -n "${ADV_USAGE_LANE:-}" && -n "${JSON_TMPDIR:-}" ]] || return 0
+  local v line=""
+  for v in "${1:-}" "${2:-}" "${3:-}" "${4:-}"; do
+    [[ "$v" =~ ^[0-9]+$ ]] || v=-
+    line+="$v "
+  done
+  # Nothing measured is no line: an all-unknown call would only turn the row's empty columns into zeros.
+  [[ "$line" != "- - - - " ]] || return 0
+  printf '%s\n' "${line% }" >> "$JSON_TMPDIR/usage_${ADV_USAGE_LANE}.txt" 2>/dev/null || true
+}
+
+# lane_usage_from_chat <response> — the usage block of an OpenAI-shaped chat response (OpenRouter, BytePlus,
+# Z.ai, Codestral, Moonshot). prompt_tokens includes the cached part; completion_tokens includes reasoning.
+lane_usage_from_chat() {
+  local t
+  t="$(printf '%s' "$1" | jq -r '.usage // empty | select(type == "object")
+        | [.prompt_tokens, (.prompt_tokens_details.cached_tokens // .prompt_cache_hit_tokens),
+           .completion_tokens, .completion_tokens_details.reasoning_tokens]
+        | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null)" || return 0
+  [[ -z "$t" ]] || lane_usage_add $t
+}
+
+# lane_usage_take <file> — every "<in> <cached> <out> <reasoning>" line a runner wrote (zms_run_* --usage-file),
+# into the running lane's usage; the file is consumed.
+lane_usage_take() {
+  local a b c d rest
+  [[ -s "$1" ]] || return 0
+  while read -r a b c d rest; do lane_usage_add "$a" "$b" "$c" "$d"; done < "$1"
+  rm -f -- "$1" 2>/dev/null || true
+}
+
+# lane_usage_cols <lane> — the lane's four token columns, tab-separated: each the sum of the calls that reported
+# it, empty when none did.
+lane_usage_cols() {
+  local f="${JSON_TMPDIR:-}/usage_$1.txt"
+  if [[ -z "${JSON_TMPDIR:-}" || ! -s "$f" ]]; then printf '\t\t\t'; return 0; fi
+  awk '{ for (i = 1; i <= 4; i++) if ($i ~ /^[0-9]+$/) { s[i] += $i; h[i] = 1 } }
+       END { printf "%s\t%s\t%s\t%s", (h[1] ? s[1] : ""), (h[2] ? s[2] : ""), (h[3] ? s[3] : ""), (h[4] ? s[4] : "") }' "$f"
 }
 
 # ─── Provider health ledger (persistent, across runs) ───────────────────────

@@ -233,6 +233,7 @@ run_codestral() {
 
   # Log token usage to stderr
   echo "  Codestral tokens: $(chat_tokens "$response")" >&2
+  lane_usage_from_chat "$response"
 
   local text
   text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')
@@ -303,6 +304,7 @@ openrouter_review_text() {
   # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
   reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
   echo "  OpenRouter [$model] tokens: $(chat_tokens "$response") (${reasoning_tokens} reasoning)" >&2
+  lane_usage_from_chat "$response"
 
   local text
   # content is a string for every model measured here, but the OpenAI-compatible schema also
@@ -646,6 +648,7 @@ run_kimi_api() {
 
   # Log token usage to stderr
   echo "  Kimi API tokens: $(chat_tokens "$response")" >&2
+  lane_usage_from_chat "$response"
 
   local text
   text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
