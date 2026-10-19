@@ -236,13 +236,20 @@ run_cursor_agent() {
     || status=$?
   # JSON for the tokens: {"type":"result","result":"<the reply>","usage":{inputTokens (uncached), outputTokens,
   # cacheReadTokens, cacheWriteTokens}}. Output that is not that object (a crash, an error page) is read as text.
-  if jq -e 'type == "object" and (.result | type == "string")' "$out_file" >/dev/null 2>&1; then
-    lane_usage_add $(jq -r '.usage // {} | [
+  if jq -e 'type == "object"' "$out_file" >/dev/null 2>&1; then
+    lane_usage_line "$(jq -r '.usage // {} | [
         (if .inputTokens == null then null
          else .inputTokens + (.cacheReadTokens // 0) + (.cacheWriteTokens // 0) end),
         .cacheReadTokens, .outputTokens, null]
-      | map(if type == "number" then floor | tostring else "-" end) | join(" ")' "$out_file" 2>/dev/null)
-    result="$(jq -r '.result' "$out_file" 2>/dev/null)"
+      | map(if type == "number" then floor | tostring else "-" end) | join(" ")' "$out_file" 2>/dev/null)"
+    # An error object (is_error, or no string .result) is no review: its result is left empty and the lane fails
+    # below, where the object itself read as text would pass as a clean review with zero findings.
+    result="$(jq -r 'if (.is_error // false) == false and (.result | type == "string") then .result else "" end' \
+      "$out_file" 2>/dev/null)"
+    if [[ -z "$result" && $status -eq 0 ]]; then
+      echo "  WARN: cursor-agent answered with no review: $(head -c 300 "$out_file" | tr -d '\000-\037')" >&2
+      return 1
+    fi
   else
     result="$(cat "$out_file" 2>/dev/null)"
   fi
@@ -355,14 +362,17 @@ _ar_lane_budget() {
 # _AGY_BODY_FILE and the call's tokens to the lane; output that is not that object is the body as it came.
 # Thinking counts as output, once: added only when total_tokens shows output_tokens left it out (Gemini's way).
 _agy_unpack() {
-  if jq -e 'type == "object" and (.response | type == "string")' "$1" >/dev/null 2>&1; then
-    jq -j '.response' "$1" > "$_AGY_BODY_FILE" 2>/dev/null || : > "$_AGY_BODY_FILE"
-    lane_usage_add $(jq -r '.usage // {} | [.input_tokens, .cache_read_tokens,
+  if jq -e 'type == "object"' "$1" >/dev/null 2>&1; then
+    # An object carrying an error, or no string .response, is no review: the body stays empty and the attempt
+    # fails (its .error still reaches the classification through the raw file in _agy_attempt).
+    jq -j 'if (.error // null) == null and (.response | type == "string") then .response else "" end' "$1" \
+      > "$_AGY_BODY_FILE" 2>/dev/null || : > "$_AGY_BODY_FILE"
+    lane_usage_line "$(jq -r '.usage // {} | [.input_tokens, .cache_read_tokens,
         (if .output_tokens == null then null
          elif (.thinking_tokens // 0) > 0 and .total_tokens == (.input_tokens // 0) + .output_tokens + .thinking_tokens
          then .output_tokens + .thinking_tokens else .output_tokens end),
         .thinking_tokens]
-      | map(if type == "number" then floor | tostring else "-" end) | join(" ")' "$1" 2>/dev/null)
+      | map(if type == "number" then floor | tostring else "-" end) | join(" ")' "$1" 2>/dev/null)"
   else
     cat "$1" > "$_AGY_BODY_FILE" 2>/dev/null || : > "$_AGY_BODY_FILE"
   fi
@@ -816,20 +826,34 @@ PY
 
 # _qwen_usage <workspace> <call QWEN_HOME or ""> — the call's tokens from the record the qwen CLI appends to
 # usage_record.jsonl after every session ({"project":"<cwd>","models":{"<id>":{inputTokens (cached ones
-# included), cachedTokens, outputTokens (thoughts included), thoughtsTokens}}}). The workspace is this call's
-# alone, so its records are this call's. Looked for in the call's QWEN_HOME, the caller's, and ~/.qwen.
-_qwen_usage() {
-  local ws="$1" phys f seen=" "
-  phys="$(cd -P -- "$ws" 2>/dev/null && pwd -P)" || phys="$ws"
-  for f in ${2:+"$2/usage_record.jsonl"} ${QWEN_HOME:+"$QWEN_HOME/usage_record.jsonl"} "$HOME/.qwen/usage_record.jsonl"; do
-    [[ -s "$f" && "$seen" != *" $f "* ]] || continue
+# included), cachedTokens, outputTokens (thoughts included), thoughtsTokens}}}). Looked for in the call's QWEN_HOME,
+# the caller's, and ~/.qwen; only the bytes appended since _qwen_usage_mark ran, and of those only this
+# workspace's records — a second call in the same workspace (a retry) must not bill the first one again.
+# _qwen_usage_mark <call QWEN_HOME or ""> — "<file>\t<size>" per record file, taken before the call.
+_qwen_usage_mark() {
+  local f n seen=" "
+  for f in ${1:+"$1/usage_record.jsonl"} ${QWEN_HOME:+"$QWEN_HOME/usage_record.jsonl"} "$HOME/.qwen/usage_record.jsonl"; do
+    [[ "$seen" != *" $f "* ]] || continue
     seen+="$f "
-    grep -F -e "\"project\":\"$ws\"" -e "\"project\":\"$phys\"" "$f" 2>/dev/null \
+    n="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+    printf '%s\t%s\n' "$f" "${n:-0}"
+  done
+}
+_qwen_usage() {  # <workspace> <marks from _qwen_usage_mark>
+  local ws="$1" phys f n
+  phys="$(cd -P -- "$ws" 2>/dev/null && pwd -P)" || phys="$ws"
+  while IFS=$'\t' read -r f n; do
+    [[ -n "$f" && -s "$f" ]] || continue
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    # A file that shrank was rotated or truncated: all of it is new.
+    (( $(wc -c < "$f" | tr -d ' ') >= n )) || n=0
+    tail -c +"$(( n + 1 ))" "$f" 2>/dev/null \
+      | grep -F -e "\"project\":\"$ws\"" -e "\"project\":\"$phys\"" 2>/dev/null \
       | jq -r --arg a "$ws" --arg b "$phys" 'select(.project == $a or .project == $b) | .models // {} | to_entries[] | .value
                | [.inputTokens, .cachedTokens, .outputTokens, .thoughtsTokens]
                | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null \
       | while read -r a b c d; do lane_usage_add "$a" "$b" "$c" "$d"; done
-  done
+  done <<< "$2"
 }
 
 run_qwen() {
@@ -891,14 +915,15 @@ run_qwen() {
     fi
   fi
 
-  local status=0
+  local status=0 umarks
+  umarks="$(_qwen_usage_mark "$qhome")"
   (if [[ -n "$qhome" ]]; then export QWEN_HOME="$qhome" "$kname=$kval"; fi
    cd "$ws" && env -u OPENAI_API_KEY -u OPENAI_BASE_URL -u OPENAI_MODEL \
     timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
     qwen -p "Everything you need is in this message: the complete code under review is included above. Do NOT use any tool, do NOT read the filesystem, do NOT invoke any skill or slash command. Reply with the findings only." \
       -o json -m "$model" --safe-mode --max-tool-calls 0 \
       < "$pf" > "$out_file" 2>"$err_file") || status=$?
-  _qwen_usage "$ws" "$qhome"
+  _qwen_usage "$ws" "$umarks"
   if [[ $status -eq 124 ]]; then
     echo "  WARN: qwen timed out after ${PROVIDER_TIMEOUT}s" >&2
     return 124

@@ -336,6 +336,15 @@ lane_usage_add() {
   printf '%s\n' "${line% }" >> "$JSON_TMPDIR/usage_${ADV_USAGE_LANE}.txt" 2>/dev/null || true
 }
 
+# lane_usage_line "<in> <cached> <out> <reasoning>" — lane_usage_add from one jq-built line, four fields exactly
+# (word splitting of an unquoted line would shift a field if one ever came out empty).
+lane_usage_line() {
+  local a b c d
+  [[ -n "${1:-}" ]] || return 0
+  read -r a b c d _ <<< "$1"
+  lane_usage_add "$a" "$b" "$c" "$d"
+}
+
 # lane_usage_from_chat <response> — the usage block of an OpenAI-shaped chat response (OpenRouter, BytePlus,
 # Z.ai, Codestral, Moonshot). prompt_tokens includes the cached part; completion_tokens includes reasoning.
 lane_usage_from_chat() {
@@ -344,7 +353,7 @@ lane_usage_from_chat() {
         | [.prompt_tokens, (.prompt_tokens_details.cached_tokens // .prompt_cache_hit_tokens),
            .completion_tokens, .completion_tokens_details.reasoning_tokens]
         | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null)" || return 0
-  [[ -z "$t" ]] || lane_usage_add $t
+  lane_usage_line "$t"
 }
 
 # lane_usage_take <file> — every "<in> <cached> <out> <reasoning>" line a runner wrote (zms_run_* --usage-file),

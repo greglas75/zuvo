@@ -654,6 +654,8 @@ _zms_run_validate() {
     _zms_err "$fn" "--stderr-file must differ from --prompt-file (opening it would truncate the prompt)"; exit 2
   fi
   case "$usef" in ''|/*) ;; *) usef="$PWD/$usef" ;; esac
+  # The JSON reply needs jq to be read back: without it no usage is taken, and the client keeps its text output.
+  command -v jq >/dev/null 2>&1 || usef=""
   if ! to="$(_zms_timeout_bin)"; then
     echo "model-subprocess: GNU timeout required (timeout or gtimeout on PATH; macOS: brew install coreutils)" >&2
     exit 2
@@ -774,11 +776,15 @@ _zms_run_usage() {
     else
       cat "$tmp/claude_reply.json" 2>/dev/null
     fi
-  elif command -v jq >/dev/null 2>&1 && [ -d "$home/sessions" ]; then
+  elif [ -d "$home/sessions" ]; then
+    # total_token_usage is a running total, so the call's usage is the LARGEST one, whatever order find reads
+    # the session files in.
     line="$(find "$home/sessions" -type f -name '*.jsonl' -exec cat {} + 2>/dev/null \
-      | jq -rR 'fromjson? | select(.payload.type? == "token_count") | .payload.info.total_token_usage // empty
+      | jq -cR 'fromjson? | select(.payload.type? == "token_count") | .payload.info.total_token_usage // empty
+          | select(type == "object")' 2>/dev/null \
+      | jq -rs 'max_by((.input_tokens // 0) + (.output_tokens // 0)) // empty
           | [.input_tokens, .cached_input_tokens, .output_tokens, .reasoning_output_tokens]
-          | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null | tail -n 1)"
+          | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null)"
   fi
   case "$line" in ''|'- - - -') ;; *) printf '%s\n' "$line" >> "$usef" 2>/dev/null || true ;; esac
 }

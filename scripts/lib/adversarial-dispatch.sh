@@ -97,6 +97,8 @@ dispatch_provider() {
   local provider="$1" status=0 d_start d_elapsed
   # The lane every call below bills its tokens to (lane_usage_add) — dynamic scope, so a stand-in runner sees it.
   local ADV_USAGE_LANE="$provider"
+  # One dispatch, one row: a lane dispatched again in this run must not re-bill the earlier call's tokens.
+  rm -f -- "${JSON_TMPDIR:-/nonexistent}/usage_${provider}.txt" 2>/dev/null || true
   d_start=$(date +%s)
   _dispatch_provider_inner "$provider" || status=$?
   d_elapsed=$(( $(date +%s) - d_start ))

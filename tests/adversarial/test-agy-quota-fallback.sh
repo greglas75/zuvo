@@ -75,6 +75,10 @@ case "${MOCK_AGY_MODE:-ok}" in
     exit 3 ;;
   hang)
     sleep 30 ;;
+  json-ok)
+    printf '{"status":"success","response":"SEVERITY: CRITICAL - mock json finding from %s","error":null,"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}\n' "$model" ;;
+  json-error)
+    printf '{"status":"error","response":null,"error":"MOCK-UNSEEN-ERROR something new broke"}\n' ;;
 esac
 MOCK
 chmod +x "$BIN/agy"
@@ -116,6 +120,20 @@ assert_eq "Gemini 3.8 Flash (High)|Gemini 3.8 Flash (High)" "$(tr '\n' '|' < "$C
   "both calls asked for the primary model"
 if [[ "$out" == *"[agy] fallback model:"* ]]; then fail "the review is not announced as a fallback's" "$out"
 else pass "the review is not announced as a fallback's"; fi
+
+# ─── 2c. --output-format json: the reply is .response; an error object is no review ───
+# Bug caught: an error object agy exits 0 with (an error text the classifier does not know yet) read as the
+# review body — a non-empty "review" with zero findings, i.e. a false-clean pass.
+start_test "agy.2c the JSON reply's .response is the review, and an error object fails the lane"
+reset_calls
+out=$(run_adv json-ok)
+assert_contains "$out" "mock json finding" "the .response text is the review"
+if [[ "$out" == *'"status":"success"'* ]]; then fail "the JSON envelope is not passed on as the review" "$out"
+else pass "the JSON envelope is not passed on as the review"; fi
+reset_calls
+out=$(FB= run_adv json-error)
+if [[ "$out" == *"MOCK-UNSEEN-ERROR"* ]]; then fail "an error object is not consumed as a review" "$out"
+else pass "an error object is not consumed as a review"; fi
 
 # ─── 3. D1 HOLDS: a timeout is NOT retried ────────────────────────────────
 # This is the regression guard for the whole change. If a future edit retries on timeout, the

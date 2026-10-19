@@ -32,7 +32,7 @@ COLUMNS
     FAILURES  every non-ok outcome with its count
     TOK/RUN   mean input/output tokens per call that reported usage — failed calls included, they
               are billed too. Input counts cached tokens; output counts reasoning.
-    CACHE%    cached share of those input tokens
+    CACHE%    cached share of the input tokens, over the calls that reported a cache figure
     TOKENS    total input+output tokens of the window
     FIND/1M   findings per million tokens, over successful reviews that reported usage — what a
               lane returns for what it burns (still not precision, see CRIT)
@@ -154,7 +154,8 @@ def collect(args):
     skipped = 0
     groups = defaultdict(lambda: {"runs": 0, "ok": 0, "find": 0, "crit": 0, "dur": [],
                                   "fail": defaultdict(int), "tok_runs": 0, "tin": 0, "tcached": 0,
-                                  "tout": 0, "ok_tok": 0, "ok_find": 0})
+                                  "tout": 0, "ok_tok": 0, "ok_find": 0,
+                                  "cache_in": 0})
     try:
         fh = open(args.log, encoding="utf-8", errors="replace")
     except OSError as exc:
@@ -183,7 +184,10 @@ def collect(args):
                 g["tok_runs"] += 1
                 g["tin"] += tin or 0
                 g["tout"] += tout or 0
-                g["tcached"] += tokens(cols, C_TCACHED) or 0
+                cached = tokens(cols, C_TCACHED)
+                if cached is not None and tin is not None:  # CACHE% only over calls that reported their cache
+                    g["tcached"] += cached
+                    g["cache_in"] += tin
             if outcome != "ok":
                 g["fail"][outcome or "?"] += 1
                 continue
@@ -206,7 +210,8 @@ def tokens(cols, idx):
     if len(cols) <= idx:
         return None
     v = cols[idx].strip()
-    return int(v) if v.isdigit() else None
+    # ASCII digits only: str.isdigit() also passes "²", which int() then refuses — one odd cell would end the report.
+    return int(v) if re.fullmatch(r"[0-9]+", v) else None
 
 
 def human(n):
@@ -232,7 +237,7 @@ def rows(groups):
             "fail": ", ".join("%s %d" % (k, v) for k, v
                               in sorted(g["fail"].items(), key=lambda kv: (-kv[1], kv[0]))) or "-",
             "tokrun": "%s/%s" % (human(g["tin"] / tr), human(g["tout"] / tr)) if tr else "-",
-            "cache": "%d%%" % (100 * g["tcached"] // g["tin"]) if g["tin"] else "-",
+            "cache": "%d%%" % (100 * g["tcached"] // g["cache_in"]) if g["cache_in"] else "-",
             "tokens": human(g["tin"] + g["tout"]) if tr else "-",
             "fpm": "%.1f" % (g["ok_find"] * 1e6 / g["ok_tok"]) if g["ok_tok"] else "-",
         })

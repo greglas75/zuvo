@@ -175,6 +175,12 @@ md0="$("$TOOL" --log "$TMP/tok.log" --markdown 2>&1)"
 [ "$(cell qwen 9)" = "2.0k/400" ] && pass "TOK/RUN averages over calls that reported usage, failed ones included" || bad "TOK/RUN: [$(cell qwen 9)]"
 [ "$(cell qwen 10)" = "10%" ] && pass "CACHE% is cached / input tokens" || bad "CACHE%: [$(cell qwen 10)]"
 [ "$(cell qwen 11)" = "4.8k" ] && pass "TOKENS totals input + output" || bad "TOKENS: [$(cell qwen 11)]"
+# A lane that reports input but no cache figure has no CACHE%, not 0%; an odd digit ("²") is not a number, not a crash.
+printf '%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tzai\tok\t5s\tprojA\t\t500\t\t50\t\n%s\trid\tcode\tm\t1\t1\t1\t0\t0\t0\t1s\t0\t/x\tzai\tok\t5s\tprojA\t\t\xc2\xb2\t\t50\t\n' "$T" "$T" > "$TMP/tok2.log"
+md0="$("$TOOL" --log "$TMP/tok2.log" --markdown 2>&1)"
+[ "$(cell zai 10)" = "-" ] && pass "CACHE% is - when no call reported a cache figure" || bad "CACHE% unreported: [$(cell zai 10)] $md0"
+[ "$(cell zai 11)" = "600" ] && pass "a non-ASCII digit is unmeasured, the rest of the report stands" || bad "TOKENS with odd digit: [$(cell zai 11)] $md0"
+md0="$("$TOOL" --log "$TMP/tok.log" --markdown 2>&1)"
 [ "$(cell qwen 12)" = "2500.0" ] && pass "FIND/1M leaves out findings of reviews that reported no usage" || bad "FIND/1M: [$(cell qwen 12)]"
 
 # Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
