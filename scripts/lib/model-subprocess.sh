@@ -566,6 +566,13 @@ _zms_live() {
 # is left of it — its process group included — is TERMed, KILLed after the grace, and the temp dir
 # removed. The runner reports ITS failures on stderr; a client's failure is reported by the client
 # (its stderr) and the status, nothing is added.
+# [--usage-file <f>] appends ONE line, "<in> <cached> <out> <reasoning>" ("-" for a number the client did not
+# report), with the tokens the call spent as the client counted them: in = every input token (cached ones
+# included), out = every output token (reasoning included). codex: the last token_count of the session the
+# client wrote in its own CODEX_HOME, read before that home is removed — also after a timeout, since the tokens
+# were spent. claude: the client runs with --output-format json instead of text, and the runner prints the
+# reply's `result` text on stdout (the raw output when it is not that JSON) — the same answer text mode gives.
+# Nothing measured, or no jq: no line. Without the flag nothing changes, byte for byte.
 zms_run_codex() { _zms_run codex "$@"; }
 zms_run_claude() { _zms_run claude "$@"; }
 
@@ -580,7 +587,7 @@ zms_run_claude() { _zms_run claude "$@"; }
 _zms_run() (
   set +e
   client="$1" fn="zms_run_$1"; shift
-  model="" effort="" access="" prompt="" secs="" root="" errf="" tmp="" child="" waited="" home="" cwd=""
+  model="" effort="" access="" prompt="" secs="" root="" errf="" usef="" tmp="" child="" waited="" home="" cwd=""
   _zms_run_args "$@"
   _zms_run_validate
   # The EXIT trap ignores further signals first: a second Ctrl-C during the reap must not skip the
@@ -598,14 +605,14 @@ _zms_run() (
 _zms_run_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      --model|--effort|--access|--prompt-file|--timeout|--read-root|--stderr-file) ;;
+      --model|--effort|--access|--prompt-file|--timeout|--read-root|--stderr-file|--usage-file) ;;
       *) _zms_err "$fn" "unknown argument: $1"; exit 2 ;;
     esac
     if [ $# -lt 2 ]; then _zms_err "$fn" "$1 needs a value"; exit 2; fi
     case "$1" in
       --model) model="$2" ;;          --effort) effort="$2" ;;     --access) access="$2" ;;
       --prompt-file) prompt="$2" ;;   --timeout) secs="$2" ;;      --read-root) root="$2" ;;
-      --stderr-file) errf="$2" ;;
+      --stderr-file) errf="$2" ;;     --usage-file) usef="$2" ;;
     esac
     shift 2
   done
@@ -646,6 +653,9 @@ _zms_run_validate() {
   if [ -n "$errf" ] && { [ "$errf" = "$prompt" ] || [ "$errf" -ef "$prompt" ]; }; then
     _zms_err "$fn" "--stderr-file must differ from --prompt-file (opening it would truncate the prompt)"; exit 2
   fi
+  case "$usef" in ''|/*) ;; *) usef="$PWD/$usef" ;; esac
+  # The JSON reply needs jq to be read back: without it no usage is taken, and the client keeps its text output.
+  command -v jq >/dev/null 2>&1 || usef=""
   if ! to="$(_zms_timeout_bin)"; then
     echo "model-subprocess: GNU timeout required (timeout or gtimeout on PATH; macOS: brew install coreutils)" >&2
     exit 2
@@ -707,7 +717,7 @@ _zms_run_setup() {
     printf '{"mcpServers":{}}' > "$mcp" || { _zms_err "$fn" "cannot write the empty MCP config"; exit 2; }
     args=(--model "$model")
     if [ -n "$effort" ]; then args+=(--effort "$effort"); fi
-    args+=(--print --output-format text)
+    if [ -n "$usef" ]; then args+=(--print --output-format json); else args+=(--print --output-format text); fi
     case "$access" in
       none)  args+=(--tools "" --safe-mode --mcp-config "$mcp" --strict-mcp-config --no-session-persistence) ;;
       read)  args+=(--tools "Read,Grep,Glob" --add-dir "$root" --safe-mode --permission-prompts none
@@ -735,6 +745,8 @@ _zms_run_exec() {
   fi
   if [ "$client" = codex ]; then
     CODEX_HOME="$home" "$to" -k "$grace" "$secs" "$bin" "${args[@]}" < "$prompt" 2>&4 4>&- &
+  elif [ -n "$usef" ]; then
+    "$to" -k "$grace" "$secs" "$bin" "${args[@]}" < "$prompt" > "$tmp/claude_reply.json" 2>&4 4>&- &
   else
     "$to" -k "$grace" "$secs" "$bin" "${args[@]}" < "$prompt" 2>&4 4>&- &
   fi
@@ -744,5 +756,35 @@ _zms_run_exec() {
   # child stays set: timeout has exited, but its process group can still hold what the client left
   # behind, and the EXIT trap reaps that group on this path too — only the pid itself is done with.
   waited=1
+  if [ -n "$usef" ]; then _zms_run_usage; fi
   exit "$status"
+}
+
+# _zms_run_usage — the --usage-file line (see zms_run_codex) and, for claude, the reply's text on stdout. Runs in
+# the runner's subshell after the client ended, before the EXIT trap removes the temp dir that holds both.
+_zms_run_usage() {
+  line=""
+  if [ "$client" = claude ]; then
+    if command -v jq >/dev/null 2>&1 && jq -e 'type == "object" and (.result | type == "string")' \
+         "$tmp/claude_reply.json" >/dev/null 2>&1; then
+      jq -j '.result + "\n"' "$tmp/claude_reply.json"
+      line="$(jq -r '.usage // {} | [
+          (if .input_tokens == null then null
+           else .input_tokens + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0) end),
+          .cache_read_input_tokens, .output_tokens, .output_tokens_details.thinking_tokens]
+        | map(if type == "number" then floor | tostring else "-" end) | join(" ")' "$tmp/claude_reply.json" 2>/dev/null)"
+    else
+      cat "$tmp/claude_reply.json" 2>/dev/null
+    fi
+  elif [ -d "$home/sessions" ]; then
+    # total_token_usage is a running total, so the call's usage is the LARGEST one, whatever order find reads
+    # the session files in.
+    line="$(find "$home/sessions" -type f -name '*.jsonl' -exec cat {} + 2>/dev/null \
+      | jq -cR 'fromjson? | select(.payload.type? == "token_count") | .payload.info.total_token_usage // empty
+          | select(type == "object")' 2>/dev/null \
+      | jq -rs 'max_by((.input_tokens // 0) + (.output_tokens // 0)) // empty
+          | [.input_tokens, .cached_input_tokens, .output_tokens, .reasoning_output_tokens]
+          | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null)"
+  fi
+  case "$line" in ''|'- - - -') ;; *) printf '%s\n' "$line" >> "$usef" 2>/dev/null || true ;; esac
 }

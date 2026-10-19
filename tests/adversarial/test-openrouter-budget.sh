@@ -22,7 +22,8 @@ for a in "$@"; do case "$a" in *://*) url="$a"; printf '%s\n' "$a" >> "$ORB_REC/
 case "$url" in
   */key) printf '%s' "${ORB_KEY_BODY-{\"data\":{\"usage_daily\":${ORB_USED:-1.5}}}}"; exit 0 ;;
 esac
-printf '%s\n%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}]}' 200
+body='{"choices":[{"message":{"content":"NO ISSUES FOUND."}}]}'
+printf '%s\n%s' "${ORB_CHAT_BODY:-$body}" 200
 EOF
 chmod +x "$BTMP/bin/curl"
 
@@ -32,7 +33,8 @@ run_b() {
   local home="$BTMP/$1" lane="$2"; shift 2
   mkdir -p "$home/.zuvo"
   ( umask 077; printf 'fake-or-key' > "$home/.zuvo/openrouter.key"; printf 'fake-plan-key' > "$home/bp.key" )
-  env -u OPENROUTER_API_KEY -u ZUVO_OPENROUTER_BASE_URL -u ZUVO_OPENROUTER_USAGE_FILE -u ORB_KEY_BODY -u ORB_USED \
+  env -u OPENROUTER_API_KEY -u ZUVO_OPENROUTER_BASE_URL -u ZUVO_OPENROUTER_USAGE_FILE -u ORB_KEY_BODY -u ORB_USED -u ORB_CHAT_BODY \
+    ZUVO_ADVERSARIAL_LOG_FILE="$home/adversarial.log" \
     PATH="$BTMP/bin:$PATH" ORB_REC="$home" HOME="$home" ZUVO_HOME="$home" ZUVO_BYTEPLUS_KEY_FILE="$home/bp.key" \
     ZUVO_PROVIDER_HEALTH_FILE="$home/health" ZUVO_BYTEPLUS_QUOTA_FILE="$home/bpquota" \
     ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 ZUVO_OPENROUTER_DAILY_USD=5 "$@" \
@@ -43,6 +45,14 @@ run_b() {
 urls() { cat "$BTMP/$1/curl.urls" 2>/dev/null; }
 chats() { urls "$1" | awk '/chat\/completions/' | wc -l | tr -d ' '; }
 keys() { urls "$1" | awk '/\/key$/' | wc -l | tr -d ' '; }
+
+# Bug caught: an HTTP lane's tokens lost — DeepSeek reports its cache as prompt_cache_hit_tokens, not
+# prompt_tokens_details.cached_tokens; a lane that never reported usage must leave the cells empty, not 0.
+start_test "b.0 the response's usage lands in the row's token columns"
+run_b c0 openrouter-alt ORB_USED=1.5 ORB_CHAT_BODY='{"choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"prompt_tokens":1200,"prompt_cache_hit_tokens":800,"completion_tokens":90,"completion_tokens_details":{"reasoning_tokens":40}}}' >/dev/null
+assert_eq "1200 800 90 40" "$(awk -F'\t' '$14 == "openrouter-alt" { r = $19 " " $20 " " $21 " " $22 } END { print r }' "$BTMP/c0/adversarial.log" 2>/dev/null)" "in/cached/out/reasoning"
+run_b c0b openrouter-alt ORB_USED=1.5 >/dev/null
+assert_eq "[|||]" "$(awk -F'\t' '$14 == "openrouter-alt" { r = "[" $19 "|" $20 "|" $21 "|" $22 "]" } END { print r }' "$BTMP/c0b/adversarial.log" 2>/dev/null)" "no usage reported -> empty cells"
 
 # Bug caught: the cap blocking a key that is under it, so the cheap lanes never review.
 start_test "b.1 under the cap the review runs, and the day's spend is kept for the other lanes"

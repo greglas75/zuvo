@@ -30,6 +30,13 @@ COLUMNS
     CRIT      CRITICALs per successful review — what the model REPORTED, not what was right.
               A louder model scores higher here; precision needs the findings ledger.
     FAILURES  every non-ok outcome with its count
+    TOK/RUN   mean input/output tokens per call that reported usage — failed calls included, they
+              are billed too. Input counts cached tokens; output counts reasoning.
+    CACHE%    cached share of the input tokens, over the calls that reported a cache figure
+    TOKENS    total input+output tokens of the window
+    FIND/1M   findings per million tokens, over successful reviews that reported usage — what a
+              lane returns for what it burns (still not precision, see CRIT)
+    A lane whose calls report no usage (rows written before the token columns existed) shows "-".
 
 Test rows (`mock-*` lanes) and summary rows are never counted.
 """
@@ -64,7 +71,7 @@ BILLING = [
 # is the source; tests/hooks/test-adversarial-stats.sh fails if these indices stop naming the same
 # fields there.
 (C_DATE, C_MODEL, C_FIND, C_CRIT, C_DUR, C_PROVIDER, C_OUTCOME, C_PDUR,
- C_PROJECT) = 0, 3, 6, 7, 10, 13, 14, 15, 16
+ C_PROJECT, C_TIN, C_TCACHED, C_TOUT, C_TREASON) = 0, 3, 6, 7, 10, 13, 14, 15, 16, 18, 19, 20, 21
 SKIP_LANES = {"", "none", "input_file"}
 ROW_DATE = re.compile(r"\d{4}-\d\d-\d\dT")  # a data row; the header row and "#schema" lines are not
 
@@ -146,7 +153,9 @@ def collect(args):
 
     skipped = 0
     groups = defaultdict(lambda: {"runs": 0, "ok": 0, "find": 0, "crit": 0, "dur": [],
-                                  "fail": defaultdict(int)})
+                                  "fail": defaultdict(int), "tok_runs": 0, "tin": 0, "tcached": 0,
+                                  "tout": 0, "ok_tok": 0, "ok_find": 0,
+                                  "cache_in": 0})
     try:
         fh = open(args.log, encoding="utf-8", errors="replace")
     except OSError as exc:
@@ -169,12 +178,25 @@ def collect(args):
                 continue
             g = groups[(lane, cols[C_MODEL].strip() or "?")]
             g["runs"] += 1
+            tin, tout = tokens(cols, C_TIN), tokens(cols, C_TOUT)
+            measured = tin is not None or tout is not None
+            if measured:
+                g["tok_runs"] += 1
+                g["tin"] += tin or 0
+                g["tout"] += tout or 0
+                cached = tokens(cols, C_TCACHED)
+                if cached is not None and tin is not None:  # CACHE% only over calls that reported their cache
+                    g["tcached"] += cached
+                    g["cache_in"] += tin
             if outcome != "ok":
                 g["fail"][outcome or "?"] += 1
                 continue
             g["ok"] += 1
             g["find"] += count(cols[C_FIND])
             g["crit"] += count(cols[C_CRIT])
+            if measured:
+                g["ok_tok"] += (tin or 0) + (tout or 0)
+                g["ok_find"] += count(cols[C_FIND])
             # Time of SUCCESSFUL reviews only, from the provider column only: a timeout row's
             # duration is the cap, and the older total-duration column measures something else.
             d = seconds(cols[C_PDUR]) if len(cols) > C_PDUR else None
@@ -183,12 +205,28 @@ def collect(args):
     return since, groups, skipped
 
 
+def tokens(cols, idx):
+    """A token column: an int, or None when the row is too short or the lane reported nothing."""
+    if len(cols) <= idx:
+        return None
+    v = cols[idx].strip()
+    # ASCII digits only: str.isdigit() also passes "²", which int() then refuses — one odd cell would end the report.
+    return int(v) if re.fullmatch(r"[0-9]+", v) else None
+
+
+def human(n):
+    for div, unit in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
+        if n >= div:
+            return "%.1f%s" % (n / div, unit)
+    return str(int(n))
+
+
 def rows(groups):
     out = []
     for (lane, model), g in sorted(groups.items(), key=lambda kv: (-kv[1]["runs"], kv[0])):
         vendor, _ = billing_for(lane)
         p50, p90 = percentile(g["dur"], 50), percentile(g["dur"], 90)
-        ok = g["ok"]
+        ok, tr = g["ok"], g["tok_runs"]
         out.append({
             "lane": lane, "model": model, "pays": vendor.split(" (")[0],
             "runs": str(g["runs"]),
@@ -198,13 +236,18 @@ def rows(groups):
             "crit": "%.2f" % (g["crit"] / ok) if ok else "-",
             "fail": ", ".join("%s %d" % (k, v) for k, v
                               in sorted(g["fail"].items(), key=lambda kv: (-kv[1], kv[0]))) or "-",
+            "tokrun": "%s/%s" % (human(g["tin"] / tr), human(g["tout"] / tr)) if tr else "-",
+            "cache": "%d%%" % (100 * g["tcached"] // g["cache_in"]) if g["cache_in"] else "-",
+            "tokens": human(g["tin"] + g["tout"]) if tr else "-",
+            "fpm": "%.1f" % (g["ok_find"] * 1e6 / g["ok_tok"]) if g["ok_tok"] else "-",
         })
     return out
 
 
 HEAD = [("lane", "LANE"), ("model", "MODEL"), ("pays", "PAYS"), ("runs", "RUNS"), ("ok", "OK%"),
-        ("time", "P50/P90"), ("find", "FIND"), ("crit", "CRIT"), ("fail", "FAILURES")]
-RIGHT = {"runs", "ok", "time", "find", "crit"}
+        ("time", "P50/P90"), ("find", "FIND"), ("crit", "CRIT"), ("tokrun", "TOK/RUN"),
+        ("cache", "CACHE%"), ("tokens", "TOKENS"), ("fpm", "FIND/1M"), ("fail", "FAILURES")]
+RIGHT = {"runs", "ok", "time", "find", "crit", "tokrun", "cache", "tokens", "fpm"}
 
 
 def render_text(table):

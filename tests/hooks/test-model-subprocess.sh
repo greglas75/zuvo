@@ -993,6 +993,49 @@ if spy_ran claude "$L"; then
 fi
 rtmp_clean "$L"
 
+# ── 9e2. --usage-file: the tokens a call burnt, one line "<in> <cached> <out> <reasoning>" ──
+# Bugs caught: claude's input_tokens EXCLUDES its cache (in must add both cache fields); codex's rollout
+# holds a running total per turn (the LAST token_count is the call's, not the first); claude in JSON mode
+# must still hand the caller the review text, not the JSON envelope.
+echo "-- 9e2. --usage-file"
+UF="$T/usage.txt"
+L="claude --usage-file"
+rm -f "$UF"
+printf '%s' '{"type":"result","result":"REVIEW TEXT","usage":{"input_tokens":10,"cache_creation_input_tokens":200,"cache_read_input_tokens":3000,"output_tokens":40,"output_tokens_details":{"thinking_tokens":7}}}' > "$SPY_DIR/claude.reply"
+out="$(rrun claude -- --model claude-opus-5-5 --access none --prompt-file "$PROMPT" --timeout 60 --usage-file "$UF")"
+expect_eq "$L: exit 0" "rc=0" "$out"
+if spy_ran claude "$L"; then
+  case "|$(recj claude arg)|" in *"|--output-format|json|"*) ok "$L: the client is asked for JSON" ;;
+    *) bad "$L: no --output-format json in [$(recj claude arg)]" ;; esac
+  expect_eq "$L: stdout is the review text, not the JSON envelope" "REVIEW TEXT" "$(cat "$T/run.out")"
+  expect_eq "$L: in = input + cache writes + cache reads; cached, out, thinking as reported" "3210 3000 40 7" "$(cat "$UF" 2>/dev/null)"
+fi
+rm -f "$SPY_DIR/claude.reply" "$UF"
+rtmp_clean "$L"
+L="claude --usage-file, a reply that is not JSON"
+printf 'plain words\n' > "$SPY_DIR/claude.reply"
+out="$(rrun claude -- --model claude-opus-5-5 --access none --prompt-file "$PROMPT" --timeout 60 --usage-file "$UF")"
+expect_eq "$L: the raw reply is passed through" "plain words" "$(cat "$T/run.out")"
+expect_eq "$L: no usage line is invented" "absent" "$([ -e "$UF" ] && echo present || echo absent)"
+rm -f "$SPY_DIR/claude.reply" "$UF"
+rtmp_clean "$L"
+L="codex --usage-file"
+out="$(rrun codex SPY_ROLLOUT='{"payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":50,"output_tokens":20,"reasoning_output_tokens":5}}}}
+not json
+{"payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"cached_input_tokens":600,"output_tokens":80,"reasoning_output_tokens":30}}}}' \
+  -- --model gpt-6-sol --access agent --prompt-file "$PROMPT" --timeout 60 --usage-file "$UF")"
+expect_eq "$L: exit 0" "rc=0" "$out"
+if spy_ran codex "$L"; then
+  expect_eq "$L: the LAST token_count total is the call's usage" "900 600 80 30" "$(cat "$UF" 2>/dev/null)"
+fi
+rm -f "$UF"
+rtmp_clean "$L"
+L="claude without --usage-file"
+out="$(rrun claude -- --model claude-opus-5-5 --access none --prompt-file "$PROMPT" --timeout 60)"
+case "|$(recj claude arg)|" in *"|--output-format|text|"*) ok "$L: claude stays on text output without the flag" ;;
+  *) bad "$L: argv changed without --usage-file: [$(recj claude arg)]" ;; esac
+rtmp_clean "$L"
+
 # ── 9f. the caller's traps survive (the runners' cleanup trap lives in their own subshell) ──
 TB="$T/traps-before"; TA="$T/traps-after"
 rm -f "$SPY_DIR"/*.rec

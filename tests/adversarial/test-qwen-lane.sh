@@ -33,6 +33,11 @@ pwd > "$d/cwd"
 if [ -n "${QWEN_HOME:-}" ]; then cp "$QWEN_HOME/settings.json" "$d/qhome_settings.json"; fi
 printf '%s' "${BAILIAN_CODING_PLAN_API_KEY-<unset>}" > "$d/key_env"
 printf '%s' "${QWEN_FAKE_EXTRA_ENV-<unset>}" > "$d/extra_env"
+if [ -n "${FAKE_QWEN_USAGE:-}" ]; then  # the record the real CLI appends, plus another project's line
+  q="${QWEN_HOME:-$HOME/.qwen}"; mkdir -p "$q"
+  printf '{"project":"/elsewhere","models":{"m1":{"inputTokens":99999,"outputTokens":99999}}}\n' >> "$q/usage_record.jsonl"
+  printf '{"project":"%s","models":{"m1":{"inputTokens":1000,"cachedTokens":300,"outputTokens":150,"thoughtsTokens":50},"m2":{"inputTokens":500,"outputTokens":50}}}\n' "$(pwd)" >> "$q/usage_record.jsonl"
+fi
 case "${FAKE_QWEN_MODE:-ok}" in
   ok)    printf '[{"type":"system"},{"type":"result","subtype":"success","is_error":false,"result":"SEVERITY: CRITICAL\\nFILE: input.py:2\\nISSUE: division by zero QWEN-FAKE-FINDING"}]\n' ;;
   error) printf '[{"type":"result","subtype":"error_during_execution","is_error":true,"error":{"message":"Arrearage: plan quota exhausted QWEN-FAKE-ERR"}}]\n' ;;
@@ -110,6 +115,18 @@ case "$(cat "$QTMP/c5/cwd" 2>/dev/null)" in
   *qwen_ws) assert_eq "ok" "ok" "runs in an empty workspace" ;;
   *)        assert_eq "*qwen_ws" "$(cat "$QTMP/c5/cwd" 2>/dev/null)" "runs in an empty workspace" ;;
 esac
+
+# ─── 5a. the tokens the call burnt land in its adversarial.log row ─────────
+# Bugs caught: another project's usage line (the record is shared by every qwen run) counted against
+# this call; a second model in one call dropped instead of summed; the row losing its token columns.
+start_test "qw.5a the call's own tokens, every model summed, land in columns 19-22 of its log row"
+c="$QTMP/c5a"; mkdir -p "$c/home"
+env -u CLAUDECODE -u CODEX_SANDBOX -u CODEX_SHELL -u CODEX_INTERNAL_ORIGINATOR_OVERRIDE -u __CFBundleIdentifier -u QWEN_CODE -u QWEN_HOME \
+  HOME="$c/home" PATH="$QTMP/bin:$(host_neutral_path)" FAKE_QWEN_DIR="$c" FAKE_QWEN_USAGE=1 \
+  ZUVO_QWEN_SETTINGS="$S" ZUVO_HOME="$c" ZUVO_ADVERSARIAL_LOG_FILE="$c/adversarial.log" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+  bash "$ADV" --provider qwen --mode code --files "$INPUT" > "$c/stdout" 2>"$c/stderr"
+row="$(awk -F'\t' '$14 == "qwen"' "$c/adversarial.log" 2>/dev/null | tail -n 1)"
+assert_eq "1500 300 200 50" "$(printf '%s' "$row" | awk -F'\t' '{ print $19, $20, $21, $22 }')" "tokens in/cached/out/reasoning of this call only"
 
 # ─── 5b. the Token Plan endpoint is a plan endpoint too ────────────────────
 start_test "qw.5b the Token Plan endpoint passes the guard"
