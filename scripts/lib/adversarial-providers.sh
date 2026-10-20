@@ -723,13 +723,13 @@ lane_model_ok() {
 # held a lane 45 min or 6 h with no cheap way back.
 #
 #   * ZUVO_ADV_COOLDOWN_THRESHOLD (2) consecutive lane-side failures put a (lane, model) pair on cooldown for
-#     ZUVO_ADV_COOLDOWN_BASE (1800 s), doubled per further failure, capped at ZUVO_ADV_COOLDOWN_MAX (14400 s); an
-#     auth failure takes the cap at once. Counted in the same provider-health ledger, under its lock; the parts
+#     ZUVO_ADV_COOLDOWN_BASE (1800 s), doubled per further failure, capped at ZUVO_ADV_COOLDOWN_MAX (14400 s); a
+#     pair at the threshold whose last failure was auth takes the cap at once. Counted in the same provider-health ledger, under its lock; the parts
 #     of one chunked review are one strike (the ledger's strike group).
 #   * A lane on cooldown is not dispatched: one line "<lane>: cooldown until <t> (<reason>)". It gets no outcome,
 #     so neither the ledger nor the run log counts the skip as a failure.
 #   * When the window has passed, the next run sends the lane the --doctor canary (ZUVO_ADV_COOLDOWN_PROBE_TIMEOUT,
-#     25 s) before the fan-out: an answer marks the row probe-ok and the lane runs; anything else is one more
+#     30 s) before the fan-out: an answer marks the row probe-ok and the lane runs; anything else is one more
 #     strike — a longer window. One lock per pair: concurrent runs and chunks probe once, the others read the
 #     result. Only a real review answer resets the count, so a lane that answers canaries but not reviews still
 #     backs off.
@@ -770,36 +770,47 @@ _ar_cooldown_row_now() {
     "$PROVIDER_HEALTH_FILE" 2>/dev/null
 }
 
-# _ar_cooldown_probe <lane> <row epoch> <out file> — the canary for a lane whose window has passed, under the
-# pair's probe lock. Writes "keep" or "cool <until> <reason>" to <out file>. Another run that probed first (the
-# row moved past <row epoch>) decides for this one: no second canary, no second write.
+# _ar_cooldown_slug <lane> — the (lane, model) pair as a file-name part: lock and result files.
+_ar_cooldown_slug() {
+  printf '%s@%s' "$1" "$(ledger_model "$1")" | LC_ALL=C tr -c 'A-Za-z0-9._@-' '-' | cut -c1-120
+}
+
+# _ar_cooldown_probe <lane> <out file> — the canary for a lane whose window has passed, under the pair's probe
+# lock. Writes "keep" or "cool <until> <reason>" / "probe-failed <outcome>" to <out file>. A run that waited on
+# the lock while another probed finds the row changed and takes that result: no second canary, no second write.
+# Only a wait longer than the canary's own timeout (the holder is stuck) skips the lane for a minute unprobed.
 _ar_cooldown_probe() {
-  local lane="$1" seen="$2" out="$3" t lock slug d rc=0 ans row cnt ts last
-  t="$(ar_env_int ZUVO_ADV_COOLDOWN_PROBE_TIMEOUT 25 1)"
-  slug="$(printf '%s' "$lane" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-')"
-  lock="${PROVIDER_HEALTH_FILE}.probe-${slug}.lock"
+  local lane="$1" out="$2" t lock d rc=0 ans before after cnt ts last base
+  t="$(ar_env_int ZUVO_ADV_COOLDOWN_PROBE_TIMEOUT 30 1)"
+  base="$(ar_env_int ZUVO_ADV_COOLDOWN_BASE 1800 1)"
+  lock="${PROVIDER_HEALTH_FILE}.probe-$(_ar_cooldown_slug "$lane").lock"
+  before="$(_ar_cooldown_row_now "$lane")"
   if ! _ar_lock "$lock" $(( t + 15 )); then
     echo "cool $(( $(date +%s) + 60 )) re-probe held by another run" > "$out"; return 0
   fi
-  row="$(_ar_cooldown_row_now "$lane")"; IFS=$'\t' read -r cnt ts last <<< "$row"
-  if [[ -n "$ts" && "$ts" -gt "$seen" ]]; then
+  after="$(_ar_cooldown_row_now "$lane")"
+  IFS=$'\t' read -r cnt ts last <<< "$after"
+  if [[ "$last" == probe-ok || "$last" == ok || "$after" != "$before" ]]; then
     if [[ "$last" == probe-ok || "$last" == ok ]]; then echo keep > "$out"
-    else echo "cool $(( ts + $(ar_env_int ZUVO_ADV_COOLDOWN_BASE 1800 1) )) ${cnt:-?} x ${last:-failure}, re-probed by another run" > "$out"; fi
+    else echo "cool $(( ${ts:-0} + base )) ${cnt:-?} x ${last:-failure}, re-probed by another run" > "$out"; fi
     _ar_unlock "$lock"; return 0
   fi
   d="$(_ar_run_tmpdir)" || { _ar_unlock "$lock"; echo keep > "$out"; return 0; }
   ( JSON_TMPDIR="$d"; REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"; PROVIDER_TIMEOUT="$t"
     dispatch_provider "$lane" ) > "$d/probe.out" 2> "$d/probe.err" < /dev/null || rc=$?
   ans="$(cat "$d/probe.out" 2>/dev/null)" || ans=""
-  rm -rf -- "$d" 2>/dev/null || true
   if [[ $rc -eq 0 && "$ans" == *PROVIDER-OK* && "$ans" != *"Reply with exactly: PROVIDER-OK"* ]]; then
     ZUVO_ADV_CHUNK="" PROVIDER_OUTCOMES="$lane:probe-ok" record_provider_health
+    echo keep > "$out"
+  elif [[ -e "$d/nokey_$lane" || -e "$d/norunner_$lane" || -e "$d/quota_$lane" ]]; then
+    # Not the lane's health: no key, no runner, a spent plan — the run's own paths say so; no strike.
     echo keep > "$out"
   else
     [[ $rc -eq 124 ]] && last=timeout || last=empty
     ZUVO_ADV_CHUNK="" PROVIDER_OUTCOMES="$lane:$last" record_provider_health
     echo "probe-failed $last" > "$out"
   fi
+  rm -rf -- "$d" 2>/dev/null || true
   _ar_unlock "$lock"
 }
 
@@ -817,21 +828,23 @@ ar_lane_cooldown() {
     if [[ "$st" == probe ]]; then
       (( probing )) || continue
       echo "  $lane: cooldown over ($reason) — re-probing" >&2
-      _ar_cooldown_probe "$lane" "$ts" "$dir/$lane" &
+      _ar_cooldown_probe "$lane" "$dir/$(_ar_cooldown_slug "$lane")" &
       pids+=($!)
     else
-      printf 'cool %s %s\n' "$until" "$reason" > "$dir/$lane"
+      printf 'cool %s %s\n' "$until" "$reason" > "$dir/$(_ar_cooldown_slug "$lane")"
     fi
   done <<< "$rows"
   for r in ${pids[@]+"${pids[@]}"}; do wait "$r" 2>/dev/null || true; done
   while IFS=$'\t' read -r lane st until reason ts; do
-    [[ -s "$dir/$lane" ]] || continue
-    read -r st until reason < "$dir/$lane" || continue
+    r="$dir/$(_ar_cooldown_slug "$lane")"
+    [[ -s "$r" ]] || continue
+    read -r st until reason < "$r" || continue
     case "$st" in
       keep) continue ;;
       probe-failed)
         r="$(_ar_cooldown_rows | awk -F'\t' -v l="$lane" '$1==l { print $3 "\t" $4; exit }')"
-        until="${r%%$'\t'*}"; reason="${r#*$'\t'}, re-probe failed" ;;
+        if [[ -n "$r" ]]; then until="${r%%$'\t'*}"; reason="${r#*$'\t'}, re-probe failed"
+        else until=$(( $(date +%s) + $(ar_env_int ZUVO_ADV_COOLDOWN_BASE 1800 1) )); reason="re-probe failed"; fi ;;
     esac
     drop="${drop:+$drop }$lane"
     notes="${notes}  $lane: cooldown until $(_ar_epoch_text "${until:-0}") (${reason})

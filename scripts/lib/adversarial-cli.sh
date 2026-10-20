@@ -323,11 +323,12 @@ Environment variables:
   ZUVO_ADV_SESSION         Names the agent session for the 3-pass cap: only that session's passes count.
                            Unset: CLAUDE_CODE_SESSION_ID, else CODEX_THREAD_ID / CODEX_SESSION_ID; none
                            of them (cron, CI): every session's passes in the window count.
-  ZUVO_ADV_COOLDOWN_THRESHOLD  Lane-side failures in a row (empty, timeout, auth — never a too-large input)
+  ZUVO_ADV_COOLDOWN_THRESHOLD  Lane-side failures in a row (empty, timeout, auth — not an input the lane
+                           names as over its context window)
                            that put a lane on cooldown (default 2). It is skipped, not failed, until
                            the window ends, then re-probed with the --doctor canary first.
   ZUVO_ADV_COOLDOWN_BASE / _MAX  First window / cap in seconds (1800 / 14400); doubles per further failure.
-  ZUVO_ADV_COOLDOWN_PROBE_TIMEOUT  The re-probe canary's timeout in seconds (default 25).
+  ZUVO_ADV_COOLDOWN_PROBE_TIMEOUT  The re-probe canary's timeout in seconds (default 30).
   ZUVO_ADV_COOLDOWN_OFF    Lanes never put on cooldown, space- or comma-separated.
   ZUVO_ADV_NO_COOLDOWN=1   The old bench instead: 3 failures, 45 min / 6 h, no canary; agy keeps a quota
                            stop's stated reset (else capped at ZUVO_ADV_COOLDOWN_MAX).

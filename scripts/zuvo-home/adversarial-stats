@@ -155,6 +155,7 @@ def cooldowns(path, now=None):
     thr = env_int("ZUVO_ADV_COOLDOWN_THRESHOLD", 2)
     base = env_int("ZUVO_ADV_COOLDOWN_BASE", 1800)
     cap = max(env_int("ZUVO_ADV_COOLDOWN_MAX", 14400), base)
+    off = set(os.environ.get("ZUVO_ADV_COOLDOWN_OFF", "").replace(",", " ").split())
     now = int(time.time()) if now is None else now
     out = []
     try:
@@ -167,6 +168,8 @@ def cooldowns(path, now=None):
         if len(f) < 4 or not f[2].isdigit() or not f[3].isdigit() or int(f[2]) < thr:
             continue
         lane, model, cnt, ts = f[0], f[1], int(f[2]), int(f[3])
+        if lane in off:
+            continue
         last = f[4] if len(f) >= 5 and f[4] else "failure"
         if ts > now:
             continue

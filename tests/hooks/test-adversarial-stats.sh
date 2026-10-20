@@ -221,7 +221,8 @@ PY
 NOWS=$(date +%s)
 printf 'cool-lane\tm1\t2\t%s\tempty\nover-lane\tm2\t2\t%s\ttimeout\nlong-lane\tm3\t4\t%s\tempty\nprobed-lane\tm4\t3\t%s\tprobe-ok\nfine-lane\tm5\t1\t%s\tempty\n' \
   "$NOWS" "$(( NOWS - 1900 ))" "$(( NOWS - 5400 ))" "$NOWS" "$NOWS" > "$TMP/health.tsv"
-cd_out="$(env -u ZUVO_ADV_NO_COOLDOWN "$TOOL" --log "$LOG" --health "$TMP/health.tsv" 2>&1)"
+cd_out="$(env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
+  -u ZUVO_ADV_COOLDOWN_THRESHOLD "$TOOL" --log "$LOG" --health "$TMP/health.tsv" 2>&1)"
 case "$cd_out" in *"cool-lane [m1]: cooldown until "*"(2 x empty)"*) pass "a fresh cooldown is listed with its end and reason" ;;
   *) bad "cooling lane not listed: $cd_out" ;; esac
 case "$cd_out" in *"over-lane [m2]: cooldown over"*) pass "an expired one says it is re-probed next" ;; *) bad "expired lane: $cd_out" ;; esac

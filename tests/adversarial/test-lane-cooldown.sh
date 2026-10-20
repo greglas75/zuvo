@@ -31,9 +31,10 @@ chmod +x "$LC/bin"/mock-lc-*
 # lc_run <lanes> [VAR=value ...] — one review; stderr in $ERR, status in LC_RC.
 lc_run() {
   local lanes="$1"; shift
-  env PATH="$LC/bin:$MOCKS:$PATH" ZUVO_HOME="$LC/home" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
+  env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
+    -u ZUVO_ADV_COOLDOWN_THRESHOLD PATH="$LC/bin:$MOCKS:$PATH" ZUVO_HOME="$LC/home" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
     ZUVO_ADVERSARIAL_LOG_FILE="$LOG" ZUVO_REVIEW_TEST_PROVIDERS="$lanes" ZUVO_REVIEW_TIMEOUT=10 "$@" \
-    bash "$ADV" --multi --files "$ADV_TEST_EMPTY" >/dev/null 2>"$ERR"
+    bash "$ADV" --multi --files "$ADV_TEST_EMPTY" >/dev/null 2>"${LC_ERR:-$ERR}"
   LC_RC=$?
 }
 row() { awk -F'\t' -v l="$1" '$1 == l { print $3, $5 }' "$HF" 2>/dev/null; }      # count + last outcome
@@ -62,6 +63,8 @@ start_test "LC.3 a canary that fails puts the lane back on a longer cooldown, wi
 seed "mock-fail\tunknown\t2\t$(( NOW - 1900 ))\tempty\n"; : > "$LOG"
 lc_run "mock-success mock-fail"
 assert_eq "3 empty" "$(row mock-fail)" "the failed canary is one more strike"
+assert_eq "fresh" "$(awk -F'\t' -v n="$NOW" '$1 == "mock-fail" { print ($4 >= n ? "fresh" : "stale " $4) }' "$HF")" \
+  "the strike restarts the window now (3 strikes: 60 min from now, not from the old row)"
 assert_contains "$(cat "$ERR")" "re-probe failed" "the skip names the failed re-probe"
 assert_eq "0" "$(logged mock-fail)" "the lane was not dispatched to review"
 lc_run "mock-success mock-fail" ZUVO_ADV_COOLDOWN_BASE=1000
@@ -74,9 +77,10 @@ assert_eq "3 empty" "$(row mock-lc-flaky)" "canary ok, review empty: 3 strikes, 
 
 start_test "LC.5 concurrent runs re-probe a lane once"
 seed "mock-lc-slowprobe\tunknown\t2\t$(( NOW - 1900 ))\tempty\n"; : > "$CALLS"
-lc_run "mock-success mock-lc-slowprobe" & p1=$!
-lc_run "mock-success mock-lc-slowprobe" & p2=$!
-wait "$p1"; wait "$p2"
+( LC_ERR="$LC/err1"; lc_run "mock-success mock-findings-a mock-lc-slowprobe"; exit "$LC_RC" ) & p1=$!
+( LC_ERR="$LC/err2"; lc_run "mock-success mock-findings-a mock-lc-slowprobe"; exit "$LC_RC" ) & p2=$!
+wait "$p1"; r1=$?; wait "$p2"; r2=$?
+assert_eq "0 0" "$r1 $r2" "both reviews completed"
 assert_eq "1" "$(grep -c '^probe$' "$CALLS")" "one canary for two runs"
 assert_eq "2" "$(grep -c '^review$' "$CALLS")" "both runs then reviewed with the lane"
 
@@ -102,9 +106,8 @@ assert_eq "3 empty" "$(row mock-fail)" "two strikes do not bench under the old r
 
 start_test "LC.9 --doctor lists the cooldowns still standing after its probes"
 seed "mock-fail\tunknown\t2\t$NOW\tempty\n"
-env PATH="$LC/bin:$MOCKS:$PATH" ZUVO_HOME="$LC/home" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
-  ZUVO_REVIEW_TEST_PROVIDERS="mock-probe-ok mock-fail" ZUVO_DOCTOR_TIMEOUT=5 bash "$ADV" --doctor > "$LC/doc" 2>&1
+env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF PATH="$LC/bin:$MOCKS:$PATH" ZUVO_HOME="$LC/home" \
+  ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 ZUVO_REVIEW_TEST_PROVIDERS="mock-probe-ok mock-fail" ZUVO_DOCTOR_TIMEOUT=5 bash "$ADV" --doctor > "$LC/doc" 2>&1
 assert_contains "$(cat "$LC/doc")" "mock-fail: cooldown until" "the doctor shows the cooling lane"
 
-rm -rf "$LC"
 rm -rf "$LC"
