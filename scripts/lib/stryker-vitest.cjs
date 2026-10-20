@@ -10,6 +10,7 @@ const CONFIG_NAMES = ['vitest.config.ts', 'vitest.config.mts', 'vitest.config.ct
 const WORKSPACE_FILES = ['vitest.workspace.ts', 'vitest.workspace.mts', 'vitest.workspace.js', 'vitest.workspace.json'];
 const VITEST_DEFAULT_INCLUDE = '**/*.{test,spec}.?(c|m)[jt]s?(x)';
 const TEST_EXT = '\\.[cm]?[jt]sx?$';
+const MAX_COVERING_TESTS = 40;
 
 const P = path.posix;
 const exists = (repo, rel) => fs.existsSync(path.join(repo, rel));
@@ -220,17 +221,64 @@ function parseTestInclude(src, key = 'include') {
   return { kind: 'list', globs };
 }
 
-// foo.test.*, foo.spec.* beside the source, and __tests__/foo.* (with or without .test/.spec).
+const listDir = (repo, d) => (exists(repo, d) ? fs.readdirSync(path.join(repo, d)) : []);
+const stripExt = (rel) => rel.replace(/\.[^./]+$/, '');
+// A file Vitest would collect as a test from its NAME alone (`.test.`/`.spec.` before the extension).
+const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+// The module specifiers a file imports, as written: `from '…'`, `import '…'`, `require('…')`,
+// `import('…')`. A side-effect import and a `vi.mock('…')` path count too: both make Vitest load the
+// module, which is all "covering" means here.
+function importSpecifiers(src) {
+  const re = /(?:^|[^\w$.])(?:import|require|from)\s*\(?\s*(['"])([^'"\n]+)\1/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(src))) out.push(m[2]);
+  return out;
+}
+
+// The stem of every path, extension dropped, so `./foo`, `./foo.js` (a TS ESM specifier) and
+// `./foo.ts` all name the same module. A directory specifier resolves to its index file.
+const moduleStem = (rel) => stripExt(P.normalize(rel)).replace(/\/index$/, '');
+
+// Spec files in the source's own directory and its __tests__ that IMPORT the source. A sibling named
+// `foo.checked-dsl.spec.ts` is found by name (colocatedTests); an importer named after something else
+// (`compiler-variants.spec.ts` importing `./simple-script-compiler`) only by this scan. Relative
+// specifiers only: resolving an alias (`@/…`) would mean reading the config's alias table, and a wrong
+// resolution here would run an unrelated test.
+function importingTests(repo, relFile) {
+  const dir = P.dirname(relFile);
+  const target = moduleStem(relFile);
+  const hit = [];
+  for (const d of [dir, P.join(dir, '__tests__')]) {
+    for (const n of listDir(repo, d)) {
+      if (!TEST_NAME.test(n)) continue;
+      const t = P.join(d, n);
+      let src;
+      try { src = fs.readFileSync(path.join(repo, t), 'utf8'); } catch { continue; }
+      const imports = importSpecifiers(src).some((s) =>
+        s.startsWith('.') && moduleStem(P.join(P.dirname(t), s)) === target);
+      if (imports) hit.push(t);
+    }
+  }
+  return hit.sort();
+}
+
+// foo.test.* / foo.spec.* and foo.<variant>.test|spec.* beside the source, __tests__/foo[.<variant>]
+// [.test|.spec].* (plus a bare __tests__/foo.* helper, which matchesOwnInclude then filters), and any
+// spec/test file beside them that imports the source. The bare stem was the whole rule until
+// 2026-10-20: a module with five sibling specs (simple-script-compiler.{,checked-dsl,legacy,
+// rule-shape,page-target}.spec.ts) had one selected and reported 42 % from tests that never ran.
 function colocatedTests(repo, relFile) {
   const dir = P.dirname(relFile);
   const stem = escapeRe(P.basename(relFile).replace(/\.[^.]+$/, ''));
-  const beside = new RegExp(`^${stem}\\.(test|spec)${TEST_EXT}`);
-  const nested = new RegExp(`^${stem}(\\.(test|spec))?${TEST_EXT}`);
-  const list = (d) => (exists(repo, d) ? fs.readdirSync(path.join(repo, d)) : []);
-  return [
-    ...list(dir).filter((n) => beside.test(n)).map((n) => P.join(dir, n)),
-    ...list(P.join(dir, '__tests__')).filter((n) => nested.test(n)).map((n) => P.join(dir, '__tests__', n)),
-  ].sort();
+  const beside = new RegExp(`^${stem}\\.(?:.+\\.)?(?:test|spec)${TEST_EXT}`);
+  const nested = new RegExp(`^${stem}(?:\\.(?:.+\\.)?(?:test|spec))?${TEST_EXT}`);
+  const byName = [
+    ...listDir(repo, dir).filter((n) => beside.test(n)).map((n) => P.join(dir, n)),
+    ...listDir(repo, P.join(dir, '__tests__')).filter((n) => nested.test(n)).map((n) => P.join(dir, '__tests__', n)),
+  ];
+  return [...new Set([...byName, ...importingTests(repo, relFile)])].sort();
 }
 
 // Nearest package.json directory: the workspace a file belongs to when its config is an aggregator.
@@ -312,7 +360,8 @@ function resolve({ repo, files, override, tests }) {
     const outside = tests.filter((t) => outsideRepo(rel(t)));
     if (outside.length) return { error: `explicit test(s) outside vitest_root ${root}: ${outside.join(', ')}` };
     // `covering` is the same list as PLAIN repo-relative paths, for a test-runner command line.
-    return { ...out, source: 'explicit', include: tests.map((t) => escapeGlob(rel(t))), covering: [...tests] };
+    return { ...out, source: 'explicit', include: tests.map((t) => escapeGlob(rel(t))), covering: [...tests],
+      note: `covering tests (explicit, ${tests.length}): ${tests.join(', ')}` };
   }
   if (typeof P.matchesGlob !== 'function') {
     warnings.push('this node has no path.matchesGlob: co-located tests are not filtered by the workspace include');
@@ -325,8 +374,16 @@ function resolve({ repo, files, override, tests }) {
     for (const t of hits) found.add(t);
   }
   if (!missing.length) {
-    const covering = [...found].sort();
-    return { ...out, source: 'colocated', include: covering.map((t) => escapeGlob(rel(t))), covering };
+    let covering = [...found].sort();
+    // A barrel file can list half a workspace; a stated cap keeps the dry run finite, and the chosen
+    // list is printed, so a truncated set is visible rather than silent.
+    if (covering.length > MAX_COVERING_TESTS) {
+      warnings.push(`covering tests capped at ${MAX_COVERING_TESTS} (${covering.length} found): ` +
+        `${covering.slice(MAX_COVERING_TESTS).join(', ')} not selected — narrow the scope or pass --test-file`);
+      covering = covering.slice(0, MAX_COVERING_TESTS);
+    }
+    return { ...out, source: 'colocated', include: covering.map((t) => escapeGlob(rel(t))), covering,
+      note: `covering tests (${covering.length}): ${covering.join(', ')}` };
   }
   warnings.push(`covering_tests=workspace-include: no co-located test inside vitest_root ${root} for ${missing.join(', ')}`);
   const printed = own.kind === 'list' && own.globs.length ? own.globs : own.kind === 'default' ? [VITEST_DEFAULT_INCLUDE] : null;
@@ -476,5 +533,5 @@ function vitestRunnerVerdict(repo) {
 
 module.exports = {
   CONFIG_NAMES, VITEST_DEFAULT_INCLUDE, escapeGlob, findNearestConfig, hasProjects, projectsForm, parseTestInclude,
-  colocatedTests, workspaceDir, resolveVitest, renderVitestConfig, vitestRunnerVerdict,
+  colocatedTests, importingTests, workspaceDir, resolveVitest, renderVitestConfig, vitestRunnerVerdict,
 };

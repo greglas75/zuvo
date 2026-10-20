@@ -98,7 +98,9 @@
 #     the same idle timeout the run itself uses; a refusal exits non-zero (the watchdog reports 126).
 #
 # Vitest: the config nearest each scoped file (or --vitest-config); covering tests = --test-file/
-# --tests-from, else co-located foo.test|spec.* / __tests__/foo.*, else the config's own include.
+# --tests-from, else the co-located set (foo.test|spec.*, foo.<variant>.test|spec.*,
+# __tests__/foo[.<variant>][.test|.spec].*, and any test beside them importing the file — capped at
+# 40, the chosen list printed on stderr), else the config's own include.
 #   Inline projects — `test.projects: [{ extends: true, test: { … } }, …]`, objects defined in the
 #   config itself — are DROPPED for the scoped run (their project-level options stop applying; this
 #   is what the repo's own Stryker adapters do). A config whose projects live elsewhere (glob/string
@@ -703,6 +705,9 @@ if (runner === 'vitest') {
     process.exit(5);
   }
   for (const w of r.warnings) say(`WARNING ${w}`);
+  // The tests the run will admit, named before it starts: a missing sibling spec is visible here
+  // instead of only in the score.
+  if (r.note) say(r.note);
   const known = r.include || r.printed;
   const printed = known || [`<inherited from ${r.config}>`];
   vitest = { ...r, printed, count: known ? known.length : 'unknown' };
