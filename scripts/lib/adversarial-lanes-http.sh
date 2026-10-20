@@ -25,6 +25,18 @@ chat_payload() {
   fi
 }
 
+# openrouter_routing <model> — the OpenRouter `provider` field that pins which hosts serve <model>, or nothing for
+# OpenRouter's own routing. Unpinned, OpenRouter weights calls by price: mimo-v2.6-flash went mostly to the cheapest
+# host, which serves it 4-bit (mxfp4), so the lane's measured quality depended on whichever host answered. Pinned on
+# the owner's call (2026-10-20): mimo on Makora, DeepInfra when Makora does not answer; ling-3.1-flash on Novita
+# only. `allow_fallbacks: false` keeps OpenRouter from going past the list. Slugs: GET /api/v1/models/<id>/endpoints.
+openrouter_routing() {
+  case "$1" in
+    xiaomi/mimo-v2.6-flash)     echo '{"provider":{"order":["makora","deepinfra"],"allow_fallbacks":false}}' ;;
+    inclusionai/ling-3.1-flash) echo '{"provider":{"order":["novita"],"allow_fallbacks":false}}' ;;
+  esac
+}
+
 # chat_tokens <response> — "<prompt> in / <completion> out" from a chat response's usage ("?" when absent).
 chat_tokens() {
   printf '%s in / %s out' "$(printf '%s' "$1" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)" \
@@ -563,6 +575,8 @@ run_openrouter() {
          _or_extra='{"reasoning_effort":"low"}' ;;
     esac
   fi
+  # Host pinning is OpenRouter's field; the BytePlus and Z.ai lanes share this body but not that API.
+  [[ "$_lane" == openrouter* ]] && _or_extra="$(openrouter_routing "$model")"
   chat_payload "$payload_file" "$model" 0.2 "$_or_stream" "$_or_extra" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
   local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"

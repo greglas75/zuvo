@@ -449,7 +449,8 @@ import http.server, json, sys, threading, time
 MODE=sys.argv[1]; N=[0]
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
-        self.rfile.read(int(self.headers.get('Content-Length',0))); N[0]+=1
+        req=self.rfile.read(int(self.headers.get('Content-Length',0))); N[0]+=1
+        if MODE=='capture': open(sys.argv[2],'wb').write(req)
         if MODE=='502html':
             b=b'<html><body>\x1b[31m502 Bad Gateway \xe2\x80\x94 \x9b2J\xc2\x9b\xe2\x80\xae retry\r</body></html>'; self.send_response(502)
             self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(b)))
@@ -513,6 +514,32 @@ sys.exit(0 if line is not None and all(0x20 <= c <= 0x7e for c in line) else 1)
 else
   fail "HTTP 502 with an HTML body fails the lane and names the HTTP status" "reviewed=$_or_reviewed kept=[$_or_kept] out: $(printf '%s' "$_out" | tail -2)"
 fi
+
+# ─── Case OR.4/OR.5: pinned hosts reach the request ────
+# Unpinned, OpenRouter sent mimo mostly to its cheapest host, 4-bit. The bug these catch: the pin
+# is lost on the way to the request (the lane label, the model, or the payload merge), and the
+# lane silently goes back to whichever host is cheapest.
+_or_body="$HERE/.tmp/or-body.json"
+
+start_test "OR.4 openrouter-alt (mimo) asks for Makora, then DeepInfra, and no other host"
+rm -f "$_or_body"
+exec 9< <(python3 "$_or_fake" capture "$_or_body"); read -u 9 _or_port
+printf 'diff --git a/x b/x\n+x\n' | ZUVO_OPENROUTER_BASE_URL="http://127.0.0.1:$_or_port/v1" \
+  OPENROUTER_API_KEY="sk-or-test-fake" ZUVO_MODEL_OPENROUTER_ALT="xiaomi/mimo-v2.6-flash" \
+  ZUVO_ADV_OPENROUTER=1 ZUVO_REVIEW_TIMEOUT=40 bash "$ADV" --provider openrouter-alt --mode code >/dev/null 2>&1
+exec 9<&-
+assert_eq '{"order":["makora","deepinfra"],"allow_fallbacks":false}' \
+  "$(jq -c '.provider' "$_or_body" 2>/dev/null)" "mimo request pins makora → deepinfra"
+
+start_test "OR.5 a model with no pin leaves the host to OpenRouter"
+rm -f "$_or_body"
+exec 9< <(python3 "$_or_fake" capture "$_or_body"); read -u 9 _or_port
+printf 'diff --git a/x b/x\n+x\n' | ZUVO_OPENROUTER_BASE_URL="http://127.0.0.1:$_or_port/v1" \
+  OPENROUTER_API_KEY="sk-or-test-fake" ZUVO_MODEL_OPENROUTER="z-ai/glm-5.3-flashx" \
+  ZUVO_ADV_OPENROUTER=1 ZUVO_REVIEW_TIMEOUT=40 bash "$ADV" --provider openrouter --mode code >/dev/null 2>&1
+exec 9<&-
+assert_eq 'null|z-ai/glm-5.3-flashx' \
+  "$(jq -r '"\(.provider)|\(.model)"' "$_or_body" 2>/dev/null)" "unpinned request has no provider field"
 
 # ─── Case STOP: lanes with a known stop are not drawn ────────────────────────
 # Bug caught: rdesigner #4111 (2026-10-17) — the draw took 5 of 8, four of them already on record as stopped
