@@ -216,5 +216,19 @@ PY
 [ "$contract" = "OK" ] && pass "column indices match the writer's LOG_HEADER and the docs list every BILLING vendor" \
   || bad "contract: $contract"
 
+# Bug caught: a lane on cooldown is invisible in the usage table (it has no rows while skipped), so the owner
+# could not tell a cooled lane from an idle one. The same rule as the driver: 2 strikes, 30 min doubling, 4 h cap.
+NOWS=$(date +%s)
+printf 'cool-lane\tm1\t2\t%s\tempty\nover-lane\tm2\t2\t%s\ttimeout\nlong-lane\tm3\t4\t%s\tempty\nprobed-lane\tm4\t3\t%s\tprobe-ok\nfine-lane\tm5\t1\t%s\tempty\n' \
+  "$NOWS" "$(( NOWS - 1900 ))" "$(( NOWS - 5400 ))" "$NOWS" "$NOWS" > "$TMP/health.tsv"
+cd_out="$(env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
+  -u ZUVO_ADV_COOLDOWN_THRESHOLD "$TOOL" --log "$LOG" --health "$TMP/health.tsv" 2>&1)"
+case "$cd_out" in *"cool-lane [m1]: cooldown until "*"(2 x empty)"*) pass "a fresh cooldown is listed with its end and reason" ;;
+  *) bad "cooling lane not listed: $cd_out" ;; esac
+case "$cd_out" in *"over-lane [m2]: cooldown over"*) pass "an expired one says it is re-probed next" ;; *) bad "expired lane: $cd_out" ;; esac
+case "$cd_out" in *"long-lane [m3]: cooldown until "*) pass "4 strikes: the doubled (2 h) window still holds after 90 min" ;; *) bad "doubling: $cd_out" ;; esac
+case "$cd_out" in *"probed-lane [m4]: re-probe answered"*) pass "a probe-ok row is shown running" ;; *) bad "probe-ok: $cd_out" ;; esac
+case "$cd_out" in *fine-lane*) bad "a lane below the threshold is listed" ;; *) pass "a lane below the threshold is not listed" ;; esac
+
 printf 'RESULT: PASS=%d FAIL=%d\n' "$npass" "$nfail"   # the verdict line mutation runners read
 exit "$fail"

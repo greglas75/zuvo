@@ -495,6 +495,7 @@ record_provider_health() {
   # reached it), unverified (without the runner a short answer cannot be judged a login stub) and
   # no-runner (model-subprocess.sh did not load) and no-key (no usable API key): a broken install or a missing
   # key is not a broken lane, and counted here would bench a healthy lane long after it is fixed.
+  # And `input`: the lane refused THIS input (a prompt over its context window) — the input's fault, not the lane's.
   models=""
   for _rp in $(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' ' '); do
     _rn="${_rp%%:*}"; [[ -n "$_rn" ]] || continue
@@ -511,7 +512,7 @@ record_provider_health() {
       grp=ENVIRON["ZUVO_ADV_STRIKE_GROUP"]; gsub(/[\t\n\r]/, "", grp)
       n=split(outcomes, pp, ",")
       for(i=1;i<=n;i++){ split(pp[i], kv, ":")
-        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified" && kv[2]!="no-runner" && kv[2]!="no-key") seen[kv[1]]=kv[2] }
+        if(kv[1]!="" && kv[2]!="" && kv[2]!="not-attempted" && kv[2]!="unverified" && kv[2]!="no-runner" && kv[2]!="no-key" && kv[2]!="input") seen[kv[1]]=kv[2] }
       while((getline l < hf) > 0){ k=split(l, f, "\t"); if(k<4) continue
         key=f[1] SUBSEP f[2]; cnt[key]=f[3]+0; ts[key]=f[4]
         last[key]=(k>=5 ? f[5] : ""); sg[key]=(k>=6 ? f[6] : "") }
@@ -526,7 +527,9 @@ record_provider_health() {
         # the hour changes nothing — not the count, the class or the time: whichever order the parts end in,
         # a review with any answering part leaves 0, one with none leaves exactly one strike.
         if(seen[p]!="ok" && grp != "" && sg[key] == grp && now >= ts[key] && now - ts[key] <= 3600) continue
-        if(seen[p]=="ok"){ cnt[key]=0; last[key]="ok" }
+        # probe-ok: the cooldown canary answered — the lane runs again, the count stands until a real answer.
+        if(seen[p]=="probe-ok"){ cnt[key]=((key in cnt) ? cnt[key] : 0); last[key]="probe-ok" }
+        else if(seen[p]=="ok"){ cnt[key]=0; last[key]="ok" }
         else             { cnt[key]=((key in cnt) ? cnt[key] : 0) + 1; last[key]=seen[p] }
         sg[key]=grp
         ts[key]=now

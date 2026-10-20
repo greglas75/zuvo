@@ -227,18 +227,25 @@ ZUVO_PROVIDER_HEALTH_FILE="$_hfl" ZUVO_REVIEW_PIN_PROVIDERS="" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>/dev/null >/dev/null
 assert_eq "0" "$(grep -c '^legacy-lane' "$_hfl" | tr -d ' ')" "legacy row is gone after one run"
 
-start_test "CAP.1g cooldown expiry lets a benched provider back in for one probe"
-# A permanent ban would mean a restored subscription silently costs a reviewer forever.
+start_test "CAP.1g cooldown expiry lets a benched provider back in once it answers the re-probe"
+# A permanent ban would mean a restored subscription silently costs a reviewer forever. Since the lane cooldown
+# the way back is the canary the next review run sends first (a lane that fails it stays out: test-lane-cooldown.sh
+# LC.2/LC.3).
 # Each bench case seeds its OWN ledger, so the cases run in any order and no leftover row decides the next.
 _hfg="$HERE/.tmp/health-expiry.tsv"
-printf 'mock-empty\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hfg"
-ZUVO_PROVIDER_HEALTH_FILE="$_hfg" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
-  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+printf 'mock-probe-ok\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hfg"
+rm -rf "$HERE/.tmp/cap1g-home"; mkdir -p "$HERE/.tmp/cap1g-home"
+env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
+  -u ZUVO_ADV_COOLDOWN_THRESHOLD ZUVO_HOME="$HERE/.tmp/cap1g-home" \
+  ZUVO_PROVIDER_HEALTH_FILE="$_hfg" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-probe-ok" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1g.err" >/dev/null
 case "$(cat "$HERE/.tmp/cap1g.err")" in
-  *Benched*) fail "stale bench expires" "still benched after the cooldown window" ;;
+  *Benched*|*"cooldown until"*) fail "stale bench expires" "still benched after the cooldown window" ;;
   *)         pass "stale bench expires" ;;
 esac
+assert_contains "$(cat "$HERE/.tmp/cap1g.err")" "mock-probe-ok: cooldown over" "the expired lane was re-probed"
+assert_eq "0 ok" "$(awk -F'\t' '$1 == "mock-probe-ok" { print $3, $5 }' "$_hfg")" "it reviewed and its strikes were reset"
 
 start_test "CAP.1h all-benched fails OPEN rather than running nothing"
 # If every candidate is benched the ledger is likelier wrong than the whole fleet being down.

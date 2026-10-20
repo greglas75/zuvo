@@ -44,6 +44,7 @@ import argparse
 import datetime as dt
 import os
 import sys
+import time
 import math
 import re
 from collections import defaultdict
@@ -134,7 +135,75 @@ def parse_args(argv):
     default_log = os.environ.get("ZUVO_ADVERSARIAL_LOG_FILE") or os.path.join(
         os.environ.get("ZUVO_HOME") or os.path.join(os.path.expanduser("~"), ".zuvo"), "adversarial.log")
     p.add_argument("--log", default=default_log)
+    default_health = os.environ.get("ZUVO_PROVIDER_HEALTH_FILE") or os.path.join(
+        os.environ.get("ZUVO_HOME") or os.path.join(os.path.expanduser("~"), ".zuvo"), "provider-health.tsv")
+    p.add_argument("--health", default=default_health, help="provider-health ledger (lane cooldowns)")
     return p.parse_args(argv)
+
+
+def env_int(name, default):
+    raw = os.environ.get(name, "")
+    # ASCII digits only ("²" passes isdigit() and int() refuses it), at most 12: no runaway window from a typo.
+    return int(raw) if re.fullmatch(r"[0-9]{1,12}", raw) and int(raw) >= 1 else default
+
+
+def cooldowns(path, now=None):
+    """The lane cooldowns the driver would apply now — the same rule as _ar_cooldown_rows
+    (scripts/lib/adversarial-providers.sh): THRESHOLD strikes, BASE doubled per further strike, capped at MAX,
+    auth at MAX; a probe-ok row runs again with its strikes standing. Lines of text, empty when none."""
+    if os.environ.get("ZUVO_ADV_NO_COOLDOWN") == "1" or os.environ.get("ZUVO_PROVIDER_BENCH", "1") != "1":
+        return []   # the old bench, or no ledger at all: the driver cools nothing
+    thr = env_int("ZUVO_ADV_COOLDOWN_THRESHOLD", 2)
+    base = env_int("ZUVO_ADV_COOLDOWN_BASE", 1800)
+    cap = max(env_int("ZUVO_ADV_COOLDOWN_MAX", 14400), base)
+    off = set(os.environ.get("ZUVO_ADV_COOLDOWN_OFF", "").replace(",", " ").split())
+    now = int(time.time()) if now is None else now
+    out = []
+    try:
+        with open(path, errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return []
+    rows = {}
+    for line in lines:   # one row per (lane, model), the last one written wins — as the driver's awk keys them
+        f = line.split("\t")
+        if len(f) >= 4:
+            rows[(f[0], f[1])] = f
+    for key in sorted(rows):
+        f = rows[key]
+        if not re.fullmatch(r"[0-9]+", f[2]) or not re.fullmatch(r"[0-9]+", f[3]) or int(f[2]) < thr:
+            continue
+        lane, model, cnt, ts = f[0], f[1], int(f[2]), int(f[3])
+        if lane in off:
+            continue
+        last = f[4] if len(f) >= 5 and f[4] else "failure"
+        if ts > now:
+            continue
+        if last == "probe-ok":
+            out.append("%s [%s]: re-probe answered — running, %d strike(s) standing" % (lane, model, cnt))
+            continue
+        w = base
+        for _ in range(cnt - thr):
+            if w >= cap:
+                break
+            w *= 2
+        if w > cap or last == "auth":
+            w = cap
+        try:
+            until = time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(ts + w))
+        except (OverflowError, OSError, ValueError):
+            continue   # a corrupt epoch: the driver's awk cannot cool on it either; never end the report
+        state = "cooldown until %s" % until if now - ts < w else "cooldown over — re-probe on the next run"
+        out.append("%s [%s]: %s (%d x %s)" % (lane, model, state, cnt, last))
+    return out
+
+
+def print_cooldowns(args):
+    lines = cooldowns(args.health)
+    if lines:
+        print("\nLane cooldowns (%s):" % args.health)
+        for l in lines:
+            print("  " + l)
 
 
 def collect(args):
@@ -311,6 +380,7 @@ def main(argv):
     print("Adversarial review usage since %s%s" % (since, scope))
     if not groups:
         print("(no provider rows since %s%s in %s)" % (since, scope, args.log))
+        print_cooldowns(args)
         return 1 if args.project else 0
     table = rows(groups)
     print()
@@ -318,6 +388,7 @@ def main(argv):
     print(billing_footer(table, args.markdown))
     if skipped:
         print("\n%d truncated row(s) in the window skipped — not counted above." % skipped)
+    print_cooldowns(args)
     print("\nCRIT = CRITICALs a model reported per review, not how many were right.")
     return 0
 

@@ -268,11 +268,13 @@ benched "$errfile" && bad "Codex host: a (claude, claude-sonnet-5) row benched t
 
 # ── malformed and legacy ledger rows (the bench awk) ──────────────────────────────────────────────
 # dry_bench <label> <want: benched|free> <ledger> [VAR=value ...] — Claude host, Sonnet pinned, so the
-# key under test is (claude, claude-sonnet-5); extra VARs (cooldowns) go after the host ones.
+# key under test is (claude, claude-sonnet-5); extra VARs (cooldowns) go after the host ones. These cases pin the
+# old bench's windows (soft 45 min / full 6 h), so they run it: ZUVO_ADV_NO_COOLDOWN=1. The lane cooldown that
+# replaced it as the default has its own cases (tests/adversarial/test-lane-cooldown.sh).
 dry_bench() {
   local label="$1" want="$2" ledger="$3" res rc errfile
   shift 3
-  res="$(run_dry_env "$ledger" CLAUDECODE=1 ZUVO_CLAUDE_REVIEWER_MODEL=claude-sonnet-5 "$@")"
+  res="$(run_dry_env "$ledger" CLAUDECODE=1 ZUVO_CLAUDE_REVIEWER_MODEL=claude-sonnet-5 ZUVO_ADV_NO_COOLDOWN=1 "$@")"
   rc="${res%%|*}"; errfile="${res#*|}"
   [ "$rc" = "0" ] && ok "$label: exits 0" || bad "$label: exited $rc (want 0)"
   if [ "$want" = "benched" ]; then
