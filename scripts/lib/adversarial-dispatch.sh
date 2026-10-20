@@ -198,9 +198,12 @@ _byteplus_fallback() {
   else
     echo "  NOTE: $lane: BytePlus quota exhausted until $when — fallback step 2: Alibaba Token Plan $fb" >&2
     printf '%s' "$fb" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
-    printf 'fallback step 2: Alibaba Token Plan %s' "$fb" > "$JSON_TMPDIR/fallback-note-$lane" 2>/dev/null || true
-    # Its own file names: the qwen lane may be running in the same JSON_TMPDIR at the same time.
-    ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" ZUVO_QWEN_LANE="$lane" run_qwen && return 0
+    # Its own file names: the qwen lane may be running in the same JSON_TMPDIR at the same time. The note (the `Done:`
+    # line's) only for a review the step wrote.
+    ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" ZUVO_QWEN_LANE="$lane" run_qwen && {
+      printf 'fallback step 2: Alibaba Token Plan %s' "$fb" > "$JSON_TMPDIR/fallback-note-$lane" 2>/dev/null || true
+      return 0
+    }
     rc=$?
     aq="$(alibaba_quota_until)" || return "$rc"
     why="Alibaba Token Plan quota exhausted until $(_ar_epoch_text "$aq")"
@@ -232,8 +235,8 @@ _byteplus_or_step() {
   if served="$(cat "$JSON_TMPDIR/or-served-$lane" 2>/dev/null)" && [[ -n "$served" ]]; then
     printf '%s@%s' "$or_model" "$served" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
   fi
-  printf 'fallback step 3: OpenRouter %s' "$(cat "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null)" \
-    > "$JSON_TMPDIR/fallback-note-$lane" 2>/dev/null || true
+  [[ $rc -eq 0 ]] && { printf 'fallback step 3: OpenRouter %s' "$(cat "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null)" \
+    > "$JSON_TMPDIR/fallback-note-$lane" 2>/dev/null || true; }
   return "$rc"
 }
 
