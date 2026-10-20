@@ -319,7 +319,9 @@ PYEOF
 # The diff is over the driver's default input ceiling (ZUVO_ADV_MAX_INPUT_BYTES), which
 # would refuse it with exit 2 before the material check ran. This case is about that check on a large
 # input, not about the ceiling (hardening F28 drives the refusal), so it raises the ceiling for itself.
-rc=$(dry_ar code ZUVO_ADV_MAX_INPUT_BYTES=16777216 < "$S/big.diff")
+# ZUVO_ADV_NO_CHUNK=1: its one hunk is now split at its lines into ~300 parts, and a chunked dry run prints the
+# chunk plan instead of the one prompt this case reads the check's verdict from.
+rc=$(dry_ar code ZUVO_ADV_MAX_INPUT_BYTES=16777216 ZUVO_ADV_NO_CHUNK=1 < "$S/big.diff")
 passed_check "a 200k-line real diff is NOT rejected as no-material (the SIGPIPE regression)" "$rc" "+line 0 of a large but entirely real diff"
 
 echo "=== prose is not code (the false negative that mirrors it) ==="

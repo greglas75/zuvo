@@ -495,15 +495,21 @@ _ck_count_units() {
 # file's text, not a hunk.
 _ck_count_hunks() {
   LC_ALL=C awk -v re="$FILE_HEADER_RE" -v budget="${1:-0}" '
+    # Splittable, as _ck_split_hunks rules it: over the budget with its file header and trailer, room for a
+    # sub-hunk body (the budget less header, trailer, 200 and the section heading) of 1000 bytes or more, and
+    # two or more lines a part can start at (a `\` marker or an empty closing line never starts one).
     function close_sec(   k) {
-      for (k = 1; k <= nh; k++) if (budget > 0 && fixed + hs[k] > budget && hl[k] >= 2) n++
+      for (k = 1; k <= nh; k++)
+        if (budget > 0 && fixed + hs[k] > budget && budget - fixed - 200 - hr[k] >= 1000 && hl[k] >= 2) n++
       nh = 0; fixed = 0; st = 0
     }
     $0 ~ re { close_sec(); indiff = ($0 ~ /^diff --git /); if (indiff) fixed = length($0) + 1; next }
     !indiff { next }
     st < 2 && /^=== CONTEXT: / { st = 2 }
-    st != 2 && /^@@ /          { st = 1; nh++; n++; hs[nh] = length($0) + 1; hl[nh] = 0; next }
-    st == 1 { hs[nh] += length($0) + 1; hl[nh]++; next }
+    st != 2 && /^@@ /          { st = 1; nh++; n++; hs[nh] = length($0) + 1; hl[nh] = 0
+                                 hr[nh] = match($0, /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/) ? length($0) - RLENGTH : 1e9
+                                 next }
+    st == 1 { hs[nh] += length($0) + 1; if ($0 != "" && !/^\\/) hl[nh]++; next }
             { fixed += length($0) + 1 }
     END { close_sec(); print n + 0 }'
 }
@@ -513,9 +519,11 @@ _ck_count_hunks() {
 # alone overflows is cut at its LINE boundaries into sub-hunks that each fit, every one a valid hunk: a synthetic
 # `@@ -a,b +c,d @@` header recomputed from the lines it holds (context counts on both sides, `-` old, `+` new, a
 # `\ No newline` marker on neither and never separated from the line before it, empty lines closing the hunk on
-# neither), so a reviewer's file:line stays right; the section heading stays on the first sub-hunk only. Only a single LINE over the budget still overflows — its part is cut by the child's truncate path.
-# A hunk is left whole when the file header and trailer leave under 1000 bytes of room, or its header does not
-# parse. Beside each part, <dir>/pnote-<name>-pNNNN names its hunks. Prints the number of parts written: 0 when
+# neither unless its header counts them), so a reviewer's file:line stays right. The section heading stays on
+# the first sub-hunk only. Only a single LINE over the budget still overflows: its part is cut by the child's
+# truncate path. A hunk is left whole when its header does not parse, or when the room for a sub-hunk body (the
+# budget less the file header, the trailer, 200 bytes for the synthetic header and the section heading) is under
+# 1000. Beside each part, <dir>/pnote-<name>-pNNNN names its hunks. Prints the number of parts written: 0 when
 # the section has fewer than 2 units (whole hunks or hunk parts) — nothing is written.
 _ck_split_hunks() {
   local sec="$1" budget="$2"
@@ -549,7 +557,7 @@ _ck_split_hunks() {
     }
     # cut(k, avail) — hunk k as sub-hunks of at most <avail> body bytes each (a longer single line stays one part);
     # 0, adding nothing, when its header does not parse or it yields one part.
-    function cut(k, avail,   h, rest, ab, o, nw, no, nn, i, c, sz, from, cur, po, pn, pc, m, last) {
+    function cut(k, avail,   h, rest, ab, o, nw, no, nn, i, c, sz, from, cur, po, pn, pc, m, last, j, to, tn, sz2) {
       h = L[us[k]]
       if (!match(h, /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/)) return 0
       rest = substr(h, RLENGTH + 1)
@@ -561,12 +569,23 @@ _ck_split_hunks() {
       # The next old / new line number: a side with no lines names the line before the gap.
       no = (o[2] + 0 == 0) ? o[1] + 1 : o[1] + 0
       nn = (nw[2] + 0 == 0) ? nw[1] + 1 : nw[1] + 0
-      # Empty lines closing the hunk (a separator before the next file) are not context: they count on neither side.
+      # Empty lines closing the hunk (a separator before the next file) are not context: they count on neither
+      # side — unless the header of the hunk counts them, as blank context lines whose space was stripped.
       for (last = ue[k]; last > us[k] && L[last] == ""; last--) ;
+      if (last < ue[k]) {
+        to = 0; tn = 0
+        for (j = us[k] + 1; j <= last; j++) {
+          c = substr(L[j], 1, 1)
+          if (c == "-") to++; else if (c == "+") tn++; else if (c != "\\") { to++; tn++ }
+        }
+        if (o[2] - to == ue[k] - last && nw[2] - tn == ue[k] - last) last = ue[k]
+      }
       from = us[k] + 1; cur = 0; po = 0; pn = 0; m = 0
       for (i = from; i <= ue[k] + 1; i++) {
         sz = (i <= ue[k]) ? length(L[i]) + 1 : 0
-        if (i > ue[k] || (cur > 0 && i <= last && cur + sz > avail && substr(L[i], 1, 1) != "\\")) {
+        # A `\` marker goes with the line before it, so that line is measured with it.
+        if (i < ue[k] && substr(L[i + 1], 1, 1) == "\\") sz2 = sz + length(L[i + 1]) + 1; else sz2 = sz
+        if (i > ue[k] || (cur > 0 && i <= last && cur + sz2 > avail && substr(L[i], 1, 1) != "\\")) {
           m++
           # The heading names the function the HUNK starts in: true of the first part only.
           phdr[m] = sprintf("@@ -%s +%s @@%s", rng(no, po), rng(nn, pn), m == 1 ? rest : "")

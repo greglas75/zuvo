@@ -847,8 +847,14 @@ for f in sorted(glob.glob(d + "/*.in")):
         osum += b; nsum += e
         oc = nc = 0
         i += 1
-        while i < len(lines) and lines[i][:1] in (" ", "-", "+", "\\") and not lines[i].startswith("diff --git "):
+        # A body line: ' ', '-', '+', '\\' — or an empty line the header still counts (a blank context line whose
+        # space was stripped), which has no o=/n= to check.
+        while i < len(lines) and not lines[i].startswith("diff --git ") and (
+                lines[i][:1] in (" ", "-", "+", "\\") or (lines[i] == "" and oc < b and nc < e)):
             body = lines[i]
+            if body == "":
+                oc += 1; nc += 1; no += 1; nn += 1; i += 1
+                continue
             seen.append(body)
             om, nm = re.search(r" o=(\d+)", body), re.search(r" n=(\d+)", body)
             if body[0] in " -":
@@ -931,3 +937,16 @@ ck_run_parts 44 "$CK_HK/longhdr.diff"; rc=$?
 assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
 assert_eq "hunks=2 lines=325 unique=325 old=0 new=325 bad=0" "$(ck_hunk_verify 44 "$ck44_path")" \
   "every line reached one of two sub-hunks with a valid header"
+
+start_test "CK.45 blank context lines whose space was stripped, closing an over-cap hunk: still counted, as the header says"
+# An empty line closing a hunk is a separator unless the hunk's own header counts it; a diff passed through an
+# editor or `sed 's/ *$//'` turns the blank context line " " into "". Here the header counts both empty lines.
+{ printf 'diff --git a/blank.ts b/blank.ts\nindex 6666666..7777777 100644\n--- a/blank.ts\n+++ b/blank.ts\n'
+  awk 'BEGIN { printf "@@ -1,442 +1,442 @@\n"
+    for (i = 1; i <= 440; i++) printf " ctx o=%d n=%d context padding padding padding padding padding padding\n", i, i
+    print ""; print "" }'
+  printf 'diff --git a/other.ts b/other.ts\n--- a/other.ts\n+++ b/other.ts\n@@ -1 +1 @@\n-a\n+b\n'; } > "$CK_HK/blank.diff"
+ck_run_parts 45 "$CK_HK/blank.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+assert_eq "hunks=2 lines=440 unique=440 old=442 new=442 bad=0" "$(ck_hunk_verify 45 blank.ts)" \
+  "the sub-hunks' counts add up to the header's 442, the two stripped blank lines included"
