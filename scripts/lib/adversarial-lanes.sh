@@ -878,7 +878,7 @@ alibaba_quota_until() {   # prints the stop epoch while it is ahead; status 1 ot
   f="$(_alibaba_quota_file)" || return 1
   [[ -f "$f" ]] || return 1
   { read -r until _ < "$f"; } 2>/dev/null || [[ -n "$until" ]] || return 1
-  [[ "$until" =~ ^[0-9]{9,11}$ ]] && (( until > $(date +%s) )) || return 1
+  [[ "$until" =~ ^[1-9][0-9]{8,10}$ ]] && (( until > $(date +%s) )) || return 1
   printf '%s\n' "$until"
 }
 # _alibaba_quota_error <text> — status 0 when the text is the plan's spent-quota refusal (a throttling 429 is not).
@@ -904,10 +904,12 @@ _alibaba_reset_epoch() {
   printf '%s\n' "$e"
 }
 # alibaba_quota_record <lane> <text> — the reset into the HOME file (temp file + mv: concurrent lanes and runs never
-# read half a write); prints the recorded epoch.
+# read half a write), unless a later reset is already on file: an hour's guess must not cut a monthly stop short.
+# Prints the reset in force.
 alibaba_quota_record() {
-  local until f tmp
+  local until f tmp held
   until=$(_alibaba_reset_epoch "$2")
+  if held="$(alibaba_quota_until)" && (( held >= until )); then printf '%s\n' "$held"; return 0; fi
   if f="$(_alibaba_quota_file)"; then
     mkdir -p -- "${f%/*}" 2>/dev/null || true
     tmp="$f.$$.$RANDOM"

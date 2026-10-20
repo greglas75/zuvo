@@ -252,6 +252,11 @@ start_test "q.16 the Token Plan reset: no date is an hour, a date behind this ye
 ) > "$QTMP/q16.out" 2>&1
 assert_eq "hour
 ahead" "$(cat "$QTMP/q16.out")" "no date → an hour; a date already behind is never taken as past"
+# Bug caught: a refusal with no usable date, arriving after the monthly stop was recorded, cutting it to an hour.
+printf '%s\tbyteplus-alt\n' "$RESET" > "$QTMP/q16.aquota"
+( source "$ROOT/scripts/lib/adversarial-lanes.sh"
+  ZUVO_ALIBABA_QUOTA_FILE="$QTMP/q16.aquota" alibaba_quota_record qwen "$(ali_msg "soon")" >/dev/null ) 2>/dev/null
+assert_eq "$RESET" "$(cut -f1 "$QTMP/q16.aquota")" "a later reset already on file is kept"
 
 # Bug caught: a refused call's all-zero usage (qwen records a spent-plan call as 0 in / 0 out) logged as 0 in
 # columns 19-22 — a measured, free call — instead of empty; a real call next to it must still be summed.
