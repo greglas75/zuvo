@@ -348,8 +348,18 @@ Environment variables:
   ZUVO_BYTEPLUS_FALLBACK_<LANE>  Alibaba Token Plan model (qwen CLI, needs ZUVO_ADV_QWEN=1) a BytePlus lane
                            (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) runs while the plan's quota is spent (default:
                            glm-5.3-flash -> glm-5.3, deepseek-v4-1-flash -> deepseek-v4.1-flash, none for the
-                           rest: left out). Never OpenRouter. Set but empty = no fallback. The reset is kept in
+                           rest). Set but empty = no Token Plan step. The reset is kept in
                            ~/.zuvo/byteplus-quota-until.
+  ZUVO_GLM_OR_MODEL / ZUVO_GLM_OR_PROVIDERS, ZUVO_DEEPSEEK_OR_MODEL / ZUVO_DEEPSEEK_OR_PROVIDERS
+                           Step 3 when the Token Plan is out too: OpenRouter, pinned to these endpoint tags in
+                           order, no other endpoint (default glm: z-ai/glm-5.3-flash on baseten/fp8,baseten/fp8/us,
+                           wafer/nvfp4; deepseek: deepseek/deepseek-v4.1-flash-1017 on inference-net/fp8,
+                           parasail/fp8,atlas-cloud/fp8). Needs ZUVO_ADV_OPENROUTER=1; priced against the daily
+                           cap. Set but empty = no step 3.
+  ZUVO_OR_SORT_<LANE> / ZUVO_OR_QUANTS_<LANE>
+                           OpenRouter routing of an unpinned lane (OPENROUTER, OPENROUTER_ALT, …): sort
+                           price|throughput|latency (default throughput) and the allowed quantizations (default
+                           fp8,fp16,bf16,fp32 for a model with such endpoints, else none). Empty = not sent.
   ZUVO_ADV_ZAI=1           Opt IN to the `zai` lane: Z.ai GLM Coding Plan (prepaid). Key in ZAI_API_KEY or
                            ~/.zuvo/zai.key (ZUVO_ZAI_KEY_FILE; mode 600/400, the full {id}.{secret}). Key
                            presence alone does NOT enable it — the plan's quota is shared.

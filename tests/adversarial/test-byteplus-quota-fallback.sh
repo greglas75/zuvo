@@ -3,8 +3,9 @@
 # byteplus_quota_*, adversarial-lanes-http.sh).
 #
 # The plan answers a spent quota with HTTP 429 AccountQuotaExceeded and names its reset: recorded once, the plan
-# not asked again until then, glm and deepseek on the Alibaba Token Plan (qwen CLI) — never on OpenRouter, which
-# bills per call — and dola-seed left out without counting against it.
+# not asked again until then, glm and deepseek on the Alibaba Token Plan (qwen CLI), and dola-seed left out without
+# counting against it. Step 3 (OpenRouter, pinned) is off in every case here (ZUVO_*_OR_MODEL empty), so a request
+# to OpenRouter is a path this file does not expect; test-byteplus-or-fallback.sh covers that step.
 
 ADV="$ROOT/scripts/adversarial-review.sh"
 EMPTY="$ADV_TEST_EMPTY"
@@ -75,7 +76,8 @@ run_q() {
     -u BPQ_SLOW -u ZUVO_MODEL_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_3 -u ZUVO_QWEN_MODEL -u BPQ_ALI_MSG \
     PATH="$QTMP/bin:$PATH" BPQ_REC="$home" ZUVO_BYTEPLUS_KEY_FILE="$KEYFILE" HOME="$home" ZUVO_HOME="$home" \
     ZUVO_BYTEPLUS_QUOTA_FILE="$home/quota" ZUVO_ALIBABA_QUOTA_FILE="$home/aquota" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
-    ZUVO_QWEN_SETTINGS="$QSET" ZUVO_ADV_QWEN=1 ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 "$@" \
+    ZUVO_QWEN_SETTINGS="$QSET" ZUVO_ADV_QWEN=1 ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+    ZUVO_GLM_OR_MODEL= ZUVO_DEEPSEEK_OR_MODEL= "$@" \
     bash "$ADV" --provider "$lane" --mode code --files "$EMPTY" >/dev/null 2>&1
   echo "$?" > "$home/rc"
   cat "$home"/adversarial-failures/*/provider_*.stderr 2>/dev/null

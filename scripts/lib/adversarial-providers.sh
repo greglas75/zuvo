@@ -389,10 +389,9 @@ detect_providers() {
   # Antigravity, whose ~12 calls / 5h made it a fallback only.
   if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
     if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
-      # While the plan's quota is spent run_byteplus runs deepseek on the Alibaba Token Plan, never OpenRouter, and leaves dola-seed out.
-      # `byteplus` (glm-5.3-flash) is not in the default set (owner): GLM runs on its own vendor's plan, lane
-      # `zai`. Still reachable by name or ZUVO_ADV_BYTEPLUS_LANES.
-      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus-alt byteplus-3}"
+      # While the plan's quota is spent run_byteplus runs glm and deepseek on the Alibaba Token Plan, then on pinned
+      # OpenRouter endpoints, and leaves dola-seed out.
+      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus byteplus-alt byteplus-3}"
     else
       echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
     fi
@@ -680,7 +679,8 @@ provider_model() {
                   # subshells, so an exported name set inside run_agy never reaches this caller.
                   _ar_recorded_model agy-effective-model && return 0 ;;
     byteplus|byteplus-alt|byteplus-3)
-                  # Same reason: with the plan out of quota the review ran on OpenRouter (_byteplus_fallback).
+                  # Same reason: with the plan out of quota the review ran on the Token Plan or on OpenRouter as
+                  # <model>@<provider> (_byteplus_fallback).
                   _ar_recorded_model "byteplus-effective-model-$1" && return 0 ;;
   esac
   lane_model "$1"
@@ -825,10 +825,15 @@ _ar_lane_stop() {   # <lane> — prints why the lane cannot run now; status 1 wh
       echo "muse quota until $(_ar_epoch_text "$until")" ;;
     byteplus|byteplus-alt|byteplus-3)
       until="$(byteplus_quota_until)" || return 1
+      # Stopped only when neither fallback step can run: the Token Plan (step 2), nor OpenRouter (step 3).
       fb="$(byteplus_fallback_model "$lane" "$(lane_model "$lane")")"
-      if [[ -z "$fb" ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), no Token Plan stand-in"
-      elif [[ "${ZUVO_ADV_QWEN:-0}" != 1 ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), stand-in $fb needs ZUVO_ADV_QWEN=1"
-      else return 1; fi ;;
+      [[ -n "$fb" && "${ZUVO_ADV_QWEN:-0}" == 1 ]] && ! alibaba_quota_until >/dev/null && return 1
+      if [[ -n "$(byteplus_or_fallback "$(lane_model "$lane")")" && "${ZUVO_ADV_OPENROUTER:-0}" == 1 ]]; then
+        spent="$(openrouter_budget_spent)" || return 1
+        echo "BytePlus quota until $(_ar_epoch_text "$until"), Token Plan out, OpenRouter daily budget \$${spent% *}/\$${spent#* }"
+        return 0
+      fi
+      echo "BytePlus quota until $(_ar_epoch_text "$until"), no fallback step can run" ;;
     openrouter|openrouter-alt|openrouter-3|openrouter-4|openrouter-mini)
       # A base URL on a prepaid plan host is not OpenRouter's money.
       [[ -n "$(_plan_endpoint "$lane" "${ZUVO_OPENROUTER_BASE_URL:-}" 2>/dev/null)" ]] && return 1

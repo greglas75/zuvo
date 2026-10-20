@@ -91,17 +91,48 @@ never a review: it fails with a named reason and is retried like a dropped conne
 3-10 min per review (bench rerun 2026-10-06: 171-576 s), so the slowest diffs exceed the 500 s lane
 timeout — backlog `B-20261006-BYTEPLUS-GLM-TIMEOUT-VS-500S`.
 
-**A spent BytePlus quota falls back to the Alibaba Token Plan (since 2026-10-16; never OpenRouter).** The plan answers a spent
+**A spent BytePlus quota falls back in three steps (since 2026-10-20, owner's decision).** The plan answers a spent
 monthly, weekly or 5-hour quota with HTTP 429 `AccountQuotaExceeded` and names its reset ("It will
 reset at 2026-10-22 23:59:59 +0800"). That 429 is not retried: the reset goes to
 `~/.zuvo/byteplus-quota-until`, an hour ahead when the message names none, and until then no lane,
-chunk or run asks the plan. Meanwhile `byteplus` (glm-5.3-flash) runs as `glm-5.3` and `byteplus-alt`
-(deepseek-v4-1-flash-260910) as `deepseek-v4.1-flash` on the Alibaba Token Plan, through the qwen CLI
-(needs `ZUVO_ADV_QWEN=1` and the model declared on a Token Plan endpoint in `~/.qwen/settings.json`).
-Never on OpenRouter: the first cut fell back there and deepseek alone spent $72 in one day (2026-10-15).
-`byteplus-3` (dola-seed-2.0-code) exists only on BytePlus: it is left out (outcome `no-key`, not held
-against the lane). The run log and the ledger name the model that answered.
-`ZUVO_BYTEPLUS_FALLBACK_<LANE>` sets a lane's stand-in, and set but empty turns it off. Delete the file to ask the plan again before the reset.
+chunk or run asks the plan. Meanwhile `byteplus` (glm-5.3-flash, back in the default roster) and
+`byteplus-alt` (deepseek-v4-1-flash-260910) run:
+
+1. **BytePlus** Coding Plan (prepaid) — until the quota stop.
+2. **Alibaba Token Plan** (prepaid, qwen CLI) as `glm-5.3` / `deepseek-v4.1-flash` — needs `ZUVO_ADV_QWEN=1`
+   and the model declared on a Token Plan endpoint in `~/.qwen/settings.json`. `ZUVO_BYTEPLUS_FALLBACK_<LANE>`
+   sets the stand-in; set but empty turns this step off.
+3. **OpenRouter** (metered, priced against `ZUVO_OPENROUTER_DAILY_USD`), pinned to named endpoints with
+   `allow_fallbacks: false` and only the quantizations those endpoints name — never an fp4 endpoint nobody chose:
+
+   | Lane | OpenRouter model | Endpoints, in order | Override |
+   |---|---|---|---|
+   | `byteplus` | `z-ai/glm-5.3-flash` | `baseten/fp8` > `baseten/fp8/us` > `wafer/nvfp4` | `ZUVO_GLM_OR_MODEL` / `ZUVO_GLM_OR_PROVIDERS` |
+   | `byteplus-alt` | `deepseek/deepseek-v4.1-flash-1017` | `inference-net/fp8` > `parasail/fp8` > `atlas-cloud/fp8` | `ZUVO_DEEPSEEK_OR_MODEL` / `ZUVO_DEEPSEEK_OR_PROVIDERS` |
+
+   Needs `ZUVO_ADV_OPENROUTER=1`; either override set but empty turns this step off. Prices on 2026-10-20 (per 1M
+   in/out): BaseTen $0.15/$0.50, Wafer $0.074/$0.20, inference.net $0.08/$0.50, Parasail and AtlasCloud
+   $0.30/$1.20. This replaces the 2026-10-16 rule "deepseek never on OpenRouter", which followed $72 spent in one
+   day (2026-10-15) by deepseek routed to any endpoint.
+
+A step that cannot run, or ends in its own quota stop, passes to the next; a review that fails for another reason
+ends the lane. `byteplus-3` (dola-seed-2.0-code) exists only on BytePlus: it is left out (outcome `no-key`, not
+held against the lane). Each step says so on stderr (`fallback step 2: …`, `fallback step 3: …`), and the run
+log, the artifact and the health ledger name what answered — the Token Plan model, or the OpenRouter model and
+endpoint as `<model>@<provider>` (`z-ai/glm-5.3-flash@BaseTen`). adversarial-stats bills a BytePlus-lane row
+with an OpenRouter model to OpenRouter. Delete the stop file to ask the plan again before the reset.
+
+**OpenRouter provider routing (since 2026-10-20).** Unpinned, OpenRouter balanced mimo onto Relace's mxfp4
+endpoint, and `openrouter-alt` timed out on 2152 of 6622 calls (32%), ~430 s each. Every OpenRouter lane now
+sends `provider.sort: "throughput"` — a review is one long answer, so tokens/s decides whether it ends inside the
+budget, and first-token latency does not — and `quantizations: fp8,fp16,bf16,fp32` for a model with such
+endpoints (mimo-v2.6-flash, glm-5.3-flash, glm-5.3-flashx, inkling-small, deepseek-v4.1-flash-1017). None for
+ling-3.1-flash or minimax-m3.1-flash:free: their endpoints are fp4 or undeclared, and the filter would leave them
+none (HTTP 404, measured). Per lane `ZUVO_OR_SORT_<LANE>` (price|throughput|latency) and `ZUVO_OR_QUANTS_<LANE>`
+(comma list) override it; set but empty sends nothing. A timeout already stops generation: on 2026-10-20 five
+calls cut at 6 s (DeepInfra, Novita, InferenceNet, BaseTen, Relace; stream and non-stream) all show
+`cancelled: true` in `/api/v1/generation`, billed only for the tokens produced before the cut. Each OpenRouter
+answer names its endpoint on stderr (`answered by provider …`).
 
 **Free OpenRouter lane: `openrouter-mini` (since 2026-10-20, owner's decision).** It runs
 `minimax/minimax-m3.1-flash:free` (1M context, reasoning on, $0 per call — the response's `usage.cost` is 0)
@@ -263,7 +294,7 @@ filtering the list to nothing.
 
 **Known stops are left out before the draw** (`ar_skip_stopped_lanes`, 2026-10-17). Some lanes would only
 end as "not run — not held against the lane": muse inside a spent window, a BytePlus lane while the plan is
-out of quota with no Token Plan stand-in it can use (none mapped, or `ZUVO_ADV_QWEN` not 1), an OpenRouter lane once today's spend has reached
+out of quota with no fallback step it can use (Token Plan off or spent, OpenRouter step off or over the day's cap), an OpenRouter lane once today's spend has reached
 `ZUVO_OPENROUTER_DAILY_USD`, `openrouter-mini` while its free ration is spent. Those are removed from the pool first, from local state only (no request), and
 named on stderr (`Known stops, left out before the fan-out draw: …`), so the cap's slots go to lanes that can
 answer. Before this, rdesigner #4111 drew 5 of 8, four were known stops, and the run ended single-provider
