@@ -11,10 +11,16 @@
 # idempotent (cp overwrites; re-runs never duplicate). This is what makes the
 # pipeline-gate lib + new hooks reach a target.
 install_hook_tree() {
-  local dst="$1"
+  local dst="$1" src global_refactor=0
   [ -n "$dst" ] || return 1
   mkdir -p "$dst/lib"
-  cp "$ZUVO_DIR"/hooks/*.sh "$dst/" 2>/dev/null || true
+  [[ "$dst" = "$HOME/.claude/hooks" ]] && global_refactor=1
+  for src in "$ZUVO_DIR"/hooks/*.sh; do
+    # The stable global gate has its own ownership check below. Never write
+    # through a foreign symlink before that check has even run.
+    if [[ "$global_refactor" = 1 && "${src##*/}" = refactor-safety-gate.sh ]]; then continue; fi
+    cp "$src" "$dst/" 2>/dev/null || true
+  done
   cp "$ZUVO_DIR"/hooks/*.json "$dst/" 2>/dev/null || true
   [ -f "$ZUVO_DIR/hooks/run-hook.cmd" ] && cp "$ZUVO_DIR/hooks/run-hook.cmd" "$dst/" 2>/dev/null || true
   [ -f "$ZUVO_DIR/hooks/session-start" ] && cp "$ZUVO_DIR/hooks/session-start" "$dst/" 2>/dev/null || true
@@ -27,14 +33,18 @@ install_hook_tree() {
   [ -f "$ZUVO_DIR/scripts/setup-dev-hooks.sh" ] && cp "$ZUVO_DIR/scripts/setup-dev-hooks.sh" "$dst/" 2>/dev/null || true
   # The global entry must follow cache upgrades, while versioned cache entries
   # remain the real gate (dispatching there again would recurse).
-  if [[ "$dst" = "$HOME/.claude/hooks" && -f "$ZUVO_DIR/hooks/refactor-safety-gate.sh" \
+  if [[ "$global_refactor" = 1 && -f "$ZUVO_DIR/hooks/refactor-safety-gate.sh" \
         && -f "$ZUVO_DIR/hooks/refactor-gate-dispatch.sh" ]]; then
-    cp "$ZUVO_DIR/hooks/refactor-gate-dispatch.sh" "$dst/.refactor-safety-gate.sh.tmp" \
-      && chmod +x "$dst/.refactor-safety-gate.sh.tmp" \
-      && mv -f "$dst/.refactor-safety-gate.sh.tmp" "$dst/refactor-safety-gate.sh" \
-      || { fail "global refactor-gate dispatcher installation failed"; return 1; }
+    if ! sh "$ZUVO_DIR/scripts/install-refactor-gate.sh" --global-dispatch \
+        "$dst/refactor-safety-gate.sh" "$ZUVO_DIR/hooks/refactor-safety-gate.sh"; then
+      echo '  WARN: global refactor-gate dispatcher skipped; existing hook preserved (see reason above)' >&2
+    fi
   fi
-  chmod +x "$dst"/*.sh "$dst"/lib/*.sh 2>/dev/null || true
+  for src in "$dst"/*.sh; do
+    if [[ "$global_refactor" = 1 && "${src##*/}" = refactor-safety-gate.sh ]]; then continue; fi
+    chmod +x "$src" 2>/dev/null || true
+  done
+  chmod +x "$dst"/lib/*.sh 2>/dev/null || true
 }
 
 # Copy the CI check script, the git PATH-shim, and the CI workflow template

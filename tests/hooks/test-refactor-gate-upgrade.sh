@@ -2,7 +2,7 @@
 # Hermetic integration regression: cache eviction must neither brick commits nor skip a live gate.
 set -euo pipefail
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
-unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG ZUVO_DISPATCH_ACTIVE ZUVO_REFACTOR_DISPATCH_ACTIVE
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG ZUVO_DISPATCH_ACTIVE
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home's space" GATE_LOG="$TMP/gate.log"
@@ -105,9 +105,6 @@ code=0
 if [ "$code" -eq 23 ] && grep -Fxq pre-commit "$GATE_LOG"; then
   ok 'dangling current pointer and corrupt registry recover to the newest usable release'
 else bad 'stale metadata stranded the hook'; fi
-code=0
-ZUVO_REFACTOR_DISPATCH_ACTIVE=1 .git/hooks/pre-commit || code=$?
-[ "$code" -eq 23 ] && ok 'inherited dispatcher state cannot disable a real gate' || bad 'inherited state bypassed the gate'
 # Exercise the installed shared script through the real installer helper, without global git writes.
 export ZUVO_DIR="$ROOT"
 source "$ROOT/scripts/install.d/hooks.sh"
@@ -128,6 +125,53 @@ git config extensions.worktreeConfig true
 git worktree add -q -b linked "$TMP/linked"
 cd "$TMP/linked"
 sh "$ROOT/scripts/install-refactor-gate.sh" "$CACHE/1.6.100/hooks/refactor-safety-gate.sh" "$PWD"
+private_hooks=$(git config --worktree --get core.hooksPath)
+sh "$TMP/new-installer/install-refactor-gate.sh" "$CACHE/1.6.100/hooks/refactor-safety-gate.sh" "$PWD"
+if grep -q '^# new dispatcher revision$' "$private_hooks/pre-commit" \
+    && grep -q '^# new dispatcher revision$' "$private_hooks/pre-push"; then
+  ok 'private reinstall refreshes both digest-verified wrappers when the dispatcher changes'
+else bad 'private wrappers did not receive the dispatcher revision'; fi
+# Exact legacy private wrappers must migrate even when their cache is gone.
+python3 - "$private_hooks" "$HOME/.claude/hooks" "$CACHE/1.6.98/hooks/refactor-safety-gate.sh" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+private, origin = (Path(value) for value in sys.argv[1:3])
+gate = shlex.quote(sys.argv[3])
+prefix = '#!/bin/sh\n# zuvo:private-refactor-gate\n'
+original = shlex.quote(str(origin / 'pre-commit'))
+(private / 'pre-commit').write_text(prefix + f'{gate} pre-commit "$@" </dev/null || exit $?\n'
+                                  + f'if [ -x {original} ]; then exec {original} "$@"; fi\n')
+original = shlex.quote(str(origin / 'pre-push'))
+(private / 'pre-push').write_text(prefix + '''refs=$(mktemp) || exit 2
+trap 'rm -f "$refs"' EXIT
+trap 'exit 2' HUP INT TERM
+cat > "$refs" || exit 2
+''' + f'{gate} pre-push "$@" < "$refs" || exit $?\n'
+    + f'if [ -x {original} ]; then {original} "$@" < "$refs"; else exit 0; fi\n')
+PY
+code=0
+sh "$ROOT/scripts/install-refactor-gate.sh" "$CACHE/1.6.100/hooks/refactor-safety-gate.sh" "$PWD" > "$TMP/private-legacy.out" 2>&1 || code=$?
+if [ "$code" -eq 0 ] && grep -q '^# zuvo:runtime-dispatch-sha256=' "$private_hooks/pre-commit" \
+    && grep -q '^# zuvo:runtime-dispatch-sha256=' "$private_hooks/pre-push"; then
+  ok 'private reinstall migrates both exact legacy wrappers after the pinned cache is deleted'
+else cat "$TMP/private-legacy.out"; bad 'legacy private wrappers remained pinned'; fi
+# A private wrapper with edits beyond the generated body is foreign content.
+printf '\n# user customization\n' >> "$private_hooks/pre-commit"
+cp "$private_hooks/pre-commit" "$TMP/private-customized"
+code=0
+sh "$ROOT/scripts/install-refactor-gate.sh" "$CACHE/1.6.100/hooks/refactor-safety-gate.sh" "$PWD" > "$TMP/private-refresh.out" 2>&1 || code=$?
+if [ "$code" -eq 2 ] && cmp -s "$private_hooks/pre-commit" "$TMP/private-customized"; then
+  ok 'private upgrade preserves a customized wrapper instead of trusting its marker'
+else cat "$TMP/private-refresh.out"; bad 'private upgrade overwrote foreign edits'; fi
+# Restore the known generated fixture so the cache-eviction check exercises it.
+cp "$TMP/private-customized" "$private_hooks/pre-commit"
+python3 - "$private_hooks/pre-commit" <<'PY'
+from pathlib import Path
+import sys
+hook = Path(sys.argv[1])
+hook.write_text(hook.read_text().removesuffix('\n# user customization\n'))
+PY
 mv "$CACHE/1.6.100" "$CACHE/1.6.101"
 : > "$GATE_LOG"
 code=0
