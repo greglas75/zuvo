@@ -245,13 +245,13 @@ start_test "q.16 the Token Plan reset: no date is an hour, a date behind this ye
   now=$(date +%s)
   e=$(_alibaba_reset_epoch "$(ali_msg "soon")")
   (( e >= now + 3600 && e <= $(date +%s) + 3600 )) && echo hour || echo "other:$e"
-  # Two days behind today, without a year: either next year's (more than 40 days ahead → an hour) — never the past.
-  past="$(date -u -d "@$(( now - 2 * 86400 ))" '+%m-%d %H:%M:%S' 2>/dev/null || date -u -r "$(( now - 2 * 86400 ))" '+%m-%d %H:%M:%S') UTC"
-  e=$(_alibaba_reset_epoch "$(ali_msg "$past")")
-  (( e > now )) && echo ahead || echo "past:$e"
+  # On 2026-12-30 a reset named "01-02 16:00:00 UTC" is 2027-01-02, not 2026-01-02.
+  dec30=$(date -u -d '2026-12-30 12:00:00 UTC' +%s 2>/dev/null || date -u -j -f '%Y-%m-%d %H:%M:%S' '2026-12-30 12:00:00' +%s)
+  _alibaba_reset_epoch "$(ali_msg "01-02 16:00:00 UTC")" "$dec30"
 ) > "$QTMP/q16.out" 2>&1
+want=$(date -u -d '2027-01-02 16:00:00 UTC' +%s 2>/dev/null || date -u -j -f '%Y-%m-%d %H:%M:%S' '2027-01-02 16:00:00' +%s)
 assert_eq "hour
-ahead" "$(cat "$QTMP/q16.out")" "no date → an hour; a date already behind is never taken as past"
+$want" "$(cat "$QTMP/q16.out")" "no date → an hour; a date already behind this year is next year's"
 # Bug caught: a refusal with no usable date, arriving after the monthly stop was recorded, cutting it to an hour.
 printf '%s\tbyteplus-alt\n' "$RESET" > "$QTMP/q16.aquota"
 ( source "$ROOT/scripts/lib/adversarial-lanes.sh"

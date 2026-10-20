@@ -885,39 +885,46 @@ alibaba_quota_until() {   # prints the stop epoch while it is ahead; status 1 ot
 _alibaba_quota_error() {
   [[ "$1" == *"Quota exhausted"* || "$1" == *"insufficient_quota"* ]]
 }
-# _alibaba_reset_epoch <text> — the reset it names ("reset at MM-DD HH:MM:SS UTC", no year: this year, or the next
-# when that date is already more than a day behind; a full YYYY-MM-DD is taken as is). now + 1 h when it names none,
-# cannot be parsed, is past or is over 40 days ahead.
+# _alibaba_reset_epoch <text> [<now>] — the reset it names ("reset at MM-DD HH:MM:SS UTC", no year: this year, or the
+# next when that date is already more than a day behind; a full YYYY-MM-DD is taken as is). now + 1 h when it names
+# none, cannot be parsed, is past or is over 40 days ahead.
 _alibaba_reset_epoch() {
-  local now e="" y ts re='reset at (([0-9]{4})-)?([0-9]{2}-[0-9]{2}) ([0-9]{2}:[0-9]{2}:[0-9]{2}) UTC'
-  now=$(date +%s)
+  local now="${2:-$(date +%s)}" e="" y md hms ts re='reset at (([0-9]{4})-)?([0-9]{2}-[0-9]{2}) ([0-9]{2}:[0-9]{2}:[0-9]{2}) UTC'
   if [[ "$1" =~ $re ]]; then
-    y="${BASH_REMATCH[2]:-$(date -u +%Y)}"
-    ts="$y-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}"
+    # Copied out: the next =~ replaces BASH_REMATCH.
+    y="${BASH_REMATCH[2]}" md="${BASH_REMATCH[3]}" hms="${BASH_REMATCH[4]}"
+    ts="${y:-$(date -u -d "@$now" +%Y 2>/dev/null || date -u -r "$now" +%Y)}-$md $hms"
     e=$(date -u -d "$ts UTC" +%s 2>/dev/null || date -u -j -f '%Y-%m-%d %H:%M:%S' "$ts" +%s 2>/dev/null) || e=""
-    if [[ -z "${BASH_REMATCH[2]}" && "$e" =~ ^[0-9]+$ ]] && (( e < now - 86400 )); then
-      ts="$(( y + 1 ))-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}"
+    if [[ -z "$y" && "$e" =~ ^[0-9]+$ ]] && (( e < now - 86400 )); then
+      ts="$(( ${ts%%-*} + 1 ))-$md $hms"
       e=$(date -u -d "$ts UTC" +%s 2>/dev/null || date -u -j -f '%Y-%m-%d %H:%M:%S' "$ts" +%s 2>/dev/null) || e=""
     fi
   fi
   if [[ ! "$e" =~ ^[0-9]+$ ]] || (( e <= now || e > now + 40 * 86400 )); then e=$(( now + 3600 )); fi
   printf '%s\n' "$e"
 }
-# alibaba_quota_record <lane> <text> — the reset into the HOME file (temp file + mv: concurrent lanes and runs never
-# read half a write), unless a later reset is already on file: an hour's guess must not cut a monthly stop short.
-# Prints the reset in force.
+# alibaba_quota_record <lane> <text> — the reset into the HOME file, unless a later reset is already on file: an hour's
+# guess must not cut a monthly stop short. Lanes and runs hit the stop at once, so the compare and the temp-file + mv
+# run under a mkdir lock (one left by a killed run is waited out for ~2 s, then taken over). Prints the reset in force.
 alibaba_quota_record() {
-  local until f tmp held
+  local until f tmp held n=0
   until=$(_alibaba_reset_epoch "$2")
-  if held="$(alibaba_quota_until)" && (( held >= until )); then printf '%s\n' "$held"; return 0; fi
-  if f="$(_alibaba_quota_file)"; then
-    mkdir -p -- "${f%/*}" 2>/dev/null || true
+  f="$(_alibaba_quota_file)" || { printf '%s\n' "$until"; return 0; }
+  mkdir -p -- "${f%/*}" 2>/dev/null || true
+  until mkdir -- "$f.lock" 2>/dev/null; do
+    (( ++n > 20 )) && break
+    sleep 0.1
+  done
+  if held="$(alibaba_quota_until)" && (( held >= until )); then
+    until="$held"
+  else
     tmp="$f.$$.$RANDOM"
     if ! { printf '%s\t%s\n' "$until" "$1" > "$tmp" && mv -f -- "$tmp" "$f"; } 2>/dev/null; then
       rm -f -- "$tmp" 2>/dev/null || true
       echo "  WARN: $1: the quota stop could not be written to $f — later runs will ask the Token Plan again" >&2
     fi
   fi
+  rmdir -- "$f.lock" 2>/dev/null || true
   printf '%s\n' "$until"
 }
 
