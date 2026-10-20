@@ -455,6 +455,10 @@ def install_global_dispatch(path, gate):
         if status.st_uid != os.geteuid() or status.st_mode & 0o022:
             return unavailable(f"untrusted digest receipt {receipt}; hook preserved")
         receipt_identity = file_identity(receipt)
+        checked = (status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns,
+                   status.st_ctime_ns, status.st_mode)
+        if receipt_identity is None or receipt_identity[:-1] != checked:
+            return unavailable(f"digest receipt changed after its trust check: {receipt}; hook preserved")
         known.update(receipt.read_text().splitlines())
     if identity is not None and identity[-1] not in known:
         return unavailable(f"foreign global hook {path}; preserved")

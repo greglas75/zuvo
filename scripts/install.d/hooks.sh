@@ -19,6 +19,10 @@ install_hook_tree() {
     # The stable global gate has its own ownership check below. Never write
     # through a foreign symlink before that check has even run.
     if [[ "$global_refactor" = 1 && "${src##*/}" = refactor-safety-gate.sh ]]; then continue; fi
+    if [[ -L "$dst/${src##*/}" || ( -e "$dst/${src##*/}" && ! -f "$dst/${src##*/}" ) ]]; then
+      echo "  WARN: foreign hook destination $dst/${src##*/} preserved" >&2
+      continue
+    fi
     cp "$src" "$dst/" 2>/dev/null || true
   done
   cp "$ZUVO_DIR"/hooks/*.json "$dst/" 2>/dev/null || true
@@ -42,6 +46,7 @@ install_hook_tree() {
   fi
   for src in "$dst"/*.sh; do
     if [[ "$global_refactor" = 1 && "${src##*/}" = refactor-safety-gate.sh ]]; then continue; fi
+    [[ -L "$src" || ! -f "$src" ]] && continue
     chmod +x "$src" 2>/dev/null || true
   done
   chmod +x "$dst"/lib/*.sh 2>/dev/null || true

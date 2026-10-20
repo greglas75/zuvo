@@ -74,7 +74,7 @@ for root, gate, cached in gates:
             continue
         with gate.open("rb") as stream:
             inspected = identity(os.fstat(stream.fileno()))
-            if dispatch_headers.intersection(stream.read().splitlines()):
+            if dispatch_headers.intersection(line.strip() for line in stream.read().splitlines()):
                 print(f"zuvo refactor-gate: WARNING: recursive dispatcher skipped: {gate}", file=sys.stderr)
                 continue
             if inspected != identity(os.fstat(stream.fileno())) or inspected != identity(gate.lstat()):

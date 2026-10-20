@@ -36,10 +36,13 @@ stable name `~/.claude/hooks/refactor-safety-gate.sh`. Cache-origin repository
 hooks embed the same dispatcher, including private wrappers. They need neither
 the original installer nor its cache directory after activation. Exact legacy
 cache wrappers can be migrated by rerunning the current installer; unrelated
-hooks, symlinks and tracked hooks remain protected. Private refresh verifies the
-embedded template digest AND the complete original-hook chain; exact legacy
-private wrappers migrate too. A customized private wrapper is preserved with
-installer exit 2.
+hooks, symlinks and tracked hooks remain protected. Private refresh checks the
+embedded template against its recorded digest AND verifies the complete
+original-hook chain; exact legacy private wrappers migrate too. Ordinary edits
+that invalidate the digest or chain are preserved with installer exit 2. The
+self-contained digest detects accidental edits; it does not authenticate the
+template. Deliberately editing it and recomputing the digest retains managed
+ownership and permits a later refresh.
 
 Every invocation tries the gate in `~/.zuvo/current`, then every zuvo
 `installPath` record in `installed_plugins.json` in file order, then numeric
@@ -62,14 +65,16 @@ inside another comment does not skip a real gate. A copied dispatcher is skipped
 and lookup continues to a real gate. No environment recursion flag disables dispatch.
 
 The global installer checks ownership before copying the stable gate, including
-before its bulk hook copy and chmod. It accepts exact known released bytes,
+before its bulk hook copy and chmod. Other shell-hook copies and chmod skip
+symlink/non-regular destinations too. It accepts exact known released bytes,
 the current source gate/dispatcher, or bytes matching its own digest receipt
 (`~/.claude/hooks/.refactor-safety-gate.sha256`). Foreign files, directories and
 symlinks are skipped with a diagnostic; their bytes, targets and permissions
 stay intact. Remove/move a foreign entry deliberately before opting into zuvo
 ownership. Versioned cache installs continue to carry the real gate.
 Receipts must be regular files owned by the invoking uid and must not be group-
-or world-writable. The installer publishes old/new digest authorization before
+or world-writable. Their checked metadata must match the fd-based identity
+snapshot before digest authorization is accepted. The installer publishes old/new digest authorization before
 replacing the hook, so a failed receipt write leaves the hook intact and a failed
 hook replacement leaves authorization to retry either version. This records local
 installer provenance; a user who controls their HOME can deliberately forge it.
