@@ -36,12 +36,21 @@ printf '%s\n%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}]}' 200
 EOF
 chmod +x "$QTMP/bin/curl"
 
-# Fake qwen CLI: records the -m model (qwen.models) and answers a review as Qwen Code's -o json does.
+# Fake qwen CLI: records the -m model (qwen.models) and answers a review as Qwen Code's -o json does. With
+# $BPQ_ALI_MSG set it answers as qwen 0.25.3 does on a spent Token Plan: an is_error result naming the reset, exit 1,
+# and a usage record of zero tokens.
 cat > "$QTMP/bin/qwen" <<'EOF'
 #!/usr/bin/env bash
 prev=""
 for a in "$@"; do [ "$prev" = "-m" ] && printf '%s\n' "$a" >> "$BPQ_REC/qwen.models"; prev="$a"; done
 cat > /dev/null
+if [ -n "${BPQ_ALI_MSG:-}" ]; then
+  mkdir -p "$HOME/.qwen"
+  jq -cn --arg p "$PWD" '{project: $p, models: {m: {inputTokens: 0, cachedTokens: 0, outputTokens: 0, thoughtsTokens: 0}}}' \
+    >> "$HOME/.qwen/usage_record.jsonl"
+  jq -cn --arg m "$BPQ_ALI_MSG" '[{type: "result", subtype: "error_during_execution", is_error: true, error: {message: $m}}]'
+  exit 1
+fi
 printf '%s' '[{"type":"result","is_error":false,"result":"NO ISSUES FOUND."}]'
 EOF
 chmod +x "$QTMP/bin/qwen"
@@ -63,9 +72,9 @@ run_q() {
   mkdir -p "$home/.zuvo"
   ( umask 077; printf 'fake-or-key' > "$home/.zuvo/openrouter.key" )
   env -u ZUVO_BYTEPLUS_BASE_URL -u ZUVO_OPENROUTER_BASE_URL -u OPENROUTER_API_KEY -u BPQ_BODY \
-    -u BPQ_SLOW -u ZUVO_MODEL_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_3 -u ZUVO_QWEN_MODEL \
+    -u BPQ_SLOW -u ZUVO_MODEL_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_3 -u ZUVO_QWEN_MODEL -u BPQ_ALI_MSG \
     PATH="$QTMP/bin:$PATH" BPQ_REC="$home" ZUVO_BYTEPLUS_KEY_FILE="$KEYFILE" HOME="$home" ZUVO_HOME="$home" \
-    ZUVO_BYTEPLUS_QUOTA_FILE="$home/quota" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
+    ZUVO_BYTEPLUS_QUOTA_FILE="$home/quota" ZUVO_ALIBABA_QUOTA_FILE="$home/aquota" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
     ZUVO_QWEN_SETTINGS="$QSET" ZUVO_ADV_QWEN=1 ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 "$@" \
     bash "$ADV" --provider "$lane" --mode code --files "$EMPTY" >/dev/null 2>&1
   echo "$?" > "$home/rc"
@@ -200,3 +209,59 @@ mkdir -p "$QTMP/c13/quota.lock"; : > "$QTMP/c13/notadir"
 assert_eq "1" "$(head -1 "$QTMP/c13/out")" "the unwritable stop is reported"
 assert_eq "$RESET" "$(until_of c13)" "a stale lock delays the write, never stops it"
 assert_eq "" "$(ls -d "$QTMP/c13/quota.lock" 2>/dev/null)" "…and the stale lock is cleared"
+
+ali_msg() { # ali_msg <reset text> — qwen 0.25.3's message for a spent Token Plan (2026-10-20)
+  printf 'Quota exhausted: Your token-plan 1-month quota has been exhausted. The quota will reset at %s.\n\nPlease retry after the reset time, or switch to another API key / auth method. (cause: insufficient_quota: 429 Your token-plan 1-month quota has been exhausted. The quota will reset at %s.)' "$1" "$1"
+}
+
+# Bug caught: the spent Token Plan asked on every review (one refused call per lane per diff for days), the stand-in
+# counted as a failure, and the refusal's zero tokens logged as a measured, free call.
+start_test "q.14 a spent Token Plan is recorded and not held against the lane"
+mkdir -p "$QTMP/c14"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c14/quota"
+ali_reset=$(( NOW + 3 * 86400 ))
+ali_text="$(date -u -d "@$ali_reset" '+%m-%d %H:%M:%S' 2>/dev/null || date -u -r "$ali_reset" '+%m-%d %H:%M:%S') UTC"
+out=$(run_q c14 byteplus-alt BPQ_ALI_MSG="$(ali_msg "$ali_text")")
+assert_contains "$out" "Alibaba Token Plan quota exhausted until" "the lane says why"
+assert_eq "$ali_reset" "$(cut -f1 "$QTMP/c14/aquota" 2>/dev/null)" "the reset the message names (no year) is recorded"
+case "$(cat "$QTMP/c14/health" 2>/dev/null)" in
+  *byteplus-alt*) fail "the quota stop was recorded in the provider-health ledger" "$(cat "$QTMP/c14/health")" ;;
+  *) pass "the provider-health ledger holds nothing against byteplus-alt" ;;
+esac
+
+# Bug caught: a recorded Token Plan stop ignored, so every later run pays the refused call again.
+start_test "q.15 while the Token Plan stop is ahead the stand-in is not called; once past, it is"
+mkdir -p "$QTMP/c15" "$QTMP/c15b"
+printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c15/quota"; printf '%s\tbyteplus\n' "$FUTURE" > "$QTMP/c15b/quota"
+printf '%s\tbyteplus-alt\n' "$FUTURE" > "$QTMP/c15/aquota"; printf '%s\tbyteplus-alt\n' "$(( NOW - 60 ))" > "$QTMP/c15b/aquota"
+out=$(run_q c15 byteplus-alt)
+assert_eq "" "$(urls c15)$(qmodels c15)" "no request at all"
+assert_contains "$out" "Alibaba Token Plan quota exhausted until" "the lane says why"
+run_q c15b byteplus-alt >/dev/null
+assert_eq "deepseek-v4.1-flash 0" "$(qmodels c15b) $(cat "$QTMP/c15b/rc")" "a past stop: the stand-in runs and reviews"
+
+# Bug caught: a reset without a usable date shutting the plan out for good, or a year-end reset read as last January.
+start_test "q.16 the Token Plan reset: no date is an hour, a date behind this year's is next year's"
+( source "$ROOT/scripts/lib/adversarial-lanes.sh"
+  now=$(date +%s)
+  e=$(_alibaba_reset_epoch "$(ali_msg "soon")")
+  (( e >= now + 3600 && e <= $(date +%s) + 3600 )) && echo hour || echo "other:$e"
+  # Two days behind today, without a year: either next year's (more than 40 days ahead → an hour) — never the past.
+  past="$(date -u -d "@$(( now - 2 * 86400 ))" '+%m-%d %H:%M:%S' 2>/dev/null || date -u -r "$(( now - 2 * 86400 ))" '+%m-%d %H:%M:%S') UTC"
+  e=$(_alibaba_reset_epoch "$(ali_msg "$past")")
+  (( e > now )) && echo ahead || echo "past:$e"
+) > "$QTMP/q16.out" 2>&1
+assert_eq "hour
+ahead" "$(cat "$QTMP/q16.out")" "no date → an hour; a date already behind is never taken as past"
+
+# Bug caught: a refused call's all-zero usage (qwen records a spent-plan call as 0 in / 0 out) logged as 0 in
+# columns 19-22 — a measured, free call — instead of empty; a real call next to it must still be summed.
+start_test "q.17 a call reporting only zeros leaves the token columns empty"
+mkdir -p "$QTMP/c17a" "$QTMP/c17b"
+( source "$ROOT/scripts/lib/adversarial-ledger.sh"
+  export ADV_USAGE_LANE=byteplus-alt
+  JSON_TMPDIR="$QTMP/c17a"; lane_usage_add 0 0 0 0; lane_usage_add - 0 - -
+  printf '%s|' "$(lane_usage_cols byteplus-alt | tr '\t' ',')"
+  JSON_TMPDIR="$QTMP/c17b"; lane_usage_add 0 0 0 0; lane_usage_add 120 40 9 -
+  printf '%s\n' "$(lane_usage_cols byteplus-alt | tr '\t' ',')"
+) > "$QTMP/q17.out" 2>&1
+assert_eq ",,,|120,40,9," "$(cat "$QTMP/q17.out")" "zeros-only calls: empty cells; a real call beside them: its numbers"

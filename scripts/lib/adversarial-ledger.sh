@@ -331,8 +331,10 @@ lane_usage_add() {
     [[ "$v" =~ ^[0-9]+$ ]] || v=-
     line+="$v "
   done
-  # Nothing measured is no line: an all-unknown call would only turn the row's empty columns into zeros.
-  [[ "$line" != "- - - - " ]] || return 0
+  # Nothing measured is no line: an all-unknown call would only turn the row's empty columns into zeros. Nor is a
+  # call that reports only zeros — a refusal the model never saw (the qwen CLI records a spent Token Plan call as
+  # 0 in / 0 out): no real call reads zero tokens, and those zeros read as "measured, free" in columns 19-22.
+  [[ "$line" =~ [1-9] ]] || return 0
   printf '%s\n' "${line% }" >> "$JSON_TMPDIR/usage_${ADV_USAGE_LANE}.txt" 2>/dev/null || true
 }
 

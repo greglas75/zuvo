@@ -328,6 +328,8 @@ Environment variables:
   ZUVO_ADV_QWEN=1          Opt IN to the `qwen` lane: Qwen Code CLI on an Alibaba Token/Coding Plan. Set
                            it up once with `qwen` → /auth → the plan you bought. The lane refuses any model
                            whose configured baseUrl is not a plan endpoint (anything else bills per token).
+                           A spent plan quota is kept in ~/.zuvo/alibaba-quota-until: until its reset the lane
+                           and the BytePlus stand-ins are left out, not asked and not held against them.
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
