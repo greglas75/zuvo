@@ -30,7 +30,7 @@ printf '%s\n%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage"
 EOF
 chmod +x "$FTMP/bin/curl"
 
-# run_f <case> [VAR=value…] -> the lane's captured stderr; exit code in <home>/rc; stop file <home>/quota.
+# [RUN_LANE=<lane>] run_f <case> [VAR=value…] -> the stderr of the lane (default openrouter-mini); exit code in <home>/rc; stop file <home>/quota.
 run_f() {
   local home="$FTMP/$1"; shift
   mkdir -p "$home/.zuvo"
@@ -40,7 +40,7 @@ run_f() {
     ZUVO_ADVERSARIAL_LOG_FILE="$home/adversarial.log" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
     ZUVO_OPENROUTER_FREE_QUOTA_FILE="$home/quota" ZUVO_OPENROUTER_USAGE_FILE="$home/usage" \
     ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 ZUVO_OPENROUTER_DAILY_USD=5 "$@" \
-    bash "$ADV" --provider openrouter-mini --mode code --files "$EMPTY" >/dev/null 2>&1
+    bash "$ADV" --provider "${RUN_LANE:-openrouter-mini}" --mode code --files "$EMPTY" >/dev/null 2>&1
   echo "$?" > "$home/rc"
   cat "$home"/adversarial-failures/*/provider_*.stderr 2>/dev/null
 }
@@ -90,12 +90,50 @@ printf '%s\topenrouter-mini\n' "$(( $(date +%s) - 60 ))" > "$FTMP/c4b/quota"
 run_f c4b >/dev/null
 assert_eq "1 0" "$(chats c4b) $(cat "$FTMP/c4b/rc")" "a past stop: asked, and it reviews"
 
-# Bug caught: a reset the 429 does not name stopping the lane for good, or not at all.
-start_test "fq.5 a daily 429 with no reset named stops until the next UTC midnight; an upstream throttle for minutes"
-now=$(date +%s)
-run_f c5 ORF_429="$(rl_body "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day")" >/dev/null
-assert_eq "$(( (now / 86400 + 1) * 86400 ))" "$(cut -f1 "$FTMP/c5/quota" 2>/dev/null)" "per-day -> next UTC midnight"
-run_f c5b ORF_429="$(rl_body "Provider returned error")" >/dev/null
-got=$(cut -f1 "$FTMP/c5b/quota" 2>/dev/null); got=${got:-0}
-if (( got >= now + 300 && got <= $(date +%s) + 300 )); then pass "upstream throttle -> about five minutes"
-else fail "expected about now + 300, got $got (now $now)"; fi
+LIB="$ROOT/scripts/lib/adversarial-lanes-http.sh"
+# lib <fn> [args…] — one helper of the HTTP lane module, run alone (stdout; stderr dropped). QF names the stop file.
+lib() { ZUVO_OPENROUTER_FREE_QUOTA_FILE="${QF:-}" bash -c '. "$1" || exit 9; shift; "$@"' _ "$LIB" "$@" 2>/dev/null; }
+
+# Bug caught: a reset taken on trust (already past, or days out) stopping the lane for nothing or for days; the
+# seconds form read as milliseconds; the daily ration and an upstream throttle given the same stop.
+start_test "fq.5 the 429's reset: a plausible one is kept, otherwise next UTC midnight (daily) or five minutes"
+N=1000000000   # a fixed now, 2001-09-09 01:46:40 UTC; its next UTC midnight is 1000080000
+day='Rate limit exceeded: free-models-per-day.'
+assert_eq "1000000600" "$(lib _openrouter_free_reset_epoch "$(rl_body "$day" 1000000600000)" $N)" "milliseconds -> seconds"
+assert_eq "1000000600" "$(lib _openrouter_free_reset_epoch "$(rl_body "$day" 1000000600)" $N)" "seconds kept as seconds"
+assert_eq "1000080000" "$(lib _openrouter_free_reset_epoch "$(rl_body "$day" 999999000000)" $N)" "a past reset, daily -> next UTC midnight"
+assert_eq "1000080000" "$(lib _openrouter_free_reset_epoch "$(rl_body "$day" 1000777600000)" $N)" "nine days out, daily -> next UTC midnight"
+assert_eq "1000080000" "$(lib _openrouter_free_reset_epoch "$(rl_body "$day")" $N)" "no reset, daily -> next UTC midnight"
+assert_eq "1000000300" "$(lib _openrouter_free_reset_epoch "$(rl_body "Provider returned error")" $N)" "no reset, upstream throttle -> five minutes"
+
+# Bug caught: a short per-minute 429 overwriting a daily stop, so the next run asks a spent ration again.
+start_test "fq.6 a nearer reset does not shorten a later stop on file; a later one replaces it"
+QF="$FTMP/c6.quota"; far=$(( $(date +%s) + 21600 ))
+printf '%s\topenrouter-mini\n' "$far" > "$QF"
+assert_eq "$far" "$(lib openrouter_free_quota_record openrouter-mini "$(rl_body x "$(( $(date +%s) + 300 ))000")")" "the later stop stays in force"
+assert_eq "$far" "$(cut -f1 "$QF")" "the file still holds it"
+farther=$(( far + 3600 ))
+lib openrouter_free_quota_record openrouter-mini "$(rl_body x "${farther}000")" >/dev/null
+assert_eq "$farther" "$(cut -f1 "$QF")" "a later reset is written"
+
+# Bug caught: a torn or foreign stop file read as a stop, silencing the lane on garbage.
+start_test "fq.7 a stop file that is empty or not an epoch is no stop"
+QF="$FTMP/c7.quota"; : > "$QF"
+assert_eq "1" "$(lib openrouter_free_quota_until >/dev/null; echo $?)" "empty file"
+printf 'soon\topenrouter-mini\n' > "$QF"
+assert_eq "1" "$(lib openrouter_free_quota_until >/dev/null; echo $?)" "not an epoch"
+QF=""
+
+# Bug caught: a paid lane's ordinary 429 (transient, retried) parked as a free-ration stop.
+start_test "fq.8 a paid OpenRouter lane's 429 writes no free-model stop"
+RUN_LANE=openrouter-alt run_f c8 ORF_429="$(rl_body "Rate limit exceeded")" ZUVO_OPENROUTER_FREE_QUOTA_FILE="$FTMP/c8/quota" >/dev/null
+assert_eq "no" "$([ -e "$FTMP/c8/quota" ] && echo yes || echo no)" "no free-model stop file"
+
+# Bug caught: a spent free ration still drawn into the fan-out, taking a slot a working lane could fill.
+start_test "fq.9 a free-model stop ahead leaves openrouter-mini out before the fan-out draw"
+mkdir -p "$FTMP/c9"; printf '%s\topenrouter-mini\n' "$(( $(date +%s) + 3600 ))" > "$FTMP/c9/quota"
+out=$(PATH="$HERE/mocks:$PATH" ZUVO_OPENROUTER_FREE_QUOTA_FILE="$FTMP/c9/quota" ZUVO_REVIEW_PROVIDER_PICK=ranked ZUVO_REVIEW_MAX_PROVIDERS=2 \
+  ZUVO_REVIEW_TEST_PROVIDERS="openrouter-mini mock-success mock-success" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$FTMP/c9/err")
+assert_contains "$(cat "$FTMP/c9/err")" "openrouter-mini (OpenRouter free-model quota until" "named among the known stops, with its reason"
+assert_eq "mock-success, mock-success" "$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("providers_used","?"))' 2>/dev/null)" "only the working lanes ran"
