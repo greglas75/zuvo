@@ -71,3 +71,15 @@ The upgrade regression first failed on the old installer (farm run
 that directory, and proves the new gate is executed rather than merely allowing
 an ungated commit. It also covers push forwarding, legacy migration, numeric
 ordering, stale metadata, the actual global installer and private worktree hooks.
+
+## Sessions-host configuration mirrors
+
+On the sessions host (`ryzen-old-1`), `ccsync` mirrors the Mac's
+`~/.claude/hooks/` with deletions every five minutes. During verification it
+restored the old global entry and installer and removed the new dispatcher.
+The Codex script copies and local plugin-cache repairs survived. Reapplying a
+host-only Claude repair therefore lasts only until the next mirror operation.
+Apply the same backed-up repair on the Mac, the configuration source, as well.
+Do not disable configuration sync or change Git's hook chain to hide this.
+The source fix remains committed even when configuration mirroring restores an
+older installed hook; the Mac must receive the fixed installer at merge/release.
