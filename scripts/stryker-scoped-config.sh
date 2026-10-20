@@ -1009,7 +1009,12 @@ try {
   if (vitest) {
     write(path.join(repo, vitestConfigFile),
       vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include,
-        tests: vitest.covering && vitest.source !== 'workspace-include' ? vitest.covering : [] }));
+        // Relative to vitest.root (the config's own directory or the root it declares), NOT the repo:
+        // the generated config resolves them against that same directory. Repo-relative paths here
+        // became apps/runner/apps/runner/src/... and the config refused to load (farm 1792490064-3105511-31783).
+        tests: vitest.covering && vitest.source !== 'workspace-include'
+          ? vitest.covering.map((t) => (vitest.root && vitest.root !== '.' ? path.relative(vitest.root, t) : t))
+          : [] }));
   }
   if (useGuard) write(path.join(repo, guardFile), guardSource);
   if (usePreflight) write(path.join(repo, preflightFile), preflightSource);

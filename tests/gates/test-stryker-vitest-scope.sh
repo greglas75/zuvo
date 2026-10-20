@@ -432,6 +432,26 @@ case "$gen" in
     else bad "generated config $gen: missing, or include/import differ from what was printed"; fi ;;
   *) bad "vitest.configFile=$gen — Stryker would load an un-narrowed config (the RD-121 defect)" ;;
 esac
+# The generated config LOADED (not grepped) against an app that roots its tests at src/ and names
+# setupFiles against that root — apps/runner's shape. The scoper's own root is the config's directory,
+# so the covering test must be stated relative to IT; repo-relative paths resolved to
+# apps/runner/apps/runner/src/... and the config refused to load (farm 1792490064-3105511-31783).
+mkdir -p "$M/apps/d/src"
+printf '{"name":"d"}\n' > "$M/apps/d/package.json"
+printf "import path from 'node:path';\nexport default { test: { root: path.resolve(import.meta.dirname, 'src'), setupFiles: ['./s.mjs'] } };\n" > "$M/apps/d/vitest.config.mjs"
+printf 'export const s = 1;\n' > "$M/apps/d/src/s.mjs"
+printf 'export const x = 1;\n' > "$M/apps/d/src/x.ts"
+printf 'export const x = 1;\n' > "$M/apps/d/src/x.test.ts"
+run_scope --file apps/d/src/x.ts
+gen="$(configfile_of "$OUT")"; inc="$(kvs "$OUT" vitest_include | head -1)"
+cp "$M/$gen" "$M/check.mjs"
+url="$(node -e 'process.stdout.write(require("url").pathToFileURL(process.argv[1]).href)' "$M/check.mjs")"
+want="$(node -e 'process.stdout.write(JSON.stringify([process.argv[1] + "/apps/d/src", [process.argv[2].split("/").pop()], ["./s.mjs"]]))' "$M" "$inc")"
+got="$(node --input-type=module -e 'const c = await (await import(process.argv[1])).default({}); process.stdout.write(JSON.stringify([c.test.root, c.test.include, c.test.setupFiles]))' "$url" 2>&1)"
+rm -f "$M/check.mjs"
+[ "$RC" = 0 ] && [ "$got" = "$want" ] \
+  && pass "generated config: loaded, it keeps the app's own test.root and states the test relative to it" \
+  || bad "generated config (apps/d): rc=$RC got=$got want=$want"
 first="$gen"
 run_scope --file apps/a/src/x.ts
 second="$(configfile_of "$OUT")"
