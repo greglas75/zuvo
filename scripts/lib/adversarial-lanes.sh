@@ -332,9 +332,10 @@ _agy_start_cooldown() {  # $1 model, $2 seconds
   local f secs="$2" cap; f=$(_agy_cooldown_file "$1")
   # Folded into the lane cooldown: a stop never outlasts ZUVO_ADV_COOLDOWN_MAX (4 h) — a stated reset days away
   # held agy out until then, though a new login or a refill brings it back sooner; after the cap the next review
-  # is the re-probe. ZUVO_ADV_NO_COOLDOWN=1, or agy in ZUVO_ADV_COOLDOWN_OFF, keeps the stated reset.
-  if [[ "${ZUVO_ADV_NO_COOLDOWN:-0}" != 1 && " $(printf '%s' "${ZUVO_ADV_COOLDOWN_OFF:-}" | tr ',' ' ') " != *" agy "* ]]; then
-    cap="$(ar_cooldown_cap)"
+  # is the re-probe. ZUVO_ADV_NO_COOLDOWN=1 keeps the stated reset. (ZUVO_ADV_COOLDOWN_OFF does not lift the cap:
+  # "never cooled" must not read as "held for days".)
+  if [[ "${ZUVO_ADV_NO_COOLDOWN:-0}" != 1 ]]; then
+    cap="$(_ar_cooldown_cap)"
     (( secs <= cap )) || secs=$cap
   fi
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0

@@ -150,8 +150,8 @@ def cooldowns(path, now=None):
     """The lane cooldowns the driver would apply now — the same rule as _ar_cooldown_rows
     (scripts/lib/adversarial-providers.sh): THRESHOLD strikes, BASE doubled per further strike, capped at MAX,
     auth at MAX; a probe-ok row runs again with its strikes standing. Lines of text, empty when none."""
-    if os.environ.get("ZUVO_ADV_NO_COOLDOWN") == "1":
-        return []
+    if os.environ.get("ZUVO_ADV_NO_COOLDOWN") == "1" or os.environ.get("ZUVO_PROVIDER_BENCH", "1") != "1":
+        return []   # the old bench, or no ledger at all: the driver cools nothing
     thr = env_int("ZUVO_ADV_COOLDOWN_THRESHOLD", 2)
     base = env_int("ZUVO_ADV_COOLDOWN_BASE", 1800)
     cap = max(env_int("ZUVO_ADV_COOLDOWN_MAX", 14400), base)
