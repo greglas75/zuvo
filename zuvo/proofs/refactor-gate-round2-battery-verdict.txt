@@ -1,0 +1,25 @@
+COMPLETED BATTERY 1
+runid=1792522845-2950442-7958
+command=LC_ALL=C rt --full --light bash tests/run-all.sh
+log_read=LC_ALL=C rt --log 1792522845-2950442-7958
+limitation=farm transport omitted linked-worktree Git metadata; X8 could not inspect its baseline
+
+
+=== slowest children (wall clock) ===
+    176s  tests/hooks/test-adversarial-hardening.sh
+    103s  tests/hooks/test-install-host-ownership.sh
+    103s  tests/hooks/test-backlog-prose-commands.sh
+     87s  tests/hooks/test-model-run.sh
+     79s  tests/skill-suite/test-test-audit-subprocess-dispatch.sh
+     66s  tests/hooks/test-adversarial-blind-audit.sh
+     64s  tests/hooks/test-install-wiring.sh
+     63s  tests/hooks/test-reviewer-preflight-isolation.sh
+     63s  tests/hooks/test-model-subprocess.sh
+     50s  tests/gates/test-stryker-run-watchdog.sh
+  total: 1689s
+
+=== zuvo test run (scope: fast) ===
+RESULT: PASS=219 FAIL=1 SKIP=6
+FAILED children:
+  - tests/skill-suite/test-test-audit-subprocess-dispatch.sh
+tf: exit 1  [queue 0s · setup 303ms · deps 1s · test 1689s]

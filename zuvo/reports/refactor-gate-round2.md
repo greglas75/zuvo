@@ -98,6 +98,28 @@ Shell syntax and whitespace checks pass locally;
 this shell/embedded-Python change has no TypeScript or standalone typed-Python
 type-check target.
 
+The first completed battery (`1792522845-2950442-7958`) returned **exit 1**:
+`RESULT: PASS=219 FAIL=1 SKIP=6` (1689 seconds). The only failing child was
+`tests/skill-suite/test-test-audit-subprocess-dispatch.sh`: its X8 check requires
+`e6c2bedda3e576c2b7fbe6715df8d74ab3cbbf3a:skills/test-audit/SKILL.md`, while the
+farm snapshot had no Git repository. The local object exists and contains the
+same pinned Phase 3b line. This is a farm transport limitation: `rt` only syncs
+Git metadata with `"git": "full"`, and explicitly skips a linked worktree's
+`.git` file even with that option.
+
+Verification therefore uses a disposable, non-shared clone at
+`/tmp/zuvo-refactor-round2-gitfarm.LfihYj`, HEAD
+`f5e38cdbab89e291cb37a410511bc5353f5b021a`, containing the exact committed product
+tree plus a staged transport-only `.tf.json` with `{"git":"full"}`. No timeout,
+memory, source, test or assertion is changed. Both the local clone and its full
+Git object store contain the X8 baseline. The failing child is rerun first in
+farm run `1792524674-765245-2637`: **exit 0, 310 passed, 0 failed**, including
+`PASS: Phase 3b adversarial-review line is byte-identical to e6c2bedd… (X8)`.
+A Git-aware full battery follows that result: confirmed detached run
+`1792524791-852335-6806`, using `LC_ALL=C rt --full --light bash tests/run-all.sh`
+with detached/notify transport in the verification clone.
+Transport receipt: `zuvo/proofs/refactor-gate-round2-gitfarm.json`.
+
 ## Remaining limits
 
 Warn and exit 0 when no usable zuvo install is found is retained, per the explicit
