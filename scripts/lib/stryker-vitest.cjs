@@ -388,7 +388,8 @@ function renderVitestConfig({ config, root, include, tests }) {
     // absolute include would make Stryker's sandbox collect the UNMUTATED original (every mutant
     // survives), so the config refuses to load and the run fails instead.
     "  const rel = (p) => { const a = path.resolve(scopeDir, p); const r = path.relative(baseRoot, a);\n" +
-    "    if (!r || r.startsWith('..') || path.isAbsolute(r)) throw new Error('zuvo: covering test ' + p + ' is outside the base config test.root ' + baseRoot);\n" +
+    // `..` alone or a `..<sep>` prefix is an escape; a file called `..specs/x.test.ts` is not.
+    "    if (!r || r === '..' || r.startsWith('..' + path.sep) || path.isAbsolute(r)) throw new Error('zuvo: covering test ' + p + ' is outside the base config test.root ' + baseRoot);\n" +
     '    return r; };\n' +
     '  const narrowed = tests.length ? tests.map(rel).map(esc) : include;\n' +
     // Narrowing clears exclude (the include lists exact files) and any projects/workspace a base

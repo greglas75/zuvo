@@ -642,6 +642,9 @@ const watchdogFile = `.stryker-scoped-${tag}.watchdog.sh`;
 // installed here (a worktree without node_modules): the run happens where it IS installed, so the
 // generated preflight repeats the check there.
 const declaresTypescript = () => {
+  // A package.json deeper than the cap is not "no TypeScript": the walk never proved it. Truncation is
+  // reported as declared (→ the preflight decides), because a missed declaration ships a sandboxed TS7 run.
+  let truncated = false;
   const walk = (dir, depth) => {
     const pj = path.join(dir, 'package.json');
     if (fs.existsSync(pj)) {
@@ -652,15 +655,15 @@ const declaresTypescript = () => {
         }
       } catch { /* not our JSON to judge */ }
     }
-    // Deep enough for apps/<pkg>/ and packages/<group>/<pkg>/ (the nested-workspace monorepos seen so
-    // far): a shallower walk missed a TypeScript declaration and shipped a sandboxed TS7 run.
-    if (depth >= 6) return false;
     let names;
     try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
-    return names.some((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules'
-      && walk(path.join(dir, d.name), depth + 1));
+    const subdirs = names.filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules');
+    // Deep enough for apps/<pkg>/ and packages/<group>/<pkg>/ (the nested-workspace monorepos seen so
+    // far): a shallower walk missed a TypeScript declaration and shipped a sandboxed TS7 run.
+    if (depth >= 6) { if (subdirs.length) truncated = true; return false; }
+    return subdirs.some((d) => walk(path.join(dir, d.name), depth + 1));
   };
-  return walk(repo, 0);
+  return walk(repo, 0) || truncated;
 };
 const tsWithoutPreprocessorApi = () => {
   // The TypeScript Stryker itself would import: resolved from where @stryker-mutator/core is installed (a
@@ -867,14 +870,15 @@ const CONF = ${JSON.stringify(portable(out))};
 const GUARD = ${JSON.stringify('./' + guardFile)};
 const COMMAND = ${JSON.stringify(runner === 'vitest' ? vitestCommand : (cfg.commandRunner ? cfg.commandRunner.command : ''))};
 // Only the vitest command is proven here (one file-scoped run that ends): an arbitrary 'npm test' may
-// watch, or start a server. The probe is bounded by the run's own idle timeout and killed as a group.
+// watch, or start a server. The probe is bounded by the run's own idle-timeout SECONDS as a wall-clock
+// limit (not idleness: it gets no heartbeat) and killed as a process group.
 const VERIFY_COMMAND = ${runner === 'vitest' ? 'true' : 'false'};
 const PROBE_TIMEOUT_MS = ${Math.max(1, Number(idleTimeout)) * 1000};
 // A machine-readable count: a repo reporter that drops or reformats the text summary must not make a
 // run that DID execute tests look like a 0-test run (the text line stays as a fallback).
 // ABSOLUTE: Vitest resolves a relative --outputFile against its root (the app's test.root), not the
 // directory the command runs in, and the preflight reads it back from there.
-const PROBE_JSON = path.resolve(process.cwd(), ${JSON.stringify(`.stryker-scoped-${tag}.probe.json`)});
+const PROBE_JSON = path.resolve(process.cwd(), ${JSON.stringify(`.stryker-scoped-${tag}.probe.`)} + process.pid + '.json');
 const NO_TSCONFIG = ${JSON.stringify(`.stryker-scoped-${tag}.no-tsconfig.json`)};
 const ME = 'zuvo-preflight';
 const say = (m) => process.stderr.write(ME + ': ' + m + '\\n');
@@ -1001,8 +1005,8 @@ const probe = (cmd, timeoutMs) => new Promise((resolve) => {
   child.on('close', (status) => { clearTimeout(timer); resolve({ status, out, timedOut }); });
 });
 if (VERIFY_COMMAND && conf.testRunner === 'command' && COMMAND) {
-  // The report path is predictable (one per config in the repo root): a file left by an earlier run
-  // must never be counted as this run's tests.
+  // Per-process report path (two concurrent preflights of one config must not read each other's), and
+  // the file is removed first anyway: a report left behind is never counted as this run's tests.
   try { fs.unlinkSync(PROBE_JSON); } catch { /* absent */ }
   const r = await probe(COMMAND + ' --reporter=json --outputFile=' + JSON.stringify(PROBE_JSON), PROBE_TIMEOUT_MS);
   if (r.timedOut) {
@@ -1027,7 +1031,7 @@ if (VERIFY_COMMAND && conf.testRunner === 'command' && COMMAND) {
   }
   try { fs.unlinkSync(PROBE_JSON); } catch { /* never written */ }
   if (r.status !== 0 || !ran) {
-    say('ERROR: the command runner ran ' + (ran || 'no') + ' test(s) (exit ' + r.status + '): ' +
+    say('ERROR: the command runner ' + (ran ? 'ran ' + ran + ' test(s) but exited ' + r.status : 'ran no test(s)') + ': ' +
       (r.summary || 'no test count in its report') + '. A run whose tests do not execute reports every ' +
       'mutant KILLED or SURVIVED by accident. Last output:');
     say(r.out.replace(/\\x1b\\[[0-9;]*m/g, '').split('\\n').filter((l) => l.trim()).slice(-15).join('\\n'));

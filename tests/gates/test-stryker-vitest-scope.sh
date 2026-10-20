@@ -848,4 +848,16 @@ pre_out="$(preflight_of "$OKF" "$PASSBIN" "$(kv1 "$out_ok" preflight_module)")";
   && pass "preflight: matching separators keep the plugin runner, the config untouched and no test run" \
   || bad "preflight agree: rc=$rc npx-ran=$([ -f "$TMP/npx-ran-ok" ] && echo yes || echo no) — $(head -c 300 <<<"$pre_out")"
 
+# G6. A TypeScript declaration deeper than the static walk's cap must not read as "not declared": the
+#     old depth limit returned false there, so a TS7 repo shipped a sandboxed run that cannot start.
+DP="$TMP/deep"; mkdir -p "$DP/src" "$DP/a/b/c/d/e/f/g/pkg"
+printf '{"name":"d","private":true,"devDependencies":{"vitest":"5.0.5"}}\n' > "$DP/package.json"
+printf "export default { test: { include: ['**/*.spec.ts'] } };\n" > "$DP/vitest.config.ts"
+printf 'export const f = 1;\n' > "$DP/src/f.ts"
+printf '{"name":"p","devDependencies":{"typescript":"^7"}}\n' > "$DP/a/b/c/d/e/f/g/pkg/package.json"
+out_dp="$(cd "$DP" && bash "$STRYKER" --repo "$DP" --whole-files --runner vitest --file src/f.ts 2>/dev/null)"
+[ -n "$(kv1 "$out_dp" preflight_module)" ] && grep -q 'deferred to the preflight' <<<"$(kv1 "$out_dp" in_place_reason)" \
+  && pass "declaresTypescript: a declaration past the walk's depth cap defers to the preflight instead of reading as absent" \
+  || bad "declaresTypescript depth: preflight=$(kv1 "$out_dp" preflight_module) reason=$(kv1 "$out_dp" in_place_reason)"
+
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi
