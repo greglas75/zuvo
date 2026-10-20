@@ -23,3 +23,47 @@ RESULT: PASS=219 FAIL=1 SKIP=6
 FAILED children:
   - tests/skill-suite/test-test-audit-subprocess-dispatch.sh
 tf: exit 1  [queue 0s · setup 303ms · deps 1s · test 1689s]
+
+
+COMPLETED BATTERY 2 (Git metadata supplied)
+runid=1792524791-852335-6806
+source_head=f5e38cdbab89e291cb37a410511bc5353f5b021a
+command=LC_ALL=C rt --full --light bash tests/run-all.sh (detached/notify transport)
+log_read=LC_ALL=C rt --log 1792524791-852335-6806
+manifest={"git":"full"} in disposable verification clone; product files unchanged
+
+--- Running: scripts/tests/*.bats ---
+SKIP: scripts/tests/*.bats (bats not installed — group skipped)
+
+=== slowest children (wall clock) ===
+    193s  tests/hooks/test-adversarial-hardening.sh
+    163s  tests/hooks/test-install-host-ownership.sh
+    139s  tests/hooks/test-backlog-prose-commands.sh
+    101s  tests/hooks/test-install-wiring.sh
+     98s  tests/hooks/test-model-run.sh
+     81s  tests/skill-suite/test-test-audit-subprocess-dispatch.sh
+     77s  tests/hooks/test-adversarial-blind-audit.sh
+     72s  tests/hooks/test-reviewer-preflight-isolation.sh
+     71s  tests/hooks/test-backlog-grooming-smoke.sh
+     65s  tests/hooks/test-model-subprocess.sh
+  total: 2173s
+
+=== zuvo test run (scope: fast) ===
+RESULT: PASS=221 FAIL=0 SKIP=5
+ALL PASSED (SKIPs do not count as failures)
+tf: exit 0  [queue 1s · setup 342ms · deps 2s · test 2173s]
+
+Unavailable optional checks:
+SKIP: shellcheck is not installed — the lint of the moved code (test-adversarial-driver-modules (5)) did NOT run.
+SKIP: 5c (5), a result file rm cannot remove, did NOT run — chflags is not available on this machine (the user-immutable flag the case pins a file with)
+SKIP: no classic typescript module reachable — TS path not exercised on this machine
+SKIP: neither ruff nor mypy installed — the Python lint gate did NOT run.
+SKIP: tests/hooks/test-python-lint.sh (0s)
+SKIP: append-only flag is macOS-only (no chflags here)
+SKIP: tests/hooks/test-retro-append-only-flag.sh (0s)
+SKIP: shellcheck is not installed — the shell lint gate did NOT run.
+SKIP: tests/hooks/test-shellcheck.sh (0s)
+SKIP: zsh not available
+SKIP: tests/hooks/test-sleep-guard.sh (0s)
+SKIP: zsh is not installed - the [zsh] leg of the execution harness did not run
+SKIP: scripts/tests/*.bats (bats not installed — group skipped)

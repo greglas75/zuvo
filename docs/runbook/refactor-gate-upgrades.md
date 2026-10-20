@@ -65,7 +65,7 @@ inside another comment does not skip a real gate. A copied dispatcher is skipped
 and lookup continues to a real gate. No environment recursion flag disables dispatch.
 
 The global installer checks ownership before copying the stable gate, including
-before its bulk hook copy and chmod. Other shell-hook copies and chmod skip
+before its bulk hook copy and chmod. Other top-level shell-hook copies and chmod skip
 symlink/non-regular destinations too. It accepts exact known released bytes,
 the current source gate/dispatcher, or bytes matching its own digest receipt
 (`~/.claude/hooks/.refactor-safety-gate.sha256`). Foreign files, directories and

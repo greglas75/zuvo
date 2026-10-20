@@ -88,12 +88,12 @@ Commit `9054f9ac` records the first verified fixes, upgrade tests and runbook.
 - Host repair applied on `ryzen-old-1`, with source fingerprints checked after every copy. Backups: `/Users/greglas/.zuvo/backups/refactor-gate-round2-20261020T185633Z`. The global Claude entry, installer/template copies in Claude/Codex, and the installed 1.6.102/1.6.103 caches were repaired. The real Codex gate/library were not changed. Receipt: `zuvo/proofs/refactor-gate-round2-host-repair.json`.
 - All 37 finding IDs from the supplied review and the two follow-up reviews have fixed/rejected dispositions recorded by one `adversarial-review --record-disposition ...` call. No finding is deferred and there are no backlog writes.
 
-The replacement full battery is run `1792522845-2950442-7958` (detached transport
+The first completed replacement battery was run `1792522845-2950442-7958` (detached transport
 to survive a lost tool session); its command is `bash tests/run-all.sh` with
 `LC_ALL=C`, `--full` output and `--light`. An earlier replacement client vanished
 before farm confirmation during the interrupted tool session; it had no recorded
-run id or active client and is not counted as a test result. The final verdict
-is appended after completion and retrieval with `LC_ALL=C rt --log <runid>`.
+run id or active client and is not counted as a test result. Both completed
+battery verdicts below were retrieved with `LC_ALL=C rt --log <runid>`.
 Shell syntax and whitespace checks pass locally;
 this shell/embedded-Python change has no TypeScript or standalone typed-Python
 type-check target.
@@ -115,9 +115,33 @@ memory, source, test or assertion is changed. Both the local clone and its full
 Git object store contain the X8 baseline. The failing child is rerun first in
 farm run `1792524674-765245-2637`: **exit 0, 310 passed, 0 failed**, including
 `PASS: Phase 3b adversarial-review line is byte-identical to e6c2bedd… (X8)`.
-A Git-aware full battery follows that result: confirmed detached run
+A Git-aware full battery completed after that result: detached run
 `1792524791-852335-6806`, using `LC_ALL=C rt --full --light bash tests/run-all.sh`
-with detached/notify transport in the verification clone.
+with detached/notify transport in the verification clone. It returned **exit 0**
+in 2173 seconds. The authoritative log, retrieved with
+`LC_ALL=C rt --log 1792524791-852335-6806`, ends:
+
+```text
+=== zuvo test run (scope: fast) ===
+RESULT: PASS=221 FAIL=0 SKIP=5
+ALL PASSED (SKIPs do not count as failures)
+tf: exit 0  [queue 1s · setup 342ms · deps 2s · test 2173s]
+```
+
+The requested command runs the repository's default `fast` scope; `rt --full`
+means full output. The five skipped groups require unavailable ruff/mypy,
+shellcheck, zsh, Bats, or macOS `chflags`. No skip was added to resolve X8.
+The original no-Git failure remains in the verdict receipt alongside the
+successful Git-aware result: `zuvo/proofs/refactor-gate-round2-battery-verdict.txt`.
+
+The installed-hook repair was reapplied after the completed battery and every
+installed file's SHA-256 was checked against source. Claude's mirrored template
+had disappeared and its installer/global gate needed repair again; the Codex
+and cache copies remained current. Final backups:
+`/Users/greglas/.zuvo/backups/refactor-gate-round2-20261020T200955Z`.
+The first backups at `...20261020T185633Z` are retained too. The final manifest
+is `zuvo/proofs/refactor-gate-round2-host-repair.json`; this repairs the host,
+while the Mac source of ccsync still requires the eventual source update.
 Transport receipt: `zuvo/proofs/refactor-gate-round2-gitfarm.json`.
 
 ## Remaining limits
