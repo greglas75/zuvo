@@ -1285,8 +1285,13 @@ has "F28 …the parts past the budget are not started, and said" "not started" "
 
 # The chunk summary counted a part reviewed with its input cut (exit 4) as "failed", and printed
 # ", 0 with no material" because "0" is not empty.
+# The cut part is one LINE over the cap: a hunk of many lines is split at its lines, never cut.
+f28_longline() {   # <path> — a one-file diff of one added line over the 2000 cap
+  printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -0,0 +1 @@\n+const long = "%s";\n' "$1" "$1" "$1" "$1" \
+    "$(head -c 3000 /dev/zero | tr '\0' 'x')"
+}
 { printf 'diff --git a/small.js b/small.js\n--- a/small.js\n+++ b/small.js\n@@ -0,0 +1,2 @@\n+const s = 1;\n+const t = 2;\n'
-  f28_diff 140; } > "$T/f28-cut.diff"
+  f28_longline c.js; } > "$T/f28-cut.diff"
 rc="$(STDIN_FILE="$T/f28-cut.diff" drive f28-sum ZUVO_ADV_MAX_CHARS=2000 -- --single)"
 same "F28 premise: a chunked run with a part reviewed with its input cut: partial coverage (exit 4)" "4" "$rc"
 f28_line="$(grep '^CHUNKED: .*Aggregate exit' "$T/f28-sum.err" | tail -1)"
@@ -1356,9 +1361,13 @@ has "F30 …named as a failed git diff, not reviewed in part" "failed (exit 128)
 hasnt "F30 …and its partial hunk never reaches a prompt" "+b" "$(out f30-diff)"
 # The chunked aggregate was the highest child code: a part reviewed with its input cut (4) outranked a part
 # that FAILED (2), and the run read "completed over truncated input".
+# The cut part is one LINE over the cap: a hunk of many lines is split at its lines, never cut.
+f30_longline() {   # <path> — a one-file diff of one added line over the 2000 cap
+  printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -0,0 +1 @@\n+const long = "%s";\n' "$1" "$1" "$1" "$1" \
+    "$(head -c 3000 /dev/zero | tr '\0' 'x')"
+}
 { printf 'diff --git a/fail.js b/fail.js\n--- a/fail.js\n+++ b/fail.js\n@@ -0,0 +1,2 @@\n+const FAILME = 1;\n+const x = 2;\n'
-  printf 'diff --git a/big.js b/big.js\n--- a/big.js\n+++ b/big.js\n@@ -0,0 +1,120 @@\n'
-  i=1; while [ "$i" -le 120 ]; do printf '+const big_value_number_%d = %d;\n' "$i" "$i"; i=$((i + 1)); done; } > "$T/f30-mix.diff"
+  f30_longline big.js; } > "$T/f30-mix.diff"
 printf '#!/bin/sh\nin="$(cat)"\ncase "$in" in *FAILME*) exit 1 ;; esac\nprintf "%%s\\n" "{\\"findings\\": []}"\n' > "$BIN/mock-mix"; chmod +x "$BIN/mock-mix"
 rc="$(LANES=mock-mix STDIN_FILE="$T/f30-mix.diff" drive f30-agg ZUVO_ADV_MAX_CHARS=2000 -- --single)"
 same "F30 a failed part beside a part reviewed with its input cut: the run fails (exit 2), not 4" "2" "$rc"
@@ -1368,10 +1377,7 @@ has "F30 …and the summary counts both" "1 failed, 1 reviewed with input cut" "
 # The prose preamble is a part of its own (bigger than half the budget) and has no material; both diffs are
 # over the cap, so each is a part reviewed with its input cut — no part is plain ok.
 { i=1; while [ "$i" -le 30 ]; do printf 'Just prose about the change, line %d, nothing a reviewer can judge.\n' "$i"; i=$((i + 1)); done
-  for f in big2 big3; do
-    printf 'diff --git a/%s.js b/%s.js\n--- a/%s.js\n+++ b/%s.js\n@@ -0,0 +1,120 @@\n' "$f" "$f" "$f" "$f"
-    i=1; while [ "$i" -le 120 ]; do printf '+const %s_value_number_%d = %d;\n' "$f" "$i" "$i"; i=$((i + 1)); done
-  done; } > "$T/f30-nomat.diff"
+  f30_longline big2.js; f30_longline big3.js; } > "$T/f30-nomat.diff"
 rc="$(STDIN_FILE="$T/f30-nomat.diff" drive f30-nomat ZUVO_ADV_MAX_CHARS=2000 -- --single)"
 same "F30 a cut part beside a part with no material: partial coverage (exit 4)" "4" "$rc"
 hasnt "F30 …never reported as nothing reviewed" "NONE carried reviewable material" "$(err f30-nomat)"
@@ -2091,8 +2097,9 @@ fi
 EOF
 chmod +x "$F54W"
 { for n in one two; do
-    printf 'diff --git a/%s.js b/%s.js\n--- a/%s.js\n+++ b/%s.js\n@@ -1,40 +1,40 @@\n' "$n" "$n" "$n" "$n"
-    for i in $(seq 1 40); do printf '+const %s_%d = %d; // a line long enough to fill the cap\n' "$n" "$i" "$i"; done
+    # 20 lines: each file fits one part (the ~1500 budget), the two together exceed the 2000 cap — two parts.
+    printf 'diff --git a/%s.js b/%s.js\n--- a/%s.js\n+++ b/%s.js\n@@ -0,0 +1,20 @@\n' "$n" "$n" "$n" "$n"
+    for i in $(seq 1 20); do printf '+const %s_%d = %d; // a line long enough to fill the cap\n' "$n" "$i" "$i"; done
   done; } > "$T/f54-chunks.txt"
 rc="$(DRIVE_AR="$F54W" STDIN_FILE="$T/f54-chunks.txt" drive f54 ZUVO_ADV_MAX_CHARS=2000 ZUVO_ADV_CHUNK_PARALLEL=1 -- --single)"
 has "F54 premise: the review was chunked" "CHUNKED INPUT" "$(err f54)"

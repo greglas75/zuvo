@@ -1584,7 +1584,7 @@ not execute it. The adversarial suite was therefore run separately for this push
 Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the truncation marker BEFORE it counts providers, but the refusal reads `<2 'REVIEW BY:' lines` — so a proof with 32 providers is reported as having fewer than two. And `review-artifact-sync.sh --check` called the same file `OK (REVIEW BY x55)` while the push gate refused it: two readers of one artifact giving opposite answers, which is what finally forced reading the gate's source.
 **Fix:** hunk-split inside the chunker when one file exceeds the cap; for a NEW file (one `@@ -0,0 +1,N @@` hunk, no boundary at all — the documented staircase in adversarial-loop.md stops at hunk boundaries and does not cover this) split the hunk body and recompute the header. Make the gate's message name the truncation and list the omitted files. Make the two readers agree, or have the lenient one say which check it does not perform.
 **Defer-reason:** tooling fix outside the reviewed diff; worked around by hand this run.
-**Remaining:** a single hunk over the cap is still truncated (owner decision); `diff -u` input without `diff --git` headers is not split.
+**Remaining:** `diff -u` input without `diff --git` headers is not split. (A single hunk over the cap — a NEW file over ~30k — is split at its lines with recomputed sub-hunk headers since fix/split-oversized-hunk, 2026-10-20; only a single LINE over the cap is still truncated.)
 
 ## B-20260925-BYTE-IDENTICAL-EDGE-UNLISTED — a behaviour difference outside the refactor's own "intended differences" list
 
