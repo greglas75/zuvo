@@ -752,6 +752,9 @@ PASS_CAP=3
 # and every pass used another --diff base, so no file set contained all of the next one (tgm-survey-platform,
 # feature/import-parser-primitives, ~185M tokens). A shared default branch keeps the short window
 # (PASS_WINDOW_SHARED_S): unrelated changes land there one after another and touch the same files.
+# When the agent session is known (_ar_pass_session), only that session's passes count: the cap stops ONE agent
+# looping, it must not stop the next session from reviewing a fix. Owner 2026-10-20: a 6-line fix to a merged
+# change went unreviewed because three passes of an earlier review in another round had spent the branch's week.
 PASS_WINDOW_S=604800
 PASS_WINDOW_SHARED_S=10800
 # PASS_CAP_EXIT — the exit status of a refused pass: nothing was reviewed, so it is not 0 and not a finding.
@@ -769,6 +772,13 @@ _ar_pass_files() {
     /^(\+\+\+|---) "?[ab]\// { p = substr($0, 5); sub(/^"/, "", p); sub(/"$/, "", p); print substr(p, 3); seen = 1; next }
     /^=== FILE: .* ===$/   { sub(/^=== FILE: /, ""); sub(/ ===$/, ""); print }
     END { if (hdr != "" && !seen) print hdr }' | LC_ALL=C sort -u
+}
+
+# _ar_pass_session — the agent session this pass runs in: ZUVO_ADV_SESSION (a caller's own name for it), else
+# Claude Code's CLAUDE_CODE_SESSION_ID, else Codex's thread or session id. Empty for cron, CI and a bare shell:
+# those keep the cross-session count. Tabs and newlines would break the ledger's columns, so they are dropped.
+_ar_pass_session() {
+  printf '%s' "${ZUVO_ADV_SESSION:-${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}}}" | tr -d '\t\n\r'
 }
 
 # _ar_detached_key — the pass-cap key of a detached HEAD, which has no branch name to count under. Bare "detached"
@@ -816,8 +826,9 @@ PASS_RECORD=""
 if [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-}" == 1 && "${ZUVO_ADV_PASS_CAP_TEST:-0}" != 1 ]]; then
   return 0
 fi
-local files root branch ledger now n window
+local files root branch ledger now n window session
 files="$(_ar_pass_files)"
+session="$(_ar_pass_session)"
 [[ -n "$files" ]] || return 0
 # The repository, not the worktree: a second worktree of the same branch is the same change.
 root="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || root=""
@@ -842,11 +853,13 @@ if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
   if [[ -s "$ledger" ]]; then
     # Through the environment, not -v: BSD awk (macOS) refuses a -v value holding a newline, and a refusal
     # here would read as "no earlier passes" — the cap silently off.
+    # Column 6 is the session (empty in rows written before it existed, or outside an agent session).
     n="$(ZUVO_ADV_PASS_FILES="$files" ZUVO_ADV_PASS_ROOT="$root" ZUVO_ADV_PASS_BRANCH="$branch" \
-      awk -F'\t' -v since=$(( now - window )) '
+      ZUVO_ADV_PASS_SESSION="$session" awk -F'\t' -v since=$(( now - window )) '
       BEGIN { nc = split(ENVIRON["ZUVO_ADV_PASS_FILES"], want, "\n")
-              root = ENVIRON["ZUVO_ADV_PASS_ROOT"]; branch = ENVIRON["ZUVO_ADV_PASS_BRANCH"] }
-      $1 >= since && $3 == root && $4 == branch && $2 != ENVIRON["ZUVO_ADV_PASS_ID"] {
+              root = ENVIRON["ZUVO_ADV_PASS_ROOT"]; branch = ENVIRON["ZUVO_ADV_PASS_BRANCH"]
+              sess = ENVIRON["ZUVO_ADV_PASS_SESSION"] }
+      $1 >= since && $3 == root && $4 == branch && $2 != ENVIRON["ZUVO_ADV_PASS_ID"] && (sess == "" || $6 == sess) {
         m = split($5, f, "\037")
         for (i = 1; i <= m; i++) if (f[i] != "" && !((($2) SUBSEP f[i]) in seen)) { seen[$2 SUBSEP f[i]] = 1; size[$2]++ }
         pass[$2] = 1 }
@@ -857,7 +870,7 @@ if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
         print c }' "$ledger" 2>/dev/null)" || n=0
   fi
   if [[ "${n:-0}" -ge "$PASS_CAP" ]]; then
-    echo "PASS CAP: ${n} adversarial passes already reviewed these files on ${branch} in the last $(( window / 3600 ))h — the cap is ${PASS_CAP}, with no override." >&2
+    echo "PASS CAP: ${n} adversarial passes already reviewed these files on ${branch} $( [[ -n "$session" ]] && echo "in this session" || echo "in the last $(( window / 3600 ))h") — the cap is ${PASS_CAP}, with no override." >&2
     echo "  Nothing was reviewed. Do not run another pass: record what is still open as known concerns" >&2
     echo "  (shared/includes/adversarial-loop.md, Step 5). A verified CRITICAL left open still means 'not complete'." >&2
     exit "$PASS_CAP_EXIT"
@@ -870,7 +883,7 @@ if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
     echo "  NOTE: this is adversarial pass ${PASS_CAP} of ${PASS_CAP} for these files — the last one." >&2
   fi
 fi
-PASS_RECORD="$(printf '%s\t%s\t%s\t%s' "${ZUVO_ADV_PASS_ID:-$now-$$}" "$root" "$branch" "$(printf '%s' "$files" | tr '\n' '\037')")"
+PASS_RECORD="$(printf '%s\t%s\t%s\t%s\t%s' "${ZUVO_ADV_PASS_ID:-$now-$$}" "$root" "$branch" "$(printf '%s' "$files" | tr '\n' '\037')" "$session")"
 }
 
 # _ar_record_pass — append this process's row to the pass ledger once it has reviewed something. Best effort: a

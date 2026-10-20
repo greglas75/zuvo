@@ -181,7 +181,7 @@ Exit codes:
   6    blind-audit: input too large (prompt over ZUVO_BLIND_AUDIT_MAX_BYTES; nothing was sent)
        (blind-audit: 0 = strict, >= 2 valid answers; 1 = no lane left after its exclusions)
   7    pass cap — 3 adversarial passes already reviewed (half or more of) these files on this branch
-       in the last 7 days (3 h on main/master/develop/trunk)
+       in this agent session (no session known: the last 7 days, 3 h on main/master/develop/trunk)
        (code/test/security/migrate modes; nothing was reviewed; no override)
   124  timeout — every ATTEMPTED lane timed out with none answering at all, even invalidly (all
        providers timed out, or the whole-run deadline fired)
@@ -320,6 +320,9 @@ Environment variables:
   ZUVO_ADV_PASS_KEY        Names the change a DETACHED-HEAD review belongs to for the 3-pass cap (e.g. a PR
                            number). Unset: the change's first commit past the merge-base with
                            origin's default branch, else HEAD; 3 h window. A branch checkout ignores it.
+  ZUVO_ADV_SESSION         Names the agent session for the 3-pass cap: only that session's passes count.
+                           Unset: CLAUDE_CODE_SESSION_ID, else CODEX_THREAD_ID / CODEX_SESSION_ID; none
+                           of them (cron, CI): every session's passes in the window count.
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: kimi-code/k3-256k)

@@ -8,6 +8,8 @@
 
 ADV="$ROOT/scripts/adversarial-review.sh"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
+# The cases below count across sessions (cron, CI); the suite's own agent session must not leak in. PC.11 sets one.
+unset ZUVO_ADV_SESSION CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID CODEX_SESSION_ID
 export PATH="$HERE/mocks:$PATH"
 PC_TMP="$ADV_TEST_HOME/pass-cap"
 rm -rf "$PC_TMP"; mkdir -p "$PC_TMP/repo"
@@ -163,3 +165,21 @@ assert_exit_code "7" "$rc" "key pr#42: pass 4 refused"
 pc_key_run 'pr?42'; rc=$?
 assert_exit_code "0" "$rc" "key pr?42 is another change, not pr#42 with a character lost"
 pc_git checkout -q main
+
+# Bug caught (owner 2026-10-20): three passes of one review session spent the branch's 7-day cap, so a later
+# session could not review the 6-line fix it made to that change. Inside a session the cap still holds.
+start_test "PC.11 with a known agent session only that session's passes count"
+git -C "$PC_TMP/repo" checkout -q -b feature/s
+H11="$PC_TMP/h11"; mkdir -p "$H11"
+r=""; for i in 1 2 3; do ZUVO_ADV_SESSION=s-one pc_run "$H11" mock-echo-files a.ts; r="$r$?,"; done
+assert_eq "0,0,0," "$r" "session one: passes 1-3 are reviewed"
+ZUVO_ADV_SESSION=s-one pc_run "$H11" mock-echo-files a.ts; rc=$?
+assert_exit_code "7" "$rc" "session one: pass 4 is refused"
+assert_contains "$(cat "$PC_TMP/err")" "in this session" "the refusal says the count is this session's"
+ZUVO_ADV_SESSION=s-two pc_run "$H11" mock-echo-files a.ts; rc=$?
+assert_exit_code "0" "$rc" "session two reviews the same files: session one's passes do not cap it"
+CLAUDE_CODE_SESSION_ID=s-one pc_run "$H11" mock-echo-files a.ts; rc=$?
+assert_exit_code "7" "$rc" "Claude Code's session id names the same session"
+pc_run "$H11" mock-echo-files a.ts; rc=$?
+assert_exit_code "7" "$rc" "outside any session every session's passes count"
+git -C "$PC_TMP/repo" checkout -q main
