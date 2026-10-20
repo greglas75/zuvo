@@ -818,15 +818,16 @@ else fail "part 3 starts in the slot part 2 freed" "starts span ${ck40_spread}s"
 # its part was truncated and the run exited 4 every time (2026-10-20, backlog-agent harness: 16 exit-4 runs on a
 # ~730-line new spec file, each retried every 20 min). Each body line below names its own old/new line number
 # (o=<n> / n=<n>), so ck_hunk_verify can prove every sub-hunk header a reviewer would cite file:line from.
-# ck_hunk_verify <case> <path> — "hunks=<n> lines=<n> unique=<n> bad=<n>" over every prompt of <case>: the hunks of
-# <path>, their body lines, how many distinct ones, and how many headers disagree with the lines under them
-# (old/new counts, or a line whose o=/n= is not the next number its header promises).
+# ck_hunk_verify <case> <path> — "hunks=<n> lines=<n> unique=<n> old=<n> new=<n> bad=<n>" over every prompt of
+# <case>: the hunks of <path>, their body lines, how many distinct ones, the old/new line counts their headers
+# claim (summed: the unsplit hunk's), and how many headers disagree with the lines under them (old/new counts,
+# or a line whose o=/n= is not the next number its header promises).
 ck_hunk_verify() {
   python3 - "$CK_HK/parts-$1" "$2" <<'PY'
 import glob, re, sys
 d, path = sys.argv[1], sys.argv[2]
 hdr_re = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
-hunks = bad = 0
+hunks = bad = osum = nsum = 0
 seen = []
 for f in sorted(glob.glob(d + "/*.in")):
     lines = open(f, encoding="utf-8").read().split("\n")
@@ -843,6 +844,7 @@ for f in sorted(glob.glob(d + "/*.in")):
         a, b = int(m.group(1)), int(m.group(2) or 1)
         c, e = int(m.group(3)), int(m.group(4) or 1)
         no, nn = (a if b else a + 1), (c if e else c + 1)
+        osum += b; nsum += e
         oc = nc = 0
         i += 1
         while i < len(lines) and lines[i][:1] in (" ", "-", "+", "\\") and not lines[i].startswith("diff --git "):
@@ -857,7 +859,7 @@ for f in sorted(glob.glob(d + "/*.in")):
                 nn += 1; nc += 1
             i += 1
         if oc != b or nc != e: bad += 1
-print("hunks=%d lines=%d unique=%d bad=%d" % (hunks, len(seen), len(set(seen)), bad))
+print("hunks=%d lines=%d unique=%d old=%d new=%d bad=%d" % (hunks, len(seen), len(set(seen)), osum, nsum, bad))
 PY
 }
 # ck_new_file_diff <path> <lines> — a NEW file of <lines> added lines: one `@@ -0,0 +1,<lines> @@` hunk.
@@ -879,7 +881,7 @@ else
 fi
 assert_contains "$(cat "$CK_HK/err-41")" "CHUNKED INPUT:" "one file of one hunk over the cap now chunks"
 assert_eq "3" "$(ck_part_count 41)" "three parts: 730 lines of ~88 chars over a ~29.5k budget"
-assert_eq "hunks=3 lines=730 unique=730 bad=0" "$(ck_hunk_verify 41 apps/api/src/cross-survey-break.spec.ts)" \
+assert_eq "hunks=3 lines=730 unique=730 old=0 new=730 bad=0" "$(ck_hunk_verify 41 apps/api/src/cross-survey-break.spec.ts)" \
   "every line reached one part, under a sub-hunk header that matches its line numbers"
 ck41_new=""
 for f in "$CK_HK/parts-41"/*.in; do
@@ -898,12 +900,16 @@ start_test "CK.42 a MIXED hunk over the cap (context, - and + lines): each sub-h
       L[++k] = sprintf("+new n=%d %s", n++, "added padding padding padding padding padding padding pad")
       L[++k] = sprintf("+new n=%d %s", n++, "added padding padding padding padding padding padding pad") }
     printf "@@ -41,%d +37,%d @@ function mixed()\n", 2 * 160, 3 * 160
-    for (i = 1; i <= k; i++) print L[i] }'; } > "$CK_HK/mixed.diff"
+    for (i = 1; i <= k; i++) print L[i]
+    print "" }'
+  printf 'diff --git a/other.ts b/other.ts\n--- a/other.ts\n+++ b/other.ts\n@@ -1 +1 @@\n-a\n+b\n'; } > "$CK_HK/mixed.diff"
 ck_run_parts 42 "$CK_HK/mixed.diff"; rc=$?
 assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
-assert_eq "hunks=2 lines=640 unique=640 bad=0" "$(ck_hunk_verify 42 mixed.ts)" \
+assert_eq "hunks=2 lines=640 unique=640 old=320 new=480 bad=0" "$(ck_hunk_verify 42 mixed.ts)" \
   "every line reached one part, under a sub-hunk header that matches its old and new line numbers"
-assert_contains "$(cat "$CK_HK/parts-42"/*.in)" " @@ function mixed()" "each sub-hunk keeps the hunk's section heading"
+# The heading names the function the hunk STARTS in, so only the first sub-hunk may carry it; the empty line
+# between the hunk and the next file is counted on neither side (old=320 new=480 above).
+assert_eq "1" "$(cat "$CK_HK/parts-42"/*.in | grep -c ' @@ function mixed()$')" "only the first sub-hunk keeps the section heading"
 
 start_test "CK.43 one LINE over the cap is the only thing still cut: exit 4, the lines around it whole"
 { ck_new_file_diff huge.min.js 3 | sed '$d'
@@ -913,3 +919,15 @@ assert_exit_code "4" "$rc" "the part holding the over-cap line is reviewed with 
 assert_contains "$(cat "$CK_HK/art-43" 2>/dev/null)" "input_truncated=true" "the proof records the truncation"
 assert_eq "1|1" "$(grep -c -- 'n=1 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')|$(grep -c -- 'n=2 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')" \
   "the two short lines before it reached a part whole"
+
+start_test "CK.44 one hunk UNDER the budget that a long path's repeated header pushes over: split, never cut"
+# The chunk gate must judge a hunk by the split's own rule (file header + trailer + hunk over the budget). Judged
+# by its body alone, this hunk counted as one unsplittable unit, the file never chunked and was cut (exit 4).
+ck44_path="src/$(awk 'BEGIN { for (i = 0; i < 59; i++) printf "segment%02d/", i }')x.ts"
+ck_new_file_diff "$ck44_path" 325 > "$CK_HK/longhdr.diff"
+assert_eq "1|1" "$(awk '/^@@ /{h=1;next} h' "$CK_HK/longhdr.diff" | wc -c | awk '{ print ($1 < 29500) }')|$(wc -c < "$CK_HK/longhdr.diff" | awk '{ print ($1 > 30000) }')" \
+  "premise: the hunk body is under the ~29.5k budget, the whole file over the 30000 cap"
+ck_run_parts 44 "$CK_HK/longhdr.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+assert_eq "hunks=2 lines=325 unique=325 old=0 new=325 bad=0" "$(ck_hunk_verify 44 "$ck44_path")" \
+  "every line reached one of two sub-hunks with a valid header"
