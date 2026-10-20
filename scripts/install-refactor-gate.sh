@@ -2,7 +2,7 @@
 # Activate refactor hooks without replacing user hooks or shared Git configuration.
 # Exit 0 means both are wired; exit 2 means installation is unavailable/incomplete.
 # Python is also a prerequisite of the refactor gate itself.
-exec python3 - "$0" "$@" <<'PY'
+exec python3 -I - "$0" "$@" <<'PY'
 import hashlib
 import json
 import os
@@ -28,6 +28,7 @@ LEGACY_GLOBAL_GATES = {
     "56583f45d574ed99dde9541524bdc1bd8e0c73add301900ac1f2fac5f12911cf",
     "7eede029774d61d7c141ca0281c8dd51b9f861d5c7e1d6407bff249bfe4c2e4a",
     "8f01210a551b2d6f2f24f346db667c4a5283056fa438c8289e7e9bc7aa85182d",
+    "9919ce43869712146198c99dd75e7bbd3cd8431fd0528cc8f7e58f077bebdfd8",
     "a4e90a687403f827821365e90bf4ca57fba4b477531fad125005c5703f88d8aa",
     "e3ef0391a3dde6dc075eff9aca654e5b89cb47fd69501299520963ac4a214be1",
 }

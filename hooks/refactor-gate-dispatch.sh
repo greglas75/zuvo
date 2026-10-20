@@ -6,7 +6,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo 'zuvo refactor-gate: WARNING: Python resolver unavailable -> fail-open; repair: claude plugin install zuvo@zuvo-marketplace' >&2
   exit 0
 fi
-exec python3 -c '
+exec python3 -I -c '
 import json
 import os
 from pathlib import Path

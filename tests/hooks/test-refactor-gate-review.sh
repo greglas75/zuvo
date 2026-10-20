@@ -2,7 +2,7 @@
 # Regression inputs from the round-two hook review; no installed HOME is touched.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-python3 - "$ROOT" <<'PY'
+python3 -I - "$ROOT" <<'PY'
 import ast
 import hashlib
 import json
@@ -53,6 +53,24 @@ class HookReview(unittest.TestCase):
         gate.write_text(body)
         gate.chmod(0o755)
         return gate
+
+    def test_dispatcher_does_not_execute_repository_json_module(self):
+        marker = self.repo / "imported-json"
+        (self.repo / "json.py").write_text(
+            "from pathlib import Path\nPath('imported-json').touch()\n")
+        self.gate(self.cache / "1.0.0")
+        result = self.run_cmd("sh", str(DISPATCHER), "pre-commit")
+        self.assertFalse(marker.exists(), "dispatcher executed repository json.py")
+        self.assertEqual(result.returncode, 23, result)
+
+    def test_installer_does_not_execute_repository_json_module(self):
+        marker = self.repo / "imported-json"
+        (self.repo / "json.py").write_text(
+            "from pathlib import Path\nPath('imported-json').touch()\n")
+        gate = self.gate(self.cache / "1.0.0")
+        result = self.run_cmd("sh", str(INSTALLER), str(gate), str(self.repo))
+        self.assertFalse(marker.exists(), "installer executed repository json.py")
+        self.assertEqual(result.returncode, 0, result)
 
     def test_no_arguments_returns_unavailable_instead_of_traceback(self):
         result = self.run_cmd("sh", str(INSTALLER))
@@ -211,8 +229,20 @@ Path.open = swapped
     def python_fault(self, body):
         injected = self.base / "python-fault"
         injected.mkdir()
-        (injected / "sitecustomize.py").write_text(body)
-        self.env["PYTHONPATH"] = str(injected)
+        # Inject faults explicitly; isolated entry points must ignore PYTHONPATH.
+        bootstrap = body + '''
+import sys
+kind = sys.argv.pop(1)
+source = sys.argv.pop(1) if kind == "-c" else sys.stdin.read()
+sys.argv[0] = kind
+exec(compile(source, kind, "exec"), {"__name__": "__main__"})
+'''
+        shim = injected / "python3"
+        shim.write_text('#!/bin/sh\n[ "$1" = -I ] || exit 98\nshift\nexec '
+                        + shlex.quote(sys.executable) + " -I -c "
+                        + shlex.quote(bootstrap) + ' "$@"\n')
+        shim.chmod(0o755)
+        self.env["PATH"] = str(injected) + os.pathsep + self.env["PATH"]
 
     def test_permission_error_inspecting_candidate_falls_back(self):
         self.gate(self.cache / "2.0.0")
@@ -280,6 +310,18 @@ install_hook_tree "$HOME/.claude/hooks"
         body = (ROOT / "tests/fixtures/refactor-gate/v1.4.0-gate.txt").read_text()
         self.assertEqual(hashlib.sha256(body.encode()).hexdigest(),
                          "56583f45d574ed99dde9541524bdc1bd8e0c73add301900ac1f2fac5f12911cf")
+        gate = self.gate(self.home / ".claude", body)
+        self.gate(self.cache / "1.0.0")
+        result = self.install_global()
+        self.assertEqual(result.returncode, 0, result)
+        self.assertEqual(gate.read_bytes(), DISPATCHER.read_bytes())
+        invoked = self.run_cmd(str(gate), "pre-commit")
+        self.assertEqual(invoked.returncode, 23, invoked)
+
+    def test_global_install_refreshes_unisolated_dispatcher_without_receipt(self):
+        body = DISPATCHER.read_text().replace("exec python3 -I -c", "exec python3 -c", 1)
+        self.assertEqual(hashlib.sha256(body.encode()).hexdigest(),
+                         "9919ce43869712146198c99dd75e7bbd3cd8431fd0528cc8f7e58f077bebdfd8")
         gate = self.gate(self.home / ".claude", body)
         self.gate(self.cache / "1.0.0")
         result = self.install_global()
