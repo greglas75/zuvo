@@ -133,3 +133,31 @@ start_test "or.9 without ZUVO_ADV_OPENROUTER=1 step 3 does not run"
 run_o c9 byteplus-alt ZUVO_ADV_OPENROUTER=0
 assert_eq "0" "$(chats c9)" "no OpenRouter call"
 assert_contains "$(cat "$OTMP/c9/err")" "OpenRouter step not enabled" "the lane says why"
+
+# run_m <case> [VAR=value…] — a fan-out of byteplus-alt and two mock lanes with both plan stops on file; stderr ->
+# <home>/err, the lanes that ran on stdout.
+run_m() {
+  local home="$OTMP/$1"; shift
+  mkdir -p "$home/.zuvo"
+  ( umask 077; printf 'fake-or-key' > "$home/.zuvo/openrouter.key" )
+  printf '%s\n' "$(( $(date +%s) + 3600 ))" > "$home/quota"
+  printf '%s\tqwen\n' "$(( $(date +%s) + 3600 ))" > "$home/aquota"
+  env -u ZUVO_BYTEPLUS_BASE_URL -u ZUVO_OPENROUTER_BASE_URL -u OPENROUTER_API_KEY -u BYTEPLUS_API_KEY \
+    -u ZUVO_DEEPSEEK_OR_MODEL -u ZUVO_DEEPSEEK_OR_PROVIDERS -u ZUVO_MODEL_BYTEPLUS_ALT -u ZUVO_BYTEPLUS_FALLBACK_BYTEPLUS_ALT \
+    PATH="$OTMP/bin:$PATH" BOR_REC="$home" ZUVO_BYTEPLUS_KEY_FILE="$KEYFILE" HOME="$home" ZUVO_HOME="$home" \
+    ZUVO_BYTEPLUS_QUOTA_FILE="$home/quota" ZUVO_ALIBABA_QUOTA_FILE="$home/aquota" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
+    ZUVO_ADVERSARIAL_LOG_FILE="$home/adversarial.log" ZUVO_OPENROUTER_USAGE_FILE="$home/usage" \
+    ZUVO_QWEN_SETTINGS="$QSET" ZUVO_ADV_QWEN=1 ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 \
+    ZUVO_REVIEW_PROVIDER_PICK=ranked ZUVO_REVIEW_MAX_PROVIDERS=2 \
+    ZUVO_REVIEW_TEST_PROVIDERS="byteplus-alt mock-success mock-success" "$@" \
+    bash "$ADV" --multi --json --files "$EMPTY" 2>"$home/err" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("providers_used","?"))' 2>/dev/null
+}
+
+# Bug caught: the pre-run stop list dropping a lane whose step 3 can still review (both plans out, OpenRouter under
+# its cap), or drawing it once today's OpenRouter cap is spent.
+start_test "or.10 both plans out: the lane is drawn while OpenRouter is under its cap, left out once the cap is spent"
+assert_contains "$(run_m c10 ZUVO_OPENROUTER_DAILY_USD=5)" "byteplus-alt" "under the cap: drawn"
+mkdir -p "$OTMP/c10b"; printf '%s 6.5\n' "$(date +%s)" > "$OTMP/c10b/usage"
+assert_eq "mock-success, mock-success" "$(run_m c10b ZUVO_OPENROUTER_DAILY_USD=5)" "cap spent: left out"
+assert_contains "$(cat "$OTMP/c10b/err")" 'OpenRouter daily budget $6.5/$5' "named among the known stops, with the spend"

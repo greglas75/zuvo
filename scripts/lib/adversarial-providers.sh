@@ -829,8 +829,9 @@ _ar_lane_stop() {   # <lane> — prints why the lane cannot run now; status 1 wh
       fb="$(byteplus_fallback_model "$lane" "$(lane_model "$lane")")"
       [[ -n "$fb" && "${ZUVO_ADV_QWEN:-0}" == 1 ]] && ! alibaba_quota_until >/dev/null && return 1
       if [[ -n "$(byteplus_or_fallback "$(lane_model "$lane")")" && "${ZUVO_ADV_OPENROUTER:-0}" == 1 ]]; then
+        # openrouter_budget_spent succeeds (printing "<used> <cap>") only when today's cap is reached; else step 3 runs.
         spent="$(openrouter_budget_spent)" || return 1
-        echo "BytePlus quota until $(_ar_epoch_text "$until"), Token Plan out, OpenRouter daily budget \$${spent% *}/\$${spent#* }"
+        echo "BytePlus quota until $(_ar_epoch_text "$until"), Token Plan not usable, OpenRouter daily budget \$${spent% *}/\$${spent#* }"
         return 0
       fi
       echo "BytePlus quota until $(_ar_epoch_text "$until"), no fallback step can run" ;;
