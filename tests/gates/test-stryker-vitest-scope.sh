@@ -37,9 +37,16 @@ printf 'export default {};\n' > "$F/apps/a/vite.config.ts"
 printf 'export default {};\n' > "$F/packages/b/vite.config.mts"
 for f in apps/a/src/deep/x.ts packages/b/src/y.ts tools/z.ts src/foo.ts src/foo.test.ts src/foo.spec.tsx \
          src/foobar.test.ts src/__tests__/foo.ts src/__tests__/foo.test.ts src/__tests__/foobar.test.ts \
-         src/other/foo.test.ts; do
+         src/other/foo.test.ts src/foobar.checked.spec.ts; do
   : > "$F/$f"
 done
+# A module with sibling VARIANT specs and an importer named after something else (the
+# simple-script-compiler shape, farm 1792500351-3402125-17944): 42 % came from one of five specs.
+printf "import { foo } from './foo';\n" > "$F/src/foo.checked-dsl.spec.ts"
+printf "import { foo } from '../foo';\n" > "$F/src/__tests__/foo.legacy.spec.ts"
+printf "import { foo } from './foo';\n" > "$F/src/compiler-variants.spec.ts"
+printf "import { foo } from './foo.js';\n" > "$F/src/compiler-variants-esm.spec.ts"
+printf "import { o } from './other/foo';\nit('x', () => ({}));\n" > "$F/src/unrelated.spec.ts"
 # rdesigner's apps/designer config shape: test.include AND a deeper coverage.include.
 cat > "$F/designer.config.ts" <<'EOF'
 import path from 'path';
@@ -193,10 +200,18 @@ check('resolve: no scoped files is an error, not a crash', v.resolveVitest({ rep
 check('resolve: a path that normalizes outside the repo is refused',
   Boolean(v.resolveVitest({ repo: F, files: ['tools/z.ts'], tests: [], override: 'apps/../../x/vitest.config.ts' }).error), true);
 
-// colocatedTests — same stem only, beside the source or in its __tests__.
-check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar, not another dir',
+// colocatedTests — same stem, a VARIANT suffix on that stem, and anything in the same dirs that
+// imports the source; never a different stem or another directory.
+check('colocated: foo.test/spec, foo.<variant>.spec, __tests__/foo[.<variant>].*, and the importers; not foobar, not another dir',
   v.colocatedTests(F, 'src/foo.ts'),
-  ['src/__tests__/foo.test.ts', 'src/__tests__/foo.ts', 'src/foo.spec.tsx', 'src/foo.test.ts']);
+  ['src/__tests__/foo.legacy.spec.ts', 'src/__tests__/foo.test.ts', 'src/__tests__/foo.ts',
+    'src/compiler-variants-esm.spec.ts', 'src/compiler-variants.spec.ts', 'src/foo.checked-dsl.spec.ts',
+    'src/foo.spec.tsx', 'src/foo.test.ts']);
+// A spec importing a DIFFERENT module (./other/foo) is not a covering test: running it proves nothing.
+check('colocated: an importer of another module is not selected', v.colocatedTests(F, 'src/foo.ts').includes('src/unrelated.spec.ts'), false);
+check('importingTests: only files whose specifier resolves to the source', typeof v.importingTests === 'function' ? v.importingTests(F, 'src/foo.ts') : null,
+  ['src/compiler-variants-esm.spec.ts', 'src/compiler-variants.spec.ts', 'src/foo.checked-dsl.spec.ts',
+    'src/__tests__/foo.legacy.spec.ts'].sort());
 
 // renderVitestConfig — evaluated by plain node (the template is plain JS), then RELOCATED: an absolute
 // root would make Stryker's sandbox import the unmutated originals and every mutant would survive.
@@ -283,6 +298,13 @@ printf 'export const x = 1;\n' > "$M/apps/a/src/x.test.ts"
 printf 'export const h = 1;\n' > "$M/apps/a/src/h.ts"
 printf 'export const h = 1;\n' > "$M/apps/a/src/__tests__/h.ts"
 printf 'export const n = 1;\n' > "$M/apps/a/src/nocover.ts"
+# The simple-script-compiler shape: one module, five sibling specs (only the bare-stem one was picked
+# before 2026-10-20 → 42 % on a scope whose 111 "survivors" were tests that never ran) and one importer.
+printf 'export const compile = 1;\n' > "$M/apps/a/src/simple-script-compiler.ts"
+for s in '' .checked-dsl .legacy .rule-shape .page-target; do
+  printf "import { compile } from './simple-script-compiler';\n" > "$M/apps/a/src/simple-script-compiler$s.spec.ts"
+done
+printf "import { compile } from './simple-script-compiler';\n" > "$M/apps/a/src/compiler-variants.spec.ts"
 printf 'export const e = 1;\n' > "$M/apps/a/src/e.ts"
 : > "$M/apps/a/src/e.e2e.spec.ts"; : > "$M/apps/a/src/e.slow.spec.ts"   # Playwright / excluded, not Vitest
 printf 'export const y = 1;\n' > "$M/packages/b/src/y.ts"
@@ -348,6 +370,18 @@ case "$summary" in *vitest_config=apps/a/vitest.config.ts*vitest_root=apps/a*vit
   && [ "$(kvs "$OUT" vitest_include)" = src/x.test.ts ] \
   && pass "colocated: exactly the co-located test, workspace-relative" \
   || bad "colocated: source=$(kv1 "$OUT" vitest_include_source) count=$(kv1 "$OUT" vitest_include_count) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+
+# Regression (farm 1792500351-3402125-17944): every sibling variant spec and the importer must be
+# selected, and the chosen list must be printed BEFORE the run.
+run_scope --file apps/a/src/simple-script-compiler.ts
+want_six='src/compiler-variants.spec.ts src/simple-script-compiler.checked-dsl.spec.ts src/simple-script-compiler.legacy.spec.ts src/simple-script-compiler.page-target.spec.ts src/simple-script-compiler.rule-shape.spec.ts src/simple-script-compiler.spec.ts'
+if [ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_include_source)" = colocated ] && [ "$(kv1 "$OUT" vitest_include_count)" = 6 ] \
+   && [ "$(kvs "$OUT" vitest_include | tr '\n' ' ' | sed 's/ $//')" = "$want_six" ] \
+   && grep -qF "covering tests (6): apps/a/src/compiler-variants.spec.ts, apps/a/src/simple-script-compiler.checked-dsl.spec.ts" "$TMP/scope.err"; then
+  pass "colocated variants: all five sibling specs + the importer selected, printed before the run"
+else
+  bad "colocated variants: rc=$RC source=$(kv1 "$OUT" vitest_include_source) count=$(kv1 "$OUT" vitest_include_count) include=[$(kvs "$OUT" vitest_include | tr '\n' ' ')]"
+fi
 
 run_scope --file apps/a/src/x.ts --test-file apps/a/src/__tests__/h.ts
 [ "$RC" = 0 ] && [ "$(kv1 "$OUT" vitest_include_source)" = explicit ] && [ "$(kvs "$OUT" vitest_include)" = src/__tests__/h.ts ] \
