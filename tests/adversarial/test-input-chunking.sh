@@ -323,7 +323,13 @@ assert_eq "2 ok mock-success:ok" \
   "results[1] is part 2's own completed review"
 
 start_test "CK.19 a CUT part beside a NO-MATERIAL one: exit 4, never the 'NONE carried reviewable material' 5"
-{ ck_prose; ck_diff_section x.ts 600; ck_diff_section y.ts 600; } > "$CK_MIX/nomatcut.diff"
+# One line over the cap per file: the only input the hunk split cannot cut (a hunk of many lines is cut at its
+# lines since 2026-10-20), so each file's part is still reviewed with its input cut.
+ck_longline_section() {
+  printf 'diff --git a/%s b/%s\n@@ -0,0 +1 @@\n' "$1" "$1"
+  awk -v n="$2" 'BEGIN { printf "+"; for (i = 0; i < n; i++) printf "x"; printf "\n" }'
+}
+{ ck_prose; ck_longline_section x.ts 40000; ck_longline_section y.ts 40000; } > "$CK_MIX/nomatcut.diff"
 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single < "$CK_MIX/nomatcut.diff" >/dev/null 2>"$CK_MIX/err19"; rc=$?
 # ar_chunk_input exits 5 only when NO part was reviewed — a part reviewed with its input cut WAS reviewed.
 # Its cut-part rule makes the cut parts' 4 the aggregate, so its partial-coverage check (rc 0 only) does not
@@ -582,13 +588,18 @@ assert_eq "BIG-H1=1 BIG-H2=1 BIG-H3=1|A-H1=1|C-H1=1" \
   "$(ck_marker_counts 27 BIG 3)|$(ck_marker_counts 27 A 1)|$(ck_marker_counts 27 C 1)" "every hunk of every file reached exactly one part"
 assert_eq "hunks 1-2 of 3 of big.sh|hunks 3-3 of 3 of big.sh" "$(ck_part_notes 27)" "each part's note names the big file's hunks it holds"
 
-start_test "CK.28 one hunk over the cap by itself: only that hunk is cut, the others reach a part whole"
+start_test "CK.28 one hunk over the cap by itself is split at its lines: nothing is cut"
 ck_hunk_diff big.sh BIG 2000 35000 2000 > "$CK_HK/onebig.diff"
 ck_run_parts 28 "$CK_HK/onebig.diff"; rc=$?
-# Owner decision: a single hunk over the cap cannot be split further, so its part is truncated and says so.
-assert_exit_code "4" "$rc" "a part reviewed with its input cut: exit 4"
-assert_contains "$(cat "$CK_HK/art-28" 2>/dev/null)" "input_truncated=true" "the proof records the truncation"
-assert_eq "BIG-H1=1 BIG-H2=0 BIG-H3=1" "$(ck_marker_counts 28 BIG 3)" "hunks 1 and 3 reached a part whole; only hunk 2 was cut"
+# Until 2026-10-20 that hunk's part was truncated (exit 4) and its tail, MARKER-BIG-H2, reached no reviewer.
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+if grep -q 'input_truncated=true' "$CK_HK/art-28" 2>/dev/null; then
+  fail "the proof records no truncation" "$(grep -c 'input_truncated=true' "$CK_HK/art-28") input_truncated=true record(s)"
+else
+  pass "the proof records no truncation"
+fi
+assert_eq "BIG-H1=1 BIG-H2=1 BIG-H3=1" "$(ck_marker_counts 28 BIG 3)" "every hunk, the over-cap one too, reached a part whole"
+assert_contains "$(cat "$CK_HK/parts-28"/*.in)" "hunk 2 part 2/2 " "a part's note names the hunk part it holds"
 
 start_test "CK.29 '@@ ' lines inside a --files section are file content, never hunk boundaries"
 { k=1; while [[ "$k" -le 3 ]]; do
@@ -800,3 +811,105 @@ assert_eq "3" "$(wc -l < "$CK_TMP/par40.log" | tr -d ' ')" "premise: three parts
 ck40_spread=$(ck_par_spread "$CK_TMP/par40.log")
 if [[ "$ck40_spread" -le 2 ]]; then pass "part 3 started ${ck40_spread}s after the first part — inside part 1's 4 s"
 else fail "part 3 starts in the slot part 2 freed" "starts span ${ck40_spread}s"; fi
+
+# ─── 41-43: one hunk over the cap is split at its LINE boundaries (_ck_split_hunks) ───
+#
+# A NEW file over the cap is a single `@@ -0,0 +1,N @@` hunk: no file boundary and no hunk boundary to cut at, so
+# its part was truncated and the run exited 4 every time (2026-10-20, backlog-agent harness: 16 exit-4 runs on a
+# ~730-line new spec file, each retried every 20 min). Each body line below names its own old/new line number
+# (o=<n> / n=<n>), so ck_hunk_verify can prove every sub-hunk header a reviewer would cite file:line from.
+# ck_hunk_verify <case> <path> — "hunks=<n> lines=<n> unique=<n> bad=<n>" over every prompt of <case>: the hunks of
+# <path>, their body lines, how many distinct ones, and how many headers disagree with the lines under them
+# (old/new counts, or a line whose o=/n= is not the next number its header promises).
+ck_hunk_verify() {
+  python3 - "$CK_HK/parts-$1" "$2" <<'PY'
+import glob, re, sys
+d, path = sys.argv[1], sys.argv[2]
+hdr_re = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
+hunks = bad = 0
+seen = []
+for f in sorted(glob.glob(d + "/*.in")):
+    lines = open(f, encoding="utf-8").read().split("\n")
+    i, infile = 0, False
+    while i < len(lines):
+        ln = lines[i]
+        if ln.startswith("diff --git "):
+            infile = ln == "diff --git a/%s b/%s" % (path, path)
+        m = hdr_re.match(ln) if infile else None
+        if not m:
+            i += 1
+            continue
+        hunks += 1
+        a, b = int(m.group(1)), int(m.group(2) or 1)
+        c, e = int(m.group(3)), int(m.group(4) or 1)
+        no, nn = (a if b else a + 1), (c if e else c + 1)
+        oc = nc = 0
+        i += 1
+        while i < len(lines) and lines[i][:1] in (" ", "-", "+", "\\") and not lines[i].startswith("diff --git "):
+            body = lines[i]
+            seen.append(body)
+            om, nm = re.search(r" o=(\d+)", body), re.search(r" n=(\d+)", body)
+            if body[0] in " -":
+                if not om or int(om.group(1)) != no: bad += 1
+                no += 1; oc += 1
+            if body[0] in " +":
+                if not nm or int(nm.group(1)) != nn: bad += 1
+                nn += 1; nc += 1
+            i += 1
+        if oc != b or nc != e: bad += 1
+print("hunks=%d lines=%d unique=%d bad=%d" % (hunks, len(seen), len(set(seen)), bad))
+PY
+}
+# ck_new_file_diff <path> <lines> — a NEW file of <lines> added lines: one `@@ -0,0 +1,<lines> @@` hunk.
+ck_new_file_diff() {
+  printf 'diff --git a/%s b/%s\nnew file mode 100644\nindex 0000000..3333333\n--- /dev/null\n+++ b/%s\n' "$1" "$1" "$1"
+  awk -v n="$2" 'BEGIN { printf "@@ -0,0 +1,%d @@\n", n
+    for (i = 1; i <= n; i++) printf "+  it(\"case %d\", () => { expect(run(%d)).toBe(true) }); n=%d padding padding padding\n", i, i, i }'
+}
+
+start_test "CK.41 a NEW file of ~2x the cap, one hunk: split at its lines into valid sub-hunks, never cut"
+# ~64k chars in 730 lines — the shape of the cross-survey-break.spec.ts that exited 4 on every retry.
+ck_new_file_diff apps/api/src/cross-survey-break.spec.ts 730 > "$CK_HK/newfile.diff"
+ck_run_parts 41 "$CK_HK/newfile.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0 (cut at the cap: exit 4)"
+if grep -q 'input_truncated=true' "$CK_HK/art-41" 2>/dev/null; then
+  fail "the proof records no truncation" "$(grep -c 'input_truncated=true' "$CK_HK/art-41") input_truncated=true record(s)"
+else
+  pass "the proof records no truncation"
+fi
+assert_contains "$(cat "$CK_HK/err-41")" "CHUNKED INPUT:" "one file of one hunk over the cap now chunks"
+assert_eq "3" "$(ck_part_count 41)" "three parts: 730 lines of ~88 chars over a ~29.5k budget"
+assert_eq "hunks=3 lines=730 unique=730 bad=0" "$(ck_hunk_verify 41 apps/api/src/cross-survey-break.spec.ts)" \
+  "every line reached one part, under a sub-hunk header that matches its line numbers"
+ck41_new=""
+for f in "$CK_HK/parts-41"/*.in; do
+  [[ -f "$f" ]] && grep -qxF -- "new file mode 100644" "$f" && grep -qxF -- "+++ b/apps/api/src/cross-survey-break.spec.ts" "$f" \
+    && ck41_new="${ck41_new}y" || ck41_new="${ck41_new}n"
+done
+assert_eq "yyy" "$ck41_new" "every part repeats the new file's diff header"
+assert_contains "$(cat "$CK_HK/parts-41"/*.in)" "@@ -0,0 +1," "the first part keeps the new file's -0,0 side"
+
+start_test "CK.42 a MIXED hunk over the cap (context, - and + lines): each sub-hunk's old and new ranges stay exact"
+# o=/n= count the old and the new file in step: a context line advances both, - only old, + only new.
+{ printf 'diff --git a/mixed.ts b/mixed.ts\nindex 4444444..5555555 100644\n--- a/mixed.ts\n+++ b/mixed.ts\n'
+  awk 'BEGIN { o = 41; n = 37; for (g = 1; g <= 160; g++) {
+      L[++k] = sprintf(" ctx o=%d n=%d %s", o++, n++, "context padding padding padding padding padding")
+      L[++k] = sprintf("-old o=%d %s", o++, "removed padding padding padding padding padding padding")
+      L[++k] = sprintf("+new n=%d %s", n++, "added padding padding padding padding padding padding pad")
+      L[++k] = sprintf("+new n=%d %s", n++, "added padding padding padding padding padding padding pad") }
+    printf "@@ -41,%d +37,%d @@ function mixed()\n", 2 * 160, 3 * 160
+    for (i = 1; i <= k; i++) print L[i] }'; } > "$CK_HK/mixed.diff"
+ck_run_parts 42 "$CK_HK/mixed.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+assert_eq "hunks=2 lines=640 unique=640 bad=0" "$(ck_hunk_verify 42 mixed.ts)" \
+  "every line reached one part, under a sub-hunk header that matches its old and new line numbers"
+assert_contains "$(cat "$CK_HK/parts-42"/*.in)" " @@ function mixed()" "each sub-hunk keeps the hunk's section heading"
+
+start_test "CK.43 one LINE over the cap is the only thing still cut: exit 4, the lines around it whole"
+{ ck_new_file_diff huge.min.js 3 | sed '$d'
+  awk 'BEGIN { printf "+"; for (i = 0; i < 40000; i++) printf "x"; printf " n=3\n" }'; } > "$CK_HK/longline.diff"
+ck_run_parts 43 "$CK_HK/longline.diff"; rc=$?
+assert_exit_code "4" "$rc" "the part holding the over-cap line is reviewed with its input cut: exit 4"
+assert_contains "$(cat "$CK_HK/art-43" 2>/dev/null)" "input_truncated=true" "the proof records the truncation"
+assert_eq "1|1" "$(grep -c -- 'n=1 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')|$(grep -c -- 'n=2 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')" \
+  "the two short lines before it reached a part whole"
