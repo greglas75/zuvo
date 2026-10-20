@@ -209,6 +209,21 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
       v.renderVitestConfig({ config: `ws/${kind}.mjs`, root: 'ws', include: null }));
   }
   fs.writeFileSync(path.join(R, 'none.mjs'), v.renderVitestConfig({ config: 'none', root: '.', include: ['a.test.ts'] }));
+  // A base that roots its tests (apps/runner: test.root = path.resolve(configDir,'src') with
+  // setupFiles './test-setup.ts', relative to that root): the scoped config must KEEP the root and
+  // state the selected test relative to it. Overriding it pointed setupFiles at apps/runner/ and the
+  // initial run died on "Cannot find module …/apps/runner/test-setup.ts" (farm 1792488745-1939124-20968).
+  const rooted = (rootExpr) => `export default { test: { root: ${rootExpr}, setupFiles: ['./test-setup.ts'], include: ['**/*.test.ts'] } };\n`;
+  fs.mkdirSync(path.join(R, 'ws', 'src'), { recursive: true });
+  for (const f of ['test-setup.ts', 'a.test.ts']) fs.writeFileSync(path.join(R, 'ws', 'src', f), '');
+  fs.writeFileSync(path.join(R, 'ws', 'rooted.mjs'), rooted("'src'"));
+  fs.writeFileSync(path.join(R, 'ws', 'rooted-abs.mjs'), "import path from 'node:path';\n" + rooted('path.resolve(import.meta.dirname, "src")'));
+  for (const k of ['rooted', 'rooted-abs']) {
+    fs.writeFileSync(path.join(R, `${k}-scoped.mjs`),
+      v.renderVitestConfig({ config: `ws/${k}.mjs`, root: 'ws', include: ['src/a.test.ts'], tests: ['src/a.test.ts'] }));
+  }
+  fs.writeFileSync(path.join(R, 'rooted-outside.mjs'),
+    v.renderVitestConfig({ config: 'ws/rooted.mjs', root: 'ws', include: ['a.test.ts'], tests: ['a.test.ts'] }));
   const R2 = `${R}-moved`;
   fs.cpSync(R, R2, { recursive: true });
   const env = { mode: 'test', command: 'serve' };
@@ -224,6 +239,20 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
     const i = await load(R2, `${kind}-inherit.mjs`);
     check(`render (${kind} base): workspace-include mode keeps the workspace include`, i.test.include, ['src/**/*.test.ts']);
   }
+  for (const k of ['rooted', 'rooted-abs']) {
+    const c = await load(R2, `${k}-scoped.mjs`);
+    const baseRoot = path.join(R2, 'ws', 'src');
+    check(`render (${k} base): the base's own test.root is kept, the test is stated relative to it`,
+      [c.test.root, c.test.include], [baseRoot, ['a.test.ts']]);
+    check(`render (${k} base): setupFiles resolves against the kept root (the file it names exists)`,
+      [c.test.setupFiles, fs.existsSync(path.resolve(c.test.root, c.test.setupFiles[0]))], [['./test-setup.ts'], true]);
+  }
+  // A covering test the base root cannot reach: an absolute include would collect the UNMUTATED
+  // original inside Stryker's sandbox (every mutant survives), so the config must refuse to load.
+  let refused = '';
+  try { await load(R2, 'rooted-outside.mjs'); } catch (e) { refused = String(e && e.message); }
+  check('render (rooted base): a test outside the base root refuses the config, never an absolute include',
+    /outside the base config test\.root/.test(refused), true);
   const n = await load(R2, 'none.mjs');
   check('render (no config): base-less config rooted at the repo', [n.root, n.test.include], [R2, ['a.test.ts']]);
   process.exit(failed ? 1 : 0);

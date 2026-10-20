@@ -1008,7 +1008,8 @@ const write = (file, body) => { if (!fs.existsSync(file)) written.push(file); fs
 try {
   if (vitest) {
     write(path.join(repo, vitestConfigFile),
-      vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
+      vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include,
+        tests: vitest.covering && vitest.source !== 'workspace-include' ? vitest.covering : [] }));
   }
   if (useGuard) write(path.join(repo, guardFile), guardSource);
   if (usePreflight) write(path.join(repo, preflightFile), preflightSource);
