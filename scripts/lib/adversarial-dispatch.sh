@@ -203,7 +203,7 @@ _dispatch_provider_inner() {
     # would be indistinguishable afterwards — which is exactly the mistake this whole
     # measurement exercise had to unpick (a provider label that was not the model).
     # Its own label too, so its WARNs (which end the driver's line on a failed lane) name the lane.
-    openrouter-alt|openrouter-3|openrouter-4)
+    openrouter-alt|openrouter-3|openrouter-4|openrouter-mini)
                    ZUVO_OR_LANE_LABEL="$provider" ZUVO_OPENROUTER_MODEL="$(lane_model "$provider")" run_openrouter ;;
     byteplus|byteplus-alt|byteplus-3)
                    run_byteplus "$provider" "$(lane_model "$provider")" ;;

@@ -265,6 +265,8 @@ ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}"
 # deepseek-v4.1-flash left openrouter-3 on 2026-10-16 ($72 in one day); it runs on BytePlus / the Token Plan.
 ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}"
 ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-thinkingmachines/inkling-small}"
+# openrouter-mini: a `:free` model — $0 a call, rationed per minute and per day instead (openrouter_free_quota_*).
+ZUVO_MODEL_OPENROUTER_MINI="${ZUVO_MODEL_OPENROUTER_MINI:-minimax/minimax-m3.1-flash:free}"
 
 # ── BytePlus ModelArk Coding Plan (prepaid, opt-in via ZUVO_ADV_BYTEPLUS=1) ──
 # A SUBSCRIPTION, not a meter. Two consequences that shape everything below:

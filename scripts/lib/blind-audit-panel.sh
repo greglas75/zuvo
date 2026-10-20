@@ -569,7 +569,7 @@ bap_vendor_excluded() {
     kimi)        printf '%s\n' "kimi kimi-api" ;;
     qwen)        printf '%s\n' "qwen" ;;
     codestral|codestral-*)   printf '%s\n' "codestral" ;;
-    openrouter|openrouter-*) printf '%s\n' "openrouter openrouter-alt openrouter-3 openrouter-4" ;;
+    openrouter|openrouter-*) printf '%s\n' "openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini" ;;
     byteplus|byteplus-*)     printf '%s\n' "byteplus byteplus-alt byteplus-3" ;;
     *)           ;;
   esac
@@ -582,7 +582,7 @@ bap_vendor_excluded() {
 # HTTP API lanes, which have no tool or file access; agy, proven by the 2026-09-25 spike when run
 # WITHOUT --dangerously-skip-permissions (plan, Review Trail). cursor-agent and muse are NOT here: every
 # tested flag set let their read tool reach a path outside the workspace. A lane joins only with a proof.
-_BAP_ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openrouter openrouter-alt openrouter-3 openrouter-4 byteplus byteplus-alt byteplus-3'
+_BAP_ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini byteplus byteplus-alt byteplus-3'
 
 # bap_allowlist — print the lanes this run may use, space-separated on one line (nothing at all when
 # none is left): ZUVO_BLIND_AUDIT_ALLOWLIST (space-separated; unset, empty or blank = the whole isolated
