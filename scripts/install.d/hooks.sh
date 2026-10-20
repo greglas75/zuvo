@@ -25,6 +25,15 @@ install_hook_tree() {
   # zuvo:refactor Phase 0 can find it at ~/.claude/hooks/install-refactor-gate.sh)
   [ -f "$ZUVO_DIR/scripts/install-refactor-gate.sh" ] && cp "$ZUVO_DIR/scripts/install-refactor-gate.sh" "$dst/" 2>/dev/null || true
   [ -f "$ZUVO_DIR/scripts/setup-dev-hooks.sh" ] && cp "$ZUVO_DIR/scripts/setup-dev-hooks.sh" "$dst/" 2>/dev/null || true
+  # The global entry must follow cache upgrades, while versioned cache entries
+  # remain the real gate (dispatching there again would recurse).
+  if [[ "$dst" = "$HOME/.claude/hooks" && -f "$ZUVO_DIR/hooks/refactor-safety-gate.sh" \
+        && -f "$ZUVO_DIR/hooks/refactor-gate-dispatch.sh" ]]; then
+    cp "$ZUVO_DIR/hooks/refactor-gate-dispatch.sh" "$dst/.refactor-safety-gate.sh.tmp" \
+      && chmod +x "$dst/.refactor-safety-gate.sh.tmp" \
+      && mv -f "$dst/.refactor-safety-gate.sh.tmp" "$dst/refactor-safety-gate.sh" \
+      || { fail "global refactor-gate dispatcher installation failed"; return 1; }
+  fi
   chmod +x "$dst"/*.sh "$dst"/lib/*.sh 2>/dev/null || true
 }
 
