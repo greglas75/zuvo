@@ -134,3 +134,32 @@ H9="$PC_TMP/h9"; mkdir -p "$H9"
   bash "$ADV" --single --mode code --artifact "$PC_TMP/art9.txt") >/dev/null 2>"$PC_TMP/err9"
 assert_contains "$(cat "$PC_TMP/err9")" "adversarial pass 1 of 3" "stderr names pass 1"
 assert_contains "$(cat "$PC_TMP/art9.txt" 2>/dev/null)" "adversarial_pass=1/3" "the artifact records it"
+
+# Bug caught: every detached-HEAD review of a repository counted under the one key "detached", so a review host
+# that checks each PR out detached refused the fourth UNRELATED PR touching the same files (exit 7).
+start_test "PC.10 detached reviews of unrelated changes do not share a counter; fix commits on one change do"
+pc_git() { git -C "$PC_TMP/repo" -c user.email=t@t -c user.name=t "$@"; }
+pc_git update-ref refs/remotes/origin/main "$(pc_git rev-parse main)"
+pc_git checkout -q --detach main; pc_git commit -q --allow-empty -m change-a; PC_A="$(pc_git rev-parse HEAD)"
+H10="$PC_TMP/h10"; mkdir -p "$H10"
+r=""; for i in 1 2 3; do pc_run "$H10" mock-echo-files a.ts b.ts; r="$r$?,"; done
+assert_eq "0,0,0," "$r" "change A, detached: passes 1-3 are reviewed"
+pc_git checkout -q --detach main; pc_git commit -q --allow-empty -m change-b
+pc_run "$H10" mock-echo-files a.ts b.ts; rc=$?
+assert_exit_code "0" "$rc" "change B, detached, same files: its own first pass, not A's fourth"
+pc_git checkout -q --detach "$PC_A"; pc_git commit -q --allow-empty -m fix-on-a
+pc_run "$H10" mock-echo-files a.ts; rc=$?
+assert_exit_code "7" "$rc" "a fix commit on change A is still A: pass 4 refused"
+(cd "$PC_TMP/repo" && pc_diff a.ts | ZUVO_HOME="$H10" ZUVO_ADV_PASS_KEY=pr-42 ZUVO_ADV_PASS_CAP_TEST=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$ADV" --single --mode code) >/dev/null 2>&1; rc=$?
+assert_exit_code "0" "$rc" "ZUVO_ADV_PASS_KEY names another change: reviewed"
+# Bug caught: a key stripped to its allowed characters made "pr#42" and "pr?42" one change.
+pc_key_run() { (cd "$PC_TMP/repo" && pc_diff a.ts | ZUVO_HOME="$H10" ZUVO_ADV_PASS_KEY="$1" ZUVO_ADV_PASS_CAP_TEST=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$ADV" --single --mode code) >/dev/null 2>&1; }
+r=""; for i in 1 2 3; do pc_key_run 'pr#42'; r="$r$?,"; done
+assert_eq "0,0,0," "$r" "key pr#42: passes 1-3 are reviewed"
+pc_key_run 'pr#42'; rc=$?
+assert_exit_code "7" "$rc" "key pr#42: pass 4 refused"
+pc_key_run 'pr?42'; rc=$?
+assert_exit_code "0" "$rc" "key pr?42 is another change, not pr#42 with a character lost"
+pc_git checkout -q main

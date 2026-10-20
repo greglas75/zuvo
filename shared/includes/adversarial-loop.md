@@ -361,7 +361,9 @@ residuals never trigger a pass. No skill may raise this cap. The driver enforces
 see a "change": it refuses a pass when three earlier passes in the last 7 days (3 h on a shared default
 branch), in this repository (any worktree) on this branch, shared at least half of the smaller file set
 with the files under review now (exit 7, `PASS CAP:`). A re-based `--diff`, a wider scope or a fix delta
-of the same change all count. Every pass prints `adversarial pass N of 3` on stderr and records
+of the same change all count. A detached HEAD has no branch: its "branch" is `ZUVO_ADV_PASS_KEY` when
+set, else the change's first commit past the merge-base with origin's default branch (fix commits keep
+it, an unrelated detached change does not share it). Every pass prints `adversarial pass N of 3` on stderr and records
 `adversarial_pass=N/3` in its artifact. Spacing passes out or renaming a branch to get round it is still a
 fourth pass.
 

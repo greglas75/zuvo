@@ -1586,15 +1586,6 @@ Two diagnostics point away from the cause. `pg_artifact_proven` rejects on the t
 **Defer-reason:** tooling fix outside the reviewed diff; worked around by hand this run.
 **Remaining:** a single hunk over the cap is still truncated (owner decision); `diff -u` input without `diff --git` headers is not split.
 
-## B-20260925-CODEX-READ-ACCESS-UNENFORCED — `--access read` bounds claude but not codex
-
-**File:** scripts/lib/model-subprocess.sh (access mode case, codex branch)
-**Fingerprint:** scripts/lib/model-subprocess.sh|security|codex-read-root-advisory
-**Source:** zuvo:review of 06abc33..23fe52b, adversarial CRITICAL (the one of eight that survived triage); severity:medium.
-**What:** `--access read` validates `--read-root` carefully — required, must be a directory, resolved absolute AND physical with CDPATH cleared so a symlink or a relative redirect cannot move the boundary. Then the codex branch cannot enforce it: `read) args+=(-s read-only --disable view_image)` with the comment `# the shell stays; --read-root is advisory`. Claude's branch passes `--add-dir`, which the client does enforce. So the same flag means "bounded" for one client and "read-only, unbounded" for the other. Disclosed in the code, and no caller in this range relies on it (the lanes use `--access agent`) — but a future caller reading the flag name has no reason to expect the asymmetry.
-**Fix:** either give codex an equivalent boundary when the CLI grows one, or rename/split the mode so the weaker guarantee is visible at the call site (`--access read-unbounded` for codex), and say so in the access-mode table.
-**Defer-reason:** not introduced by this diff; needs a decision about the mode's contract, not a patch.
-
 ## B-20260925-BYTE-IDENTICAL-EDGE-UNLISTED — a behaviour difference outside the refactor's own "intended differences" list
 
 **File:** scripts/lib/model-subprocess.sh:468-471

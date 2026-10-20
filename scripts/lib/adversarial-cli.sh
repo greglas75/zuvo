@@ -313,9 +313,13 @@ Environment variables:
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5-5,
                            ZUVO_MODEL_CLAUDE_REVIEWER_SONNET in model-registry.sh; ZUVO_MODEL_CLAUDE_SONNET no longer applies)
   ZUVO_REVIEW_ACCESS       What the codex and claude REVIEW lanes may touch: agent (default — the
-                           reviewer may open the repo to check a finding), read (Read/Grep/Glob over
-                           the repo root, nothing written) or none (the input only). An unknown value
+                           reviewer may open the repo to check a finding), read (the repo root and its
+                           git dirs readable, plus system paths and, for codex, its own install
+                           dir; nothing written: claude --add-dir, codex a permissions profile) or none (the input only). An unknown value
                            is read. --mode blind-audit always runs none.
+  ZUVO_ADV_PASS_KEY        Names the change a DETACHED-HEAD review belongs to for the 3-pass cap (e.g. a PR
+                           number). Unset: the change's first commit past the merge-base with
+                           origin's default branch, else HEAD; 3 h window. A branch checkout ignores it.
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: kimi-code/k3-256k)
