@@ -14,8 +14,10 @@ from datetime import datetime, timedelta, timezone
 
 bill_path, tmp = sys.argv[1], sys.argv[2]
 zh, binp, proj = f"{tmp}/zh", f"{tmp}/bin", f"{tmp}/proj"
+# BILL_MODEL pins the claude path the fake below answers: Bill's default is a gpt-* model, which goes
+# through codex — the real, paid CLI where one is installed. A codex on PATH that only fails keeps it so.
 os.environ.update(ZUVO_HOME=zh, BILL_MAX_TRIES="3", BILL_MIN_AGE_MINUTES="30", BILL_MAX_AGE_HOURS="48",
-                  PATH=f"{binp}:{os.environ.get('PATH', '/usr/bin:/bin')}")
+                  BILL_MODEL="claude-test", PATH=f"{binp}:{os.environ.get('PATH', '/usr/bin:/bin')}")
 sys.path.insert(0, os.path.dirname(bill_path))   # Bill's logic: flat modules beside the launcher
 import types, zuvo_bill_config, zuvo_bill_judge, zuvo_bill_tick
 bill = types.SimpleNamespace(LEDGER=zuvo_bill_config.ledger(), BD=zuvo_bill_config.bill_data(),
@@ -41,6 +43,8 @@ def fake_claude(stdout):
     with open(f"{tmp}/claude.out", "w") as f:
         f.write(stdout if isinstance(stdout, str) else json.dumps(stdout))
     script(f"{binp}/claude", f"cat >/dev/null; cat {tmp}/claude.out\n")
+
+script(f"{binp}/codex", "echo 'test-bill: the real codex must never be called' >&2; exit 97\n")
 
 def row(ts, run, fp, disp="new", lane="codex", mode="code"):
     return "\t".join([ts, run, mode, lane, "m", fp, "WARNING", "80", "a.py", disp, proj])
