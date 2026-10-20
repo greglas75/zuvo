@@ -70,27 +70,41 @@
 # config.*, and anything under __tests__ __mocks__ __fixtures__ test tests e2e fixtures node_modules
 # dist coverage .stryker-tmp*. Deleted files are never mutated.
 #
-# Output — KEY=VALUE lines on stdout: config_path, report_path, temp_dir, test_runner,
-# coverage_analysis, ignore_static, scope_mode (changed-lines|whole-files), diff_base (<ref>@<sha7>|
-# none), file_count, mutate_count (entries), mutated_lines, changed_lines (<n>|unknown),
-# dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged | not-source |
-# glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
+# Output — KEY=VALUE lines on stdout: config_path, report_path, temp_dir, test_runner (the runner the
+# config actually runs with), test_runner_reason, coverage_analysis, ignore_static, guard_module
+# (./<file> when the zero-tests guard is wired, else none), scope_mode (changed-lines|whole-files),
+# diff_base (<ref>@<sha7>|none), file_count, mutate_count (entries), mutated_lines, changed_lines
+# (<n>|unknown), dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged |
+# not-source | glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
 # vitest_include_source (explicit|colocated|workspace-include), vitest_include_count (<n>|unknown)
-# and one vitest_include=<glob> per glob, Vitest-root-relative; in_place (true|false) and
-# in_place_reason (--in-place | typescript <version> has no parseConfigFileTextToJson | none); then run_command, which runs Stryker
-# under stryker-run-watchdog.sh (exit 124 = no progress for --no-progress-timeout s). Plus ONE summary
-# line on stderr that repeats the vitest_* values.
+# and one vitest_include=<glob> per glob, Vitest-root-relative; one vitest_covering=<path> per covering
+# test as a PLAIN repo-relative path (what the command runner passes to Vitest);
+# vitest_projects_dropped=<config>:<key>:<n> when inline test.projects are dropped; in_place
+# (true|false) and in_place_reason (--in-place | typescript <version> has no parseConfigFileTextToJson
+# | none); then run_command, which runs Stryker under stryker-run-watchdog.sh (exit 124 = no progress
+# for --no-progress-timeout s). Plus ONE summary line on stderr that repeats the vitest_* values.
 #
 # Vitest: the config nearest each scoped file (or --vitest-config); covering tests = --test-file/
 # --tests-from, else co-located foo.test|spec.* / __tests__/foo.*, else the config's own include.
+#   Inline projects — `test.projects: [{ extends: true, test: { … } }, …]`, objects defined in the
+#   config itself — are DROPPED for the scoped run (their project-level options stop applying; this
+#   is what the repo's own Stryker adapters do). A config whose projects live elsewhere (glob/string
+#   entries, a variable/shorthand/spread, a vitest.workspace.* file) is still refused, exit 5.
+#   The vitest-runner is used only when its per-test filter can match the installed Vitest's test
+#   names (it joins suite names with its own separator, Vitest with `createTaskName`'s). A measured
+#   mismatch falls back to testRunner "command" with `npx vitest run --config <generated config>`
+#   and coverageAnalysis off, and says so (test_runner_reason). When that cannot be verified, the run
+#   keeps the plugin runner and a generated reporter (guard_module) fails it — non-zero, naming the
+#   mutants — when any Killed/Survived mutant ran 0 tests.
 #
 # Exit codes: 0 ok · 1 --vitest-config does not exist · 2 usage error · 3 no such file, a path
 #             outside --repo, or nothing left to mutate · 4 cannot compute the diff (not a git work
 #             tree, no base found) · 5 no single Vitest config fits the scope: the files belong to
 #             2+ configs (one `vitest_group=<config|none> -> <file>,<file>` line per config), or only
-#             to a multi-project config — test.projects/test.workspace or a vitest.workspace.* — (one
-#             `vitest_aggregator=<config>` line, then one `vitest_group=<workspace dir> -> <files>` per
-#             workspace). Nothing is written.
+#             to a config whose projects live outside it — test.projects/test.workspace naming other
+#             project files, a variable or a vitest.workspace.* file (one `vitest_aggregator=<config>`
+#             line, then one `vitest_group=<workspace dir> -> <files>` per workspace). Nothing is
+#             written. An inline `test.projects: [{…}]` is NOT this case: it is narrowed (above).
 set -uo pipefail
 
 REPO=""
@@ -180,9 +194,6 @@ if [ -z "$COVERAGE" ]; then
   if [ "$INCLUDE_STATIC" = 1 ]; then COVERAGE="off"; else COVERAGE="perTest"; fi
 fi
 case "$COVERAGE" in off|all|perTest) ;; *) die "--coverage must be off|all|perTest" ;; esac
-if [ "$INCLUDE_STATIC" = 0 ] && [ "$COVERAGE" != "perTest" ]; then
-  die "--coverage $COVERAGE cannot be combined with ignoreStatic (the default): Stryker refuses to start unless coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage $COVERAGE."
-fi
 [[ "$CONCURRENCY" =~ ^[0-9]+$ ]] || die "--concurrency must be an integer"
 [[ "$TIMEOUT_MS" =~ ^[0-9]{1,9}$ ]] || die "--timeout-ms must be an integer (at most 9 digits)"
 [[ "$IDLE_TIMEOUT" =~ ^[1-9][0-9]{0,8}$ ]] || die "--no-progress-timeout must be an integer >= 1 (seconds)"
@@ -227,6 +238,11 @@ detect_runner() {
   echo "command"
 }
 TEST_RUNNER="$(detect_runner)"
+# The vitest runner is decided later: a vitest-runner that cannot filter per test falls back to the
+# command runner, which forces `off` + no ignoreStatic. That pairing is checked in the node step.
+if [ "$INCLUDE_STATIC" = 0 ] && [ "$COVERAGE" != "perTest" ] && [ "$TEST_RUNNER" != vitest ]; then
+  die "--coverage $COVERAGE cannot be combined with ignoreStatic (the default): Stryker refuses to start unless coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage $COVERAGE."
+fi
 if [ "$TEST_RUNNER" != vitest ] && { [ -n "$VITEST_CONFIG" ] || [ "$TESTS_FLAG" = 1 ]; }; then
   die "--vitest-config/--test-file/--tests-from apply to the vitest runner only (runner: $TEST_RUNNER)"
 fi
@@ -323,6 +339,8 @@ const ME = 'stryker-scoped-config';
 
 const say = (msg) => process.stderr.write(`${ME}: ${msg}\n`);
 const fail = (code, msg) => { say(msg); process.exit(code); };
+// run_command and the command runner are handed to a shell: quote a path only when it needs it.
+const shq = (p) => (/^[\w@%+=:,./][\w@%+=:,./-]*$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
 
 // ── git ──
 function git(args, { allowFail = false } = {}) {
@@ -595,6 +613,8 @@ let vlib = null;
 // Beside the Stryker config, in the repo tree: Stryker never copies its tempDirName into the sandbox,
 // so a config under <temp_dir> would not exist where the runner looks for it (RD-121 evidence 1).
 const vitestConfigFile = `.stryker-scoped-${tag}.vitest.config.mts`;
+// A reporter that fails the run when a mutant is decided while running 0 tests (see its source below).
+const guardFile = `.stryker-scoped-${tag}.zero-tests-guard.mjs`;
 // In the repo, not the plugin: `rt` ships the repo to the farm, and run_command must work there.
 const watchdogFile = `.stryker-scoped-${tag}.watchdog.sh`;
 // TypeScript 7 (the native port) has no JS `parseConfigFileTextToJson`, and Stryker's sandbox tsconfig
@@ -626,8 +646,8 @@ if (runner === 'vitest') {
   if (r.error) fail(2, r.error);
   if (r.groups) {
     say(r.aggregator
-      ? `${r.aggregator} is a multi-project (test.projects/workspace) config: no include can narrow it. Run one campaign per ` +
-        'workspace below, each with --vitest-config <that workspace\'s config> (or give the workspace its own config).'
+      ? `${r.aggregator} fans out to projects it does not define (${r.why || 'test.projects/workspace'}): no include can narrow it. ` +
+        'Run one campaign per workspace below, each with --vitest-config <that workspace\'s config> (or give the workspace its own config).'
       : `the scoped files belong to ${r.groups.length} different Vitest configs — run one campaign per group:`);
     for (const g of r.groups) say(`  ${g.key} -> ${g.files.join(', ')}`);
     process.stdout.write((r.aggregator ? `vitest_aggregator=${r.aggregator}\n` : '') +
@@ -639,6 +659,39 @@ if (runner === 'vitest') {
   const printed = known || [`<inherited from ${r.config}>`];
   vitest = { ...r, printed, count: known ? known.length : 'unknown' };
 }
+
+// The runner the config actually runs with. A vitest-runner whose per-test filter cannot match the
+// installed vitest's test names marks EVERY mutant SURVIVED (vlib.vitestRunnerVerdict): fall back to
+// the project's own Vitest command, and say so — never emit a config that silently runs 0 tests.
+let effectiveRunner = runner;
+let runnerReason = runner === 'vitest' ? '' : `--runner ${runner}`;
+if (runner === 'vitest' && vitest) {
+  const verdict = vlib.vitestRunnerVerdict(repo);
+  runnerReason = verdict.reason;
+  if (verdict.ok) {
+    // The plugin's per-test filter can match; nothing to say.
+  } else if (verdict.unknown) {
+    say(`WARNING per-test filtering cannot be verified (${verdict.reason}): keeping the vitest runner, and the ` +
+      'zero-tests guard fails the run if any mutant is decided while running 0 tests');
+  } else {
+    effectiveRunner = 'command';
+    say(`test_runner=command: ${verdict.reason}. Running the project's own Vitest command once per mutant instead: ` +
+      'correct but slower (coverageAnalysis off, static mutants not ignored). A newer @stryker-mutator/vitest-runner ' +
+      'that joins suite names the way the installed vitest does restores the plugin runner.');
+  }
+}
+// The command runner reports only pass/fail: per-test coverage is impossible, and Stryker refuses
+// ignoreStatic under anything but perTest, so the pair is forced off/false there.
+const effectiveCoverage = effectiveRunner === 'command' && runner === 'vitest' ? 'off' : coverage;
+const effectiveIgnoreStatic = effectiveRunner === 'command' && runner === 'vitest' ? false : !includeStatic;
+if (runner === 'vitest' && effectiveRunner === 'vitest' && !includeStatic && coverage !== 'perTest') {
+  fail(2, `--coverage ${coverage} cannot be combined with ignoreStatic (the default): Stryker refuses to start unless ` +
+    `coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage ${coverage}.`);
+}
+// The project's own command, as its own Stryker adapters run it: one Vitest per mutant, narrowed to
+// the covering tests by the generated config (and by explicit file filters when they are known).
+const vitestCommand = ['VITE_CONFIG_NATIVE_IGNORE_WARNING=true npx vitest run', '--config', shq(`./${vitestConfigFile}`),
+  '--maxWorkers=1', ...((vitest && vitest.covering) || []).map(shq)].join(' ');
 
 // Resolve runner-config candidates against the REPO, never against CWD: this script is routinely
 // invoked from somewhere else, and a CWD-relative existsSync silently reports "no jest config"
@@ -653,10 +706,11 @@ const cfg = {
   // deliberately absent — this file is the whole configuration for this run. Entries are
   // `file:startLine-endLine` per changed hunk (decision 6), or a bare path for a whole file.
   mutate: entries,
-  testRunner: runner,
-  // Decision 3: perTest + ignoreStatic by default; --include-static restores `off`.
-  coverageAnalysis: coverage,
-  ignoreStatic: !includeStatic,
+  testRunner: effectiveRunner,
+  // Decision 3: perTest + ignoreStatic by default; --include-static restores `off`. The vitest
+  // command-runner fallback forces off/false (see above).
+  coverageAnalysis: effectiveCoverage,
+  ignoreStatic: effectiveIgnoreStatic,
   // progress-append-only is the watchdog's heartbeat: a moving "tested" counter is progress.
   reporters: ['json', 'clear-text', 'progress-append-only'],
   jsonReporter: { fileName: portable(report) },
@@ -690,17 +744,64 @@ if (runner === 'jest') {
   const found = candidates.find(inRepo);
   cfg.jest = { projectType: 'custom', enableFindRelatedTests: coverage !== 'off' };
   if (found) cfg.jest.configFile = found;
-} else if (runner === 'vitest') {
+} else if (runner === 'vitest' && effectiveRunner === 'vitest') {
   // vitest.related stays at its default: Stryker narrows each mutant's run to the related tests.
   cfg.vitest = { configFile: vitestConfigFile };
+  // The plugin runner can still decide a mutant while running 0 tests (a test layout or a version it
+  // cannot filter per test): this reporter turns that into a non-zero exit instead of a 0% score.
+  cfg.plugins = ['@stryker-mutator/*', `./${guardFile}`];
+  cfg.reporters = [...cfg.reporters, 'zuvo-zero-tests-guard'];
+} else if (runner === 'vitest') {
+  // The vitest-runner cannot filter per test against this vitest: run the project's own command.
+  cfg.commandRunner = { command: vitestCommand };
 } else if (runner === 'command') {
   // `npm test` with no file filter: correct everywhere, slowest. Override with --runner once the
   // project's real runner plugin is installed.
   cfg.commandRunner = { command: 'npm test' };
 }
 
-const runFiles = [watchdogFile, vitestConfigFile, path.relative(repo, out), path.relative(repo, report),
-  ...(inPlaceReason ? [inPlaceListFile] : [])]
+// The zero-tests guard. Stryker's BroadcastReporter swallows a reporter's throw, so the guard marks
+// the process (process.exitCode = 1 — the same mechanism Stryker uses for --break) after the JSON
+// report has been written: every result survives, the run still fails, loudly.
+const guardSource = `// Generated by zuvo scripts/stryker-scoped-config.sh for ONE scoped Stryker run - do not commit.
+import { declareClassPlugin, PluginKind } from '@stryker-mutator/api/plugin';
+
+class ZuvoZeroTestsGuardReporter {
+  onMutationTestReportReady(report) {
+    let decided = 0;
+    let empty = 0;
+    let first = null;
+    for (const [file, result] of Object.entries((report && report.files) || {})) {
+      for (const mutant of result.mutants || []) {
+        if (mutant.status !== 'Survived' && mutant.status !== 'Killed') continue;
+        decided += 1;
+        if (!mutant.testsCompleted) {
+          empty += 1;
+          if (!first) first = \`\${file}:\${(mutant.location && mutant.location.start && mutant.location.start.line) || '?'} \${mutant.mutatorName || '?'} (\${mutant.status})\`;
+        }
+      }
+    }
+    this.empty = empty;
+    this.decided = decided;
+    this.first = first;
+  }
+  wrapUp() {
+    if (!this.empty) return;
+    process.stderr.write(
+      'zuvo-zero-tests-guard: ' + this.empty + ' of ' + this.decided + ' Killed/Survived mutant(s) ran 0 tests (first: ' + this.first + ').\\n' +
+      'The test runner filtered every test out, so those results mean nothing (a 0-test mutant is reported Survived).\\n' +
+      'Run the scoper again: it falls back to the project\\'s own Vitest command when the vitest-runner cannot filter per test.\\n',
+    );
+    process.exitCode = 1;
+  }
+}
+
+export const strykerPlugins = [declareClassPlugin(PluginKind.Reporter, 'zuvo-zero-tests-guard', ZuvoZeroTestsGuardReporter)];
+`;
+
+const useGuard = runner === 'vitest' && effectiveRunner === 'vitest';
+const runFiles = [watchdogFile, vitestConfigFile, ...(useGuard ? [guardFile] : []), path.relative(repo, out),
+  path.relative(repo, report), ...(inPlaceReason ? [inPlaceListFile] : [])]
   .filter((f) => !f.startsWith('..'));
 const ignored = isGit() ? runFiles.filter((f) => git(['check-ignore', '-q', f], { allowFail: true }) !== null) : [];
 if (ignored.length) {
@@ -717,6 +818,7 @@ try {
     write(path.join(repo, vitestConfigFile),
       vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
   }
+  if (useGuard) write(path.join(repo, guardFile), guardSource);
   write(path.join(repo, watchdogFile), fs.readFileSync(watchdogSrc));
   if (inPlaceReason) write(path.join(repo, inPlaceListFile), [...scopedFiles].map((f) => `${f}\n`).join(''));
   write(out, JSON.stringify(cfg, null, 2) + '\n');
@@ -729,20 +831,23 @@ const rangeCount = entries.filter((e) => /:\d+-\d+$/.test(e)).length;
 const pct = changedLines ? ` (${Math.round((100 * mutatedLines) / changedLines)}% of changed)` : '';
 say(`scope=${wholeFiles ? 'WHOLE-FILES' : 'changed-lines'} base=${baseLabel} files=${scopedFiles.size} ` +
   `line_ranges=${rangeCount} whole_files=${entries.length - rangeCount} mutated_lines=${mutatedLines} ` +
-  `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${!includeStatic}` +
-  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length} in_place=${Boolean(inPlaceReason)}` +
+  `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${effectiveIgnoreStatic}` +
+  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length} in_place=${Boolean(inPlaceReason)} ` +
+  `test_runner=${effectiveRunner}` +
   (vitest ? ` vitest_config=${vitest.config} vitest_root=${vitest.root} vitest_include_source=${vitest.source} ` +
     `vitest_include_count=${vitest.count} vitest_include=${vitest.printed.join(' ')}` : ''));
 
-// run_command is handed to a shell: quote a path only when it needs it, so plain paths read as before.
-const shq = (p) => (/^[\w@%+=:,./][\w@%+=:,./-]*$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
 const kv = [
   ['config_path', out],
   ['report_path', report],
   ['temp_dir', tempDir],
-  ['test_runner', runner],
-  ['coverage_analysis', coverage],
-  ['ignore_static', String(!includeStatic)],
+  ['test_runner', effectiveRunner],
+  // Why this runner: a measured vitest-runner/vitest separator mismatch (fallback to command), an
+  // unverifiable one (plugin + guard), an explicit --runner, or the detected framework.
+  ['test_runner_reason', runnerReason || 'none'],
+  ['coverage_analysis', effectiveCoverage],
+  ['ignore_static', String(effectiveIgnoreStatic)],
+  ['guard_module', useGuard ? `./${guardFile}` : 'none'],
   ['scope_mode', wholeFiles ? 'whole-files' : 'changed-lines'],
   ['diff_base', baseLabel],
   ['file_count', scopedFiles.size],
@@ -756,6 +861,10 @@ const kv = [
   ...(vitest ? [['vitest_config', vitest.config], ['vitest_root', vitest.root],
     ['vitest_include_source', vitest.source], ['vitest_include_count', vitest.count],
     ...vitest.printed.map((g) => ['vitest_include', g]),
+    // The same tests as plain repo-relative paths — what the command runner passes to Vitest.
+    ...(vitest.covering || []).map((f) => ['vitest_covering', f]),
+    // Inline test.projects the scoped run drops (their project-level options no longer apply).
+    ...(vitest.dropped ? [['vitest_projects_dropped', `${vitest.dropped.config}:${vitest.dropped.key}:${vitest.dropped.count}`]] : []),
     // workspace-include is all-or-nothing: these files are why the narrowing was given up.
     ...(vitest.missing || []).map((f) => ['vitest_missing_tests', f])] : []),
   ['in_place', String(Boolean(inPlaceReason))],

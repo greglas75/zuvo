@@ -11,7 +11,11 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-LIB="$ROOT/scripts/lib/stryker-vitest.cjs"
+# STRYKER_SCOPER points the whole file at ANOTHER copy (a pre-fix scoper, to see these tests fail):
+# the lib and the watchdog ship beside it, exactly as the installer lays them out.
+STRYKER="${STRYKER_SCOPER:-$ROOT/scripts/stryker-scoped-config.sh}"
+STRYKER="$(cd "$(dirname "$STRYKER")" && pwd)/$(basename "$STRYKER")"   # absolute: the fixtures cd elsewhere
+LIB="$(dirname "$STRYKER")/lib/stryker-vitest.cjs"
 
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -71,6 +75,38 @@ printf "const include = ['x'];\nexport default { test: { include } };\n" > "$F/s
 printf "const shared = { test: { include: ['a'] } };\nexport default { test: { include: ['b'] } };\n" > "$F/twice.config.ts"
 printf "export default mergeConfig(base, { test: { globals: true } });\n" > "$F/merge.config.ts"
 mkdir -p "$F/q4" && printf "export default { \"test\": { \"projects\": ['a'] } };\n" > "$F/q4/vitest.config.ts"
+# An INLINE project list (objects defined in this file) is narrowable; anything pointing elsewhere is not.
+mkdir -p "$F/inline-projects" && cat > "$F/inline-projects/vitest.config.ts" <<'EOF'
+import { defineConfig, defineProject } from 'vitest/config';
+export default defineConfig({
+  test: {
+    root: 'src',
+    environment: 'happy-dom',
+    projects: [
+      { extends: true, test: { name: 'dom', include: ['**/*.dom.test.ts'] } },
+      defineProject({ extends: true, test: { name: 'node', environment: 'node', include: ['**/*.node.test.ts'] } }),
+    ],
+  },
+});
+EOF
+mkdir -p "$F/q5" && printf "export default { test: { projects: [...base] } };\n" > "$F/q5/vitest.config.ts"
+# Vitest and the vitest-runner, installed: the separator each builds a full test name with is readable.
+mk_pkg() {  # $1 = node_modules dir, $2 = package name, $3 = version, $4 = main
+  mkdir -p "$1/$2"
+  printf '{"name":"%s","version":"%s","main":"%s"}\n' "$2" "$3" "$4" > "$1/$2/package.json"
+}
+SEP="$TMP/sep"
+mk_pkg "$SEP/node_modules" vitest 5.0.5 dist/index.js
+mkdir -p "$SEP/node_modules/vitest/dist" && : > "$SEP/node_modules/vitest/dist/index.js"
+printf 'export function createTaskName(names, separator = " > ") { return names.join(separator); }\n' > "$SEP/node_modules/vitest/dist/task-utils.js"
+mk_pkg "$SEP/node_modules" @stryker-mutator/vitest-runner 10.0.0 dist/index.js
+mkdir -p "$SEP/node_modules/@stryker-mutator/vitest-runner/dist/src"
+: > "$SEP/node_modules/@stryker-mutator/vitest-runner/dist/index.js"
+printf 'export function collectTestName({ name, suite }) {\n  const nameParts = [name];\n  return nameParts.join(" ").trim();\n}\n' \
+  > "$SEP/node_modules/@stryker-mutator/vitest-runner/dist/src/test-helpers.js"
+cp -R "$SEP" "$TMP/sep-ok"   # the same packages, with the separator the runner builds
+printf 'export function collectTestName({ name, suite }) {\n  const nameParts = [name];\n  return nameParts.join(" > ").trim();\n}\n' \
+  > "$TMP/sep-ok/node_modules/@stryker-mutator/vitest-runner/dist/src/test-helpers.js"
 printf "function f() { return /[\"']/; }\nexport default { test: { include: ['src/**/*.test.ts'] } };\n" > "$F/ret.config.ts"
 printf "export default mergeConfig(base, { test: { include: ['x'] } });\n" > "$F/mergelist.config.ts"
 printf "export default { test: { include: ['x'], ...base.test } };\n" > "$F/spreadinc.config.ts"
@@ -78,8 +114,8 @@ printf "const shared = { projects: ['a'] };\nexport default { test: shared };\n"
 # A config ABOVE the repo root is outside Stryker's sandbox and must never be found.
 mkdir -p "$TMP/outer/repo/src" && printf 'export default {};\n' > "$TMP/outer/vitest.config.ts"
 
-node - "$LIB" "$F" "$TMP/outer/repo" <<'NODE'
-const [lib, F, inner] = process.argv.slice(2);
+node - "$LIB" "$F" "$TMP/outer/repo" "$SEP" "$TMP/sep-ok" <<'NODE'
+const [lib, F, inner, SEP, SEPOK] = process.argv.slice(2);
 const v = require(lib);
 const fs = require('fs');
 const path = require('path');
@@ -106,6 +142,26 @@ check("projects: a quoted 'projects' key is an aggregator", v.hasProjects(F, 'q1
 check('projects: a shorthand { projects } is an aggregator', v.hasProjects(F, 'q2/vitest.config.ts'), true);
 check('projects: found in the real test object after an earlier one', v.hasProjects(F, 'q3/vitest.config.ts'), true);
 check('projects: a quoted "test" key with "projects" is an aggregator', v.hasProjects(F, 'q4/vitest.config.ts'), true);
+
+// projectsForm — an inline list of project OBJECTS is defined in this file and can be narrowed; a
+// list of globs/strings names OTHER configs (refused), and so does anything unreadable.
+check('projects form: glob strings point at other configs (opaque)', v.projectsForm(F, 'vitest.config.ts').kind, 'opaque');
+check('projects form: inline project objects are narrowable (inline, with the count)',
+  v.projectsForm(F, 'inline-projects/vitest.config.ts'), { kind: 'inline', key: 'projects', count: 2 });
+check('projects form: a shorthand { projects } cannot be read (opaque)', v.projectsForm(F, 'q2/vitest.config.ts').kind, 'opaque');
+check('projects form: a spread inside the array may add outside projects (opaque)', v.projectsForm(F, 'q5/vitest.config.ts').kind, 'opaque');
+check('projects form: a config that declares none', v.projectsForm(F, 'plain.config.ts'), { kind: 'none' });
+
+// vitestRunnerVerdict — the runner's per-test filter joins suite names with its own separator; the
+// verdict must be MEASURED from the installed packages, never guessed.
+check('runner verdict: a measured separator mismatch (vitest " > " vs runner " ") is refused',
+  [v.vitestRunnerVerdict(SEP).ok, v.vitestRunnerVerdict(SEP).unknown], [false, false]);
+check('runner verdict: the mismatch reason names both separators',
+  /" > "/.test(v.vitestRunnerVerdict(SEP).reason) && /" "/.test(v.vitestRunnerVerdict(SEP).reason), true);
+check('runner verdict: equal separators are accepted',
+  [v.vitestRunnerVerdict(SEPOK).ok, v.vitestRunnerVerdict(SEPOK).reason.includes('" > "')], [true, true]);
+check('runner verdict: packages that are not installed are UNKNOWN, not a refusal',
+  [v.vitestRunnerVerdict(F).ok, v.vitestRunnerVerdict(F).unknown], [false, true]);
 
 // parseTestInclude — the printed include must be test.include, never coverage.include or a comment.
 check('include: literal test.include, coverage.include and comments ignored', v.parseTestInclude(read('designer.config.ts')),
@@ -176,7 +232,6 @@ NODE
 [ $? -eq 0 ] || fail=1
 
 # ── B. scoper inputs: explicit covering tests and a config override ───────────────────────────
-STRYKER="$ROOT/scripts/stryker-scoped-config.sh"
 M="$TMP/mono"
 mkdir -p "$M/apps/a/src/__tests__" "$M/apps/c/src" "$M/packages/b/src"
 printf '{"name":"m","private":true,"devDependencies":{"vitest":"^4.0.0"}}\n' > "$M/package.json"
@@ -328,7 +383,7 @@ out_n="$(cd "$N" && bash "$STRYKER" --repo "$N" --whole-files --runner vitest --
   && pass "no config at all: vitest_config=none, root ., Vitest's default include" \
   || bad "no config: rc=$rc config=$(kv1 "$out_n" vitest_config) include=[$(kvs "$out_n" vitest_include)]"
 
-ALONE="$TMP/alone"; mkdir -p "$ALONE" && cp "$STRYKER" "$ROOT/scripts/stryker-run-watchdog.sh" "$ALONE/"
+ALONE="$TMP/alone"; mkdir -p "$ALONE" && cp "$STRYKER" "$(dirname "$STRYKER")/stryker-run-watchdog.sh" "$ALONE/"
 (cd "$M" && bash "$ALONE/stryker-scoped-config.sh" --repo "$M" --whole-files --runner vitest --file apps/a/src/x.ts >/dev/null 2>"$TMP/alone.err"); rc=$?
 [ "$rc" = 2 ] && grep -q 'lib/stryker-vitest.cjs' "$TMP/alone.err" \
   && pass "scoper without its lib/: exit 2 naming the lib, never the old repo-root guess" \
@@ -433,7 +488,7 @@ cmd_sp="$(cd "$SP" && bash "$STRYKER" --repo "$SP" --whole-files --runner vitest
 [ "$rc" = 0 ] && [ "$(cat "$TMP/npx.cwd" 2>/dev/null)" = "$SP" ] \
   && pass "run_command: a repo path with a space is quoted (npx ran in the repo)" \
   || bad "run_command with a spaced repo path: rc=$rc cwd=$(cat "$TMP/npx.cwd" 2>/dev/null) cmd=$cmd_sp"
-NOWD="$TMP/nowd"; mkdir -p "$NOWD/lib" && cp "$STRYKER" "$NOWD/" && cp "$ROOT/scripts/lib/stryker-vitest.cjs" "$NOWD/lib/"
+NOWD="$TMP/nowd"; mkdir -p "$NOWD/lib" && cp "$STRYKER" "$NOWD/" && cp "$LIB" "$NOWD/lib/"
 before="$(written)"
 (cd "$M" && bash "$NOWD/stryker-scoped-config.sh" --repo "$M" --whole-files --runner vitest --file apps/a/src/x.ts >/dev/null 2>"$TMP/nowd.err"); rc=$?
 [ "$rc" = 2 ] && [ "$(written)" = "$before" ] && grep -q 'stryker-run-watchdog.sh' "$TMP/nowd.err" \
@@ -482,5 +537,125 @@ out="$(scope --runner vitest --file apps/a/src/x.ts --report "$TMP/reports/r.jso
 name="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).jsonReporter.fileName)' "$cfg" 2>/dev/null)"
 [ "$name" = "$TMP/reports/r.json" ] && pass "portable: a --report outside the repo stays absolute" \
   || bad "portable: outside --report written as '$name'"
+
+# ── F. a config that is multi-project AT RUNTIME, and a vitest-runner that cannot filter per test ─
+# Defect 1 (2026-10-20, apps/runner): `test.projects: [{extends:true, test:{…}}, …]` — the projects are
+# defined IN the config — made the scoper exit 5 and every hand-built config report "Ran 0.00 tests
+# per mutant" with all mutants SURVIVED, even a control mutant a hand edit killed.
+I="$TMP/inline"
+mkdir -p "$I/apps/runner/src/__tests__"
+printf '{"name":"i","private":true,"devDependencies":{"vitest":"^4"}}\n' > "$I/package.json"
+printf '{"name":"r","private":true}\n' > "$I/apps/runner/package.json"
+cat > "$I/apps/runner/vitest.config.ts" <<'EOF'
+import { defineConfig } from 'vitest/config';
+import path from 'path';
+const srcDir = path.resolve(__dirname, 'src');
+export default defineConfig({
+  test: {
+    root: srcDir,
+    environment: 'happy-dom',
+    setupFiles: ['./test-setup.ts'],
+    projects: [
+      { extends: true, test: { name: 'dom', include: ['**/*.dom.test.ts'] } },
+      { extends: true, test: { name: 'node', environment: 'node', include: ['**/*.node.test.ts'], exclude: ['**/*.slow.ts'] } },
+    ],
+  },
+});
+EOF
+printf 'export const x = 1;\n' > "$I/apps/runner/src/x.ts"
+printf 'export const x = 1;\n' > "$I/apps/runner/src/x.test.ts"
+out_i="$(cd "$I" && bash "$STRYKER" --repo "$I" --whole-files --runner vitest --file apps/runner/src/x.ts 2>"$TMP/inline.err")"; rc=$?
+if [ "$rc" = 0 ] && [ "$(kv1 "$out_i" vitest_config)" = apps/runner/vitest.config.ts ] \
+   && [ "$(kv1 "$out_i" vitest_include_source)" = colocated ] && [ "$(kvs "$out_i" vitest_include)" = src/x.test.ts ] \
+   && [ "$(kv1 "$out_i" vitest_covering)" = apps/runner/src/x.test.ts ] \
+   && [ "$(kv1 "$out_i" vitest_projects_dropped)" = apps/runner/vitest.config.ts:projects:2 ] \
+   && grep -q 'WARNING apps/runner/vitest.config.ts declares test.projects' "$TMP/inline.err" \
+   && grep -qF 'const { projects, workspace, ...narrow } = b.test ?? {};' "$I/$(configfile_of "$out_i")"; then
+  pass "inline test.projects (the apps/runner shape): narrowed, dropped loudly, with the co-located test and its root"
+else
+  bad "inline projects: rc=$rc config=$(kv1 "$out_i" vitest_config) source=$(kv1 "$out_i" vitest_include_source) include=[$(kvs "$out_i" vitest_include | tr '\n' ' ')] dropped=$(kv1 "$out_i" vitest_projects_dropped) — $(head -c 300 "$TMP/inline.err")"
+fi
+# The same config with projects pointing at OTHER files stays refused: nothing here can narrow them.
+mkdir -p "$I/apps/other"
+printf "export default { test: { projects: ['apps/other/vitest.config.ts'] } };\n" > "$I/apps/runner-glob.config.ts"
+printf 'export default {};\n' > "$I/apps/other/vitest.config.ts"
+(cd "$I" && bash "$STRYKER" --repo "$I" --whole-files --runner vitest --file apps/runner/src/x.ts \
+  --vitest-config apps/runner-glob.config.ts >/dev/null 2>"$TMP/glob.err"); rc=$?
+[ "$rc" = 2 ] && grep -q 'fans out to projects it does not define' "$TMP/glob.err" \
+  && pass "projects naming other config files: still refused (2), naming the reason" \
+  || bad "projects naming other files: rc=$rc — $(head -c 300 "$TMP/glob.err")"
+
+# Defect 2 (2026-10-20, apps/api): vitest 5 builds a full test name with " > ", the vitest-runner's
+# per-test filter with " ". Every test is skipped, every mutant runs 0 tests and is reported SURVIVED.
+mkdir -p "$SEP/apps/api/src"
+printf '{"name":"s","private":true,"devDependencies":{"vitest":"5.0.5"}}\n' > "$SEP/package.json"
+printf "export default { test: { include: ['**/*.spec.ts'] } };\n" > "$SEP/apps/api/vitest.config.ts"
+printf 'export const f = 1;\n' > "$SEP/apps/api/src/f.ts"
+printf 'export const f = 1;\n' > "$SEP/apps/api/src/f.spec.ts"
+out_s="$(cd "$SEP" && bash "$STRYKER" --repo "$SEP" --whole-files --runner vitest --file apps/api/src/f.ts 2>"$TMP/sep.err")"; rc=$?
+cmd="$(node -e 'const c=require(process.argv[1]); process.stdout.write((c.commandRunner||{}).command||"")' "$(kv1 "$out_s" config_path)" 2>/dev/null)"
+cfg_lacks() { node -e 'const c=require(process.argv[1]); process.exit(process.argv[2] in c ? 1 : 0)' "$(kv1 "$1" config_path)" "$2"; }
+if [ "$rc" = 0 ] && [ "$(kv1 "$out_s" test_runner)" = command ] && [ "$(kv1 "$out_s" coverage_analysis)" = off ] \
+   && [ "$(kv1 "$out_s" ignore_static)" = false ] && [ "$(kv1 "$out_s" guard_module)" = none ] \
+   && grep -q 'vitest 5.0.5' "$TMP/sep.err" && grep -q 'vitest-runner 10.0.0' "$TMP/sep.err" \
+   && [ "$(cfg_val "$out_s" testRunner)" = '"command"' ] && cfg_lacks "$out_s" vitest \
+   && case "$cmd" in *"npx vitest run --config ./.stryker-scoped-"*"--maxWorkers=1"*"apps/api/src/f.spec.ts"*) true ;; *) false ;; esac; then
+  pass "separator mismatch (vitest \" > \" vs runner \" \"): test_runner=command, the project's own Vitest command, said loudly"
+else
+  bad "separator mismatch: rc=$rc runner=$(kv1 "$out_s" test_runner) coverage=$(kv1 "$out_s" coverage_analysis) command=[$cmd] — $(head -c 300 "$TMP/sep.err")"
+fi
+# The same packages, agreeing: the plugin runner stays, and the zero-tests guard is wired beside it.
+# A stub @stryker-mutator/api/plugin lets the generated guard be RUN below, as Stryker loads it.
+mkdir -p "$TMP/sep-ok/node_modules/@stryker-mutator/api"
+printf '{"name":"@stryker-mutator/api","version":"10.0.0","exports":{"./plugin":"./plugin.mjs"}}\n' \
+  > "$TMP/sep-ok/node_modules/@stryker-mutator/api/package.json"
+printf 'export const PluginKind = { Reporter: "Reporter" };\nexport const declareClassPlugin = (kind, name, injectableClass) => ({ kind, name, injectableClass });\n' \
+  > "$TMP/sep-ok/node_modules/@stryker-mutator/api/plugin.mjs"
+cp -R "$SEP/apps" "$SEP/package.json" "$TMP/sep-ok/" 2>/dev/null
+out_k="$(cd "$TMP/sep-ok" && bash "$STRYKER" --repo "$TMP/sep-ok" --whole-files --runner vitest --file apps/api/src/f.ts 2>"$TMP/ok.err")"; rc=$?
+guard_rel="$(kv1 "$out_k" guard_module)"
+if [ "$rc" = 0 ] && [ "$(kv1 "$out_k" test_runner)" = vitest ] && [ "$(kv1 "$out_k" coverage_analysis)" = perTest ] \
+   && [ "$(kv1 "$out_k" ignore_static)" = true ] && case "$guard_rel" in ./.stryker-scoped-*.zero-tests-guard.mjs) true ;; *) false ;; esac \
+   && [ "$(cfg_val "$out_k" vitest)" = "{\"configFile\":\"$(configfile_of "$out_k")\"}" ] \
+   && node -e 'const c=require(process.argv[1]);
+       const ok = c.reporters.includes("zuvo-zero-tests-guard") && c.plugins.includes("@stryker-mutator/*")
+         && c.plugins.includes("./" + process.argv[2].replace(/^\.\//, ""));
+       process.exit(ok ? 0 : 1)' "$(kv1 "$out_k" config_path)" "$guard_rel"; then
+  pass "matching separators: the plugin runner stays, and the zero-tests guard is a plugin + reporter of the config"
+else
+  bad "matching separators: rc=$rc runner=$(kv1 "$out_k" test_runner) guard=$guard_rel — $(head -c 300 "$TMP/ok.err")"
+fi
+# The guard itself, loaded the way Stryker loads it: a Killed/Survived mutant with 0 tests must make
+# the process exit non-zero (a reporter's throw is swallowed by Stryker's BroadcastReporter, so the
+# guard marks process.exitCode instead), and a healthy report must not.
+run_guard() {  # $1 = report JSON; prints the child's exit code
+  node --input-type=module - "$TMP/sep-ok/${guard_rel#./}" "$1" <<'EOF'
+import { pathToFileURL } from 'node:url';
+const [guardPath, reportJson] = process.argv.slice(2);
+const m = await import(pathToFileURL(guardPath).href);
+const plugin = m.strykerPlugins[0];
+if (plugin.name !== 'zuvo-zero-tests-guard' || plugin.kind !== 'Reporter') { console.error('NOT A GUARD PLUGIN'); process.exit(3); }
+const reporter = new plugin.injectableClass();
+reporter.onMutationTestReportReady(JSON.parse(reportJson));
+reporter.wrapUp();
+EOF
+}
+broken='{"files":{"a.ts":{"mutants":[{"status":"Survived","testsCompleted":0,"mutatorName":"X","location":{"start":{"line":1}}}]}}}'
+healthy='{"files":{"a.ts":{"mutants":[{"status":"Killed","testsCompleted":3,"mutatorName":"X","location":{"start":{"line":1}}}]}}}'
+run_guard "$broken" >/dev/null 2>"$TMP/guard.err"; rc=$?
+[ "$rc" = 1 ] && grep -q 'zuvo-zero-tests-guard: 1 of 1 Killed/Survived mutant(s) ran 0 tests' "$TMP/guard.err" \
+  && pass "zero-tests guard: a mutant decided with 0 tests fails the run (exit 1) and names it" \
+  || bad "zero-tests guard (broken report): rc=$rc — $(head -c 300 "$TMP/guard.err")"
+run_guard "$healthy" >/dev/null 2>"$TMP/guard-ok.err"; rc=$?
+[ "$rc" = 0 ] && [ ! -s "$TMP/guard-ok.err" ] \
+  && pass "zero-tests guard: a healthy report passes untouched" \
+  || bad "zero-tests guard (healthy report): rc=$rc — $(head -c 300 "$TMP/guard-ok.err")"
+# --coverage other than perTest with ignoreStatic (the default) is still a startup error — now checked
+# where the runner is known (the vitest fallback forces off/false, an explicit --coverage does not).
+(cd "$TMP/sep-ok" && bash "$STRYKER" --repo "$TMP/sep-ok" --whole-files --runner vitest --file apps/api/src/f.ts \
+  --coverage off >/dev/null 2>"$TMP/cov.err"); rc=$?
+[ "$rc" = 2 ] && grep -q 'cannot be combined with ignoreStatic' "$TMP/cov.err" \
+  && pass "--coverage off without --include-static: exit 2, named (not a Stryker startup failure)" \
+  || bad "--coverage off without --include-static: rc=$rc — $(head -c 300 "$TMP/cov.err")"
 
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi

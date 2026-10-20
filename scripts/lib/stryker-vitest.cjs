@@ -107,12 +107,60 @@ function testObjects(src) {
   return objects;
 }
 
-// True when the config fans out to several projects: `test.projects` / `test.workspace` in ANY test
-// object, or a `vitest.workspace.*` file beside it. Such a config runs every project, whatever
-// `include` says.
+// True when the config declares projects in any form: `test.projects` / `test.workspace` in ANY test
+// object, or a `vitest.workspace.*` file beside it.
 function hasProjects(repo, relConfig) {
-  if (WORKSPACE_FILES.some((n) => exists(repo, P.join(P.dirname(relConfig), n)))) return true;
-  return testObjects(fs.readFileSync(path.join(repo, relConfig), 'utf8')).some((k) => k.projects || k.workspace);
+  return projectsForm(repo, relConfig).kind !== 'none';
+}
+
+// The entries of a literal array, as source slices, or null when the text is not one.
+function literalArray(text) {
+  const t = text.trim();
+  if (t[0] !== '[' || t[t.length - 1] !== ']') return null;
+  const body = t.slice(1, -1);
+  const entries = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    else if (c === ',' && depth === 0) { entries.push(body.slice(start, i)); start = i + 1; }
+  }
+  entries.push(body.slice(start));
+  return entries.map((e) => e.trim()).filter(Boolean);
+}
+
+const isProjectObject = (e) => /^\{[\s\S]*\}$/.test(e) || /^[\w$.]+\s*\(\s*\{[\s\S]*\}\s*\)$/.test(e);
+
+// How a config fans out to projects:
+//   none   — no test.projects/test.workspace anywhere and no vitest.workspace.* beside it.
+//   inline — test.projects/test.workspace is a literal array of project OBJECTS defined in this same
+//            file (`projects: [{ extends: true, test: { … } }, …]`). Dropping the key keeps every
+//            test in this config's own tree; the project files of the repo's own Stryker configs are
+//            dropped the same way. `why` names the key.
+//   opaque — a variable/shorthand/spread, entries naming OTHER project files or globs
+//            (`projects: ['apps/*']`), or a vitest.workspace.* file: the real project configs live
+//            elsewhere and no include written here can narrow them.
+function projectsForm(repo, relConfig) {
+  const beside = WORKSPACE_FILES.find((n) => exists(repo, P.join(P.dirname(relConfig), n)));
+  if (beside) return { kind: 'opaque', why: `a ${beside} file sits beside it` };
+  const src = fs.readFileSync(path.join(repo, relConfig), 'utf8');
+  const b = blank(src);
+  for (const keys of testObjects(src)) {
+    for (const key of ['projects', 'workspace']) {
+      const span = keys[key];
+      if (!span) continue;
+      if (span === 'shorthand') return { kind: 'opaque', why: `test.${key} is written shorthand` };
+      const entries = literalArray(b.slice(span[0], span[1]));
+      if (!entries) return { kind: 'opaque', why: `test.${key} is not a literal array` };
+      if (!entries.length) continue;
+      if (entries.every(isProjectObject)) return { kind: 'inline', key, count: entries.length };
+      if (entries.some((e) => e.startsWith('...'))) return { kind: 'opaque', why: `test.${key} holds a spread` };
+      return { kind: 'opaque', why: `test.${key} names project files or variables, not inline project objects` };
+    }
+  }
+  return { kind: 'none' };
 }
 
 // `test: shared`, `defineConfig({ test })`: the test options live elsewhere and cannot be read here.
@@ -185,16 +233,24 @@ function resolve({ repo, files, override, tests }) {
   if ([...files, ...tests, override || '.'].some(outsideRepo)) return { error: 'a scoped file, test or --vitest-config resolves outside the repo' };
   if (override && !exists(repo, override)) return { error: `--vitest-config: no such file: ${override}` };
   let config = override || null;
-  if (override && hasProjects(repo, override)) {
-    return { error: `--vitest-config ${override} declares test.projects/workspace: every project would run and no include can narrow it — pass a workspace config` };
+  let dropped = null;
+  if (override) {
+    const form = projectsForm(repo, override);
+    if (form.kind === 'opaque') {
+      return { error: `--vitest-config ${override} fans out to projects it does not define (${form.why}): every project would run and no include can narrow it — pass the workspace's own config` };
+    }
+    if (form.kind === 'inline') dropped = { config: override, ...form };
   }
   if (!override) {
     const byConfig = group(files, (f) => findNearestConfig(repo, f) || 'none');
     if (byConfig.length > 1) return { groups: byConfig };
     config = byConfig[0].key === 'none' ? null : byConfig[0].key;
-    if (config && hasProjects(repo, config)) {
-      return { aggregator: config,
-        groups: group(files, (f) => workspaceDir(repo, f)) };
+    if (config) {
+      const form = projectsForm(repo, config);
+      if (form.kind === 'opaque') {
+        return { aggregator: config, why: form.why, groups: group(files, (f) => workspaceDir(repo, f)) };
+      }
+      if (form.kind === 'inline') dropped = { config, ...form };
     }
   }
   const root = config ? P.dirname(config) : '.';
@@ -205,10 +261,16 @@ function resolve({ repo, files, override, tests }) {
   // `!pattern` (a re-include) is ignored: a re-included test may be dropped, never wrongly added.
   own.exclude = ownExclude.kind === 'list' ? ownExclude.globs.filter((g) => !g.startsWith('!')) : [];
   const warnings = [];
+  // The keys are dropped by renderVitestConfig; say what that costs, loudly, BEFORE the run.
+  if (dropped) {
+    warnings.push(`${dropped.config} declares test.${dropped.key} (${dropped.count} inline project object(s)): the scoped run ` +
+      'drops them, so their project-level test options (environment, setupFiles, include, exclude) do not apply — ' +
+      `only ${dropped.config}'s own test options do`);
+  }
   if (config && ownExclude.kind === 'unknown') {
     warnings.push(`${config} test.exclude cannot be read: co-located tests are not filtered by it`);
   }
-  if (config && !opaqueTest(src) && /mergeConfig|extends|\.\.\.\s*[\w$]+\s*[,}]/.test(blank(src))) {
+  if (config && !dropped && !opaqueTest(src) && /mergeConfig|extends|\.\.\.\s*[\w$]+\s*[,}]/.test(blank(src))) {
     warnings.push(`${config} spreads or merges another config: whether it is multi-project cannot be read`);
   }
   if (config && opaqueTest(src)) {
@@ -218,13 +280,14 @@ function resolve({ repo, files, override, tests }) {
   if (setsRoot || (config && /(?:^|[^\w$.])root\s*:/.test(blank(src)))) {
     warnings.push(`${config} sets a root/test.root/test.dir; the scoped run roots it at ${root} (and test.dir too when it narrows the include)`);
   }
-  const out = { config: config || 'none', root, warnings };
+  const out = { config: config || 'none', root, warnings, dropped };
   const away = files.filter((f) => outsideRepo(rel(f)));
   if (away.length) warnings.push(`scoped file(s) outside vitest_root ${root}: ${away.join(', ')} — only tests under ${root} can run`);
   if (tests.length) {
     const outside = tests.filter((t) => outsideRepo(rel(t)));
     if (outside.length) return { error: `explicit test(s) outside vitest_root ${root}: ${outside.join(', ')}` };
-    return { ...out, source: 'explicit', include: tests.map((t) => escapeGlob(rel(t))) };
+    // `covering` is the same list as PLAIN repo-relative paths, for a test-runner command line.
+    return { ...out, source: 'explicit', include: tests.map((t) => escapeGlob(rel(t))), covering: [...tests] };
   }
   if (typeof P.matchesGlob !== 'function') {
     warnings.push('this node has no path.matchesGlob: co-located tests are not filtered by the workspace include');
@@ -236,10 +299,13 @@ function resolve({ repo, files, override, tests }) {
     if (!hits.length) missing.push(f);
     for (const t of hits) found.add(t);
   }
-  if (!missing.length) return { ...out, source: 'colocated', include: [...found].sort().map((t) => escapeGlob(rel(t))) };
+  if (!missing.length) {
+    const covering = [...found].sort();
+    return { ...out, source: 'colocated', include: covering.map((t) => escapeGlob(rel(t))), covering };
+  }
   warnings.push(`covering_tests=workspace-include: no co-located test inside vitest_root ${root} for ${missing.join(', ')}`);
   const printed = own.kind === 'list' && own.globs.length ? own.globs : own.kind === 'default' ? [VITEST_DEFAULT_INCLUDE] : null;
-  return { ...out, source: 'workspace-include', include: null, printed, missing };
+  return { ...out, source: 'workspace-include', include: null, printed, missing, covering: null };
 }
 
 const group = (items, keyOf) => {
@@ -285,7 +351,79 @@ function renderVitestConfig({ config, root, include }) {
     '};\n';
 }
 
+// ── the vitest-runner's per-test filter ────────────────────────────────────────────────────────
+// Stryker's vitest-runner narrows a mutant's run to its covering tests by building a testNamePattern
+// from the test names `collectTestName` joins with its own separator; Vitest evaluates that pattern
+// against a full name built by `createTaskName` with ITS separator. Equal → per-test filtering works.
+// Different → every test is skipped, each mutant reports "Ran 0.00 tests per mutant" and is marked
+// SURVIVED (2026-10-20: vitest 5.0.5 joins with " > ", @stryker-mutator/vitest-runner 10.0.0 with
+// " ": 168 survivors on a scope whose control mutant a hand-applied edit killed).
+function packageRoot(spec, repo) {
+  let entry;
+  try { entry = require.resolve(spec, { paths: [repo] }); } catch { return null; }
+  let dir = path.dirname(entry);
+  for (;;) {
+    try {
+      if (JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).name === spec) return dir;
+    } catch { /* no package.json here: keep walking up */ }
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+const isJs = (name) => /\.(?:js|mjs|cjs)$/.test(name) && !/\.d\.[cm]?[jt]s$/.test(name);
+
+function firstMatch(dir, re, depth = 0) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  for (const e of entries) {
+    if (!e.isFile() || !isJs(e.name)) continue;
+    const m = re.exec(fs.readFileSync(path.join(dir, e.name), 'utf8'));
+    if (m) return m;
+  }
+  if (depth >= 3) return null;
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const m = firstMatch(path.join(dir, e.name), re, depth + 1);
+    if (m) return m;
+  }
+  return null;
+}
+
+const readKnownOrScan = (root, rels, re) => {
+  for (const r of rels) {
+    try { const m = re.exec(fs.readFileSync(path.join(root, r), 'utf8')); if (m) return m; } catch { /* absent: scan */ }
+  }
+  return firstMatch(root, re);
+};
+
+// Do the installed vitest and vitest-runner agree on how a test's full name is built?
+// {ok:true} · {ok:false, unknown:false, reason} a MEASURED mismatch · {ok:false, unknown:true, reason}
+// when it cannot be checked (nothing installed) — the caller keeps the plugin and relies on the
+// zero-tests guard rather than guessing.
+function vitestRunnerVerdict(repo) {
+  const vRoot = packageRoot('vitest', repo);
+  const rRoot = packageRoot('@stryker-mutator/vitest-runner', repo);
+  const missing = !vRoot ? 'vitest' : !rRoot ? '@stryker-mutator/vitest-runner' : null;
+  if (missing) return { ok: false, unknown: true, reason: `cannot resolve ${missing} from the repo` };
+  const v = readKnownOrScan(vRoot, ['dist/task-utils.js', 'dist/task-utils.mjs'],
+    /function createTaskName\([^)]*separator\s*=\s*(['"`])([^'"`]*)\1/);
+  const r = readKnownOrScan(rRoot, ['dist/src/test-helpers.js', 'dist/test-helpers.js', 'dist/src/stryker-setup.js'],
+    /function collectTestName\([\s\S]{0,800}?\.join\((['"`])([^'"`]*)\1\)/);
+  if (!v) return { ok: false, unknown: true, reason: 'cannot read the suite-name separator from the installed vitest' };
+  if (!r) return { ok: false, unknown: true, reason: 'cannot read the suite-name separator from the installed @stryker-mutator/vitest-runner' };
+  const version = (root) => { try { return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; } catch { return '?'; } };
+  if (v[2] === r[2]) {
+    return { ok: true, reason: `vitest ${version(vRoot)} and @stryker-mutator/vitest-runner ${version(rRoot)} both join suite names with ${JSON.stringify(v[2])}` };
+  }
+  return { ok: false, unknown: false,
+    reason: `vitest ${version(vRoot)} builds a test's full name with ${JSON.stringify(v[2])} but @stryker-mutator/vitest-runner ` +
+      `${version(rRoot)} builds its per-test filter with ${JSON.stringify(r[2])}: that filter matches no test, so every mutant ` +
+      'runs 0 tests and is reported SURVIVED' };
+}
+
 module.exports = {
-  CONFIG_NAMES, VITEST_DEFAULT_INCLUDE, escapeGlob, findNearestConfig, hasProjects, parseTestInclude,
-  colocatedTests, workspaceDir, resolveVitest, renderVitestConfig,
+  CONFIG_NAMES, VITEST_DEFAULT_INCLUDE, escapeGlob, findNearestConfig, hasProjects, projectsForm, parseTestInclude,
+  colocatedTests, workspaceDir, resolveVitest, renderVitestConfig, vitestRunnerVerdict,
 };
