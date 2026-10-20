@@ -329,10 +329,17 @@ _agy_on_cooldown() {   # 0 = still cooling down
   return 0
 }
 _agy_start_cooldown() {  # $1 model, $2 seconds
-  local f; f=$(_agy_cooldown_file "$1")
+  local f secs="$2" cap; f=$(_agy_cooldown_file "$1")
+  # Folded into the lane cooldown: a stop never outlasts ZUVO_ADV_COOLDOWN_MAX (4 h) — a stated reset days away
+  # held agy out until then, though a new login or a refill brings it back sooner; after the cap the next review
+  # is the re-probe. ZUVO_ADV_NO_COOLDOWN=1 keeps the stated reset.
+  if [[ "${ZUVO_ADV_NO_COOLDOWN:-0}" != 1 ]]; then
+    cap="$(ar_env_int ZUVO_ADV_COOLDOWN_MAX 14400 1)"
+    (( secs <= cap )) || secs=$cap
+  fi
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
   # Temp + rename: a write that fails half-way must not truncate a stop that is already there.
-  { printf '%s %s\n' "$(( $(date +%s) + $2 ))" "$(_agy_account)" > "$f.$$" && mv -f "$f.$$" "$f"; } 2>/dev/null \
+  { printf '%s %s\n' "$(( $(date +%s) + secs ))" "$(_agy_account)" > "$f.$$" && mv -f "$f.$$" "$f"; } 2>/dev/null \
     || rm -f "$f.$$" 2>/dev/null || true
 }
 

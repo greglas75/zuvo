@@ -342,6 +342,14 @@ lane_failed_verb() {
   if [[ -e "$JSON_TMPDIR/nokey_$1" ]]; then echo "was not run"; else echo "failed or returned empty"; fi
 }
 
+# _ar_input_side_failure <lane> — the lane's stderr says it refused THIS input (over its context window, a body
+# too large): outcome `input`, which the health ledger never counts — the next, smaller input may well pass.
+_ar_input_side_failure() {
+  [[ -s "$JSON_TMPDIR/provider_$1.stderr" ]] || return 1
+  LC_ALL=C grep -qiE 'context[ _-]?(length|window)|maximum context|prompt is too long|input is too long|exceeds? the (model|maximum)|request (entity )?too large|payload too large|HTTP 413|argument list too long' \
+    "$JSON_TMPDIR/provider_$1.stderr" 2>/dev/null
+}
+
 # Preserve parallel duplicate timeouts; dedupe other failures already recorded for a lane.
 record_provider_failure_outcome() {
   local lane="$1" status="$2" dispatch_mode="$3" outcome
@@ -356,6 +364,8 @@ record_provider_failure_outcome() {
     outcome=no-key
   elif [[ -e "$JSON_TMPDIR/quota_${lane}" ]]; then
     outcome=quota
+  elif _ar_input_side_failure "$lane"; then
+    outcome=input
   else
     outcome=empty
   fi

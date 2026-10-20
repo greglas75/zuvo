@@ -18,6 +18,10 @@
 # The 5th column (last outcome) is what makes that distinction possible, and it is OPTIONAL:
 # rows written before it existed must still parse, and must take the SOFT path — the safe
 # direction, since a still-broken lane re-benches itself on its next failure.
+#
+# Since 2026-10-21 that sizing is the LEGACY bench, kept behind ZUVO_ADV_NO_COOLDOWN=1: the default is the lane
+# cooldown (2 strikes, 30 min doubling to 4 h, a canary on expiry — test-lane-cooldown.sh). The cases below
+# run with ZUVO_ADV_NO_COOLDOWN=1; the ledger WRITER they also cover (columns, strike groups, --doctor) is shared.
 
 ADV="$ROOT/scripts/adversarial-review.sh"
 MOCKS="$HERE/mocks"
@@ -40,7 +44,7 @@ seed() { printf '%b' "$1" > "$HF"; }
 # meant for $( ): the exit code must reach the case, or "nothing benched" also reads true for a driver that
 # crashed before printing anything.
 bench_run() {
-  env PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
+  env PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 ZUVO_ADV_NO_COOLDOWN=1 \
     ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" ZUVO_REVIEW_TIMEOUT=5 "$@" \
     bash "$ADV" --multi --files "$EMPTY" >/dev/null 2>"$BENCH_ERR"
   BENCH_RC=$?
@@ -113,7 +117,7 @@ start_test "bench.7 a codex lane is benched under its OWN configured model befor
 # here, the bench — it is the lane's configured model. Swapped, the failing lane hides behind the other
 # lane's model and the healthy one is benched in its place.
 seed "codex-5.3\tgpt-6-sol\t3\t$(date +%s)\tauth\n"
-line=$(PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
+line=$(PATH="$MOCKS:$PATH" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 ZUVO_ADV_NO_COOLDOWN=1 \
   ZUVO_MODEL_CODEX_PRIMARY=gpt-6-sol ZUVO_MODEL_CODEX_ALT=gpt-6-luna \
   ZUVO_REVIEW_TEST_PROVIDERS="codex-5.3 codex-5.4 mock-success" \
   bash "$ADV" --multi --dry-run --files "$EMPTY" 2>&1 >/dev/null | grep -F "Benched" || true)

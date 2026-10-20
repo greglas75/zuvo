@@ -138,6 +138,17 @@ if [[ "$DOCTOR" == "true" ]]; then
     PROVIDER_OUTCOMES="$_doc_ok" record_provider_health
     echo "  (provider-health ledger: lanes that answered are recorded ok, off the bench)"
   fi
+  # The lane cooldowns still standing after the probes (the lanes that answered just left theirs).
+  if [[ "${ZUVO_ADV_NO_COOLDOWN:-0}" != 1 && "${ZUVO_PROVIDER_BENCH:-1}" == "1" && -s "${PROVIDER_HEALTH_FILE:-}" ]]; then
+    _doc_cool="$(PROVIDERS="$_doc_list" _ar_cooldown_rows)"
+    if [[ -n "$_doc_cool" ]]; then
+      echo "  lane cooldowns (provider-health ledger):"
+      while IFS=$'\t' read -r _dl _ds _du _dr _dt; do
+        if [[ "$_ds" == cool ]]; then echo "    $_dl: cooldown until $(_ar_epoch_text "$_du") ($_dr)"
+        else echo "    $_dl: cooldown over ($_dr) — re-probed on the next review"; fi
+      done <<< "$_doc_cool"
+    fi
+  fi
   echo "  ---"
   echo "  usable providers: $working / $_doc_total"
   [[ $working -ge 1 ]] && exit 0 || exit 1
