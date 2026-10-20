@@ -368,9 +368,10 @@ detect_providers() {
   # 2026-10-17: openrouter (glm-5.3-flashx) and openrouter-4 (inkling-small) left the default again, by the owner's
   # decision: in their first production hour they cost $2.32 and $1.22 — glm runs on the zai plan anyway. Kept: mimo
   # ($0.11/h) and ling-3.1-flash ($0.35/h). Both others stay reachable by ZUVO_ADV_OPENROUTER_LANES or --provider.
+  # openrouter-mini runs a `:free` model: rationed, not billed, so the spend cap does not apply (openrouter_free_quota_*).
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3 openrouter-mini}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
@@ -488,7 +489,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|byteplus|byteplus-alt|byteplus-3|zai|muse|qwen) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|openrouter-mini|byteplus|byteplus-alt|byteplus-3|zai|muse|qwen) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -621,6 +622,7 @@ lane_model() {
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}" ;;
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}" ;;
     openrouter-4) echo "${ZUVO_MODEL_OPENROUTER_4:-thinkingmachines/inkling-small}" ;;
+    openrouter-mini) echo "${ZUVO_MODEL_OPENROUTER_MINI:-minimax/minimax-m3.1-flash:free}" ;;
     byteplus)     echo "${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}" ;;
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
@@ -827,9 +829,15 @@ _ar_lane_stop() {   # <lane> — prints why the lane cannot run now; status 1 wh
       if [[ -z "$fb" ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), no Token Plan stand-in"
       elif [[ "${ZUVO_ADV_QWEN:-0}" != 1 ]]; then echo "BytePlus quota until $(_ar_epoch_text "$until"), stand-in $fb needs ZUVO_ADV_QWEN=1"
       else return 1; fi ;;
-    openrouter|openrouter-alt|openrouter-3|openrouter-4)
+    openrouter|openrouter-alt|openrouter-3|openrouter-4|openrouter-mini)
       # A base URL on a prepaid plan host is not OpenRouter's money.
       [[ -n "$(_plan_endpoint "$lane" "${ZUVO_OPENROUTER_BASE_URL:-}" 2>/dev/null)" ]] && return 1
+      # A `:free` model is never stopped by the spend cap, only by its own quota stop.
+      if openrouter_is_free "$(lane_model "$lane")"; then
+        until="$(openrouter_free_quota_until)" || return 1
+        echo "OpenRouter free-model quota until $(_ar_epoch_text "$until")"
+        return 0
+      fi
       spent="$(openrouter_budget_spent)" || return 1
       echo "OpenRouter daily budget \$${spent% *}/\$${spent#* }" ;;
     *) return 1 ;;

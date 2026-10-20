@@ -39,6 +39,7 @@ self-exclusion below enforces it.
 | `kimi` | Moonshot (Kimi) | `kimi-code/k3-256k` at effort `high` (OAuth) | `ZUVO_KIMI_CLI_MODEL` (`-m` alias), `ZUVO_KIMI_EFFORT` (`low\|high\|max`, passed per call as `KIMI_MODEL_THINKING_EFFORT`) | `kimi -p "<prompt>" --output-format stream-json -m <model> --agent-file <tool-less profile>` (prompt = **arg**; assistant lines extracted via jq — plain text mode leaks reasoning bullets + resume footer). The profile declares `tools: []`: the default agent ran shell commands mid-review. Runs from tmpdir, never `-y`. A 403 plan limit is outcome `quota`, not `empty`. |
 | `kimi-api` | Moonshot (Kimi) | `kimi-k2.6` | `ZUVO_KIMI_MODEL` (`kimi-k2.7-code` = coding variant) | `curl` to `api.moonshot.ai/v1/chat/completions` (OpenAI-compatible) — fallback when the CLI is absent and `MOONSHOT_API_KEY` is set; `ZUVO_KIMI_BASE_URL` for the `.cn` endpoint |
 | `codestral` | Mistral | `codestral-latest` | `ZUVO_CODESTRAL_MODEL` | manual only (`--provider codestral`, needs `CODESTRAL_API_KEY`) |
+| `openrouter-mini` | OpenRouter (MiniMax, **free**) | `minimax/minimax-m3.1-flash:free` | `ZUVO_MODEL_OPENROUTER_MINI` | `curl` to OpenRouter chat completions; in the default roster with `ZUVO_ADV_OPENROUTER=1` (see "Free OpenRouter lane" below) |
 
 **Effort in the run log.** `~/.zuvo/adversarial.log` column 18 (`effort`, since 2026-10-09) is the
 effort each lane actually ran at: the codex effort (the audit effort in `--mode blind-audit`), the
@@ -102,6 +103,17 @@ Never on OpenRouter: the first cut fell back there and deepseek alone spent $72 
 against the lane). The run log and the ledger name the model that answered.
 `ZUVO_BYTEPLUS_FALLBACK_<LANE>` sets a lane's stand-in, and set but empty turns it off. Delete the file to ask the plan again before the reset.
 
+**Free OpenRouter lane: `openrouter-mini` (since 2026-10-20, owner's decision).** It runs
+`minimax/minimax-m3.1-flash:free` (1M context, reasoning on, $0 per call — the response's `usage.cost` is 0)
+and is in the default OpenRouter roster (`openrouter-alt openrouter-3 openrouter-mini`, `ZUVO_ADV_OPENROUTER=1`).
+A `:free` model is rationed, not billed: OpenRouter limits free models per minute and per day on the account,
+and the upstream throttles on its own. So it never answers to `ZUVO_OPENROUTER_DAILY_USD` (no `/key` request),
+and any HTTP 429 is a quota stop, not retried: the reset (`X-RateLimit-Reset` in the error, else the next UTC
+midnight for `free-models-per-day`, else 5 minutes) goes to `~/.zuvo/openrouter-free-quota-until`, and until then
+the lane is left out (outcome `no-key`, not held against it). Delete the file to ask again sooner. Free-model
+providers may log prompts: leave `ZUVO_ADV_OPENROUTER` off, or narrow `ZUVO_ADV_OPENROUTER_LANES`, for repos whose
+code may not leave the approved vendors. Not benchmarked for coverage yet.
+
 **GLM runs on Z.ai's own plan, lane `zai` (since 2026-10-16).** `byteplus` (glm-5.3-flash) left the
 default BytePlus set the same day (owner's decision); it stays reachable by `--provider byteplus` or
 `ZUVO_ADV_BYTEPLUS_LANES`. Setup:
@@ -149,6 +161,7 @@ prints them; a hand-made table must too. `CRIT` is what a model *reported*, not 
 | BytePlus ModelArk (Coding Plan) | `byteplus`, `byteplus-alt`, `byteplus-3` | https://console.byteplus.com/ark/region:ap-southeast-1/subscription/coding-plan |
 | Z.ai (GLM Coding Plan) | `zai` | no usage page recorded (z.ai → GLM Coding Plan → Usage) |
 | OpenRouter (per token) | `openrouter`, `openrouter-alt`, `openrouter-3`, `openrouter-4` | https://openrouter.ai/activity |
+| OpenRouter (free model, $0) | `openrouter-mini` | https://openrouter.ai/activity |
 | Alibaba Model Studio (Token Plan Intl) | `qwen` | https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal |
 | OpenAI (ChatGPT plan) | `codex-5.3`, `codex-5.4` | https://chatgpt.com/codex/settings/usage |
 | Anthropic (Claude plan) | `claude` | https://claude.ai/settings/usage |
@@ -251,7 +264,7 @@ filtering the list to nothing.
 **Known stops are left out before the draw** (`ar_skip_stopped_lanes`, 2026-10-17). Some lanes would only
 end as "not run — not held against the lane": muse inside a spent window, a BytePlus lane while the plan is
 out of quota with no Token Plan stand-in it can use (none mapped, or `ZUVO_ADV_QWEN` not 1), an OpenRouter lane once today's spend has reached
-`ZUVO_OPENROUTER_DAILY_USD`. Those are removed from the pool first, from local state only (no request), and
+`ZUVO_OPENROUTER_DAILY_USD`, `openrouter-mini` while its free ration is spent. Those are removed from the pool first, from local state only (no request), and
 named on stderr (`Known stops, left out before the fan-out draw: …`), so the cap's slots go to lanes that can
 answer. Before this, rdesigner #4111 drew 5 of 8, four were known stops, and the run ended single-provider
 (exit 3) while three working lanes sat undrawn. A stop first hit during a run still ends that lane; the next

@@ -202,6 +202,62 @@ byteplus_quota_record() {
   return 0
 }
 
+# A `:free` OpenRouter model is rationed, not billed: its 429 is the ration spent, so the reset is kept in a HOME file
+# (as for BytePlus, Alibaba, Muse) and the lane is not run until then, nor held against it.
+openrouter_is_free() { [[ "$1" == *:free ]]; }
+# _openrouter_free_quota_file — status 1 (none) under the test harness unless a test names one.
+_openrouter_free_quota_file() {
+  if [[ -n "${ZUVO_OPENROUTER_FREE_QUOTA_FILE:-}" ]]; then printf '%s\n' "$ZUVO_OPENROUTER_FREE_QUOTA_FILE"; return 0; fi
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 ]] && return 1
+  printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/openrouter-free-quota-until"
+}
+openrouter_free_quota_until() {   # prints the stop epoch while it is ahead; status 1 otherwise
+  local f until=""
+  f="$(_openrouter_free_quota_file)" || return 1
+  [[ -f "$f" ]] || return 1
+  { read -r until _ < "$f"; } 2>/dev/null || [[ -n "$until" ]] || return 1
+  [[ "$until" =~ ^[1-9][0-9]{8,10}$ ]] && (( until > $(date +%s) )) || return 1
+  printf '%s\n' "$until"
+}
+# _openrouter_free_reset_epoch <body> [<now>] — the reset the 429 names in error.metadata.headers X-RateLimit-Reset
+# (epoch ms; seconds accepted). Without a usable one (missing, past, or over two days ahead): the next UTC midnight
+# for the daily ration ("free-models-per-day"), else now + 5 min — an upstream throttle names no reset.
+_openrouter_free_reset_epoch() {
+  local now="${2:-$(date +%s)}" r e="" msg
+  r=$(printf '%s' "$1" | jq -r '.error.metadata.headers["X-RateLimit-Reset"] // empty | tostring' 2>/dev/null) || r=""
+  msg=$(printf '%s' "$1" | jq -r '.error.message // empty | tostring' 2>/dev/null) || msg=""
+  [[ "$r" =~ ^[1-9][0-9]{9,12}$ ]] && e=$(( ${#r} > 10 ? r / 1000 : r ))
+  if [[ -z "$e" ]] || (( e <= now || e > now + 2 * 86400 )); then
+    if [[ "$msg" == *free-models-per-day* ]]; then e=$(( (now / 86400 + 1) * 86400 )); else e=$(( now + 300 )); fi
+  fi
+  printf '%s\n' "$e"
+}
+# openrouter_free_quota_record <lane> <body> — the reset into the HOME file, unless a later one is already there (a
+# per-minute answer must not cut a daily stop short); compare and temp-file + mv under a mkdir lock, as
+# alibaba_quota_record does. Prints the reset in force.
+openrouter_free_quota_record() {
+  local until f tmp held n=0
+  until=$(_openrouter_free_reset_epoch "$2")
+  f="$(_openrouter_free_quota_file)" || { printf '%s\n' "$until"; return 0; }
+  mkdir -p -- "${f%/*}" 2>/dev/null || true
+  # Held past ~2 s means its holder died (the section takes microseconds): taken over, and cleared below.
+  until mkdir -- "$f.lock" 2>/dev/null; do
+    (( ++n > 20 )) && break
+    sleep 0.1
+  done
+  if held="$(openrouter_free_quota_until)" && (( held >= until )); then
+    until="$held"
+  else
+    tmp="$f.$$.$RANDOM"
+    if ! { printf '%s\t%s\n' "$until" "$1" > "$tmp" && mv -f -- "$tmp" "$f"; } 2>/dev/null; then
+      rm -f -- "$tmp" 2>/dev/null || true
+      echo "  WARN: $1: the quota stop could not be written to $f — later runs will ask OpenRouter again" >&2
+    fi
+  fi
+  rmdir -- "$f.lock" 2>/dev/null || true
+  printf '%s\n' "$until"
+}
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -n "${CODESTRAL_API_KEY:-}" ]] || { lane_no_key codestral "CODESTRAL_API_KEY is not set"; return 1; }
@@ -455,17 +511,25 @@ run_openrouter() {
   local _plan
   _plan="$(_plan_endpoint "$_lane" "${ZUVO_OPENROUTER_BASE_URL:-}")" || return 1
 
-  # Every OpenRouter call answers to the day's budget; a plan call (BytePlus, Z.ai) is prepaid and does not.
-  if [[ -z "$_plan" ]]; then
-    openrouter_budget_ok "$_lane" "$key" || return 1
-  fi
-
   # Model id is attacker-adjacent only via env, but checked anyway: ids are vendor/name[:tag]. Rejected
   # when malformed, never repaired (lane_model_ok). The router sets ZUVO_OPENROUTER_MODEL for the other
   # OpenRouter and BytePlus lanes; lane_model openrouter reads it first.
   local model
   model="$(lane_model openrouter)"
   lane_model_ok "$_lane" "$model" || return 1
+
+  # Every metered OpenRouter call answers to the day's budget. A plan call (BytePlus, Z.ai) is prepaid and a
+  # `:free` model costs nothing: neither does — the free one answers to its quota stop instead.
+  local _free=0 _until
+  [[ -z "$_plan" ]] && openrouter_is_free "$model" && _free=1
+  if (( _free )); then
+    if _until="$(openrouter_free_quota_until)"; then
+      lane_not_run "$_lane" "OpenRouter free-model quota spent until $(_ar_epoch_text "$_until")"
+      return 1
+    fi
+  elif [[ -z "$_plan" ]]; then
+    openrouter_budget_ok "$_lane" "$key" || return 1
+  fi
 
   # Temp names carry the LANE and the MODEL. `openrouter` and `openrouter-alt` are two
   # providers in the SAME parallel dispatch, so one fixed name means each overwrites the other's
@@ -547,6 +611,12 @@ run_openrouter() {
     # Keyed on the endpoint, not the lane label, which a stand-in on another endpoint keeps.
     if [[ "$_plan" == byteplus && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
       byteplus_quota_record "$_lane" "$response"
+      return 1
+    fi
+    # A free model's 429 is its ration spent (per minute, per day, or upstream): recorded, never retried.
+    if (( _free )) && [[ "$http_code" == 429 ]]; then
+      _until="$(openrouter_free_quota_record "$_lane" "$response")"
+      lane_not_run "$_lane" "OpenRouter free-model quota spent until $(_ar_epoch_text "$_until") (HTTP 429: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS"))"
       return 1
     fi
     # No stop file for Z.ai: no fallback reads one, and a chunk's one refused request costs nothing.
