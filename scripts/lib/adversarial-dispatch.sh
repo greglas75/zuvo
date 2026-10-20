@@ -178,10 +178,15 @@ _byteplus_fallback() {
     lane_not_run "$lane" "BytePlus quota exhausted until $when, Alibaba Token Plan not enabled (ZUVO_ADV_QWEN=1)"
     return 1
   fi
+  local aq
+  if aq="$(alibaba_quota_until)"; then
+    lane_not_run "$lane" "BytePlus quota exhausted until $when, Alibaba Token Plan quota exhausted until $(_ar_epoch_text "$aq")"
+    return 1
+  fi
   echo "  NOTE: $lane: BytePlus quota exhausted until $when — via Alibaba Token Plan $fb" >&2
   printf '%s' "$fb" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
   # Its own file names: the qwen lane may be running in the same JSON_TMPDIR at the same time.
-  ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" run_qwen
+  ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" ZUVO_QWEN_LANE="$lane" run_qwen
 }
 
 _dispatch_provider_inner() {

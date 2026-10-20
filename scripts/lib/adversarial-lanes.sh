@@ -840,7 +840,8 @@ _qwen_usage_mark() {
   for f in ${1:+"$1/usage_record.jsonl"} ${QWEN_HOME:+"$QWEN_HOME/usage_record.jsonl"} "$HOME/.qwen/usage_record.jsonl"; do
     [[ "$seen" != *" $f "* ]] || continue
     seen+="$f "
-    n="$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+    # The braces: a missing file is a redirection error, which a 2> on wc itself would not silence.
+    n="$({ wc -c < "$f"; } 2>/dev/null | tr -d ' ')"
     printf '%s\t%s\n' "$f" "${n:-0}"
   done
 }
@@ -859,6 +860,72 @@ _qwen_usage() {  # <workspace> <marks from _qwen_usage_mark>
                | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null \
       | while read -r a b c d; do lane_usage_add "$a" "$b" "$c" "$d"; done
   done <<< "$2"
+}
+
+# The Alibaba Token Plan answers a spent quota on every call (qwen CLI, -o json, is_error):
+#   Quota exhausted: Your token-plan 1-month quota has been exhausted. The quota will reset at 10-23 16:00:00 UTC. …
+#   (cause: insufficient_quota: 429 …)
+# Asking again cannot help before the reset (2026-10-20: byteplus-alt, standing in through this plan, paid a refused
+# call on every review for days). The reset is kept in $ZUVO_HOME/alibaba-quota-until; until then the qwen lane and
+# every BytePlus stand-in are not run — not asked, not held against them.
+_alibaba_quota_file() {
+  if [[ -n "${ZUVO_ALIBABA_QUOTA_FILE:-}" ]]; then printf '%s\n' "$ZUVO_ALIBABA_QUOTA_FILE"; return 0; fi
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 ]] && return 1
+  printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/alibaba-quota-until"
+}
+alibaba_quota_until() {   # prints the stop epoch while it is ahead; status 1 otherwise
+  local f until
+  f="$(_alibaba_quota_file)" || return 1
+  [[ -f "$f" ]] || return 1
+  { read -r until _ < "$f"; } 2>/dev/null || [[ -n "$until" ]] || return 1
+  [[ "$until" =~ ^[1-9][0-9]{8,10}$ ]] && (( until > $(date +%s) )) || return 1
+  printf '%s\n' "$until"
+}
+# _alibaba_quota_error <text> — status 0 when the text is the plan's spent-quota refusal (a throttling 429 is not).
+_alibaba_quota_error() {
+  [[ "$1" == *"Quota exhausted"* || "$1" == *"insufficient_quota"* ]]
+}
+# _alibaba_reset_epoch <text> [<now>] — the reset it names ("reset at MM-DD HH:MM:SS UTC", no year: this year, or the
+# next when that date is already more than a day behind; a full YYYY-MM-DD is taken as is). now + 1 h when it names
+# none, cannot be parsed, is past or is over 40 days ahead.
+_alibaba_reset_epoch() {
+  local now="${2:-$(date +%s)}" e="" y md hms ts re='reset at (([0-9]{4})-)?([0-9]{2}-[0-9]{2}) ([0-9]{2}:[0-9]{2}:[0-9]{2}) UTC'
+  if [[ "$1" =~ $re ]]; then
+    # Copied out: the next =~ replaces BASH_REMATCH.
+    y="${BASH_REMATCH[2]}" md="${BASH_REMATCH[3]}" hms="${BASH_REMATCH[4]}"
+    ts="${y:-$(date -u -d "@$now" +%Y 2>/dev/null || date -u -r "$now" +%Y)}-$md $hms"
+    e=$(date -u -d "$ts UTC" +%s 2>/dev/null || date -u -j -f '%Y-%m-%d %H:%M:%S' "$ts" +%s 2>/dev/null) || e=""
+    if [[ -z "$y" && "$e" =~ ^[0-9]+$ ]] && (( e < now - 86400 )); then
+      ts="$(( ${ts%%-*} + 1 ))-$md $hms"
+      e=$(date -u -d "$ts UTC" +%s 2>/dev/null || date -u -j -f '%Y-%m-%d %H:%M:%S' "$ts" +%s 2>/dev/null) || e=""
+    fi
+  fi
+  if [[ ! "$e" =~ ^[0-9]+$ ]] || (( e <= now || e > now + 40 * 86400 )); then e=$(( now + 3600 )); fi
+  printf '%s\n' "$e"
+}
+# alibaba_quota_record <lane> <text> — the reset into the HOME file, unless a later reset is already on file: an hour's
+# guess must not cut a monthly stop short. Lanes and runs hit the stop at once, so the compare and the temp-file + mv
+# run under a mkdir lock (one left by a killed run is waited out for ~2 s, then taken over). Prints the reset in force.
+alibaba_quota_record() {
+  local until f tmp held n=0
+  until=$(_alibaba_reset_epoch "$2")
+  f="$(_alibaba_quota_file)" || { printf '%s\n' "$until"; return 0; }
+  mkdir -p -- "${f%/*}" 2>/dev/null || true
+  until mkdir -- "$f.lock" 2>/dev/null; do
+    (( ++n > 20 )) && break
+    sleep 0.1
+  done
+  if held="$(alibaba_quota_until)" && (( held >= until )); then
+    until="$held"
+  else
+    tmp="$f.$$.$RANDOM"
+    if ! { printf '%s\t%s\n' "$until" "$1" > "$tmp" && mv -f -- "$tmp" "$f"; } 2>/dev/null; then
+      rm -f -- "$tmp" 2>/dev/null || true
+      echo "  WARN: $1: the quota stop could not be written to $f — later runs will ask the Token Plan again" >&2
+    fi
+  fi
+  rmdir -- "$f.lock" 2>/dev/null || true
+  printf '%s\n' "$until"
 }
 
 run_qwen() {
@@ -884,6 +951,12 @@ run_qwen() {
   #     hard failure instead of a fake clean review, and a short "workspace is empty" body is
   #     rejected below. Same refused input, before/after: wandered off vs. a full review.
   command -v qwen &>/dev/null || return 1
+  # ZUVO_QWEN_LANE: the lane the call is for — a BytePlus lane standing in through the Token Plan sets its own name.
+  local lane="${ZUVO_QWEN_LANE:-qwen}" until
+  if until="$(alibaba_quota_until)"; then
+    lane_not_run "$lane" "Alibaba Token Plan quota exhausted until $(_ar_epoch_text "$until")"
+    return 1
+  fi
   local model
   model="$(lane_model qwen)"
   lane_model_ok qwen "$model" || return 1
@@ -960,6 +1033,11 @@ run_qwen() {
       fi
       printf '%s\n' "$text" ;;
     ERR$'\t'*)
+      if _alibaba_quota_error "${parsed#ERR$'\t'}"; then
+        until="$(alibaba_quota_record "$lane" "${parsed#ERR$'\t'}")"
+        lane_not_run "$lane" "Alibaba Token Plan quota exhausted until $(_ar_epoch_text "$until") — not retried"
+        return 1
+      fi
       echo "  WARN: qwen failed: $(printf '%s' "${parsed#ERR$'\t'}" | _ar_quote_line first -)" >&2
       return 1 ;;
     *)
