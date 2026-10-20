@@ -79,10 +79,12 @@ kv() { sed -n "s/^$1=//p" <<<"$out"; }
   || bad "scoper: source=$(kv vitest_include_source) count=$(kv vitest_include_count) include=[$(kv vitest_include | tr '\n' ' ')]"
 
 cmd="$(kv run_command)"
-# The watchdog may carry flags of its own before --idle-timeout (--in-place-files, --preflight):
-# requiring the timeout right after its name failed every run since 3924e9cc added --preflight.
-# The `.*` stays OUTSIDE the quotes: a quoted part of a bash =~ right-hand side is matched literally.
-[[ "$cmd" =~ "&& bash ./.stryker-scoped-"[^\ ]+".watchdog.sh".*" --idle-timeout "[0-9]+" -- npx stryker run " ]] \
+# The watchdog may carry flags of its own before --idle-timeout (--in-place-files, --preflight, each
+# taking one argument): requiring the timeout right after its name failed every run since 3924e9cc
+# added --preflight. Only those two are allowed, so a garbled argv still fails. The pattern lives in a
+# variable: a quoted part of a bash =~ right-hand side is matched literally, not as a regex.
+cmd_re='&& bash \./\.stryker-scoped-[^ ]+\.watchdog\.sh( --in-place-files [^ ]+)?( --preflight [^ ]+)? --idle-timeout [0-9]+ -- npx stryker run '
+[[ "$cmd" =~ $cmd_re ]] \
   && ok "run_command runs npx stryker under the watchdog" || bad "run_command: $cmd"
 # The farm runs the repo from another path: move it, then run run_command without its local `cd`
 # (the SKILL's `rt` form). Every path the config carries must still resolve there.

@@ -227,13 +227,22 @@ const stripExt = (rel) => rel.replace(/\.[^./]+$/, '');
 const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 // The module specifiers a file imports, as written: `from '…'`, `import '…'`, `require('…')`,
-// `import('…')`. A side-effect import and a `vi.mock('…')` path count too: both make Vitest load the
-// module, which is all "covering" means here.
+// `import('…')`, `vi.mock('…')`/`vi.doMock('…')`. Every one of them makes Vitest load the module
+// (mocked or not), which is all "covering" means here. Read through blank(): a comment, a prose
+// string or a regex holding `import './foo'` is not an import, and blank() keeps every quote at its
+// own offset while space-filling their contents — so the specifier itself is sliced from the source.
 function importSpecifiers(src) {
-  const re = /(?:^|[^\w$.])(?:import|require|from)\s*\(?\s*(['"])([^'"\n]+)\1/g;
+  const b = blank(src);
+  const re = /(?:^|[^\w$.])(?:import|require|from|(?:vi|vitest)\.(?:mock|doMock))\s*\(?\s*(['"])/g;
   const out = [];
   let m;
-  while ((m = re.exec(src))) out.push(m[2]);
+  while ((m = re.exec(b))) {
+    const q = m.index + m[0].length - 1;
+    const end = b.indexOf(b[q], q + 1);
+    if (end < 0) break;
+    out.push(src.slice(q + 1, end).replace(/\\(.)/g, '$1'));
+    re.lastIndex = end + 1;
+  }
   return out;
 }
 
@@ -246,16 +255,23 @@ const moduleStem = (rel) => stripExt(P.normalize(rel)).replace(/\/index$/, '');
 // (`compiler-variants.spec.ts` importing `./simple-script-compiler`) only by this scan. Relative
 // specifiers only: resolving an alias (`@/…`) would mean reading the config's alias table, and a wrong
 // resolution here would run an unrelated test.
-function importingTests(repo, relFile) {
+function importingTests(repo, relFile, warn) {
   const dir = P.dirname(relFile);
   const target = moduleStem(relFile);
   const hit = [];
   for (const d of [dir, P.join(dir, '__tests__')]) {
-    for (const n of listDir(repo, d)) {
-      if (!TEST_NAME.test(n)) continue;
-      const t = P.join(d, n);
+    let entries;
+    try { entries = fs.readdirSync(path.join(repo, d), { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (!e.isFile() || !TEST_NAME.test(e.name)) continue;
+      const t = P.join(d, e.name);
       let src;
-      try { src = fs.readFileSync(path.join(repo, t), 'utf8'); } catch { continue; }
+      // A test that cannot be read is NOT silently treated as unrelated: the printed covering list
+      // would then claim a completeness it never checked.
+      try { src = fs.readFileSync(path.join(repo, t), 'utf8'); } catch (err) {
+        if (warn) warn(`cannot read ${t} (${(err && err.code) || err}): it was not checked for an import of ${relFile}`);
+        continue;
+      }
       const imports = importSpecifiers(src).some((s) =>
         s.startsWith('.') && moduleStem(P.join(P.dirname(t), s)) === target);
       if (imports) hit.push(t);
@@ -269,7 +285,7 @@ function importingTests(repo, relFile) {
 // spec/test file beside them that imports the source. The bare stem was the whole rule until
 // 2026-10-20: a module with five sibling specs (simple-script-compiler.{,checked-dsl,legacy,
 // rule-shape,page-target}.spec.ts) had one selected and reported 42 % from tests that never ran.
-function colocatedTests(repo, relFile) {
+function colocatedTests(repo, relFile, warn) {
   const dir = P.dirname(relFile);
   const stem = escapeRe(P.basename(relFile).replace(/\.[^.]+$/, ''));
   const beside = new RegExp(`^${stem}\\.(?:.+\\.)?(?:test|spec)${TEST_EXT}`);
@@ -278,7 +294,7 @@ function colocatedTests(repo, relFile) {
     ...listDir(repo, dir).filter((n) => beside.test(n)).map((n) => P.join(dir, n)),
     ...listDir(repo, P.join(dir, '__tests__')).filter((n) => nested.test(n)).map((n) => P.join(dir, '__tests__', n)),
   ];
-  return [...new Set([...byName, ...importingTests(repo, relFile)])].sort();
+  return [...new Set([...byName, ...importingTests(repo, relFile, warn)])].sort();
 }
 
 // Nearest package.json directory: the workspace a file belongs to when its config is an aggregator.
@@ -369,17 +385,20 @@ function resolve({ repo, files, override, tests }) {
   const missing = [];
   const found = new Set();
   for (const f of files) {
-    const hits = colocatedTests(repo, f).filter((t) => !outsideRepo(rel(t)) && matchesOwnInclude(own, rel(t)));
+    const hits = colocatedTests(repo, f, (m) => warnings.push(m))
+      .filter((t) => !outsideRepo(rel(t)) && matchesOwnInclude(own, rel(t)));
     if (!hits.length) missing.push(f);
     for (const t of hits) found.add(t);
   }
   if (!missing.length) {
     let covering = [...found].sort();
-    // A barrel file can list half a workspace; a stated cap keeps the dry run finite, and the chosen
-    // list is printed, so a truncated set is visible rather than silent.
+    // A barrel file can list half a workspace; a stated cap keeps the dry run finite. A truncated set
+    // is never silent: the warning names every dropped test, and saying so out loud stops the score
+    // from being read as the module's — it covers the selected subset only.
     if (covering.length > MAX_COVERING_TESTS) {
-      warnings.push(`covering tests capped at ${MAX_COVERING_TESTS} (${covering.length} found): ` +
-        `${covering.slice(MAX_COVERING_TESTS).join(', ')} not selected — narrow the scope or pass --test-file`);
+      warnings.push(`covering tests capped at ${MAX_COVERING_TESTS} of ${covering.length}: the score covers only the ` +
+        `selected subset, because ${covering.slice(MAX_COVERING_TESTS).join(', ')} did not fit — narrow the scope or ` +
+        'pass --test-file for the tests that matter');
       covering = covering.slice(0, MAX_COVERING_TESTS);
     }
     return { ...out, source: 'colocated', include: covering.map((t) => escapeGlob(rel(t))), covering,

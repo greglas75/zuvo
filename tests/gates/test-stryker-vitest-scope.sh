@@ -46,6 +46,9 @@ printf "import { foo } from './foo';\n" > "$F/src/foo.checked-dsl.spec.ts"
 printf "import { foo } from '../foo';\n" > "$F/src/__tests__/foo.legacy.spec.ts"
 printf "import { foo } from './foo';\n" > "$F/src/compiler-variants.spec.ts"
 printf "import { foo } from './foo.js';\n" > "$F/src/compiler-variants-esm.spec.ts"
+# vi.mock loads the module too (mocked); a specifier in a COMMENT is prose, not an import.
+printf "vi.mock('./foo', () => ({}));\n" > "$F/src/foo-mock.spec.ts"
+printf "// This used to import './foo'.\nimport { o } from './other/foo';\n" > "$F/src/prose.spec.ts"
 printf "import { o } from './other/foo';\nit('x', () => ({}));\n" > "$F/src/unrelated.spec.ts"
 # rdesigner's apps/designer config shape: test.include AND a deeper coverage.include.
 cat > "$F/designer.config.ts" <<'EOF'
@@ -205,13 +208,15 @@ check('resolve: a path that normalizes outside the repo is refused',
 check('colocated: foo.test/spec, foo.<variant>.spec, __tests__/foo[.<variant>].*, and the importers; not foobar, not another dir',
   v.colocatedTests(F, 'src/foo.ts'),
   ['src/__tests__/foo.legacy.spec.ts', 'src/__tests__/foo.test.ts', 'src/__tests__/foo.ts',
-    'src/compiler-variants-esm.spec.ts', 'src/compiler-variants.spec.ts', 'src/foo.checked-dsl.spec.ts',
-    'src/foo.spec.tsx', 'src/foo.test.ts']);
+    'src/compiler-variants-esm.spec.ts', 'src/compiler-variants.spec.ts', 'src/foo-mock.spec.ts',
+    'src/foo.checked-dsl.spec.ts', 'src/foo.spec.tsx', 'src/foo.test.ts']);
 // A spec importing a DIFFERENT module (./other/foo) is not a covering test: running it proves nothing.
 check('colocated: an importer of another module is not selected', v.colocatedTests(F, 'src/foo.ts').includes('src/unrelated.spec.ts'), false);
-check('importingTests: only files whose specifier resolves to the source', typeof v.importingTests === 'function' ? v.importingTests(F, 'src/foo.ts') : null,
-  ['src/compiler-variants-esm.spec.ts', 'src/compiler-variants.spec.ts', 'src/foo.checked-dsl.spec.ts',
-    'src/__tests__/foo.legacy.spec.ts'].sort());
+// A specifier inside a comment is prose: selecting it runs a test that never loads the module.
+check('colocated: a commented-out import is not an import', v.colocatedTests(F, 'src/foo.ts').includes('src/prose.spec.ts'), false);
+check('importingTests: only files whose specifier resolves to the source (vi.mock counted)', typeof v.importingTests === 'function' ? v.importingTests(F, 'src/foo.ts') : null,
+  ['src/compiler-variants-esm.spec.ts', 'src/compiler-variants.spec.ts', 'src/foo-mock.spec.ts',
+    'src/foo.checked-dsl.spec.ts', 'src/__tests__/foo.legacy.spec.ts'].sort());
 
 // renderVitestConfig — evaluated by plain node (the template is plain JS), then RELOCATED: an absolute
 // root would make Stryker's sandbox import the unmutated originals and every mutant would survive.
