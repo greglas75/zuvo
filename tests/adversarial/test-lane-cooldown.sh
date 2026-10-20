@@ -53,6 +53,7 @@ start_test "LC.1 two empties in a row put a lane on cooldown; the next run skips
 lc_run "mock-success mock-findings-a mock-fail"; lc_run "mock-success mock-findings-a mock-fail"
 assert_eq "2 empty" "$(row mock-fail)" "two empties: count 2"
 before="$(logged mock-fail)"
+assert_eq "yes" "$( [[ "$before" -gt 0 ]] && echo yes || echo "no rows ($before)" )" "control: a dispatched failing lane is logged"
 lc_run "mock-success mock-findings-a mock-fail"
 assert_exit_code "0" "$LC_RC" "the review ran on the other two lanes"
 assert_contains "$(cat "$ERR")" "mock-fail: cooldown until" "the skip says until when"

@@ -143,7 +143,9 @@ if [[ "$DOCTOR" == "true" ]]; then
     _doc_cool="$(PROVIDERS="$_doc_list" _ar_cooldown_rows)"
     if [[ -n "$_doc_cool" ]]; then
       echo "  lane cooldowns (provider-health ledger):"
+      _doc_off=" $(printf '%s' "${ZUVO_ADV_COOLDOWN_OFF:-}" | tr ',' ' ') "
       while IFS=$'\t' read -r _dl _ds _du _dr _dt; do
+        [[ "$_doc_off" != *" $_dl "* ]] || continue   # exempt: the review never cools it
         if [[ "$_ds" == cool ]]; then echo "    $_dl: cooldown until $(_ar_epoch_text "$_du") ($_dr)"
         else echo "    $_dl: cooldown over ($_dr) — re-probed on the next review"; fi
       done <<< "$_doc_cool"

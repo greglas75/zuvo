@@ -344,14 +344,14 @@ lane_failed_verb() {
 
 # _ar_input_side_failure <lane> — the lane's stderr says it refused THIS input (over its context window, a body
 # too large): outcome `input`, which the health ledger never counts — the next, smaller input may well pass.
-# Only the lane's own words count: the stderr tail, minus every line the prompt itself carries — a lane that echoes
+# Only the lane's own words count: the stderr tail (200 lines: a refusal can sit above retry chatter), minus every line the prompt itself carries — a lane that echoes
 # its prompt (the reviewed diff may well say "context window") must not turn a dead lane into `input`.
 _ar_input_side_failure() {
   local own
   [[ -s "$JSON_TMPDIR/provider_$1.stderr" ]] || return 1
   # Captured, then matched from a here-string: `… | grep -q` under the driver's pipefail turns grep's early exit
   # into a SIGPIPE status on the writer, and a match would read as no match.
-  own="$(tail -n 20 "$JSON_TMPDIR/provider_$1.stderr" 2>/dev/null \
+  own="$(tail -n 200 "$JSON_TMPDIR/provider_$1.stderr" 2>/dev/null \
     | LC_ALL=C grep -vxF -f <(printf '%s\n' "${REVIEW_PROMPT:-}" | LC_ALL=C grep -v '^[[:space:]]*$' || true) || true)"
   [[ -n "$own" ]] || return 1
   LC_ALL=C grep -qiE 'context[ _-]?(length|window)|maximum context|prompt is too long|input is too long|exceeds? the (model.?s? )?(maximum )?context|request (entity )?too large|payload too large|HTTP 413|argument list too long' <<< "$own"

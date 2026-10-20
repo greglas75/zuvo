@@ -143,7 +143,8 @@ def parse_args(argv):
 
 def env_int(name, default):
     raw = os.environ.get(name, "")
-    return int(raw) if raw.isdigit() and int(raw) >= 1 else default
+    # ASCII digits only ("²" passes isdigit() and int() refuses it), at most 12: no runaway window from a typo.
+    return int(raw) if re.fullmatch(r"[0-9]{1,12}", raw) and int(raw) >= 1 else default
 
 
 def cooldowns(path, now=None):
@@ -163,9 +164,14 @@ def cooldowns(path, now=None):
             lines = fh.read().splitlines()
     except OSError:
         return []
-    for line in sorted(lines):
+    rows = {}
+    for line in lines:   # one row per (lane, model), the last one written wins — as the driver's awk keys them
         f = line.split("\t")
-        if len(f) < 4 or not f[2].isdigit() or not f[3].isdigit() or int(f[2]) < thr:
+        if len(f) >= 4:
+            rows[(f[0], f[1])] = f
+    for key in sorted(rows):
+        f = rows[key]
+        if not re.fullmatch(r"[0-9]+", f[2]) or not re.fullmatch(r"[0-9]+", f[3]) or int(f[2]) < thr:
             continue
         lane, model, cnt, ts = f[0], f[1], int(f[2]), int(f[3])
         if lane in off:

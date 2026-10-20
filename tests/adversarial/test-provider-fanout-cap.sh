@@ -234,7 +234,10 @@ start_test "CAP.1g cooldown expiry lets a benched provider back in once it answe
 # Each bench case seeds its OWN ledger, so the cases run in any order and no leftover row decides the next.
 _hfg="$HERE/.tmp/health-expiry.tsv"
 printf 'mock-probe-ok\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hfg"
-ZUVO_PROVIDER_HEALTH_FILE="$_hfg" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
+mkdir -p "$HERE/.tmp/cap1g-home"
+env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
+  -u ZUVO_ADV_COOLDOWN_THRESHOLD ZUVO_HOME="$HERE/.tmp/cap1g-home" \
+  ZUVO_PROVIDER_HEALTH_FILE="$_hfg" ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_PIN_PROVIDERS="" \
   ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-probe-ok" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1g.err" >/dev/null
 case "$(cat "$HERE/.tmp/cap1g.err")" in

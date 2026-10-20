@@ -724,7 +724,8 @@ lane_model_ok() {
 #
 #   * ZUVO_ADV_COOLDOWN_THRESHOLD (2) consecutive lane-side failures put a (lane, model) pair on cooldown for
 #     ZUVO_ADV_COOLDOWN_BASE (1800 s), doubled per further failure, capped at ZUVO_ADV_COOLDOWN_MAX (14400 s); a
-#     pair at the threshold whose last failure was auth takes the cap at once. Counted in the same provider-health ledger, under its lock; the parts
+#     pair at the threshold whose last failure was auth takes the cap at once. Counted in the same provider-health ledger (writes
+#     under its lock; the decision reads an unlocked snapshot, and the re-probe re-reads the row under the pair's lock); the parts
 #     of one chunked review are one strike (the ledger's strike group).
 #   * A lane on cooldown is not dispatched: one line "<lane>: cooldown until <t> (<reason>)". It gets no outcome,
 #     so neither the ledger nor the run log counts the skip as a failure.
@@ -798,14 +799,14 @@ _ar_cooldown_probe() {
   before="$(_ar_cooldown_row_now "$lane")"; since="$(date +%s)"
   if ! _ar_lock "$lock" $(( t + 15 )); then
     # The holder is stuck past its own timeout: its verdict if it wrote one, else the row, else a minute out.
-    read -r v verdict < "$vfile" 2>/dev/null || v=0
+    { [[ -f "$vfile" ]] && read -r v verdict < "$vfile"; } 2>/dev/null || v=0
     if [[ "${v:-0}" =~ ^[0-9]+$ && "$v" -ge "$since" && -n "$verdict" ]]; then echo "$verdict" > "$out"; return 0; fi
     IFS=$'\t' read -r cnt ts last <<< "$(_ar_cooldown_row_now "$lane")"
     if [[ "$last" == probe-ok || "$last" == ok ]]; then echo keep > "$out"
     else echo "cool $(( $(date +%s) + 60 )) re-probe held by another run" > "$out"; fi
     return 0
   fi
-  read -r v verdict < "$vfile" 2>/dev/null || v=0
+  { [[ -f "$vfile" ]] && read -r v verdict < "$vfile"; } 2>/dev/null || v=0
   if [[ "${v:-0}" =~ ^[0-9]+$ && "$v" -ge "$since" && -n "$verdict" ]]; then
     echo "$verdict" > "$out"; _ar_unlock "$lock"; return 0
   fi
@@ -871,7 +872,12 @@ _ar_lane_cooldown() {
   for r in ${pids[@]+"${pids[@]}"}; do wait "$r" 2>/dev/null || true; done
   while IFS=$'\t' read -r lane st until reason ts; do
     r="$dir/$(_ar_cooldown_slug "$lane")"
-    [[ -s "$r" ]] || continue
+    if [[ ! -s "$r" ]]; then
+      # A re-probe that died before its verdict: fail open (the lane runs), but say so.
+      [[ "$st" == probe && "$probing" == 1 && "$off" != *" $lane "* ]] \
+        && echo "  WARN: $lane: the re-probe left no verdict — running the lane unprobed" >&2
+      continue
+    fi
     read -r st until reason < "$r" || continue
     case "$st" in
       keep) continue ;;
