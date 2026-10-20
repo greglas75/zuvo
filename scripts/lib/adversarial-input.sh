@@ -497,7 +497,8 @@ _ck_count_hunks() {
   LC_ALL=C awk -v re="$FILE_HEADER_RE" -v budget="${1:-0}" '
     # Splittable, as _ck_split_hunks rules it: over the budget with its file header and trailer, room for a
     # sub-hunk body (the budget less header, trailer, 200 and the section heading) of 1000 bytes or more, and
-    # two or more lines a part can start at (a `\` marker or an empty closing line never starts one).
+    # two or more lines a part can start at. A `\` marker never starts one; an empty line is not counted either
+    # (the split may start a part at an empty line inside a hunk, so this can only under-count, never over-count).
     function close_sec(   k) {
       for (k = 1; k <= nh; k++)
         if (budget > 0 && fixed + hs[k] > budget && budget - fixed - 200 - hr[k] >= 1000 && hl[k] >= 2) n++
@@ -578,7 +579,9 @@ _ck_split_hunks() {
           c = substr(L[j], 1, 1)
           if (c == "-") to++; else if (c == "+") tn++; else if (c != "\\") { to++; tn++ }
         }
-        if (o[2] - to == ue[k] - last && nw[2] - tn == ue[k] - last) last = ue[k]
+        # As many as the header still counts on BOTH sides are stripped blank context; any beyond are separators.
+        j = o[2] - to
+        if (j > 0 && j == nw[2] - tn) last += (j < ue[k] - last ? j : ue[k] - last)
       }
       from = us[k] + 1; cur = 0; po = 0; pn = 0; m = 0
       for (i = from; i <= ue[k] + 1; i++) {
@@ -694,10 +697,12 @@ _ck_build_chunk_note() {
 # ar_chunk_input — input over the cap with 2+ boundaries (or 2+ diff hunks): review it chunk by chunk in child
 # runs, then exit with the merged result.
 ar_chunk_input() {
+# One budget for the gate below and the split it predicts (Pass 1.5, Pass 2): MAX_CHARS less the note headroom.
+_ck_budget=$((MAX_CHARS - CHUNK_NOTE_HEADROOM_CHARS))
 if [[ ${#INPUT} -gt $MAX_CHARS && ! "$REVIEW_MODE" =~ $AR_UNCHUNKED_DOC_MODES ]]; then
   _chunk_headers=$(printf '%s\n' "$INPUT" | _ck_count_units)
   if [[ "$_ck_fence" -eq 0 ]]; then
-    _chunk_hunks=$(printf '%s\n' "$INPUT" | _ck_count_hunks "$((MAX_CHARS - CHUNK_NOTE_HEADROOM_CHARS))")
+    _chunk_hunks=$(printf '%s\n' "$INPUT" | _ck_count_hunks "$_ck_budget")
   fi
 fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
@@ -766,7 +771,6 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     !(fence && infence) && $0 ~ re { close(fn); n++; fn = sprintf("%s/sec-%04d", dir, n) }
     { print >> fn }
   '
-  _ck_budget=$((MAX_CHARS - CHUNK_NOTE_HEADROOM_CHARS))
   # Pass 1.5: a diff section over the budget is split at its hunks.
   _ck_nsplit=0
   if [[ "$_ck_fence" -eq 0 ]]; then
