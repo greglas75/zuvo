@@ -12,7 +12,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WD="$ROOT/scripts/stryker-run-watchdog.sh"
+WD="${STRYKER_WATCHDOG:-$ROOT/scripts/stryker-run-watchdog.sh}"   # overridable: a pre-fix copy must be red
 . "$ROOT/tests/lib/hermetic-tools.sh"
 
 fail=0
@@ -156,6 +156,22 @@ PATH="$NOGROUP" "$TIMEOUT" -s KILL 40 bash "$WD" --idle-timeout 2 -- touch "$TMP
   || bad "no setsid/perl: rc=$RC ran=$([ -e "$TMP/ran" ] && echo yes || echo no)"
 run_wd --help
 case "$RC|$OUT" in "0|"*Usage:*) pass "--help: exit 0, prints Usage:" ;; *) bad "--help: rc=$RC out=[$OUT]" ;; esac
+
+# ── 5b. --preflight: decided where the run happens, before anything is mutated ───────────────
+# The scoper runs in a worktree without node_modules; the runner choice is made by this script at
+# run time. A preflight that refuses must stop the run (never mutate on a config nobody decided).
+printf 'process.stderr.write("preflight said ok\\n");\n' > "$TMP/pf-ok.mjs"
+run_wd --idle-timeout 2 --preflight "$TMP/pf-ok.mjs" -- sh -c 'echo ran; exit 0'
+case "$RC|$OUT|$ERR" in "0|"*ran*"|"*"preflight said ok"*) pass "preflight: its output is forwarded, the command still runs (0)" ;;
+  *) bad "preflight ok: rc=$RC out=[$OUT] err=[$ERR]" ;; esac
+printf 'process.stderr.write("refused: 0 tests\\n"); process.exit(1);\n' > "$TMP/pf-bad.mjs"
+run_wd --idle-timeout 2 --preflight "$TMP/pf-bad.mjs" -- sh -c "echo ran; touch '$TMP/ran'"
+if [ "$RC" = 126 ] && [ ! -e "$TMP/ran" ] && case "$ERR" in *"ERROR preflight $TMP/pf-bad.mjs failed (exit 1)"*) true ;; *) false ;; esac; then
+  pass "preflight refusing: 126, named on stderr, the command never started"
+else bad "preflight refusing: rc=$RC ran=$([ -e "$TMP/ran" ] && echo yes || echo no) err=[$ERR]"; fi
+run_wd --idle-timeout 2 --preflight "$TMP/nope.mjs" -- sh -c "touch '$TMP/ran'"
+[ "$RC" = 125 ] && [ ! -e "$TMP/ran" ] && pass "preflight: a missing script is a usage error (125), nothing ran" \
+  || bad "preflight missing: rc=$RC ran=$([ -e "$TMP/ran" ] && echo yes || echo no)"
 
 # ── 6. the watchdog itself is stopped: the run must not be orphaned ──────────────────────────
 bash "$WD" --idle-timeout 20 -- sh -c "echo \$\$ > '$TMP/orphan.pid'; sleep 30" >/dev/null 2>&1 &

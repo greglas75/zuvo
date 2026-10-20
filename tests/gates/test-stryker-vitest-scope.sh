@@ -441,7 +441,7 @@ run_scope --file apps/a/src/x.ts
 cmd="$(kv1 "$OUT" run_command)"
 wd="$(sed -n 's/.*bash \.\/\(\.stryker-scoped-[^ ]*\.watchdog\.sh\) .*/\1/p' <<<"$cmd")"
 case "$cmd" in
-  "(cd $M && bash ./.stryker-scoped-"*".watchdog.sh --idle-timeout 600 -- npx stryker run "*")")
+  "(cd $M && bash ./.stryker-scoped-"*".watchdog.sh "*"--idle-timeout 600 -- npx stryker run "*")")
     if [ -n "$wd" ] && cmp -s "$M/$wd" "$WATCHDOG"; then
       pass "run_command: the repo-local copy of the watchdog (rt syncs the repo, not the plugin) wraps npx stryker"
     else bad "run_command names $wd, which is missing or not a copy of scripts/stryker-run-watchdog.sh"; fi ;;
@@ -657,5 +657,96 @@ run_guard "$healthy" >/dev/null 2>"$TMP/guard-ok.err"; rc=$?
 [ "$rc" = 2 ] && grep -q 'cannot be combined with ignoreStatic' "$TMP/cov.err" \
   && pass "--coverage off without --include-static: exit 2, named (not a Stryker startup failure)" \
   || bad "--coverage off without --include-static: rc=$rc — $(head -c 300 "$TMP/cov.err")"
+
+# ── G. the preflight: the same decision where the run happens ─────────────────────────────────
+# The scoper is run in a worktree with no node_modules (the farm installs them afterwards), so a
+# vitest-runner/vitest mismatch — or TypeScript 7 — is only visible at run time. The generated
+# preflight decides there, rewrites the config, and refuses a command run that runs 0 tests.
+#
+# A `npx` that answers like Vitest: $1 = the "Tests" line, $2 = exit code, $3 = marker file (written
+# when called, so "did it even run" is assertable).
+mk_npx() {
+  local bin="$TMP/bin-$4"; mkdir -p "$bin"
+  cat > "$bin/npx" <<EOF
+#!/usr/bin/env bash
+: > '$3'
+# Vitest colours its summary even when its output is not a TTY — the real farm output.
+printf ' RUN  v5.0.5 /repo\n\n Test Files \033[22m \033[1m\033[32m1 passed\033[39m\033[22m \033[90m(1)\033[39m\n      \033[22m \033[1m\033[32m$1\033[39m\033[22m \033[90m(1)\033[39m\n\n Duration  100ms\n'
+exit $2
+EOF
+  chmod +x "$bin/npx"; printf '%s' "$bin"
+}
+PASSBIN="$(mk_npx 'Tests  3 passed (3)' 0 "$TMP/npx-ran-ok" ok)"
+ZEROBIN="$(mk_npx 'Tests  no tests' 1 "$TMP/npx-ran-zero" zero)"
+preflight_of() { (cd "$1" && PATH="$2:$PATH" node "$3" 2>&1); }   # $3 = ./preflight_module of the kv
+
+# G1. Emission with no node_modules: the decision is deferred, not guessed, and the run carries the
+#     preflight and the in-place list (TypeScript is declared: it may be 7 where the run happens).
+FL="$TMP/flip"; mkdir -p "$FL/apps/api/src"
+printf '{"name":"f","private":true,"devDependencies":{"typescript":"^7","vitest":"5.0.5"}}\n' > "$FL/package.json"
+printf "export default { test: { include: ['**/*.spec.ts'] } };\n" > "$FL/apps/api/vitest.config.ts"
+printf 'export const f = 1;\n' > "$FL/apps/api/src/f.ts"
+printf 'export const f = 1;\n' > "$FL/apps/api/src/f.spec.ts"
+out_fl="$(cd "$FL" && bash "$STRYKER" --repo "$FL" --whole-files --runner vitest --file apps/api/src/f.ts 2>"$TMP/flip.err")"; rc=$?
+pf="$(kv1 "$out_fl" preflight_module)"
+case "$(kv1 "$out_fl" run_command)" in *"--in-place-files ./.stryker-scoped-"*"--preflight $pf "*) cmd_ok=1 ;; *) cmd_ok=0 ;; esac
+if [ "$rc" = 0 ] && [ "$(kv1 "$out_fl" test_runner)" = vitest ] \
+   && [ "$(kv1 "$out_fl" in_place)" = false ] && grep -q 'deferred to the preflight' <<<"$(kv1 "$out_fl" in_place_reason)" \
+   && case "$pf" in ./.stryker-scoped-*.preflight.mjs) true ;; *) false ;; esac \
+   && [ -f "$FL/${pf#./}" ] && [ -f "$FL/$(sed -n 's/.*--in-place-files \.\/\([^ ]*\).*/\1/p' <<<"$(kv1 "$out_fl" run_command)")" ] \
+   && [ "$cmd_ok" = 1 ]; then
+  pass "preflight (no node_modules): runner decision deferred, run_command carries --preflight and the in-place list"
+else
+  bad "preflight emission: rc=$rc runner=$(kv1 "$out_fl" test_runner) in_place=$(kv1 "$out_fl" in_place) reason=$(kv1 "$out_fl" in_place_reason) cmd=$(kv1 "$out_fl" run_command) — $(head -c 300 "$TMP/flip.err")"
+fi
+conf_fl="$(kv1 "$out_fl" config_path)"
+
+# G2. The packages arrive (vitest 5 " > " vs runner " "): the preflight rewrites the config to the
+#     project's own command, drops the guard (its reporter counts testsCompleted, meaningless there),
+#     and proves the command actually executes tests.
+cp -R "$SEP/node_modules" "$FL/node_modules"
+pre_out="$(preflight_of "$FL" "$PASSBIN" "$pf")"; rc=$?
+if [ "$rc" = 0 ] && grep -q 'test_runner=command: vitest 5.0.5 joins test names with " > "' <<<"$pre_out" \
+   && grep -q 'command runner verified: 3 test(s)' <<<"$pre_out" \
+   && node -e 'const c=require(process.argv[1]);
+       const ok = c.testRunner === "command" && c.coverageAnalysis === "off" && c.ignoreStatic === false
+         && !("vitest" in c) && !c.plugins.some((p) => /zero-tests-guard/.test(p)) && !c.reporters.includes("zuvo-zero-tests-guard")
+         && /npx vitest run --config \.\/\.stryker-scoped-.*--maxWorkers=1 .*apps\/api\/src\/f\.spec\.ts/.test((c.commandRunner||{}).command||"");
+       process.exit(ok ? 0 : 1)' "$conf_fl"; then
+  pass "preflight: a run-time separator mismatch falls back to testRunner command, guard removed, tests proven"
+else
+  bad "preflight mismatch: rc=$rc out=$(head -c 400 <<<"$pre_out")"
+fi
+
+# G3. A command that runs 0 tests must abort the run: 0 tests per mutant reads as KILLED for every mutant.
+rm -f "$TMP/npx-ran-zero"
+pre_out="$(preflight_of "$FL" "$ZEROBIN" "$pf")"; rc=$?
+[ "$rc" = 1 ] && grep -q 'the command runner ran no test(s)' <<<"$pre_out" && [ -f "$TMP/npx-ran-zero" ] \
+  && pass "preflight: a command run that executes 0 tests aborts (exit 1) instead of reporting a fake score" \
+  || bad "preflight 0 tests: rc=$rc ran=$([ -f "$TMP/npx-ran-zero" ] && echo yes || echo no) — $(head -c 300 <<<"$pre_out")"
+
+# G4. TypeScript 7 where the run happens: in-place, and the tsconfig preprocessor turned off by pointing
+#     tsconfigFile at a file that does not exist. Uses a fresh emission (G2 already rewrote the config).
+TSF="$TMP/tsflip"; cp -R "$FL" "$TSF"; rm -rf "$TSF/node_modules"; rm -f "$TSF"/.stryker-scoped-*
+out_ts="$(cd "$TSF" && bash "$STRYKER" --repo "$TSF" --whole-files --runner vitest --file apps/api/src/f.ts 2>/dev/null)"
+mkdir -p "$TSF/node_modules/typescript"
+printf '{"name":"typescript","version":"7.0.2","main":"lib/typescript.js"}\n' > "$TSF/node_modules/typescript/package.json"
+mkdir -p "$TSF/node_modules/typescript/lib" && printf 'module.exports = { version: "7.0.2" };\n' > "$TSF/node_modules/typescript/lib/typescript.js"
+pre_out="$(preflight_of "$TSF" "$PASSBIN" "$(kv1 "$out_ts" preflight_module)")"; rc=$?
+[ "$rc" = 0 ] && grep -q 'in-place: typescript 7.0.2 has no parseConfigFileTextToJson' <<<"$pre_out" \
+  && node -e 'const c=require(process.argv[1]); process.exit(c.inPlace === true && /^\.stryker-scoped-.*no-tsconfig\.json$/.test(c.tsconfigFile||"") ? 0 : 1)' "$(kv1 "$out_ts" config_path)" \
+  && pass "preflight: TypeScript 7 found at run time switches the run in-place and disables the preprocessor" \
+  || bad "preflight TypeScript 7: rc=$rc — $(head -c 300 <<<"$pre_out")"
+
+# G5. Packages that agree: nothing is rewritten and the project's command is not run.
+OKF="$TMP/okflip"; cp -R "$FL" "$OKF"; rm -rf "$OKF/node_modules"; rm -f "$OKF"/.stryker-scoped-*
+out_ok="$(cd "$OKF" && bash "$STRYKER" --repo "$OKF" --whole-files --runner vitest --file apps/api/src/f.ts 2>/dev/null)"
+cp -R "$TMP/sep-ok/node_modules" "$OKF/node_modules"
+rm -f "$TMP/npx-ran-ok"
+pre_out="$(preflight_of "$OKF" "$PASSBIN" "$(kv1 "$out_ok" preflight_module)")"; rc=$?
+[ "$rc" = 0 ] && grep -q 'the plugin runner filters per test' <<<"$pre_out" && [ ! -f "$TMP/npx-ran-ok" ] \
+  && node -e 'const c=require(process.argv[1]); process.exit(c.testRunner === "vitest" && c.ignoreStatic === true ? 0 : 1)' "$(kv1 "$out_ok" config_path)" \
+  && pass "preflight: matching separators keep the plugin runner, the config untouched and no test run" \
+  || bad "preflight agree: rc=$rc npx-ran=$([ -f "$TMP/npx-ran-ok" ] && echo yes || echo no) — $(head -c 300 <<<"$pre_out")"
 
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi
