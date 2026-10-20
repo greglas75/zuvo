@@ -22,8 +22,11 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
 [ -f "$DP" ] || { bad "scripts/dev-push.sh missing"; exit 1; }
 
-# 1. The tag must name a commit. A bare `git tag "v$VERSION"` follows HEAD.
-if grep -qE 'git tag "v\$\{NEW_VERSION\}" "\$NEW_SHA"' "$DP"; then
+# 1. The tag must name a commit. A bare `git tag "v$VERSION"` follows HEAD. Since signed releases
+# dev-push hands the pinned commit to release-tag.sh, and both of its tag commands must pass it on.
+RT="$ROOT/scripts/release-tag.sh"
+if grep -qE 'release-tag\.sh" "v\$\{NEW_VERSION\}" "\$NEW_SHA"' "$DP" \
+   && [ "$(grep -cE 'tag (-s -m "zuvo \$tag" )?"\$tag" "\$commit"' "$RT")" -eq 2 ]; then
   pass "the tag is created on the pinned release commit, not on HEAD"
 else
   bad "git tag does not pass an explicit commit — it will follow HEAD and can tag a sibling agent's work"
