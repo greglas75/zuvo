@@ -815,6 +815,14 @@ pre_out="$(preflight_of "$FR" "$JSONBIN" "$(kv1 "$out_fr" preflight_module)")"; 
 [ "$rc" = 0 ] && grep -q 'command runner verified: 2 test(s) ran (exit 0, json)' <<<"$pre_out" && [ -f "$TMP/npx-ran-json" ] \
   && pass "preflight: the test count comes from Vitest's JSON report, not only its text summary" \
   || bad "preflight json: rc=$rc — $(head -c 300 <<<"$pre_out")"
+# A report left at the probe's predictable path by an EARLIER run must not be counted as this run's.
+stale_tag="$(basename "$(kv1 "$out_fr" config_path)")"; stale_tag="${stale_tag#.stryker-scoped-}"; stale_tag="${stale_tag%.conf.json}"
+printf '{"numPassedTests":9,"numFailedTests":0}\n' > "$FR/.stryker-scoped-$stale_tag.probe.json"
+rm -f "$TMP/npx-ran-ok"
+pre_out="$(preflight_of "$FR" "$PASSBIN" "$(kv1 "$out_fr" preflight_module)")"; rc=$?
+[ "$rc" = 0 ] && grep -q 'command runner verified: 3 test(s) ran (exit 0, text)' <<<"$pre_out" \
+  && pass "preflight: a stale JSON report at the probe path is not counted (the command's own run is)" \
+  || bad "preflight stale report: rc=$rc — $(head -c 300 <<<"$pre_out")"
 
 # G4. TypeScript 7 where the run happens: in-place, and the tsconfig preprocessor turned off by pointing
 #     tsconfigFile at a file that does not exist. Uses a fresh emission (G2 already rewrote the config).

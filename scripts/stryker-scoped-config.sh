@@ -825,6 +825,8 @@ class ZuvoZeroTestsGuardReporter {
     let first = null;
     for (const [file, result] of Object.entries((report && report.files) || {})) {
       for (const mutant of result.mutants || []) {
+        // Killed/Survived are the two verdicts that REQUIRE a test run; NoCoverage legitimately ran
+        // none, and Timeout/CompileError/... are already non-zero verdicts on their own.
         if (mutant.status !== 'Survived' && mutant.status !== 'Killed') continue;
         decided += 1;
         if (!mutant.testsCompleted) {
@@ -999,6 +1001,9 @@ const probe = (cmd, timeoutMs) => new Promise((resolve) => {
   child.on('close', (status) => { clearTimeout(timer); resolve({ status, out, timedOut }); });
 });
 if (VERIFY_COMMAND && conf.testRunner === 'command' && COMMAND) {
+  // The report path is predictable (one per config in the repo root): a file left by an earlier run
+  // must never be counted as this run's tests.
+  try { fs.unlinkSync(PROBE_JSON); } catch { /* absent */ }
   const r = await probe(COMMAND + ' --reporter=json --outputFile=' + JSON.stringify(PROBE_JSON), PROBE_TIMEOUT_MS);
   if (r.timedOut) {
     say('ERROR: the verification run made no progress in ' + (PROBE_TIMEOUT_MS / 1000) + 's and was killed: ' +

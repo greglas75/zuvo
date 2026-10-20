@@ -420,9 +420,11 @@ function packageRoot(spec, repo) {
 
 const isJs = (name) => /\.(?:js|mjs|cjs)$/.test(name) && !/\.d\.[cm]?[jt]s$/.test(name);
 
+// Sorted: readdir order is filesystem-dependent, and the scan below must name the same file — and so
+// the same separator — on every machine and for every run.
 function firstMatch(dir, re, depth = 0) {
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)); } catch { return null; }
   for (const e of entries) {
     if (!e.isFile() || !isJs(e.name)) continue;
     const m = re.exec(fs.readFileSync(path.join(dir, e.name), 'utf8'));
@@ -455,8 +457,10 @@ function vitestRunnerVerdict(repo) {
   if (missing) return { ok: false, unknown: true, reason: `cannot resolve ${missing} from the repo` };
   const v = readKnownOrScan(vRoot, ['dist/task-utils.js', 'dist/task-utils.mjs'],
     /function createTaskName\([^)]*separator\s*=\s*(['"`])([^'"`]*)\1/);
+  // The window is generous (a minified or bundled build can put the join far from the signature) but
+  // still bound to collectTestName: an unrelated `.join(' ')` elsewhere in the bundle must not decide it.
   const r = readKnownOrScan(rRoot, ['dist/src/test-helpers.js', 'dist/test-helpers.js', 'dist/src/stryker-setup.js'],
-    /function collectTestName\([\s\S]{0,800}?return\s[\w$.]+\.join\((['"`])([^'"`]*)\1\)/);
+    /function collectTestName\([\s\S]{0,4000}?return\s[\w$.]+\.join\((['"`])([^'"`]*)\1\)/);
   if (!v) return { ok: false, unknown: true, reason: 'cannot read the suite-name separator from the installed vitest' };
   if (!r) return { ok: false, unknown: true, reason: 'cannot read the suite-name separator from the installed @stryker-mutator/vitest-runner' };
   const version = (root) => { try { return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; } catch { return '?'; } };
