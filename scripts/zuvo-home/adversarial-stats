@@ -189,7 +189,10 @@ def cooldowns(path, now=None):
             w *= 2
         if w > cap or last == "auth":
             w = cap
-        until = time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(ts + w))
+        try:
+            until = time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(ts + w))
+        except (OverflowError, OSError, ValueError):
+            continue   # a corrupt epoch: the driver's awk cannot cool on it either; never end the report
         state = "cooldown until %s" % until if now - ts < w else "cooldown over — re-probe on the next run"
         out.append("%s [%s]: %s (%d x %s)" % (lane, model, state, cnt, last))
     return out

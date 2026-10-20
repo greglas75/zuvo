@@ -46,7 +46,8 @@ lc_run() {
 row() { awk -F'\t' -v l="$1" '$1 == l { print $3, $5 }' "$HF" 2>/dev/null; }      # count + last outcome
 logged() { awk -F'\t' -v l="$1" '$14 == l' "$LOG" 2>/dev/null | wc -l | tr -d ' '; }  # run-log rows of a lane
 seed() { printf '%b' "$1" > "$HF"; }
-ago() { echo $(( $(date +%s) - $1 )); }   # an epoch <n> s ago, taken when the case seeds (no drift across cases)
+ago() { echo $(( $(date +%s) - $1 )); }   # an epoch <n> s ago, taken when the case seeds: earlier cases' run time
+# never eats a boundary margin (only the case's own run does)
 
 start_test "LC.1 two empties in a row put a lane on cooldown; the next run skips it without counting a failure"
 : > "$HF"; : > "$LOG"
@@ -119,6 +120,7 @@ seed "mock-success\tunknown\t5\t$(ago 0)\tempty\nmock-fail\tunknown\t5\t$(ago 0)
 lc_run "mock-success mock-fail"
 assert_exit_code "0" "$LC_RC" "the review ran"
 assert_contains "$(cat "$ERR")" "every provider is benched" "the fallback said so"
+assert_eq "6 empty" "$(row mock-fail)" "the cooling lane really was dispatched (its sixth strike)"
 
 start_test "LC.8 ZUVO_ADV_COOLDOWN_OFF exempts a lane; ZUVO_ADV_NO_COOLDOWN=1 keeps the old 3-strike bench"
 seed "mock-fail\tunknown\t2\t$(ago 0)\tempty\n"

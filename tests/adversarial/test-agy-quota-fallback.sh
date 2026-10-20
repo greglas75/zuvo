@@ -190,14 +190,20 @@ fi
 # Bug caught: a stated reset days away held agy out of every review until then (backlog
 # B-20261020-CURSOR-AGY-DEAD-STATE-COOLDOWN) — the stop is capped at the lane cooldown's maximum.
 start_test "agy.5a a quota stop never outlasts ZUVO_ADV_COOLDOWN_MAX; ZUVO_ADV_NO_COOLDOWN=1 keeps the stated reset"
-reset_calls
+# stop_left — seconds left on the one stop this run wrote ("none" when it wrote none: no stale file can answer).
+stop_left() {
+  local f; f=$(ls "$AGYHOME"/agy-cooldown-* 2>/dev/null | head -1)
+  [[ -n "$f" ]] || { echo none; return; }
+  echo $(( $(tr -cd '0-9' < "$f" | cut -c1-10) - $(date +%s) ))
+}
+reset_calls; rm -f "$AGYHOME"/agy-cooldown-*
 ZUVO_ADV_COOLDOWN_BASE=10 ZUVO_ADV_COOLDOWN_MAX=30 run_adv quota-primary >/dev/null
-until=$(tr -cd '0-9' < "$(ls "$AGYHOME"/agy-cooldown-* | head -1)" | cut -c1-10); delta=$(( until - $(date +%s) ))
-assert_eq "capped" "$( [[ "$delta" -le 30 ]] && echo capped || echo "$delta s" )" "a 120 s reset under a 30 s cap"
-reset_calls
+left=$(stop_left)
+assert_eq "capped" "$( [[ "$left" != none && "$left" -gt 0 && "$left" -le 30 ]] && echo capped || echo "$left" )" "a 120 s reset under a 30 s cap"
+reset_calls; rm -f "$AGYHOME"/agy-cooldown-*
 ZUVO_ADV_NO_COOLDOWN=1 ZUVO_ADV_COOLDOWN_BASE=10 ZUVO_ADV_COOLDOWN_MAX=30 run_adv quota-primary >/dev/null
-until=$(tr -cd '0-9' < "$(ls "$AGYHOME"/agy-cooldown-* | head -1)" | cut -c1-10); delta=$(( until - $(date +%s) ))
-assert_eq "stated" "$( [[ "$delta" -gt 60 ]] && echo stated || echo "$delta s" )" "the old rule keeps the 120 s reset"
+left=$(stop_left)
+assert_eq "stated" "$( [[ "$left" != none && "$left" -gt 60 ]] && echo stated || echo "$left" )" "the old rule keeps the 120 s reset"
 
 # ─── 5b. the LOG must name the model that actually answered ───────────────
 # Caught on the first live run after the fallback shipped: the row said

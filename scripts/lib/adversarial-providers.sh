@@ -733,7 +733,7 @@ lane_model_ok() {
 #     30 s) before the fan-out: an answer marks the row probe-ok and the lane runs; anything else is one more
 #     strike — a longer window. One lock per pair: concurrent runs and chunks probe once, the others read the
 #     result. Only a real review answer resets the count, so a lane that answers canaries but not reviews still
-#     backs off.
+#     backs off. (--doctor, run by hand, still records its answering lanes ok: an owner's deliberate check.)
 #   * Input-side failures (outcome `input`: a prompt over the lane's context) never count (record_provider_health).
 #   * Never every lane: when all are cooling, the ledger is ignored and all retried (as the bench always did).
 #   * ZUVO_ADV_COOLDOWN_OFF="<lane> ..." exempts lanes; ZUVO_PROVIDER_BENCH=0 turns the ledger off;
