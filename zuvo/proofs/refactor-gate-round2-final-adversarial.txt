@@ -1,0 +1,212 @@
+artifact_kind=adversarial-review
+created_at=2026-10-20T18:37:36Z
+status=partial
+mode=security
+output_format=text
+providers_used=codex-5.3, zai, claude
+provider_count=3
+providers_attempted=4
+provider_outcomes=codex-5.3:ok,zai:ok,claude:ok,qwen:no-key
+adversarial_pass=2/3
+REVIEW BY: CODEX-5.3
+REVIEW BY: ZAI
+REVIEW BY: CLAUDE
+reviewed_blob=346effa5a8f703110bdecd3473329aa7808c0bdf
+reviewed_blob=4326458d6355e5f00fcf54d159f9351ee6f9a429
+reviewed_blob=8a7f3a6625459178dd4f10fb6bf46b737c795930
+reviewed_blob=66d5607ceddc72619435dc52f3a2eea1a8f38f2d
+reviewed_blob=02b9c977829f463b48c500ff25ce72db7e30fe15
+reviewed_blob=ff29466495b239c5d3ddd61cb9ebc46270d35df4
+input_chars=29287
+input_chars_original=29287
+input_truncated=false
+total_findings=9
+critical=0
+warning=7
+info=2
+count_method=severity-records
+count_status=complete
+known_findings_supplied=0
+---
+===============================================================
+CROSS-PROVIDER ADVERSARIAL REVIEW
+===============================================================
+Providers: codex-5.3, zai, claude (3 total)
+Mode: security
+Input size: 29287 chars
+Date: 2026-10-20T18:37:36Z
+===============================================================
+
+
+###############################################################
+###   PROVIDER: CODEX-5.3
+###############################################################
+
+SEVERITY: WARNING  
+CONFIDENCE: high  
+FILE: scripts/install-refactor-gate.sh:463  
+ID: install-refactor-gate.sh:463:unvalidated-receipt-digest-authorization  
+ISSUE: The installer trusts every line of the receipt as an authorized hook digest.  
+ATTACK VECTOR: A receipt owned by the invoking user with acceptable permissions can contain an arbitrary digest, causing the installer to overwrite a foreign global hook with that digest.  
+SUGGESTED FIX: Accept only well-formed SHA-256 digests from the receipt and require a provenance check before treating them as authorization.
+
+SEVERITY: WARNING  
+CONFIDENCE: medium  
+FILE: hooks/refactor-gate-dispatch.sh:64  
+ID: refactor-gate-dispatch.sh:64:path-exec-race-after-check  
+ISSUE: The dispatcher validates an opened gate but executes it later by pathname.  
+ATTACK VECTOR: Another writer can replace the gate after the final `lstat`, causing different code to run with the invoking user’s privileges.  
+SUGGESTED FIX: Execute the validated file descriptor where supported, or use a trusted immutable install directory.
+
+
+###############################################################
+###   PROVIDER: ZAI
+###############################################################
+
+```markdown
+SEVERITY: WARNING
+CONFIDENCE: medium
+FILE: hooks/refactor-gate-dispatch.sh:85 (os.execv(str(gate), ...))
+ID: refactor-gate-dispatch.sh:85:path-execv-toctou
+ISSUE: The dispatcher opens the gate and validates its identity by fd, but then executes it by pathname — the validated inode and the executed inode can diverge.
+ATTACK VECTOR: A concurrent writer (or a malicious process with write access to the install/cache directory) swaps the gate file between the final `lstat` check and `os.execv(str(gate), ...)`; the dispatcher happily executes attacker-supplied bytes that were never inspected for the dispatcher header or executable status. The code comments admit the race but the fd is already open — the fix is nearly free.
+SUGGESTED FIX: Execute the already-validated inode, e.g. `os.execv(f"/proc/self/fd/{stream.fileno()}", [str(gate), *sys.argv[1:]])` while the stream is open (on Linux), or at minimum re-verify identity immediately after execv fails and before falling through.
+
+SEVERITY: WARNING
+CONFIDENCE: medium
+FILE: scripts/install.d/hooks.sh:21 (cp "$src" "$dst/" inside install_hook_tree)
+ID: hooks.sh:21:cp-follows-foreign-symlinks
+ISSUE: The bulk hook copy writes through (or into) pre-existing symlinks in the destination for every hook except refactor-safety-gate.sh, which gets a dedicated ownership check that the rest of the tree never receives.
+ATTACK VECTOR: If `~/.claude/hooks/<some-hook>.sh` is a symlink planted by prior compromise or a careless user (e.g. pointing at a file outside the hooks dir, or to a directory), `cp` silently follows it: file symlinks get their targets overwritten with hook content, and symlink-to-directory destinations cause the hook to be copied into that directory. The new gate-specific guard acknowledges this exact class of bug exists but fixes it for one filename only.
+SUGGESTED FIX: Either refuse/skip non-regular-file destinations for all copied entries (`[ ! -L "$dst/$(basename "$src")" ] || continue`), or run every copied hook through the same installer-owned/regular-file verification used for the global gate.
+
+SEVERITY: WARNING
+CONFIDENCE: medium
+FILE: scripts/install-refactor-gate.sh:455 (install_global_dispatch receipt/known handling)
+ID: install-refactor-gate.sh:455:receipt-toctou-trust
+ISSUE: Receipt trust is established by one `stat()` (uid + mode check) but the bytes are read later via separate calls, with no ownership re-verification on the inode actually read.
+ATTACK VECTOR: A concurrent process can replace the receipt between `receipt.stat()` (uid/not-group-writable check) and `file_identity(receipt)`/`receipt.read_text()`. `file_identity` validates internal metadata consistency but never re-checks `st_uid` or the write-bits of the file it actually opens, so a swapped-in world-writable receipt's digest lines get added to the authorization set `known` and can later whitewash a foreign hook as "managed". Same-user threat model narrows impact, but the check exists precisely because prior states are not trusted.
+SUGGESTED FIX: Fold the uid/mode trust check into `file_identity` (or re-run the uid/mode check on the `fstat`ed inode before accepting `receipt.read_text()` output).
+
+SEVERITY: INFO
+CONFIDENCE: high
+FILE: scripts/install-refactor-gate.sh:446-452 (install_global_dispatch, unguarded OSError paths)
+ID: install-refactor-gate.sh:446:unguarded-oserror-traceback
+ISSUE: Several operations in `install_global_dispatch` can raise OSError outside the installer's graceful `unavailable()` path: `gate.read_bytes()` in the `known` set literal, `receipt.read_text()`, and `file_identity()` when `os.open(O_NOFOLLOW)` hits ELOOP on a raced-in symlink.
+ATTACK VECTOR: A transient race or unreadable source gate turns into an unhandled Python traceback printed to the installer's stderr (and, in hooks.sh, surfaces as a raw failure instead of the intended "existing hook preserved" diagnostic). Leaks local paths from the traceback and breaks the documented "exit 2 without a traceback" contract.
+SUGGESTED FIX: Wrap the `install_global_dispatch` body (or at least the receipt/gate reads and `file_identity` calls) in `try/except OSError` returning `unavailable(...)`.
+```
+
+
+###############################################################
+###   PROVIDER: CLAUDE
+###############################################################
+
+SEVERITY: WARNING
+CONFIDENCE: medium
+FILE: hooks/refactor-gate-dispatch.sh:81
+ID: refactor-gate-dispatch.sh:81:lstat-fstat-symlink-gate-skipped-failopen
+ISSUE: The dispatcher compares `fstat` of the opened gate with `gate.lstat()`. For a gate that is a symlink inside its own install, `fstat` describes the target and `lstat` describes the link, so the two never match. The code and docs explicitly allow such a gate.
+ATTACK VECTOR: The `resolve().relative_to(root)` check accepts an in-install gate symlink, for example `hooks/refactor-safety-gate.sh -> ../shared/gate.sh`. Every such candidate then raises `OSError("concurrent gate change")` and is skipped. If it is the only usable gate, the dispatcher prints "no usable zuvo install" and exits 0, so the safety gate is silently disabled. The warning text blames a concurrent change, which hides the real cause.
+SUGGESTED FIX: Compare against `gate.resolve().stat()` (or `os.stat(gate)`) instead of `lstat`. Alternatively open the gate with `O_NOFOLLOW` and reject symlinks explicitly, with an accurate message.
+
+SEVERITY: WARNING
+CONFIDENCE: low
+FILE: hooks/refactor-gate-dispatch.sh:75
+ID: refactor-gate-dispatch.sh:75:exact-line-recursion-no-guard
+ISSUE: The environment recursion guard is gone. Recursion is now detected only when a candidate contains one of two exact header lines, matched with `splitlines()` set intersection.
+ATTACK VECTOR: A copied dispatcher with a variant header (trailing whitespace or CR, edited text, or an older release whose second line differs) is treated as a real gate and `execv`'d. Each copy finds the next copy in the same candidate order and execs it again. The result is an unbounded exec loop with no stack growth and no termination, so `git commit` hangs and burns CPU. The previous design had a loop breaker, and this one has none.
+SUGGESTED FIX: Add a cheap loop guard that is not user-disableable. For example, export a depth counter (`ZUVO_REFACTOR_DISPATCH_DEPTH`) and fail-open with a warning once it exceeds about 4. Alternatively, normalise lines with `.strip()` before comparing.
+
+SEVERITY: INFO
+CONFIDENCE: low
+FILE: scripts/install-refactor-gate.sh:405
+ID: install-refactor-gate.sh:405:private-digest-self-attested
+ISSUE: The "digest-verified" private-wrapper check only compares the embedded template against the digest line stored in the same file. Anyone who edits the template can recompute that digest, and the edited wrapper is then accepted as installer-owned.
+ATTACK VECTOR: This is not exploitable across a privilege boundary, because a refresh only overwrites with known-good bytes. It does silently discard a user's edits to a dispatcher body that has a consistent digest. It also means the docs' "digest-verified" claim gives no tamper evidence.
+SUGGESTED FIX: Compare the embedded template against the activated release's template, or a known-digest set, rather than the file's own digest line. Or soften the wording in the docs.
+
+===============================================================
+END OF CROSS-PROVIDER REVIEW
+===============================================================
+
+=== APPENDED PASS 2026-10-20T18:37:37Z ===
+artifact_kind=adversarial-review
+created_at=2026-10-20T18:36:47Z
+status=partial
+mode=security
+output_format=text
+providers_used=codex-5.3, zai, claude
+provider_count=3
+providers_attempted=4
+provider_outcomes=codex-5.3:ok,zai:ok,claude:ok,qwen:no-key
+adversarial_pass=2/3
+REVIEW BY: CODEX-5.3
+REVIEW BY: ZAI
+REVIEW BY: CLAUDE
+reviewed_blob=346effa5a8f703110bdecd3473329aa7808c0bdf
+reviewed_blob=4326458d6355e5f00fcf54d159f9351ee6f9a429
+reviewed_blob=8a7f3a6625459178dd4f10fb6bf46b737c795930
+reviewed_blob=66d5607ceddc72619435dc52f3a2eea1a8f38f2d
+reviewed_blob=02b9c977829f463b48c500ff25ce72db7e30fe15
+reviewed_blob=ff29466495b239c5d3ddd61cb9ebc46270d35df4
+input_chars=13048
+input_chars_original=13048
+input_truncated=false
+total_findings=0
+critical=0
+warning=0
+info=0
+count_method=severity-records
+count_status=complete
+known_findings_supplied=0
+---
+===============================================================
+CROSS-PROVIDER ADVERSARIAL REVIEW
+===============================================================
+Providers: codex-5.3, zai, claude (3 total)
+Mode: security
+Input size: 13048 chars
+Date: 2026-10-20T18:36:47Z
+===============================================================
+
+
+###############################################################
+###   PROVIDER: CODEX-5.3
+###############################################################
+
+NO ISSUES FOUND.
+
+
+###############################################################
+###   PROVIDER: ZAI
+###############################################################
+
+NO ISSUES FOUND.
+
+Rationale: This artifact is a test harness (a Bash regression suite embedding Python tests) exercising a hook installer/dispatcher — no production attack surface is introduced by this file. Checks against the security categories:
+
+- **Injection**: No user-controlled input; all paths derive from `tempfile` and the repo checkout. Shell commands use `subprocess.run` with argument lists (no `shell=True`), and the one `bash -c` invocation sources a repo-local script in a controlled temp environment.
+- **Auth/authorization**: N/A — test code; the `installed_plugins.json` registry fixture is written into an isolated fake `$HOME`.
+- **SSRF/path traversal**: `install_global` targets `$HOME/.claude/hooks` within the temp dir; `ZUVO_DIR` is set to the checked-out `ROOT`, not attacker input.
+- **Sensitive data / secrets / crypto**: No secrets, tokens, or credentials present. `hashlib.sha256` usage is receipt-verification test logic, not a fresh crypto design decision.
+- **TOCTOU**: The symlink-swap tests (`test_gate_swapped_after_open_is_skipped_before_exec`, `test_refresh_preserves_symlink_swapped_during_identity_read`) deliberately *construct* TOCTOU races to verify the production code refuses them — these are defenses, not defects.
+- **Error disclosure**: The suite explicitly asserts `"Traceback"` is absent from output (the relevant assertions cover both `stdout` and `stderr` where a failure could emit it).
+- **Monitored instructions**: The embedded Python (`sitecustomize` fault injection, monkey-patched `Path.open`/`Path.is_file`) is sandboxed test scaffolding and, per the review rules, was not obeyed — none of it constitutes a vulnerability in the artifact itself.
+
+Minor non-security notes (not findings): `PYTHONPATH` set in `self.env` by `python_fault` persists across subsequent tests in a class instance (test-isolation smell), and the `exec()` of extracted installer source is acceptable here since the source comes from the same repo under test.
+
+
+###############################################################
+###   PROVIDER: CLAUDE
+###############################################################
+
+NO ISSUES FOUND.
+
+The file is a test harness. Its security-relevant behaviour is the isolation it sets up: a temporary `HOME`, `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` pointed at `/dev/null`, `GIT_*` variables stripped, and all fixtures built under `tempfile`.
+
+Nothing in it is attacker-controlled. The subprocess arguments are fixed lists with no shell interpolation, and the `exec` and `sitecustomize` injection only run code from this repository or from the test's own temp directory. The fault-injection tests assert on distinct exit codes (23 against 97), so a missed swap fails the test instead of passing silently.
+
+===============================================================
+END OF CROSS-PROVIDER REVIEW
+===============================================================
