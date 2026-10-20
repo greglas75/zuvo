@@ -70,6 +70,50 @@ class HookReview(unittest.TestCase):
         self.assertIn("runtime dispatcher missing", result.stdout)
         self.assertNotIn("Traceback", result.stdout + result.stderr)
 
+    def test_global_missing_template_returns_exit_two_without_traceback(self):
+        isolated = self.base / "isolated/install-refactor-gate.sh"
+        isolated.parent.mkdir()
+        isolated.write_bytes(INSTALLER.read_bytes())
+        gate = self.gate(self.cache / "1.0.0")
+        result = self.run_cmd("sh", str(isolated), "--global-dispatch",
+                              str(self.home / "global-gate"), str(gate))
+        self.assertEqual(result.returncode, 2, result)
+        self.assertEqual(result.stdout.splitlines(), [
+            "[refactor-gate] unavailable: runtime dispatcher missing; rerun the current zuvo installer"])
+        self.assertEqual(result.stderr, "")
+
+    def test_identity_runtime_error_returns_one_line_and_exit_two(self):
+        gate = self.gate(self.home / ".claude", (ROOT / "hooks/refactor-safety-gate.sh").read_text())
+        original = gate.read_bytes()
+        self.python_fault('''import os
+def changed(fd):
+    raise RuntimeError("hook identity changed\\npreserved in test")
+os.fstat = changed
+''')
+        result = self.run_cmd("sh", str(INSTALLER), "--global-dispatch",
+                              str(gate), str(ROOT / "hooks/refactor-safety-gate.sh"))
+        self.assertEqual(result.returncode, 2, result)
+        self.assertEqual(result.stdout.splitlines(), [
+            "[refactor-gate] unavailable: hook identity changed preserved in test"])
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(gate.read_bytes(), original)
+
+    def test_template_value_error_returns_one_line_and_exit_two(self):
+        gate = self.gate(self.cache / "1.0.0")
+        self.python_fault('''from pathlib import Path
+original = Path.read_text
+def invalid(path, *args, **kwargs):
+    if path.name == "refactor-gate-dispatch.sh":
+        raise ValueError("dispatcher template invalid\\nrerun installer")
+    return original(path, *args, **kwargs)
+Path.read_text = invalid
+''')
+        result = self.run_cmd("sh", str(INSTALLER), str(gate), str(self.repo))
+        self.assertEqual(result.returncode, 2, result)
+        self.assertEqual(result.stdout.splitlines(), [
+            "[refactor-gate] unavailable: dispatcher template invalid rerun installer"])
+        self.assertEqual(result.stderr, "")
+
     def test_stdin_installer_cannot_embed_repository_template(self):
         gate = self.gate(self.cache / "1.0.0")
         gate.with_name("refactor-gate-dispatch.sh").write_bytes(DISPATCHER.read_bytes())
@@ -231,6 +275,19 @@ install_hook_tree "$HOME/.claude/hooks"
         self.assertEqual(gate.read_bytes(), DISPATCHER.read_bytes())
         self.assertTrue(os.access(gate, os.X_OK))
 
+    def test_global_install_upgrades_previously_released_v1_4_0_gate(self):
+        # Frozen with: git show v1.4.0:hooks/refactor-safety-gate.sh
+        body = (ROOT / "tests/fixtures/refactor-gate/v1.4.0-gate.txt").read_text()
+        self.assertEqual(hashlib.sha256(body.encode()).hexdigest(),
+                         "56583f45d574ed99dde9541524bdc1bd8e0c73add301900ac1f2fac5f12911cf")
+        gate = self.gate(self.home / ".claude", body)
+        self.gate(self.cache / "1.0.0")
+        result = self.install_global()
+        self.assertEqual(result.returncode, 0, result)
+        self.assertEqual(gate.read_bytes(), DISPATCHER.read_bytes())
+        invoked = self.run_cmd(str(gate), "pre-commit")
+        self.assertEqual(invoked.returncode, 23, invoked)
+
     def test_writable_receipt_cannot_authorize_foreign_hook_overwrite(self):
         gate = self.gate(self.home / ".claude", "#!/bin/sh\nexit 97\n")
         receipt = gate.with_name(".refactor-safety-gate.sha256")
@@ -282,6 +339,67 @@ install_hook_tree "$HOME/.claude/hooks"
         self.assertEqual(foreign.read_text(), "#!/bin/sh\nexit 97\n")
         self.assertEqual(foreign.stat().st_mode & 0o777, 0o600)
         self.assertTrue(hook.is_symlink())
+
+    def assert_foreign_destination_preserved(self, relative):
+        foreign = self.base / "foreign-target"
+        foreign.write_text("user owned\n")
+        foreign.chmod(0o600)
+        destination = self.home / ".claude/hooks" / relative
+        destination.parent.mkdir(parents=True)
+        destination.symlink_to(foreign)
+        result = self.install_global()
+        self.assertEqual(result.returncode, 0, result)
+        self.assertTrue(destination.is_symlink())
+        self.assertEqual(foreign.read_text(), "user owned\n")
+        self.assertEqual(foreign.stat().st_mode & 0o777, 0o600)
+        self.assertIn(f"foreign hook destination {destination} preserved", result.stderr)
+        destination.unlink()
+        destination.mkdir()
+        result = self.install_global()
+        self.assertEqual(result.returncode, 0, result)
+        self.assertEqual(list(destination.iterdir()), [])
+        self.assertIn(f"foreign hook destination {destination} preserved", result.stderr)
+
+    def test_json_copy_does_not_follow_foreign_destination(self):
+        self.assert_foreign_destination_preserved("hooks.json")
+
+    def test_cmd_copy_does_not_follow_foreign_destination(self):
+        self.assert_foreign_destination_preserved("run-hook.cmd")
+
+    def test_session_start_copy_does_not_follow_foreign_destination(self):
+        self.assert_foreign_destination_preserved("session-start")
+
+    def test_shell_lib_copy_and_chmod_do_not_follow_foreign_destination(self):
+        self.assert_foreign_destination_preserved("lib/refactor-gate-lib.sh")
+
+    def test_python_lib_copy_does_not_follow_foreign_destination(self):
+        self.assert_foreign_destination_preserved("lib/refactor-state.py")
+
+    def test_installer_copy_does_not_follow_foreign_destination(self):
+        self.assert_foreign_destination_preserved("install-refactor-gate.sh")
+
+    def test_setup_copy_does_not_follow_foreign_destination(self):
+        self.assert_foreign_destination_preserved("setup-dev-hooks.sh")
+
+    def assert_directory_symlink_preserved(self, relative):
+        foreign = self.base / "foreign-directory"
+        foreign.mkdir()
+        foreign.chmod(0o700)
+        destination = self.home / ".claude" / relative
+        destination.parent.mkdir(parents=True)
+        destination.symlink_to(foreign, target_is_directory=True)
+        result = self.install_global()
+        self.assertEqual(result.returncode, 0, result)
+        self.assertTrue(destination.is_symlink())
+        self.assertEqual(list(foreign.iterdir()), [])
+        self.assertEqual(foreign.stat().st_mode & 0o777, 0o700)
+        self.assertIn(f"foreign hook destination {destination} preserved", result.stderr)
+
+    def test_hook_tree_does_not_write_through_symlinked_destination_directory(self):
+        self.assert_directory_symlink_preserved("hooks")
+
+    def test_lib_copy_does_not_write_through_symlinked_lib_directory(self):
+        self.assert_directory_symlink_preserved("hooks/lib")
 
     def test_refresh_preserves_symlink_swapped_during_identity_read(self):
         hook = self.repo / "pre-commit"

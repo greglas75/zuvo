@@ -16,11 +16,20 @@ import tempfile
 
 INSTALLER = sys.argv.pop(1) if len(sys.argv) > 1 else ""
 
-# Exact pre-dispatch global gate and first dispatcher shipped by this installer.
+# Exact historical global gates and first dispatcher shipped by this installer.
+# Regenerate gate digests from origin/main and release tags:
+# git log origin/main --tags='v*' --format=%H -- hooks/refactor-safety-gate.sh |
+# while read -r c; do git show "$c:hooks/refactor-safety-gate.sh" | sha256sum; done | sort -u
 # New installations also record a digest receipt to recognize later revisions.
 LEGACY_GLOBAL_GATES = {
+    "0e0f32fc723f66bbae2a2877656e9ff3de52a63c352bbee6751b6ba8b2c890c3",
     "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "4d54cd298e689545a4eb5ed3da6a1d507d8a46472e0ab83e048598b0b2483902",
+    "56583f45d574ed99dde9541524bdc1bd8e0c73add301900ac1f2fac5f12911cf",
     "7eede029774d61d7c141ca0281c8dd51b9f861d5c7e1d6407bff249bfe4c2e4a",
+    "8f01210a551b2d6f2f24f346db667c4a5283056fa438c8289e7e9bc7aa85182d",
+    "a4e90a687403f827821365e90bf4ca57fba4b477531fad125005c5703f88d8aa",
+    "e3ef0391a3dde6dc075eff9aca654e5b89cb47fd69501299520963ac4a214be1",
 }
 
 # Exact identities, not a marker that an unrelated/broken script can contain.
@@ -316,6 +325,7 @@ def private_install(gate, gitdir, effective):
 
 
 def unavailable(message):
+    message = " ".join(str(message).splitlines())
     print(f"[refactor-gate] unavailable: {message}")
     return False
 

@@ -11,30 +11,43 @@
 # idempotent (cp overwrites; re-runs never duplicate). This is what makes the
 # pipeline-gate lib + new hooks reach a target.
 install_hook_tree() {
-  local dst="$1" src global_refactor=0
+  local dst="$1" src target global_refactor=0
   [ -n "$dst" ] || return 1
-  mkdir -p "$dst/lib"
+  if [[ -L "$dst" || ( -e "$dst" && ! -d "$dst" ) ]]; then
+    echo "  WARN: foreign hook destination $dst preserved" >&2
+    return 0
+  fi
+  mkdir -p "$dst"
   [[ "$dst" = "$HOME/.claude/hooks" ]] && global_refactor=1
-  for src in "$ZUVO_DIR"/hooks/*.sh; do
+  for src in "$ZUVO_DIR"/hooks/*.sh "$ZUVO_DIR"/hooks/*.json \
+      "$ZUVO_DIR/hooks/run-hook.cmd" "$ZUVO_DIR/hooks/session-start" \
+      "$ZUVO_DIR/scripts/install-refactor-gate.sh" "$ZUVO_DIR/scripts/setup-dev-hooks.sh"; do
+    [ -f "$src" ] || continue
     # The stable global gate has its own ownership check below. Never write
     # through a foreign symlink before that check has even run.
     if [[ "$global_refactor" = 1 && "${src##*/}" = refactor-safety-gate.sh ]]; then continue; fi
-    if [[ -L "$dst/${src##*/}" || ( -e "$dst/${src##*/}" && ! -f "$dst/${src##*/}" ) ]]; then
-      echo "  WARN: foreign hook destination $dst/${src##*/} preserved" >&2
+    target="$dst/${src##*/}"
+    if [[ -L "$target" || ( -e "$target" && ! -f "$target" ) ]]; then
+      echo "  WARN: foreign hook destination $target preserved" >&2
       continue
     fi
-    cp "$src" "$dst/" 2>/dev/null || true
+    cp "$src" "$target" 2>/dev/null || true
   done
-  cp "$ZUVO_DIR"/hooks/*.json "$dst/" 2>/dev/null || true
-  [ -f "$ZUVO_DIR/hooks/run-hook.cmd" ] && cp "$ZUVO_DIR/hooks/run-hook.cmd" "$dst/" 2>/dev/null || true
-  [ -f "$ZUVO_DIR/hooks/session-start" ] && cp "$ZUVO_DIR/hooks/session-start" "$dst/" 2>/dev/null || true
-  if [ -d "$ZUVO_DIR/hooks/lib" ]; then
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$dst/lib/" 2>/dev/null || true
+  if [[ -L "$dst/lib" || ( -e "$dst/lib" && ! -d "$dst/lib" ) ]]; then
+    echo "  WARN: foreign hook destination $dst/lib preserved" >&2
+  elif [ -d "$ZUVO_DIR/hooks/lib" ]; then
+    mkdir -p "$dst/lib"
+    for src in "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py; do
+      [ -f "$src" ] || continue
+      target="$dst/lib/${src##*/}"
+      if [[ -L "$target" || ( -e "$target" && ! -f "$target" ) ]]; then
+        echo "  WARN: foreign hook destination $target preserved" >&2
+        continue
+      fi
+      cp "$src" "$target" 2>/dev/null || true
+      [[ "$src" = *.sh ]] && chmod +x "$target" 2>/dev/null || true
+    done
   fi
-  # refactor commit-gate self-installer (lives in scripts/, needed in the hooks dir so
-  # zuvo:refactor Phase 0 can find it at ~/.claude/hooks/install-refactor-gate.sh)
-  [ -f "$ZUVO_DIR/scripts/install-refactor-gate.sh" ] && cp "$ZUVO_DIR/scripts/install-refactor-gate.sh" "$dst/" 2>/dev/null || true
-  [ -f "$ZUVO_DIR/scripts/setup-dev-hooks.sh" ] && cp "$ZUVO_DIR/scripts/setup-dev-hooks.sh" "$dst/" 2>/dev/null || true
   # The global entry must follow cache upgrades, while versioned cache entries
   # remain the real gate (dispatching there again would recurse).
   if [[ "$global_refactor" = 1 && -f "$ZUVO_DIR/hooks/refactor-safety-gate.sh" \
@@ -49,7 +62,6 @@ install_hook_tree() {
     [[ -L "$src" || ! -f "$src" ]] && continue
     chmod +x "$src" 2>/dev/null || true
   done
-  chmod +x "$dst"/lib/*.sh 2>/dev/null || true
 }
 
 # Copy the CI check script, the git PATH-shim, and the CI workflow template
