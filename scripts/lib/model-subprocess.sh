@@ -416,14 +416,20 @@ zms_codex_cli_guard() {
 #                  model simply ran `cat` on the planted absolute path. P1a: with the shell gone the
 #                  model reached for view_image on that path (it failed only because it was text).
 #          claude: neutral cwd, --tools "" --safe-mode, strict EMPTY MCP config, no session (P2).
-#   read   read files under a root — test-audit batches.
-#          --read-root is ENFORCED for claude and only ADVISORY for codex. Do not read it as a
-#          boundary for codex: it is validated, then never handed to the client.
+#   read   read files under a root — test-audit batches, and the review lanes under ZUVO_REVIEW_ACCESS=read.
+#          --read-root is ENFORCED for both clients: the root plus the paths each client lists below.
 #          codex:  as none, but the shell tool stays, so the prompt can name ABSOLUTE paths; view_image
 #                  stays disabled — reads go through the shell, and the image viewer is one more read
-#                  primitive (the one P1a saw the model reach for). The read-only sandbox blocks
-#                  WRITES, not reads: in P6 the model `cat`-ed a planted file outside any root. What
-#                  keeps codex to the root is the prompt, nothing else.
+#                  primitive (the one P1a saw the model reach for). The `-s read-only` sandbox blocks
+#                  WRITES, not reads (P6: the model `cat`-ed a planted file outside any root), so read
+#                  runs under a codex permissions profile instead (default_permissions, no sandbox_mode
+#                  and no -s: either one replaces the profile — probed 2026-10-20, codex-cli 0.163.0,
+#                  zuvo/proofs/probe-codex-read-profile-2026-10-20.txt). Readable, nothing writable: the
+#                  system paths (":minimal"), the root, its git dir and the shared git dir of a linked
+#                  worktree (git show/diff read objects there), and the codex install (the Linux sandbox
+#                  re-executes codex inside itself). A file anywhere else is not there for the shell;
+#                  --strict-config makes a CLI that does not know the profile refuse to start rather than
+#                  run unbounded.
 #          claude: --tools Read,Grep,Glob --add-dir <root> --safe-mode --permission-prompts none —
 #                  the root was read, a file outside it was not, and nothing hung (P3).
 #   agent  the adversarial lanes' benchmarked flags, byte for byte what adversarial-review.sh ran
@@ -445,11 +451,13 @@ _zms_toml_safe() {
   done
 }
 
-# zms_codex_home <dir> <model> <effort> <sandbox> — build an isolated CODEX_HOME in <dir>: mode 700;
+# zms_codex_home <dir> <model> <effort> <sandbox> [readable dir...] — build an isolated CODEX_HOME in <dir>: mode 700;
 # auth.json copied from ${CODEX_HOME:-$HOME/.codex} WHEN PRESENT (mode 600; one already in <dir> is
 # removed either way, and neither file is ever written through an existing one); a minimal config.toml —
 # model, sandbox_mode, approval_policy never, and model_reasoning_effort only when <effort> is
-# non-empty (empty leaves the model's own default). Nothing else from the user's config: no MCP
+# non-empty (empty leaves the model's own default). <sandbox> `read-roots` writes no sandbox_mode: a
+# permissions profile (default_permissions = "zuvo_read") that can read the system paths and each
+# [readable dir] and write nothing. Nothing else from the user's config: no MCP
 # servers (a required one whose daemon hung took every codex run down, 2026-09-25), no profiles.
 # Whether a missing auth.json is fatal is the caller's decision — the runners: yes for none/read
 # unless OPENAI_API_KEY is set, no for agent (run_codex never required it; env-key users keep the
@@ -462,7 +470,8 @@ _zms_toml_safe() {
 # Status: 0 built, 1 filesystem error, 2 usage error.
 zms_codex_home() {
   local dir="${1:-}" model="${2:-}" effort="${3:-}" sandbox="${4:-}"
-  local srch="${CODEX_HOME:-${HOME:-}/.codex}" d s
+  local srch="${CODEX_HOME:-${HOME:-}/.codex}" d s r
+  shift 4 2>/dev/null || set --
   local src="$srch/auth.json"
   if [ -z "$dir" ] || [ -z "$model" ]; then
     _zms_err zms_codex_home "usage: <dir> <model> <effort> <sandbox>"; return 2
@@ -475,7 +484,17 @@ zms_codex_home() {
     return 2
   fi
   case "$sandbox" in
-    read-only|workspace-write|danger-full-access) ;;
+    read-only|workspace-write|danger-full-access)
+      if [ $# -gt 0 ]; then _zms_err zms_codex_home "readable dirs are only for the read-roots sandbox"; return 2; fi ;;
+    read-roots)
+      if [ $# -eq 0 ]; then _zms_err zms_codex_home "read-roots needs at least one readable dir"; return 2; fi
+      for r in "$@"; do
+        # Each one becomes a TOML key: a quote or a line break there could rewrite the profile.
+        case "$r" in /*) ;; *) _zms_err zms_codex_home "readable dir is not absolute: $r"; return 2 ;; esac
+        if ! _zms_toml_safe "$r"; then
+          _zms_err zms_codex_home "readable dir may not contain quotes, backslashes or control characters: $r"; return 2
+        fi
+      done ;;
     *) _zms_err zms_codex_home "unknown sandbox: $sandbox"; return 2 ;;
   esac
   if ! _zms_toml_safe "$model" "$effort"; then
@@ -501,9 +520,13 @@ zms_codex_home() {
     fi
     {
       printf 'model = "%s"\n' "$model"
-      printf 'sandbox_mode = "%s"\n' "$sandbox"
+      if [ "$sandbox" != read-roots ]; then printf 'sandbox_mode = "%s"\n' "$sandbox"; fi
       printf 'approval_policy = "never"\n'
       if [ -n "$effort" ]; then printf 'model_reasoning_effort = "%s"\n' "$effort"; fi
+      if [ "$sandbox" = read-roots ]; then
+        printf 'default_permissions = "zuvo_read"\n[permissions.zuvo_read.filesystem]\n":minimal" = "read"\n'
+        for r in "$@"; do printf '"%s" = "read"\n' "$r"; done
+      fi
     } > "$dir/config.toml" || exit 1
   )
 }
@@ -547,7 +570,7 @@ _zms_live() {
 # zms_run_codex / zms_run_claude — run ONE prompt through the client, isolated per --access.
 #   --model <id> --access none|read|agent --prompt-file <f> --timeout <s>
 #   [--effort <e>] [--read-root <dir>] (read only, required there: ENFORCED for claude through
-#   --add-dir, ADVISORY for codex — validated, never handed to it; see Access modes) [--stderr-file <f>]
+#   --add-dir, for codex through a permissions profile; see Access modes) [--stderr-file <f>]
 # The prompt goes to the client on stdin; the answer is the runner's stdout. The client's stderr goes
 # to --stderr-file when given, else to the runner's stderr — never to stdout. The file is created /
 # truncated only as the client starts: a runner that cannot start leaves it as it was.
@@ -676,6 +699,37 @@ _zms_run_validate() {
   [ "$grace" -le 3600 ] || grace=3600
 }
 
+# _zms_codex_readable — fills `readable` for codex --access read: the root, its git dir and the common git dir
+# (a linked worktree's objects and refs live in the main checkout's .git), and the directory codex is installed
+# in. Physical paths, each once. A root outside git, or no git on PATH, is the root alone.
+_zms_codex_readable() {
+  local p q seen=" "
+  for p in "$root" \
+           "$(git -C "$root" rev-parse --path-format=absolute --git-dir 2>/dev/null)" \
+           "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+           "$(_zms_install_dir "$bin")"; do
+    [ -n "$p" ] && [ -d "$p" ] || continue
+    q="$(CDPATH='' cd -P -- "$p" 2>/dev/null && pwd -P)" || continue
+    case "$seen" in *" $q "*) continue ;; esac
+    seen="$seen$q "; readable+=("$q")
+  done
+}
+
+# _zms_install_dir <bin> — where a client is installed: the directory of <bin> with every symlink followed, or,
+# for an npm package's bin/ (bin/<name>.js beside a package.json), the package — its platform binary lives in
+# its node_modules. Empty when <bin> cannot be resolved.
+_zms_install_dir() {
+  local f="$1" l n=0 d
+  while [ -L "$f" ] && [ "$n" -lt 40 ]; do
+    l="$(readlink "$f")" || return 0
+    case "$l" in /*) f="$l" ;; *) f="$(dirname "$f")/$l" ;; esac
+    n=$((n + 1))
+  done
+  d="$(CDPATH='' cd -P -- "$(dirname "$f")" 2>/dev/null && pwd -P)" || return 0
+  if [ "${d##*/}" = bin ] && [ -f "${d%/*}/package.json" ]; then d="${d%/*}"; fi
+  printf '%s\n' "$d"
+}
+
 # _zms_run_setup — the call's temp dir (tmp; the EXIT trap removes it), then the per-client, per-access
 # invocation: the isolated CODEX_HOME (home) or the empty MCP config, the argv (args), the client's cwd.
 _zms_run_setup() {
@@ -697,9 +751,11 @@ _zms_run_setup() {
   cwd="$tmp/cwd"
   if [ "$client" = codex ]; then
     home="$tmp/codex_home_$access"
-    sandbox=read-only
+    sandbox=read-only; readable=()
     if [ "$access" = agent ]; then sandbox=danger-full-access; fi
-    zms_codex_home "$home" "$model" "$effort" "$sandbox" || { _zms_err "$fn" "cannot build an isolated CODEX_HOME"; exit 2; }
+    if [ "$access" = read ]; then sandbox=read-roots; _zms_codex_readable; fi
+    zms_codex_home "$home" "$model" "$effort" "$sandbox" ${readable[@]+"${readable[@]}"} \
+      || { _zms_err "$fn" "cannot build an isolated CODEX_HOME"; exit 2; }
     # none/read take the account file — or an API key: the codex CLI reads OPENAI_API_KEY from its
     # environment and needs no auth.json for it. The key stays in the environment, never on disk.
     if [ "$access" != agent ] && [ ! -f "$home/auth.json" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -709,7 +765,7 @@ _zms_run_setup() {
     args=(exec --skip-git-repo-check)
     case "$access" in
       none)  args+=(-s read-only --disable shell_tool --disable unified_exec --disable view_image) ;;
-      read)  args+=(-s read-only --disable view_image) ;;   # the shell stays; --read-root is advisory
+      read)  args+=(--strict-config --disable view_image) ;;   # the shell stays, bounded by the profile
       agent) cwd="$home" ;;   # run_codex: cd "$tmp_home"
     esac
   else

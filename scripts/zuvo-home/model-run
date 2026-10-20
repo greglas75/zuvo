@@ -15,9 +15,9 @@
 #   --mode audit   effort: codex ZUVO_CODEX_EFFORT_AUDIT, claude ZUVO_CLAUDE_REVIEWER_OPUS_EFFORT (the
 #                  registry). Without --mode the client keeps its own default effort.
 #   --access       none (default): the prompt only. read: files too, meant for those under --read-root.
-#                  --read-root is ENFORCED for claude (--add-dir) and only ADVISORY for codex: its
-#                  read-only sandbox confines writes, not reads (probe P6 read a file outside any root).
-#                  It is never a boundary for codex — the prompt is what points it at the root.
+#                  --read-root is ENFORCED for both: claude through --add-dir, codex through a
+#                  permissions profile (the root, its git dirs and the system paths readable, nothing
+#                  writable — model-subprocess.sh, "Access modes").
 #   --prompt-file, --append-file   regular files, concatenated byte for byte, in order, as stdin.
 #   --require, --reject   an answer with no line matching --require, or any line matching --reject, is
 #                  not usable (exit 3, status=invalid) — e.g. a client that echoed the prompt back.

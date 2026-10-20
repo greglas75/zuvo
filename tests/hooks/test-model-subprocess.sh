@@ -864,14 +864,16 @@ L="codex read"
 out="$(rrun codex -- --model gpt-6-sol --effort high --access read --read-root "$RROOT" --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "$L: exit 0" "rc=0" "$out"
 if spy_ran codex "$L"; then
-  # P6: the read-only sandbox confines WRITES, not reads — with the shell tool present the model
-  # reads absolute paths anywhere, so the read-root is reachable (and NOT a boundary: it is advisory
-  # for codex); the prompt names absolute paths. view_image goes: reads happen through the shell,
-  # so the image viewer is only one more read primitive (P1a: it was the model's next reach).
-  expect_eq "$L: argv = exec, no git check, read-only sandbox, view_image disabled, shell tool KEPT" \
-    "exec|--skip-git-repo-check|-s|read-only|--disable|view_image" "$(recj codex arg)"
-  expect_eq "$L: config.toml read-only" \
-    'model = "gpt-6-sol"|sandbox_mode = "read-only"|approval_policy = "never"|model_reasoning_effort = "high"' "$(recj codex config)"
+  # P6: the read-only sandbox confines WRITES, not reads — the model `cat`-ed a file outside any root. So
+  # read runs under a permissions profile, and neither -s nor sandbox_mode may be passed: either one
+  # replaces the profile (probed 2026-10-20: with -s read-only the outside file was read again).
+  # view_image goes: reads happen through the shell, and the image viewer is one more read primitive.
+  expect_eq "$L: argv = exec, no git check, strict config, view_image disabled, shell tool KEPT, no -s" \
+    "exec|--skip-git-repo-check|--strict-config|--disable|view_image" "$(recj codex arg)"
+  # Bug caught: the read-root only advisory for codex — any path on the machine was readable.
+  expect_eq "$L: config.toml = no sandbox_mode; a profile reading the system paths, the root and the codex install" \
+    "model = \"gpt-6-sol\"|approval_policy = \"never\"|model_reasoning_effort = \"high\"|default_permissions = \"zuvo_read\"|[permissions.zuvo_read.filesystem]|\":minimal\" = \"read\"|\"$RROOT\" = \"read\"|\"$SPYB\" = \"read\"" \
+    "$(recj codex config)"
   pw="$(rec codex pwd_P)"
   expect_not_under "$L: cwd is not under the repo" "$pw" "$ROOT"
   expect_not_under "$L: cwd is not the read-root (a project config there must not load)" "$pw" "$RROOT"
@@ -879,6 +881,42 @@ if spy_ran codex "$L"; then
   expect_eq "$L: CODEX_HOME holds exactly auth.json + config.toml" "auth.json config.toml " "$(rec codex codex_home_ls)"
   stdin_same codex "$L"
 fi
+rtmp_clean "$L"
+# A linked worktree (the AI-review host's checkout): `git show`/`git diff` read objects and refs in the MAIN
+# checkout's .git, so the profile must hold that shared git dir and the worktree's own git dir — and nothing
+# else of the main checkout. Bug caught: a profile of the root alone, where every git command in a worktree
+# review fails; or one that opens the whole main checkout.
+L="codex read, linked worktree"
+WTM="$T/wt-main"; WTL="$T/wt-linked"
+mkdir -p "$WTM" && printf 'main-only\n' > "$WTM/a.txt"
+( cd "$WTM" && export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && git init -q . && git add a.txt \
+    && git -c user.name=t -c user.email=t@t commit -qm init && git worktree add -q "$WTL" -b wt ) >/dev/null 2>&1
+WTM="$(cd "$WTM" && pwd -P)"; WTL="$(cd "$WTL" 2>/dev/null && pwd -P)"
+if [ -z "$WTL" ] || [ ! -f "$WTL/.git" ]; then
+  bad "$L: could not build the linked worktree fixture (git missing?)"
+else
+  out="$(rrun codex -- --model gpt-6-sol --access read --read-root "$WTL" --prompt-file "$PROMPT" --timeout 60)"
+  expect_eq "$L: exit 0" "rc=0" "$out"
+  if spy_ran codex "$L"; then
+    expect_eq "$L: readable = the worktree, its git dir, the shared git dir, the codex install — in that order" \
+      "$WTL|$WTM/.git/worktrees/wt-linked|$WTM/.git|$SPYB" \
+      "$(rec codex config | awk -F'"' '/^"\// && / = "read"$/ { printf "%s%s", (n++ ? "|" : ""), $2 } END { print "" }')"
+    outside="no"
+    while IFS= read -r d; do under "$WTM/a.txt" "$d" && outside="yes"; done <<RD
+$(rec codex config | awk -F'"' '/^"\// { print $2 }')
+RD
+    expect_eq "$L: the main checkout's own files stay outside every readable dir" "no" "$outside"
+    case "|$(recj codex config)|" in *'= "write"'*|*sandbox_mode*) bad "$L: something writable, or a sandbox_mode that replaces the profile" ;;
+      *) ok "$L: nothing writable, no sandbox_mode" ;; esac
+  fi
+  rtmp_clean "$L"
+fi
+# Bug caught: a path that rewrites the profile — a quote ends the TOML key, a newline starts a new entry.
+L="codex read, a root whose name could rewrite the profile"
+QR="$T/quote\"root"; mkdir -p "$QR"
+out="$(rrun codex -- --model gpt-6-sol --access read --read-root "$QR" --prompt-file "$PROMPT" --timeout 60)"
+expect_eq "$L → rc=2" "rc=2" "$out"
+spy_absent codex "$L"
 rtmp_clean "$L"
 out="$(rrun codex -- --model gpt-6-sol --access read --prompt-file "$PROMPT" --timeout 60)"
 expect_eq "$L without --read-root → usage error rc=2" "rc=2" "$out"

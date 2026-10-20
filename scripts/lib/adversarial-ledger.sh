@@ -771,6 +771,38 @@ _ar_pass_files() {
     END { if (hdr != "" && !seen) print hdr }' | LC_ALL=C sort -u
 }
 
+# _ar_detached_key — the pass-cap key of a detached HEAD, which has no branch name to count under. Bare "detached"
+# made every detached review of a repository ONE change: a review host that checks each PR out detached refused the
+# fourth unrelated PR touching the same files (exit 7). The key, first that applies:
+#   detached@<ZUVO_ADV_PASS_KEY> — the caller names the change (a PR number); a key outside [A-Za-z0-9._/-]{1,80}
+#     is keyed by its checksum (k-<cksum>-<length>), so two keys never collapse into one by losing characters;
+#   detached@<sha12> — the change's FIRST commit past the merge-base with the remote's default branch, which fix
+#     commits appended on top keep, and an unrelated change (other commits) never shares;
+#   detached@<sha12> of HEAD — no default branch to measure from, or HEAD is on it (uncommitted work on the base).
+# Every detached key keeps the SHARED window (3 h), not a feature branch's 7 days: a review host re-reviews each
+# push of a PR detached, and a stacked change (B on unmerged A) shares A's first commit — name it with the key.
+_ar_pass_key_ok() { [[ ${#1} -le 80 && "$1" =~ ^[A-Za-z0-9._/-]+$ ]]; }
+_ar_detached_key() {
+  local key="${ZUVO_ADV_PASS_KEY:-}" top def mb first
+  if [[ -n "$key" ]] && ! LC_ALL=C _ar_pass_key_ok "$key"; then
+    key="k-$(printf '%s' "$key" | cksum | awk '{ print $1 "-" $2 }')"
+  fi
+  if [[ -n "$key" ]]; then printf 'detached@%s\n' "$key"; return 0; fi
+  top="$(ar_repo_root)"
+  def="$(git -C "$top" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null)" || def=""
+  if [[ -z "$def" ]]; then
+    for def in refs/remotes/origin/main refs/remotes/origin/master refs/remotes/origin/develop ""; do
+      [[ -z "$def" ]] || git -C "$top" rev-parse -q --verify "$def^{commit}" >/dev/null 2>&1 && break
+    done
+  fi
+  first=""
+  if [[ -n "$def" ]] && mb="$(git -C "$top" merge-base HEAD "$def" 2>/dev/null)" && [[ -n "$mb" ]]; then
+    first="$(git -C "$top" rev-list --reverse --first-parent "$mb..HEAD" 2>/dev/null | head -n 1)"
+  fi
+  [[ -n "$first" ]] || first="$(git -C "$top" rev-parse -q --verify HEAD 2>/dev/null)" || first=""
+  if [[ -n "$first" ]]; then printf 'detached@%s\n' "${first:0:12}"; else printf 'detached\n'; fi
+}
+
 # ar_check_pass_cap — refuse a fourth pass over the same change (exit PASS_CAP_EXIT) and set up the record
 # _ar_record_pass writes once this pass has reviewed something. Runs before the input is chunked, so a chunked
 # pass counts ONCE: the parent checks, and every part records under the parent's ZUVO_ADV_PASS_ID.
@@ -792,13 +824,13 @@ root="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || r
 [[ -n "$root" ]] || root="$(ar_repo_root)"
 # The branch of THIS worktree: $root is the shared git dir, whose HEAD is the main worktree's.
 branch="$(git -C "$(ar_repo_root)" symbolic-ref -q --short HEAD 2>/dev/null)" || branch=""
-[[ -n "$branch" ]] || branch="detached"
+[[ -n "$branch" ]] || branch="$(_ar_detached_key)"
 # Shared: the usual default names, the remote's own default branch (whatever it is called), and a detached HEAD.
 local shared_branch
 shared_branch="$(git -C "$(ar_repo_root)" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || shared_branch=""
 shared_branch="${shared_branch#origin/}"
 case "$branch" in
-  main|master|develop|trunk|detached) window=$PASS_WINDOW_SHARED_S ;;
+  main|master|develop|trunk|detached|detached@*) window=$PASS_WINDOW_SHARED_S ;;
   *) if [[ -n "$shared_branch" && "$branch" == "$shared_branch" ]]; then window=$PASS_WINDOW_SHARED_S; else window=$PASS_WINDOW_S; fi ;;
 esac
 ledger="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-passes.tsv"

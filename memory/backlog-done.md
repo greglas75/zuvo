@@ -628,3 +628,6 @@ and its three-line cap, and an unborn HEAD, where `git diff --cached HEAD` would
 first commit. Refreshing the pinned dispatcher identity in `install-refactor-gate.sh` is part of the same commit; the
 nine failures skipping it caused are in that commit's message. NOT measured: how often entries still arrive by hand now
 that `backlog-add` exists — since it landed (2026-10-14) no open entry has been added at all, historically 990 of 1000.
+
+## Archived from backlog.md on 2026-10-20 (1 fixed item moved out)
+- [x] B-20260925-CODEX-READ-ACCESS-UNENFORCED: `--access read` bounded claude but not codex. [FIXED fix/codex-readroot-passcap] — codex read mode now runs under a `zuvo_read` permissions profile (`:minimal` + the root, its git dir, the common git dir and the codex install dir readable; no `-s`, which would replace the profile); live-probed on Linux (bwrap).
