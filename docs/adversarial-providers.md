@@ -122,17 +122,27 @@ log, the artifact and the health ledger name what answered — the Token Plan mo
 endpoint as `<model>@<provider>` (`z-ai/glm-5.3-flash@BaseTen`). adversarial-stats bills a BytePlus-lane row
 with an OpenRouter model to OpenRouter. Delete the stop file to ask the plan again before the reset.
 
-**OpenRouter provider routing (since 2026-10-20).** Unpinned, OpenRouter balanced mimo onto Relace's mxfp4
-endpoint, and `openrouter-alt` timed out on 2152 of 6622 calls (32%), ~430 s each. Every OpenRouter lane now
-sends `provider.sort: "throughput"` — a review is one long answer, so tokens/s decides whether it ends inside the
-budget, and first-token latency does not — and `quantizations: fp8,fp16,bf16,fp32` for a model with such
-endpoints (mimo-v2.6-flash, glm-5.3-flash, glm-5.3-flashx, inkling-small, deepseek-v4.1-flash-1017). None for
-ling-3.1-flash or minimax-m3.1-flash:free: their endpoints are fp4 or undeclared, and the filter would leave them
-none (HTTP 404, measured). Per lane `ZUVO_OR_SORT_<LANE>` (price|throughput|latency) and `ZUVO_OR_QUANTS_<LANE>`
-(comma list) override it; set but empty sends nothing. A timeout already stops generation: on 2026-10-20 five
-calls cut at 6 s (DeepInfra, Novita, InferenceNet, BaseTen, Relace; stream and non-stream) all show
-`cancelled: true` in `/api/v1/generation`, billed only for the tokens produced before the cut. Each OpenRouter
-answer names its endpoint on stderr (`answered by provider …`).
+**OpenRouter provider routing (since 2026-10-20).** Unpinned, OpenRouter weights calls by price: it balanced mimo
+onto Relace's mxfp4 endpoint, and `openrouter-alt` timed out on 2152 of 6622 calls (32%), ~430 s each. One pin
+table, `openrouter_pin_order` in `scripts/lib/adversarial-lanes-http.sh`, names the hosts for a pinned model, sent
+with `allow_fallbacks: false` (and, when every entry names its quantization, only those quantizations):
+
+| Model | Hosts, in order | Used by |
+|---|---|---|
+| `xiaomi/mimo-v2.6-flash` | `makora` > `deepinfra` | `openrouter-alt` (owner's call, #108) |
+| `inclusionai/ling-3.1-flash` | `novita` | `openrouter-3` (owner's call, #108) |
+| `deepseek/deepseek-v4.1-flash-1017` | `inference-net/fp8` > `parasail/fp8` > `atlas-cloud/fp8` | `byteplus-alt` step 3 |
+| `z-ai/glm-5.3-flash` | `baseten/fp8` > `baseten/fp8/us` > `wafer/nvfp4` | `byteplus` step 3 |
+
+Any other model (glm-5.3-flashx, inkling-small, minimax-m3.1-flash:free) is sent `provider.sort: "throughput"` —
+a review is one long answer, so tokens/s decides whether it ends inside the budget, and first-token latency does
+not — and `quantizations: fp8,fp16,bf16,fp32` where the model has such endpoints (glm-5.3-flashx, inkling-small).
+None for minimax:free: its endpoints are undeclared, and the filter would leave it none (HTTP 404, measured). Per
+lane `ZUVO_OR_SORT_<LANE>` (price|throughput|latency) and `ZUVO_OR_QUANTS_<LANE>` (comma list) override that; set but
+empty sends nothing. A timeout already stops generation: on 2026-10-20 five calls cut at 6 s (DeepInfra, Novita,
+InferenceNet, BaseTen, Relace; stream and non-stream) all show `cancelled: true` in `/api/v1/generation`, billed
+only for the tokens produced before the cut. Each OpenRouter answer names its endpoint on stderr (`answered by
+provider …`).
 
 **Free OpenRouter lane: `openrouter-mini` (since 2026-10-20, owner's decision).** It runs
 `minimax/minimax-m3.1-flash:free` (1M context, reasoning on, $0 per call — the response's `usage.cost` is 0)
@@ -146,8 +156,7 @@ providers may log prompts: leave `ZUVO_ADV_OPENROUTER` off, or narrow `ZUVO_ADV_
 code may not leave the approved vendors. Not benchmarked for coverage yet.
 
 **GLM runs on Z.ai's own plan, lane `zai` (since 2026-10-16).** `byteplus` (glm-5.3-flash) left the
-default BytePlus set the same day (owner's decision); it stays reachable by `--provider byteplus` or
-`ZUVO_ADV_BYTEPLUS_LANES`. Setup:
+default BytePlus set that day and came back on 2026-10-20 with its fallback chain (owner's decisions). Setup:
 
 ```bash
 ( umask 077; pbpaste > ~/.zuvo/zai.key )   # the FULL key, {API Key ID}.{secret} — Z.ai shows it once

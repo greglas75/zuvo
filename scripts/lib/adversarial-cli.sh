@@ -357,7 +357,8 @@ Environment variables:
                            parasail/fp8,atlas-cloud/fp8). Needs ZUVO_ADV_OPENROUTER=1; priced against the daily
                            cap. Set but empty = no step 3.
   ZUVO_OR_SORT_<LANE> / ZUVO_OR_QUANTS_<LANE>
-                           OpenRouter routing of an unpinned lane (OPENROUTER, OPENROUTER_ALT, …): sort
+                           OpenRouter routing of a model with no host pin (openrouter_pin_order pins mimo,
+                           ling-3.1-flash and the step-3 models): sort
                            price|throughput|latency (default throughput) and the allowed quantizations (default
                            fp8,fp16,bf16,fp32 for a model with such endpoints, else none). Empty = not sent.
   ZUVO_ADV_ZAI=1           Opt IN to the `zai` lane: Z.ai GLM Coding Plan (prepaid). Key in ZAI_API_KEY or
