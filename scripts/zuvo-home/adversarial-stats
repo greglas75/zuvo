@@ -77,9 +77,13 @@ SKIP_LANES = {"", "none", "input_file"}
 ROW_DATE = re.compile(r"\d{4}-\d\d-\d\dT")  # a data row; the header row and "#schema" lines are not
 
 
-def billing_for(lane):
+def billing_for(lane, model=""):
     """The LONGEST matching prefix wins, and a prefix only matches at a `-` boundary (byteplus-3,
-    codex-5.4, cursor-agent): `kimi-api` is never billed as `kimi`, whatever the list order."""
+    codex-5.4, cursor-agent): `kimi-api` is never billed as `kimi`, whatever the list order.
+    A BytePlus lane whose row names an OpenRouter model (`vendor/name`, the fallback's step 3) was
+    served and billed by OpenRouter, not the plan."""
+    if lane.startswith("byteplus") and "/" in model:
+        lane = "openrouter"
     hits = [(prefix, vendor, url) for prefix, vendor, url in BILLING
             if lane == prefix or lane.startswith(prefix + "-")]
     if not hits:
@@ -225,7 +229,7 @@ def human(n):
 def rows(groups):
     out = []
     for (lane, model), g in sorted(groups.items(), key=lambda kv: (-kv[1]["runs"], kv[0])):
-        vendor, _ = billing_for(lane)
+        vendor, _ = billing_for(lane, model)
         p50, p90 = percentile(g["dur"], 50), percentile(g["dur"], 90)
         ok, tr = g["ok"], g["tok_runs"]
         out.append({
@@ -284,7 +288,7 @@ def render_markdown(table):
 def billing_footer(table, markdown):
     lanes_by_vendor = defaultdict(list)
     for r in table:
-        vendor, url = billing_for(r["lane"])
+        vendor, url = billing_for(r["lane"], r["model"])
         if r["lane"] not in lanes_by_vendor[(vendor, url)]:
             lanes_by_vendor[(vendor, url)].append(r["lane"])
     lines = ["", "**Billing / usage pages**" if markdown else "Billing / usage pages:"]

@@ -129,33 +129,32 @@ dispatch_provider() {
 # run_byteplus <lane> <model> — the OpenRouter client on the BytePlus Coding Plan endpoint, with the plan's key
 # (BYTEPLUS_API_KEY, else the key file; never OPENROUTER_API_KEY).
 # While the plan's quota is spent — recorded earlier by any lane, chunk or run (byteplus_quota_until), or hit by
-# this very request — the plan is not asked: _byteplus_fallback runs the review on the Alibaba Token Plan (qwen CLI) or leaves the lane out.
+# this very request — the plan is not asked: _byteplus_fallback runs the review on the Alibaba Token Plan (qwen CLI),
+# then on a provider-pinned OpenRouter endpoint, or leaves the lane out.
 run_byteplus() {
   local lane="$1" model="$2" until rc=0 t0=$SECONDS left
-  rm -f "$JSON_TMPDIR/byteplus-effective-model-$lane" "$JSON_TMPDIR/bpquota_$lane" 2>/dev/null || true
+  rm -f "$JSON_TMPDIR/byteplus-effective-model-$lane" "$JSON_TMPDIR/fallback-note-$lane" "$JSON_TMPDIR/bpquota_$lane" 2>/dev/null || true
   if until="$(byteplus_quota_until)"; then
     _byteplus_fallback "$lane" "$model" "$until"
     return
   fi
-  ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+  ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_GUARD_LANE="$lane" ZUVO_OR_PROVIDER_ORDER= ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
     OPENROUTER_API_KEY="${BYTEPLUS_API_KEY:-}" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
     ZUVO_OPENROUTER_MODEL="$model" ZUVO_OR_STREAM=1 run_openrouter || rc=$?
   [[ $rc -ne 0 && -s "$JSON_TMPDIR/bpquota_$lane" ]] || return "$rc"
   until="$(cat "$JSON_TMPDIR/bpquota_$lane")"
   if ! left="$(_ar_lane_budget "$t0")"; then
-    echo "  NOTE: $lane Token Plan fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
+    echo "  NOTE: $lane fallback not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
     return "$rc"
   fi
   PROVIDER_TIMEOUT="$left" _byteplus_fallback "$lane" "$model" "$until"
 }
 
-# byteplus_fallback_model <lane> <model> — the Alibaba Token Plan model (the qwen lane's plan) that stands in for
-# <lane> while BytePlus is out of quota; empty = none. ZUVO_BYTEPLUS_FALLBACK_<LANE> (BYTEPLUS, BYTEPLUS_ALT,
-# BYTEPLUS_3) overrides it, set but empty turning it off. Keyed on the MODEL, so a lane pointed at another model never
-# inherits the stand-in for the old one. The stand-in is a PREPAID plan, never a metered one: the first cut fell back
-# to OpenRouter, and deepseek alone spent $72 there in one day (2026-10-15) — the owner's rule since 2026-10-16 is
-# "deepseek and glm on BytePlus or the Token Plan; neither has quota, the lane does not run". The Token Plan sells
-# glm-5.3, not the flash variant. dola-seed-2.0-code exists only on BytePlus and waits for the reset.
+# While the BytePlus plan is out of quota: step 2 the prepaid Alibaba Token Plan, step 3 metered OpenRouter pinned to
+# named endpoints (unpinned, OpenRouter may pick any endpoint and price). Keyed on the MODEL; dola-seed is BytePlus-only.
+
+# byteplus_fallback_model <lane> <model> — step 2's Token Plan model; empty = none. ZUVO_BYTEPLUS_FALLBACK_<LANE>
+# (BYTEPLUS, BYTEPLUS_ALT, BYTEPLUS_3) overrides it, set but empty turning it off. The plan sells glm-5.3, not flash.
 byteplus_fallback_model() {
   local var
   var="ZUVO_BYTEPLUS_FALLBACK_$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
@@ -166,27 +165,79 @@ byteplus_fallback_model() {
     *)                    echo "" ;;
   esac
 }
+
+# byteplus_or_fallback <model> — step 3 as "<OpenRouter model><TAB><endpoint tags, in order>"; nothing = no step 3.
+# The endpoints default to the model's row in openrouter_pin_order (a model without a row has no step 3).
+# ZUVO_GLM_OR_MODEL / ZUVO_GLM_OR_PROVIDERS and ZUVO_DEEPSEEK_OR_MODEL / ZUVO_DEEPSEEK_OR_PROVIDERS override either
+# half; set but empty turns the step off (an unpinned step would let OpenRouter pick any endpoint, fp4 included).
+byteplus_or_fallback() {
+  local m o
+  case "$1" in
+    glm-5.3-flash)
+      m="${ZUVO_GLM_OR_MODEL-z-ai/glm-5.3-flash}"
+      o="${ZUVO_GLM_OR_PROVIDERS-$(openrouter_pin_order "$m")}" ;;
+    deepseek-v4-1-flash*)
+      m="${ZUVO_DEEPSEEK_OR_MODEL-deepseek/deepseek-v4.1-flash-1017}"
+      o="${ZUVO_DEEPSEEK_OR_PROVIDERS-$(openrouter_pin_order "$m")}" ;;
+    *) return 0 ;;
+  esac
+  [[ -n "$m" && -n "$o" ]] || return 0
+  printf '%s\t%s\n' "$m" "$o"
+}
+
+# _byteplus_fallback <lane> <model> <reset epoch> — steps 2 and 3. A step that cannot run (none, not enabled, its own
+# stop on file) or that ends in its quota stop passes to the next; a review that fails for another reason ends the
+# lane. With no step left the lane is not run, not held against it.
 _byteplus_fallback() {
-  local lane="$1" model="$2" when fb
+  local lane="$1" model="$2" when fb why="" aq rc=0 t0=$SECONDS left
   when="$(_ar_epoch_text "$3")"
   fb="$(byteplus_fallback_model "$lane" "$model")"
-  if [[ -z "$fb" ]]; then
-    lane_not_run "$lane" "BytePlus quota exhausted until $when, no Token Plan stand-in for $model"
+  if [[ -z "$fb" ]]; then why="no Token Plan stand-in for $model"
+  elif [[ "${ZUVO_ADV_QWEN:-0}" != "1" ]]; then why="Alibaba Token Plan not enabled (ZUVO_ADV_QWEN=1)"
+  elif aq="$(alibaba_quota_until)"; then why="Alibaba Token Plan quota exhausted until $(_ar_epoch_text "$aq")"
+  else
+    echo "  NOTE: $lane: BytePlus quota exhausted until $when — fallback step 2: Alibaba Token Plan $fb" >&2
+    printf '%s' "$fb" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
+    # Its own file names: the qwen lane may be running in the same JSON_TMPDIR at the same time. The note (the `Done:`
+    # line's) only for a review the step wrote.
+    ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" ZUVO_QWEN_LANE="$lane" run_qwen && {
+      printf 'fallback step 2: Alibaba Token Plan %s' "$fb" > "$JSON_TMPDIR/fallback-note-$lane" 2>/dev/null || true
+      return 0
+    }
+    rc=$?
+    aq="$(alibaba_quota_until)" || return "$rc"
+    why="Alibaba Token Plan quota exhausted until $(_ar_epoch_text "$aq")"
+  fi
+  _byteplus_or_step "$lane" "$model" "BytePlus quota exhausted until $when, $why" "$t0"
+}
+
+# _byteplus_or_step <lane> <model> <why steps 1-2 are out> <t0> — step 3, OpenRouter on the pinned endpoints.
+_byteplus_or_step() {
+  local lane="$1" model="$2" why="$3" step or_model order left rc=0 served
+  step="$(byteplus_or_fallback "$model")"
+  if [[ -z "$step" ]]; then lane_not_run "$lane" "$why, no OpenRouter step for $model"; return 1; fi
+  if [[ "${ZUVO_ADV_OPENROUTER:-0}" != "1" ]]; then
+    lane_not_run "$lane" "$why, OpenRouter step not enabled (ZUVO_ADV_OPENROUTER=1)"; return 1
+  fi
+  if ! left="$(_ar_lane_budget "$4")"; then
+    echo "  NOTE: $lane OpenRouter step not started — too little left of the lane's ${PROVIDER_TIMEOUT}s" >&2
     return 1
   fi
-  if [[ "${ZUVO_ADV_QWEN:-0}" != "1" ]]; then
-    lane_not_run "$lane" "BytePlus quota exhausted until $when, Alibaba Token Plan not enabled (ZUVO_ADV_QWEN=1)"
-    return 1
+  or_model="${step%%$'\t'*}"; order="${step#*$'\t'}"
+  echo "  NOTE: $lane: $why — fallback step 3: OpenRouter $or_model on ${order//,/ > } (no other endpoint)" >&2
+  # Step 2's not-run marker must not turn a real failure here into `no-key`.
+  rm -f -- "$JSON_TMPDIR/nokey_$lane" 2>/dev/null || true
+  printf '%s' "$or_model" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
+  PROVIDER_TIMEOUT="$left" ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_GUARD_LANE=openrouter ZUVO_OPENROUTER_BASE_URL= \
+    ZUVO_OR_KEY_FILE= ZUVO_OPENROUTER_MODEL="$or_model" ZUVO_OR_PROVIDER_ORDER="$order" ZUVO_OR_STREAM=0 \
+    run_openrouter || rc=$?
+  # The run log, the artifact and the health ledger name the endpoint that answered: <model>@<provider>.
+  if served="$(cat "$JSON_TMPDIR/or-served-$lane" 2>/dev/null)" && [[ -n "$served" ]]; then
+    printf '%s@%s' "$or_model" "$served" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
   fi
-  local aq
-  if aq="$(alibaba_quota_until)"; then
-    lane_not_run "$lane" "BytePlus quota exhausted until $when, Alibaba Token Plan quota exhausted until $(_ar_epoch_text "$aq")"
-    return 1
-  fi
-  echo "  NOTE: $lane: BytePlus quota exhausted until $when — via Alibaba Token Plan $fb" >&2
-  printf '%s' "$fb" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
-  # Its own file names: the qwen lane may be running in the same JSON_TMPDIR at the same time.
-  ZUVO_QWEN_MODEL="$fb" ZUVO_QWEN_FILE_TAG="qwen_$lane" ZUVO_QWEN_LANE="$lane" run_qwen
+  [[ $rc -eq 0 ]] && { printf 'fallback step 3: OpenRouter %s' "$(cat "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null)" \
+    > "$JSON_TMPDIR/fallback-note-$lane" 2>/dev/null || true; }
+  return "$rc"
 }
 
 _dispatch_provider_inner() {
@@ -210,7 +261,7 @@ _dispatch_provider_inner() {
     # The OpenRouter client on the Z.ai GLM Coding Plan endpoint, with the plan's key: ZAI_API_KEY or the key
     # file, never OPENROUTER_API_KEY (the client reads that first, and it would go to Z.ai). The fallback base
     # URL is the plan's, for a driver that finds no model-registry.sh.
-    zai)           ZUVO_OR_LANE_LABEL=zai ZUVO_OR_KEY_FILE="${ZUVO_ZAI_KEY_FILE:-$HOME/.zuvo/zai.key}" \
+    zai)           ZUVO_OR_LANE_LABEL=zai ZUVO_OR_GUARD_LANE=zai ZUVO_OR_KEY_FILE="${ZUVO_ZAI_KEY_FILE:-$HOME/.zuvo/zai.key}" \
                      OPENROUTER_API_KEY="${ZAI_API_KEY:-}" \
                      ZUVO_OPENROUTER_BASE_URL="${ZUVO_ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}" \
                      ZUVO_OPENROUTER_MODEL="$(lane_model zai)" ZUVO_OR_STREAM=1 run_openrouter ;;
@@ -368,6 +419,18 @@ lane_reason() {
   _ar_quote_line last-warn "$JSON_TMPDIR/provider_$1.stderr"
 }
 
+# lane_done_line <lane> — "Done: <lane>", plus what served it when that is not the lane's own route: the fallback
+# step (fallback-note-<lane>, _byteplus_fallback) or the OpenRouter endpoint (or-served-<lane>, run_openrouter). A
+# successful lane's own stderr is never relayed, so this line is where an answer from a stand-in shows.
+lane_done_line() {
+  local note="" s
+  note="$(cat "$JSON_TMPDIR/fallback-note-$1" 2>/dev/null)" || note=""
+  if [[ -z "$note" ]] && s="$(cat "$JSON_TMPDIR/or-served-$1" 2>/dev/null)" && [[ -n "$s" ]]; then
+    note="answered by provider $s"
+  fi
+  echo "  Done: $1${note:+ ($(printf '%s' "$note" | LC_ALL=C tr -d '[:cntrl:]'))}" >&2
+}
+
 # ar_dispatch_lanes — run the lanes — all at once (multi) or in turn until one answers (single) — and record each outcome.
 ar_dispatch_lanes() {
 if [[ "$MULTI_MODE" == "multi" ]]; then
@@ -450,7 +513,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
 
 $RESULT
 "
-      echo "  Done: $local_name" >&2
+      lane_done_line "$local_name"
       PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:ok"
     else
       if [[ "$provider_status" -eq 124 ]]; then
@@ -516,6 +579,7 @@ else
     if [[ $status -eq 0 && -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="$p"
+      lane_done_line "$p"
       PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:ok"
       [[ -d "$JSON_TMPDIR" ]] && echo "$RESULT" > "$JSON_TMPDIR/result_${p}.txt"
       ALL_RESULTS="$RESULT"

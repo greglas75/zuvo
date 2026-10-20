@@ -25,15 +25,19 @@ chat_payload() {
   fi
 }
 
-# openrouter_routing <model> — the OpenRouter `provider` field that pins which hosts serve <model>, or nothing for
-# OpenRouter's own routing. Unpinned, OpenRouter weights calls by price: mimo-v2.6-flash went mostly to the cheapest
-# host, which serves it 4-bit (mxfp4), so the lane's measured quality depended on whichever host answered. Pinned on
-# the owner's call (2026-10-20): mimo on Makora, DeepInfra when Makora does not answer; ling-3.1-flash on Novita
-# only. `allow_fallbacks: false` keeps OpenRouter from going past the list. Slugs: GET /api/v1/models/<id>/endpoints.
-openrouter_routing() {
+# openrouter_pin_order <model> — the one table of OpenRouter host pins: the endpoints that may serve <model>, in order,
+# as a comma list (provider, or provider/quantization[/region] as GET /api/v1/models/<id>/endpoints names them), or
+# nothing for an unpinned model. Unpinned, OpenRouter weights calls by price: mimo-v2.6-flash went mostly to the
+# cheapest host, which serves it 4-bit (mxfp4), so the lane's measured quality depended on whichever host answered.
+# Owner's calls (2026-10-20): mimo on Makora, DeepInfra when Makora does not answer; ling-3.1-flash on Novita only
+# (#108). deepseek-v4.1-flash and glm-5.3-flash are the BytePlus lanes' OpenRouter step (_byteplus_or_step), fp8
+# endpoints first. openrouter_provider_routing sends any pin with `allow_fallbacks: false`.
+openrouter_pin_order() {
   case "$1" in
-    xiaomi/mimo-v2.6-flash)     echo '{"provider":{"order":["makora","deepinfra"],"allow_fallbacks":false}}' ;;
-    inclusionai/ling-3.1-flash) echo '{"provider":{"order":["novita"],"allow_fallbacks":false}}' ;;
+    xiaomi/mimo-v2.6-flash)            echo "makora,deepinfra" ;;
+    inclusionai/ling-3.1-flash)        echo "novita" ;;
+    deepseek/deepseek-v4.1-flash-1017) echo "inference-net/fp8,parasail/fp8,atlas-cloud/fp8" ;;
+    z-ai/glm-5.3-flash)                echo "baseten/fp8,baseten/fp8/us,wafer/nvfp4" ;;
   esac
 }
 
@@ -357,6 +361,7 @@ openrouter_assemble_stream() {
                        elif type == "string" then . else empty end)
                | join(""))}}],
             usage: ($ev | map(select(.usage != null) | .usage) | last)}
+           + ($ev | map(.provider // empty) | if length > 0 then {provider: last} else {} end)
       end' 2>/dev/null) || [[ -z "$_out" ]]; then
     # A literal, not jq: this branch is reached exactly when jq could not run.
     echo "  WARN: $_lane: the stream body could not be assembled" >&2
@@ -469,6 +474,52 @@ openrouter_budget_spent() {
   printf '%s %s\n' "$used" "$cap"
 }
 
+# OpenRouter provider routing: a pinned model (openrouter_pin_order) gets its hosts; any other is sorted by throughput
+# — a review is one long answer, so tokens/s decides whether it ends inside the budget (first-token latency does
+# not). Docs: docs/adversarial-providers.md "OpenRouter provider routing".
+
+# openrouter_quants_default <model> — "fp8,fp16,bf16,fp32" for a model with fp8-or-better endpoints, else nothing: a
+# filter on a model served only at fp4 or an undeclared quantization leaves it no endpoint at all (HTTP 404).
+openrouter_quants_default() {
+  case "$1" in
+    z-ai/glm-5.3-flashx|thinkingmachines/inkling-small)
+      echo "fp8,fp16,bf16,fp32" ;;
+  esac
+}
+
+# openrouter_provider_routing <lane> <model> — the `provider` object as compact JSON, or nothing. Pinned (the order
+# in ZUVO_OR_PROVIDER_ORDER, else the model's row in openrouter_pin_order): that order, no fallbacks, and when every
+# entry names its quantization only those. Unpinned: ZUVO_OR_SORT_<LANE> and ZUVO_OR_QUANTS_<LANE> (set but empty =
+# not sent). Status 1 with a WARN on a malformed setting.
+openrouter_provider_routing() {
+  local lane="$1" model="$2" suffix order sort quants v
+  order="${ZUVO_OR_PROVIDER_ORDER:-$(openrouter_pin_order "$model")}"
+  if [[ -n "$order" ]]; then
+    # Endpoint tags: provider[/quantization[/region]], as /endpoints lists them (baseten/fp8/us).
+    if [[ ! "$order" =~ ^[a-z0-9._-]+(/[a-z0-9._-]+){0,2}(,[a-z0-9._-]+(/[a-z0-9._-]+){0,2})*$ ]]; then
+      echo "  WARN: $lane: provider order '$order' is not a comma list of endpoint tags — not sent" >&2
+      return 1
+    fi
+    jq -cn --arg o "$order" '($o | split(",")) as $t
+      | {order: $t, allow_fallbacks: false}
+      + (if all($t[]; split("/") | length > 1) then {quantizations: ($t | map(split("/")[1]) | unique)} else {} end)'
+    return
+  fi
+  suffix="$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
+  v="ZUVO_OR_SORT_$suffix";   if [[ -n "${!v+x}" ]]; then sort="${!v}"; else sort=throughput; fi
+  v="ZUVO_OR_QUANTS_$suffix"; if [[ -n "${!v+x}" ]]; then quants="${!v}"; else quants="$(openrouter_quants_default "$model")"; fi
+  case "$sort" in ""|price|throughput|latency) ;;
+    *) echo "  WARN: $lane: ZUVO_OR_SORT_$suffix='$sort' is not price/throughput/latency — not sent" >&2; return 1 ;;
+  esac
+  if [[ -n "$quants" && ! "$quants" =~ ^[a-z0-9]+(,[a-z0-9]+)*$ ]]; then
+    echo "  WARN: $lane: ZUVO_OR_QUANTS_$suffix='$quants' is not a comma list — not sent" >&2
+    return 1
+  fi
+  [[ -n "$sort$quants" ]] || return 0
+  jq -cn --arg s "$sort" --arg q "$quants" \
+    '(if $s == "" then {} else {sort: $s} end) + (if $q == "" then {} else {quantizations: ($q | split(","))} end)'
+}
+
 run_openrouter() {
   # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
   # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.
@@ -484,6 +535,7 @@ run_openrouter() {
   # whole hardened body (retry policy, umask'd curl config, model-id validation) instead of
   # growing a near-copy that will drift. Defaults are exactly the previous behaviour.
   local _lane="${ZUVO_OR_LANE_LABEL:-openrouter}"
+  rm -f -- "${JSON_TMPDIR:-/nonexistent}/or-served-$_lane" 2>/dev/null || true
   local key="${OPENROUTER_API_KEY:-}" why=""
   if [[ -z "$key" ]]; then
     local kf="${ZUVO_OR_KEY_FILE:-$HOME/.zuvo/openrouter.key}"
@@ -519,9 +571,10 @@ run_openrouter() {
   esac
 
   # Billing guard: one wrong character in a plan's base URL would meter every chunk in silence. Refuse instead.
-  # _plan = the plan this request spends (byteplus | zai), empty off any plan.
+  # _plan = the plan this request spends (byteplus | zai), empty off any plan. ZUVO_OR_GUARD_LANE: the lane whose
+  # key this is — a plan caller sets its own name, the BytePlus fallback's OpenRouter step sets `openrouter`.
   local _plan
-  _plan="$(_plan_endpoint "$_lane" "${ZUVO_OPENROUTER_BASE_URL:-}")" || return 1
+  _plan="$(_plan_endpoint "${ZUVO_OR_GUARD_LANE:-$_lane}" "${ZUVO_OPENROUTER_BASE_URL:-}")" || return 1
 
   # Model id is attacker-adjacent only via env, but checked anyway: ids are vendor/name[:tag]. Rejected
   # when malformed, never repaired (lane_model_ok). The router sets ZUVO_OPENROUTER_MODEL for the other
@@ -575,8 +628,13 @@ run_openrouter() {
          _or_extra='{"reasoning_effort":"low"}' ;;
     esac
   fi
-  # Host pinning is OpenRouter's field; the BytePlus and Z.ai lanes share this body but not that API.
-  [[ "$_lane" == openrouter* ]] && _or_extra="$(openrouter_routing "$model")"
+  # Provider routing is OpenRouter's own field: only for an OpenRouter lane (or the BytePlus lanes' OpenRouter step,
+  # whose guard lane is `openrouter`), never for a plan — the BytePlus and Z.ai lanes share this body, not that API.
+  if [[ -z "$_plan" && "${ZUVO_OR_GUARD_LANE:-$_lane}" == openrouter* ]]; then
+    local _route
+    _route="$(openrouter_provider_routing "$_lane" "$model")" || return 1
+    [[ -z "$_route" ]] || _or_extra="$(jq -cn --argjson a "${_or_extra:-null}" --argjson r "$_route" '($a // {}) + {provider: $r}')" || return 1
+  fi
   chat_payload "$payload_file" "$model" 0.2 "$_or_stream" "$_or_extra" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
   local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"
@@ -683,6 +741,14 @@ run_openrouter() {
     break
   done
 
+  # The endpoint OpenRouter routed to (`provider` in the answer), for the log and, on a fallback, the run log's model.
+  local _served
+  _served="$(printf '%s' "$response" | jq -j '.provider // empty | tostring' 2>/dev/null | LC_ALL=C tr -c 'A-Za-z0-9._-' '-')" || _served=""
+  _served="${_served:0:40}"
+  if [[ -n "$_served" ]]; then
+    echo "  NOTE: $_lane [$model] answered by provider $_served" >&2
+    printf '%s' "$_served" > "$JSON_TMPDIR/or-served-$_lane" 2>/dev/null || true
+  fi
   openrouter_review_text "$response" "$model" "$_lane"
 }
 

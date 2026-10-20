@@ -284,10 +284,10 @@ ZUVO_BYTEPLUS_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytep
 # glm-5.3-flash: 95% precision and +18 defects nobody else in the set finds — the best reviewer
 # measured after Gemini 3.8 Flash, on the same 20 diffs and the same Opus judge as the rest of
 # this file. On OpenRouter the identical model is $0.15/$0.50 per 1M; here it is inside the plan.
-# Lane `byteplus` is not in the default set (owner): GLM runs on the `zai` lane.
 ZUVO_MODEL_BYTEPLUS="${ZUVO_MODEL_BYTEPLUS:-glm-5.3-flash}"
 # deepseek-v4.1-flash: a second vendor family in the same plan, for cross-model coverage. With the
-# quota spent it runs on OpenRouter as deepseek/deepseek-v4.1-flash (run_byteplus).
+# quota spent glm and deepseek run on the Alibaba Token Plan, then on provider-pinned OpenRouter endpoints
+# (byteplus_or_fallback; ZUVO_GLM_OR_MODEL/_PROVIDERS, ZUVO_DEEPSEEK_OR_MODEL/_PROVIDERS, empty = off).
 ZUVO_MODEL_BYTEPLUS_ALT="${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}"
 # Verified 2026-09-22 against the live plan: glm-5.3-flash 7s, deepseek-v4-flash 5s.
 # 'ark-code-latest' is REJECTED as UnsupportedModel on this plan — name a concrete model.

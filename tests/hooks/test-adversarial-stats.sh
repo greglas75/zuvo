@@ -38,6 +38,7 @@ row byteplus-3 dola-seed-2.0-code ok 2 0 200s projA
 row byteplus-3 dola-seed-2.0-code timeout 0 0 500s projA
 row byteplus glm-5.3-flash ok 1 1 50s projB
 row openrouter qwen/qwen3.8-flash ok 3 0 10s projA
+row byteplus-alt deepseek/deepseek-v4.1-flash-1017@InferenceNet ok 1 0 30s projA
 row mock-success fake-model ok 9 9 1s projA
 row codex-5.3 gpt-6-sol not-attempted 0 0 0s projA
 printf '%s\t2020-01-01T00:00:00Z\tcode\tpartial\t5\t1\t503\tx\t0\n' "SUMMARY" >> "$LOG"
@@ -53,6 +54,9 @@ cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90
 }
 [ "$(cell byteplus-3 2)" = '`dola-seed-2.0-code`' ] && pass "a row names its lane AND its model" || bad "model cell: [$(cell byteplus-3 2)]"
 [ "$(cell byteplus-3 3)" = "BytePlus ModelArk" ] && pass "a row names who pays" || bad "vendor cell: [$(cell byteplus-3 3)]"
+# Bug caught: the BytePlus fallback's OpenRouter step (an OpenRouter model on a byteplus lane) billed to the plan.
+[ "$(cell byteplus-alt 3)" = "OpenRouter" ] && pass "a BytePlus-lane row with an OpenRouter model is billed to OpenRouter" \
+  || bad "fallback vendor cell: [$(cell byteplus-alt 3)]"
 [ "$(cell byteplus-3 4)" = "3" ] && pass "RUNS counts every attempted invocation" || bad "RUNS: [$(cell byteplus-3 4)]"
 [ "$(cell byteplus-3 5)" = "66%" ] && pass "OK% = floor(ok / runs): 2 of 3 is 66%, never rounded up" || bad "OK%: [$(cell byteplus-3 5)]"
 [ "$(cell byteplus-3 6)" = "100/200s" ] && pass "P50/P90 uses successful reviews only" || bad "P50/P90: [$(cell byteplus-3 6)]"
