@@ -738,14 +738,22 @@ lane_model_ok() {
 #   * ZUVO_ADV_COOLDOWN_OFF="<lane> ..." exempts lanes; ZUVO_PROVIDER_BENCH=0 turns the ledger off;
 #     ZUVO_ADV_NO_COOLDOWN=1 restores the old bench (3 strikes, 45 min / 6 h, no canary).
 
+# ar_cooldown_cap — ZUVO_ADV_COOLDOWN_MAX, never below ZUVO_ADV_COOLDOWN_BASE: the one cap the ledger and agy's
+# quota stop share.
+ar_cooldown_cap() {
+  local base max
+  base="$(ar_env_int ZUVO_ADV_COOLDOWN_BASE 1800 1)"; max="$(ar_env_int ZUVO_ADV_COOLDOWN_MAX 14400 1)"
+  (( max >= base )) || max=$base
+  echo "$max"
+}
+
 # _ar_cooldown_rows — one line per candidate pair the ledger holds at or over the threshold and not probe-ok:
 # <lane> TAB cool|probe TAB <until epoch> TAB <reason> TAB <row epoch>. Reads $PROVIDERS and the ledger.
 _ar_cooldown_rows() {
   local thr base max pairs="" p
   thr="$(ar_env_int ZUVO_ADV_COOLDOWN_THRESHOLD 2 1)"
   base="$(ar_env_int ZUVO_ADV_COOLDOWN_BASE 1800 1)"
-  max="$(ar_env_int ZUVO_ADV_COOLDOWN_MAX 14400 1)"
-  (( max >= base )) || max=$base
+  max="$(ar_cooldown_cap)"
   for p in $PROVIDERS; do pairs="${pairs}${p}	$(ledger_model "$p")
 "; done
   printf '%s' "$pairs" | awk -F'\t' -v thr="$thr" -v base="$base" -v max="$max" -v now="$(date +%s)" \
@@ -771,8 +779,11 @@ _ar_cooldown_row_now() {
 }
 
 # _ar_cooldown_slug <lane> — the (lane, model) pair as a file-name part: lock and result files.
+# The readable part is cut and sanitised, so a checksum of the whole pair keeps two pairs from sharing a file.
 _ar_cooldown_slug() {
-  printf '%s@%s' "$1" "$(ledger_model "$1")" | LC_ALL=C tr -c 'A-Za-z0-9._@-' '-' | cut -c1-120
+  local pair; pair="$(printf '%s@%s' "$1" "$(ledger_model "$1")")"
+  printf '%s-%s' "$(printf '%s' "$pair" | LC_ALL=C tr -c 'A-Za-z0-9._@-' '-' | cut -c1-100)" \
+    "$(printf '%s' "$pair" | cksum | awk '{ print $1 }')"
 }
 
 # _ar_cooldown_probe <lane> <out file> — the canary for a lane whose window has passed, under the pair's probe
@@ -780,9 +791,8 @@ _ar_cooldown_slug() {
 # the lock while another probed finds the row changed and takes that result: no second canary, no second write.
 # Only a wait longer than the canary's own timeout (the holder is stuck) skips the lane for a minute unprobed.
 _ar_cooldown_probe() {
-  local lane="$1" out="$2" t lock d rc=0 ans before after cnt ts last base
+  local lane="$1" out="$2" t lock d rc=0 ans before after cnt ts last cr
   t="$(ar_env_int ZUVO_ADV_COOLDOWN_PROBE_TIMEOUT 30 1)"
-  base="$(ar_env_int ZUVO_ADV_COOLDOWN_BASE 1800 1)"
   lock="${PROVIDER_HEALTH_FILE}.probe-$(_ar_cooldown_slug "$lane").lock"
   before="$(_ar_cooldown_row_now "$lane")"
   if ! _ar_lock "$lock" $(( t + 15 )); then
@@ -790,20 +800,28 @@ _ar_cooldown_probe() {
   fi
   after="$(_ar_cooldown_row_now "$lane")"
   IFS=$'\t' read -r cnt ts last <<< "$after"
-  if [[ "$last" == probe-ok || "$last" == ok || "$after" != "$before" ]]; then
-    if [[ "$last" == probe-ok || "$last" == ok ]]; then echo keep > "$out"
-    else echo "cool $(( ${ts:-0} + base )) ${cnt:-?} x ${last:-failure}, re-probed by another run" > "$out"; fi
-    _ar_unlock "$lock"; return 0
+  if [[ "$last" == probe-ok || "$last" == ok || -z "$after" ]]; then
+    echo keep > "$out"; _ar_unlock "$lock"; return 0
+  fi
+  if [[ "$after" != "$before" ]]; then
+    # Another run wrote the row while this one waited: judge the row as it is now, by the same rule.
+    cr="$(_ar_cooldown_rows | awk -F'\t' -v l="$lane" '$1==l { print $2 "\t" $3 "\t" $4; exit }')"
+    case "$cr" in
+      "") echo keep > "$out"; _ar_unlock "$lock"; return 0 ;;
+      cool$'\t'*) IFS=$'\t' read -r _ cnt ts <<< "$cr"   # cnt = until, ts = reason here
+        echo "cool $cnt $ts, re-probed by another run" > "$out"; _ar_unlock "$lock"; return 0 ;;
+    esac   # still past its window: probe it here
   fi
   d="$(_ar_run_tmpdir)" || { _ar_unlock "$lock"; echo keep > "$out"; return 0; }
   ( JSON_TMPDIR="$d"; REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"; PROVIDER_TIMEOUT="$t"
     dispatch_provider "$lane" ) > "$d/probe.out" 2> "$d/probe.err" < /dev/null || rc=$?
   ans="$(cat "$d/probe.out" 2>/dev/null)" || ans=""
-  if [[ $rc -eq 0 && "$ans" == *PROVIDER-OK* && "$ans" != *"Reply with exactly: PROVIDER-OK"* ]]; then
-    ZUVO_ADV_CHUNK="" PROVIDER_OUTCOMES="$lane:probe-ok" record_provider_health
+  if [[ -e "$d/nokey_$lane" || -e "$d/norunner_$lane" || -e "$d/quota_$lane" ]]; then
+    # Not the lane's health: no key, no runner, a spent plan — the run's own paths say so; no strike, and no
+    # probe-ok either, even beside an answer (checked first: a marker outranks the text).
     echo keep > "$out"
-  elif [[ -e "$d/nokey_$lane" || -e "$d/norunner_$lane" || -e "$d/quota_$lane" ]]; then
-    # Not the lane's health: no key, no runner, a spent plan — the run's own paths say so; no strike.
+  elif [[ $rc -eq 0 && "$ans" == *PROVIDER-OK* && "$ans" != *"Reply with exactly: PROVIDER-OK"* ]]; then
+    ZUVO_ADV_CHUNK="" PROVIDER_OUTCOMES="$lane:probe-ok" record_provider_health
     echo keep > "$out"
   else
     [[ $rc -eq 124 ]] && last=timeout || last=empty

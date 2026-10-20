@@ -28,13 +28,13 @@ cat >/dev/null; echo "  WARN: mock-lc-toolong HTTP 400: This model's maximum con
 EOF
 chmod +x "$LC/bin"/mock-lc-*
 
-# lc_run <lanes> [VAR=value ...] — one review; stderr in $ERR, status in LC_RC.
+# lc_run <lanes> [VAR=value ...] — one review; stderr in $ERR, status in LC_RC; LC_ARGS adds driver flags.
 lc_run() {
   local lanes="$1"; shift
   env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
     -u ZUVO_ADV_COOLDOWN_THRESHOLD PATH="$LC/bin:$MOCKS:$PATH" ZUVO_HOME="$LC/home" ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 \
     ZUVO_ADVERSARIAL_LOG_FILE="$LOG" ZUVO_REVIEW_TEST_PROVIDERS="$lanes" ZUVO_REVIEW_TIMEOUT=10 "$@" \
-    bash "$ADV" --multi --files "$ADV_TEST_EMPTY" >/dev/null 2>"${LC_ERR:-$ERR}"
+    bash "$ADV" --multi ${LC_ARGS:-} --files "$ADV_TEST_EMPTY" >/dev/null 2>"${LC_ERR:-$ERR}"
   LC_RC=$?
 }
 row() { awk -F'\t' -v l="$1" '$1 == l { print $3, $5 }' "$HF" 2>/dev/null; }      # count + last outcome
@@ -106,8 +106,21 @@ assert_eq "3 empty" "$(row mock-fail)" "two strikes do not bench under the old r
 
 start_test "LC.9 --doctor lists the cooldowns still standing after its probes"
 seed "mock-fail\tunknown\t2\t$NOW\tempty\n"
-env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF PATH="$LC/bin:$MOCKS:$PATH" ZUVO_HOME="$LC/home" \
+env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
+  -u ZUVO_ADV_COOLDOWN_THRESHOLD PATH="$LC/bin:$MOCKS:$PATH" ZUVO_HOME="$LC/home" \
   ZUVO_PROVIDER_HEALTH_FILE="$HF" ZUVO_PROVIDER_BENCH=1 ZUVO_REVIEW_TEST_PROVIDERS="mock-probe-ok mock-fail" ZUVO_DOCTOR_TIMEOUT=5 bash "$ADV" --doctor > "$LC/doc" 2>&1
 assert_contains "$(cat "$LC/doc")" "mock-fail: cooldown until" "the doctor shows the cooling lane"
+
+start_test "LC.10 adversarial-stats lists exactly the lanes the driver holds on cooldown (one rule, two copies)"
+# Bug caught: the usage table re-implements the window; a changed default or doubling in one copy only would
+# show the owner a lane as cooling that the driver re-probes, or the reverse. Rows straddle every boundary.
+seed "mock-fail\tunknown\t2\t$(( NOW - 1000 ))\tempty\nmock-findings-a\tunknown\t2\t$(( NOW - 1900 ))\tempty\nmock-probe-ok\tunknown\t3\t$(( NOW - 3000 ))\ttimeout\nmock-lc-flaky\tunknown\t4\t$(( NOW - 5400 ))\tempty\nmock-lc-toolong\tunknown\t3\t$(( NOW - 4000 ))\tempty\nmock-lc-slowprobe\tunknown\t2\t$(( NOW - 600 ))\tauth\n"
+LC_ARGS=--dry-run lc_run "mock-success mock-fail mock-findings-a mock-probe-ok mock-lc-flaky mock-lc-toolong mock-lc-slowprobe"
+driver="$(sed -n 's/^  \([^ ]*\): cooldown until .*/\1/p' "$ERR" | sort | tr '\n' ' ')"
+stats="$(env -u ZUVO_ADV_NO_COOLDOWN -u ZUVO_ADV_COOLDOWN_OFF -u ZUVO_ADV_COOLDOWN_BASE -u ZUVO_ADV_COOLDOWN_MAX \
+  -u ZUVO_ADV_COOLDOWN_THRESHOLD "$ROOT/scripts/zuvo-home/adversarial-stats" --log "$LOG" --health "$HF" 2>&1 \
+  | sed -n 's/^ *\([^ ]*\) \[unknown\]: cooldown until .*/\1/p' | sort | tr '\n' ' ')"
+assert_eq "mock-fail mock-lc-flaky mock-lc-slowprobe mock-probe-ok " "$driver" "the driver holds the four in their window"
+assert_eq "$driver" "$stats" "the usage table lists the same four"
 
 rm -rf "$LC"

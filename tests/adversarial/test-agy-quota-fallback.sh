@@ -191,11 +191,11 @@ fi
 # B-20261020-CURSOR-AGY-DEAD-STATE-COOLDOWN) — the stop is capped at the lane cooldown's maximum.
 start_test "agy.5a a quota stop never outlasts ZUVO_ADV_COOLDOWN_MAX; ZUVO_ADV_NO_COOLDOWN=1 keeps the stated reset"
 reset_calls
-ZUVO_ADV_COOLDOWN_MAX=30 run_adv quota-primary >/dev/null
+ZUVO_ADV_COOLDOWN_BASE=10 ZUVO_ADV_COOLDOWN_MAX=30 run_adv quota-primary >/dev/null
 until=$(tr -cd '0-9' < "$(ls "$AGYHOME"/agy-cooldown-* | head -1)" | cut -c1-10); delta=$(( until - $(date +%s) ))
 assert_eq "capped" "$( [[ "$delta" -le 30 ]] && echo capped || echo "$delta s" )" "a 120 s reset under a 30 s cap"
 reset_calls
-ZUVO_ADV_NO_COOLDOWN=1 ZUVO_ADV_COOLDOWN_MAX=30 run_adv quota-primary >/dev/null
+ZUVO_ADV_NO_COOLDOWN=1 ZUVO_ADV_COOLDOWN_BASE=10 ZUVO_ADV_COOLDOWN_MAX=30 run_adv quota-primary >/dev/null
 until=$(tr -cd '0-9' < "$(ls "$AGYHOME"/agy-cooldown-* | head -1)" | cut -c1-10); delta=$(( until - $(date +%s) ))
 assert_eq "stated" "$( [[ "$delta" -gt 60 ]] && echo stated || echo "$delta s" )" "the old rule keeps the 120 s reset"
 

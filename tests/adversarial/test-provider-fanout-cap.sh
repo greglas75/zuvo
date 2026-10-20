@@ -229,7 +229,8 @@ assert_eq "0" "$(grep -c '^legacy-lane' "$_hfl" | tr -d ' ')" "legacy row is gon
 
 start_test "CAP.1g cooldown expiry lets a benched provider back in once it answers the re-probe"
 # A permanent ban would mean a restored subscription silently costs a reviewer forever. Since the lane cooldown
-# the way back is the --doctor canary (a lane that fails it stays out: test-lane-cooldown.sh LC.3).
+# the way back is the canary the next review
+# run sends first (a lane that fails it stays out: test-lane-cooldown.sh LC.2/LC.3).
 # Each bench case seeds its OWN ledger, so the cases run in any order and no leftover row decides the next.
 _hfg="$HERE/.tmp/health-expiry.tsv"
 printf 'mock-probe-ok\tunknown\t5\t%s\n' "$(( $(date +%s) - 99999 ))" > "$_hfg"
