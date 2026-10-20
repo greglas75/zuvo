@@ -90,6 +90,8 @@ export default defineConfig({
 });
 EOF
 mkdir -p "$F/q5" && printf "export default { test: { projects: [...base] } };\n" > "$F/q5/vitest.config.ts"
+mkdir -p "$F/later-projects" && printf "export default { test: { projects: [{ extends: true, test: { name: 'a' } }] } };\nexport const later = { test: { projects: ['apps/*'] } };\n" \
+  > "$F/later-projects/vitest.config.ts"
 # Vitest and the vitest-runner, installed: the separator each builds a full test name with is readable.
 mk_pkg() {  # $1 = node_modules dir, $2 = package name, $3 = version, $4 = main
   mkdir -p "$1/$2"
@@ -151,6 +153,9 @@ check('projects form: inline project objects are narrowable (inline, with the co
 check('projects form: a shorthand { projects } cannot be read (opaque)', v.projectsForm(F, 'q2/vitest.config.ts').kind, 'opaque');
 check('projects form: a spread inside the array may add outside projects (opaque)', v.projectsForm(F, 'q5/vitest.config.ts').kind, 'opaque');
 check('projects form: a config that declares none', v.projectsForm(F, 'plain.config.ts'), { kind: 'none' });
+// The FIRST projects key can look safe while a later one names other configs (both would run).
+check('projects form: a later projects key naming project files makes the config opaque',
+  v.projectsForm(F, 'later-projects/vitest.config.ts').kind, 'opaque');
 
 // vitestRunnerVerdict — the runner's per-test filter joins suite names with its own separator; the
 // verdict must be MEASURED from the installed packages, never guessed.
@@ -238,6 +243,10 @@ check('colocated: foo.test/spec beside it and __tests__/foo[.test].*; not foobar
       [c.root, c.test.root, c.test.dir], Array(3).fill(path.join(R2, 'ws')));
     const i = await load(R2, `${kind}-inherit.mjs`);
     check(`render (${kind} base): workspace-include mode keeps the workspace include`, i.test.include, ['src/**/*.test.ts']);
+    // Not narrowing must not resurrect what narrowing drops: a runtime `projects` fans out to every
+    // project and the scoped run silently executes the whole workspace.
+    check(`render (${kind} base): workspace-include mode still drops the base's runtime projects`,
+      [i.test.projects, i.test.workspace], [undefined, undefined]);
   }
   for (const k of ['rooted', 'rooted-abs']) {
     const c = await load(R2, `${k}-scoped.mjs`);
@@ -660,7 +669,8 @@ printf '{"name":"@stryker-mutator/api","version":"10.0.0","exports":{"./plugin":
   > "$TMP/sep-ok/node_modules/@stryker-mutator/api/package.json"
 printf 'export const PluginKind = { Reporter: "Reporter" };\nexport const declareClassPlugin = (kind, name, injectableClass) => ({ kind, name, injectableClass });\n' \
   > "$TMP/sep-ok/node_modules/@stryker-mutator/api/plugin.mjs"
-cp -R "$SEP/apps" "$SEP/package.json" "$TMP/sep-ok/" 2>/dev/null
+cp -R "$SEP/apps" "$SEP/package.json" "$TMP/sep-ok/" \
+  || bad "fixture: could not copy the agreeing-separators tree into $TMP/sep-ok"
 out_k="$(cd "$TMP/sep-ok" && bash "$STRYKER" --repo "$TMP/sep-ok" --whole-files --runner vitest --file apps/api/src/f.ts 2>"$TMP/ok.err")"; rc=$?
 guard_rel="$(kv1 "$out_k" guard_module)"
 if [ "$rc" = 0 ] && [ "$(kv1 "$out_k" test_runner)" = vitest ] && [ "$(kv1 "$out_k" coverage_analysis)" = perTest ] \
@@ -686,15 +696,24 @@ const plugin = m.strykerPlugins[0];
 if (plugin.name !== 'zuvo-zero-tests-guard' || plugin.kind !== 'Reporter') { console.error('NOT A GUARD PLUGIN'); process.exit(3); }
 const reporter = new plugin.injectableClass();
 reporter.onMutationTestReportReady(JSON.parse(reportJson));
-reporter.wrapUp();
+// Stryker reports through a BroadcastReporter, which SWALLOWS a reporter's throw: the exit code a
+// real run sees is process.exitCode, so the harness reproduces that and nothing else.
+try { reporter.wrapUp(); } catch (e) { console.error('THREW (swallowed by Stryker): ' + e.message); }
+process.exit(process.exitCode || 0);
 EOF
 }
 broken='{"files":{"a.ts":{"mutants":[{"status":"Survived","testsCompleted":0,"mutatorName":"X","location":{"start":{"line":1}}}]}}}'
+broken_killed='{"files":{"a.ts":{"mutants":[{"status":"Killed","testsCompleted":0,"mutatorName":"X","location":{"start":{"line":1}}}]}}}'
 healthy='{"files":{"a.ts":{"mutants":[{"status":"Killed","testsCompleted":3,"mutatorName":"X","location":{"start":{"line":1}}}]}}}'
 run_guard "$broken" >/dev/null 2>"$TMP/guard.err"; rc=$?
 [ "$rc" = 1 ] && grep -q 'zuvo-zero-tests-guard: 1 of 1 Killed/Survived mutant(s) ran 0 tests' "$TMP/guard.err" \
   && pass "zero-tests guard: a mutant decided with 0 tests fails the run (exit 1) and names it" \
   || bad "zero-tests guard (broken report): rc=$rc — $(head -c 300 "$TMP/guard.err")"
+# A bogus KILL with no tests is the same defect from the other side (a filter bug that "kills" mutants).
+run_guard "$broken_killed" >/dev/null 2>"$TMP/guard-kill.err"; rc=$?
+[ "$rc" = 1 ] && grep -q '1 of 1 Killed/Survived mutant(s) ran 0 tests' "$TMP/guard-kill.err" \
+  && pass "zero-tests guard: a Killed mutant with 0 tests fails the run too (not only Survived)" \
+  || bad "zero-tests guard (killed, 0 tests): rc=$rc — $(head -c 300 "$TMP/guard-kill.err")"
 run_guard "$healthy" >/dev/null 2>"$TMP/guard-ok.err"; rc=$?
 [ "$rc" = 0 ] && [ ! -s "$TMP/guard-ok.err" ] \
   && pass "zero-tests guard: a healthy report passes untouched" \
@@ -713,20 +732,32 @@ run_guard "$healthy" >/dev/null 2>"$TMP/guard-ok.err"; rc=$?
 # preflight decides there, rewrites the config, and refuses a command run that runs 0 tests.
 #
 # A `npx` that answers like Vitest: $1 = the "Tests" line, $2 = exit code, $3 = marker file (written
-# when called, so "did it even run" is assertable).
+# when called, so "did it even run" is assertable), $5 = when set, answer through a JSON report
+# instead of the text summary (a repo reporter can suppress/reshape that line).
 mk_npx() {
   local bin="$TMP/bin-$4"; mkdir -p "$bin"
-  cat > "$bin/npx" <<EOF
+  if [ -n "${5:-}" ]; then
+    cat > "$bin/npx" <<EOF
+#!/usr/bin/env bash
+: > '$3'
+for a in "\$@"; do case "\$a" in --outputFile=*) printf '{"numPassedTests":$5,"numFailedTests":0}\n' > "\${a#--outputFile=}" ;; esac; done
+printf ' RUN  v5.0.5 /repo\n\n Duration  100ms\n'
+exit $2
+EOF
+  else
+    cat > "$bin/npx" <<EOF
 #!/usr/bin/env bash
 : > '$3'
 # Vitest colours its summary even when its output is not a TTY — the real farm output.
 printf ' RUN  v5.0.5 /repo\n\n Test Files \033[22m \033[1m\033[32m1 passed\033[39m\033[22m \033[90m(1)\033[39m\n      \033[22m \033[1m\033[32m$1\033[39m\033[22m \033[90m(1)\033[39m\n\n Duration  100ms\n'
 exit $2
 EOF
+  fi
   chmod +x "$bin/npx"; printf '%s' "$bin"
 }
 PASSBIN="$(mk_npx 'Tests  3 passed (3)' 0 "$TMP/npx-ran-ok" ok)"
 ZEROBIN="$(mk_npx 'Tests  no tests' 1 "$TMP/npx-ran-zero" zero)"
+JSONBIN="$(mk_npx '' 0 "$TMP/npx-ran-json" json 2)"
 preflight_of() { (cd "$1" && PATH="$2:$PATH" node "$3" 2>&1); }   # $3 = ./preflight_module of the kv
 
 # G1. Emission with no node_modules: the decision is deferred, not guessed, and the run carries the
@@ -767,12 +798,23 @@ else
   bad "preflight mismatch: rc=$rc out=$(head -c 400 <<<"$pre_out")"
 fi
 
-# G3. A command that runs 0 tests must abort the run: 0 tests per mutant reads as KILLED for every mutant.
+# G3. A command that runs 0 tests must abort the run: 0 tests per mutant reads as KILLED for every
+#     mutant. A FRESH emission (not the one G2 already rewrote): a config that is already a command at
+#     emission time must be verified just the same.
+FR="$TMP/flip-cmd"; rm -rf "$FR"; cp -R "$FL" "$FR"; rm -f "$FR"/.stryker-scoped-*
+out_fr="$(cd "$FR" && bash "$STRYKER" --repo "$FR" --whole-files --runner vitest --file apps/api/src/f.ts 2>/dev/null)"
 rm -f "$TMP/npx-ran-zero"
-pre_out="$(preflight_of "$FL" "$ZEROBIN" "$pf")"; rc=$?
-[ "$rc" = 1 ] && grep -q 'the command runner ran no test(s)' <<<"$pre_out" && [ -f "$TMP/npx-ran-zero" ] \
+pre_out="$(preflight_of "$FR" "$ZEROBIN" "$(kv1 "$out_fr" preflight_module)")"; rc=$?
+[ "$(kv1 "$out_fr" test_runner)" = command ] && [ "$rc" = 1 ] && grep -q 'the command runner ran no test(s)' <<<"$pre_out" && [ -f "$TMP/npx-ran-zero" ] \
   && pass "preflight: a command run that executes 0 tests aborts (exit 1) instead of reporting a fake score" \
-  || bad "preflight 0 tests: rc=$rc ran=$([ -f "$TMP/npx-ran-zero" ] && echo yes || echo no) — $(head -c 300 <<<"$pre_out")"
+  || bad "preflight 0 tests: rc=$rc runner=$(kv1 "$out_fr" test_runner) ran=$([ -f "$TMP/npx-ran-zero" ] && echo yes || echo no) — $(head -c 300 <<<"$pre_out")"
+# The same fresh command run, proven through its JSON report: a repo reporter that suppresses the
+# "Tests" summary line must not make executed tests read as 0.
+rm -f "$TMP/npx-ran-json"
+pre_out="$(preflight_of "$FR" "$JSONBIN" "$(kv1 "$out_fr" preflight_module)")"; rc=$?
+[ "$rc" = 0 ] && grep -q 'command runner verified: 2 test(s) ran (exit 0, json)' <<<"$pre_out" && [ -f "$TMP/npx-ran-json" ] \
+  && pass "preflight: the test count comes from Vitest's JSON report, not only its text summary" \
+  || bad "preflight json: rc=$rc — $(head -c 300 <<<"$pre_out")"
 
 # G4. TypeScript 7 where the run happens: in-place, and the tsconfig preprocessor turned off by pointing
 #     tsconfigFile at a file that does not exist. Uses a fresh emission (G2 already rewrote the config).

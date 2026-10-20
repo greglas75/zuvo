@@ -83,7 +83,8 @@
 # (true|false) and in_place_reason (--in-place | typescript <version> has no parseConfigFileTextToJson
 # | none | deferred to the preflight …); preflight_module (./<file> | none); then run_command, which
 # runs Stryker under stryker-run-watchdog.sh (exit 124 = no progress for --no-progress-timeout s,
-# 126 = the preflight refused the run). Plus ONE summary line on stderr that repeats the vitest_* values.
+# 126 = the preflight refused the run — any non-zero preflight exit becomes 126 at the watchdog).
+# Plus ONE summary line on stderr that repeats the vitest_* values.
 #
 # Preflight (vitest, and whenever TypeScript is declared but not installed where the scoper runs): a
 # generated node script run by the watchdog immediately before Stryker, in the repo. A worktree has no
@@ -93,7 +94,8 @@
 #     per-test filter matched nothing) -> mismatch rewrites the config to testRunner "command" with the
 #     project's own `npx vitest run`.
 #   · TypeScript 7, whose missing parseConfigFileTextToJson kills Stryker's sandbox tsconfig -> in-place.
-#   · a command run is first proven to execute >0 tests (0 tests = every mutant "KILLED"); else exit 1.
+#   · a command run is first proven to execute >0 tests (0 tests = every mutant "KILLED"), bounded by
+#     the same idle timeout the run itself uses; a refusal exits non-zero (the watchdog reports 126).
 #
 # Vitest: the config nearest each scoped file (or --vitest-config); covering tests = --test-file/
 # --tests-from, else co-located foo.test|spec.* / __tests__/foo.*, else the config's own include.
@@ -650,7 +652,9 @@ const declaresTypescript = () => {
         }
       } catch { /* not our JSON to judge */ }
     }
-    if (depth >= 3) return false;
+    // Deep enough for apps/<pkg>/ and packages/<group>/<pkg>/ (the nested-workspace monorepos seen so
+    // far): a shallower walk missed a TypeScript declaration and shipped a sandboxed TS7 run.
+    if (depth >= 6) return false;
     let names;
     try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
     return names.some((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules'
@@ -861,8 +865,14 @@ const CONF = ${JSON.stringify(portable(out))};
 const GUARD = ${JSON.stringify('./' + guardFile)};
 const COMMAND = ${JSON.stringify(runner === 'vitest' ? vitestCommand : (cfg.commandRunner ? cfg.commandRunner.command : ''))};
 // Only the vitest command is proven here (one file-scoped run that ends): an arbitrary 'npm test' may
-// watch, or start a server, and this preflight has no timeout of its own.
+// watch, or start a server. The probe is bounded by the run's own idle timeout and killed as a group.
 const VERIFY_COMMAND = ${runner === 'vitest' ? 'true' : 'false'};
+const PROBE_TIMEOUT_MS = ${Math.max(1, Number(idleTimeout)) * 1000};
+// A machine-readable count: a repo reporter that drops or reformats the text summary must not make a
+// run that DID execute tests look like a 0-test run (the text line stays as a fallback).
+// ABSOLUTE: Vitest resolves a relative --outputFile against its root (the app's test.root), not the
+// directory the command runs in, and the preflight reads it back from there.
+const PROBE_JSON = path.resolve(process.cwd(), ${JSON.stringify(`.stryker-scoped-${tag}.probe.json`)});
 const NO_TSCONFIG = ${JSON.stringify(`.stryker-scoped-${tag}.no-tsconfig.json`)};
 const ME = 'zuvo-preflight';
 const say = (m) => process.stderr.write(ME + ': ' + m + '\\n');
@@ -944,7 +954,7 @@ const separator = (spec, re) => {
 };
 if (conf.testRunner === 'vitest') {
   const v = separator('vitest', /createTaskName\\([^)]*separator\\s*=\\s*(['"\`])([^'"\`]*)\\1/);
-  const r = separator('@stryker-mutator/vitest-runner', /collectTestName\\([\\s\\S]{0,800}?\\.join\\((['"\`])([^'"\`]*)\\1\\)/);
+  const r = separator('@stryker-mutator/vitest-runner', /collectTestName\\([\\s\\S]{0,800}?return\\s[\\w$.]+\\.join\\((['"\`])([^'"\`]*)\\1\\)/);
   const why = 'vitest ' + (v.version || '?') + ' joins test names with ' + JSON.stringify(v.separator) +
     ', @stryker-mutator/vitest-runner ' + (r.version || '?') + ' with ' + JSON.stringify(r.separator);
   if (!v.installed || !r.installed || !v.separator || !r.separator) {
@@ -971,21 +981,54 @@ if (conf.testRunner === 'vitest') {
 if (changed) fs.writeFileSync(CONF, JSON.stringify(conf, null, 2) + '\\n');
 
 // ── a command run that executes 0 tests reports every mutant KILLED: prove it runs tests first ──
+// Async + detached: the watchdog's idle timer only covers Stryker, so a hanging Vitest here would
+// block the run with no progress signal at all. On expiry the whole process group is killed.
+const probe = (cmd, timeoutMs) => new Promise((resolve) => {
+  const child = cp.spawn('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  let out = '';
+  const cap = 1 << 28;
+  const take = (d) => { out += d; if (out.length > cap) out = out.slice(-cap); };
+  child.stdout.on('data', take);
+  child.stderr.on('data', take);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
+  }, timeoutMs);
+  child.on('error', (err) => { out += '\\n' + String(err && err.message); });
+  child.on('close', (status) => { clearTimeout(timer); resolve({ status, out, timedOut }); });
+});
 if (VERIFY_COMMAND && conf.testRunner === 'command' && COMMAND) {
-  const r = cp.spawnSync('bash', ['-c', COMMAND], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 28 });
-  // Vitest colours its summary even off a TTY ("Tests \\x1b[22m \\x1b[1m\\x1b[32m2 passed"): strip
-  // the escapes first, or a run that DID execute tests reads as "no Tests line" and is refused.
-  const out = (String(r.stdout || '') + '\\n' + String(r.stderr || '')).replace(/\\x1b\\[[0-9;]*m/g, '');
-  const testsLine = (out.match(/^[ \\t]*Tests\\s+(.*)$/m) || [])[1] || '';
-  const ran = [...testsLine.matchAll(/(\\d+)\\s+(?:passed|failed)/g)].reduce((n, m) => n + Number(m[1]), 0);
-  if (r.status !== 0 || !ran) {
-    say('ERROR: the command runner ran ' + (ran || 'no') + ' test(s) (exit ' + r.status + '): ' +
-      (testsLine.trim() || 'no "Tests" line in its output') + '. A run whose tests do not execute reports every ' +
-      'mutant KILLED or SURVIVED by accident. Last output:');
-    say(out.split('\\n').filter((l) => l.trim()).slice(-15).join('\\n'));
+  const r = await probe(COMMAND + ' --reporter=json --outputFile=' + JSON.stringify(PROBE_JSON), PROBE_TIMEOUT_MS);
+  if (r.timedOut) {
+    say('ERROR: the verification run made no progress in ' + (PROBE_TIMEOUT_MS / 1000) + 's and was killed: ' +
+      'the command runner cannot be proven to execute tests, so the run is refused.');
     process.exit(1);
   }
-  say('command runner verified: ' + ran + ' test(s) ran (exit 0).');
+  // Count from the JSON report; fall back to the summary line for a Vitest that wrote none.
+  let ran = 0;
+  let how = 'json';
+  try {
+    const j = JSON.parse(fs.readFileSync(PROBE_JSON, 'utf8'));
+    ran = Number(j.numPassedTests || 0) + Number(j.numFailedTests || 0);
+  } catch {
+    how = 'text';
+    // Vitest colours its summary even off a TTY ("Tests \\x1b[22m \\x1b[1m\\x1b[32m2 passed"): strip
+    // the escapes first, or a run that DID execute tests reads as "no Tests line" and is refused.
+    const out = r.out.replace(/\\x1b\\[[0-9;]*m/g, '');
+    const testsLine = (out.match(/^[ \\t]*Tests\\s+(.*)$/m) || [])[1] || '';
+    ran = [...testsLine.matchAll(/(\\d+)\\s+(?:passed|failed)/g)].reduce((n, m) => n + Number(m[1]), 0);
+    r.summary = testsLine.trim();
+  }
+  try { fs.unlinkSync(PROBE_JSON); } catch { /* never written */ }
+  if (r.status !== 0 || !ran) {
+    say('ERROR: the command runner ran ' + (ran || 'no') + ' test(s) (exit ' + r.status + '): ' +
+      (r.summary || 'no test count in its report') + '. A run whose tests do not execute reports every ' +
+      'mutant KILLED or SURVIVED by accident. Last output:');
+    say(r.out.replace(/\\x1b\\[[0-9;]*m/g, '').split('\\n').filter((l) => l.trim()).slice(-15).join('\\n'));
+    process.exit(1);
+  }
+  say('command runner verified: ' + ran + ' test(s) ran (exit 0, ' + how + ').');
 }
 `;
 
