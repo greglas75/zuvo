@@ -786,17 +786,20 @@ _ar_pass_session() {
 }
 
 # _ar_pass_agent — the agent process this pass runs under: the nearest ancestor whose argv[0] names an agent CLI
-# (claude, codex, cursor-agent, kimi, agy, gemini, qwen, opencode), as <name>:<pid>@<start time>; the start time
-# keeps a reused pid from inheriting a dead process's passes. Empty when no ancestor is one (cron, CI, a bare shell).
+# (claude, codex, cursor-agent, kimi, agy, gemini, qwen, opencode), as <name>:<pid>@<start>; the start keeps a
+# reused pid from inheriting a dead process's passes. Empty when no ancestor is one (cron, CI, a bare shell).
 # Why: a run with no session id used to count EVERY session's passes on the branch, so an independent reviewer that
 # exports no id inherited the author's spent cap (tgm-flux RD-7585). Counting only id-less rows instead would let an
-# agent reset its own cap by unsetting its session variable; the process tree is what it cannot shed by an env edit
-# — every pass records it, so an id-less run counts the passes of its own agent process whatever their session.
+# agent reset its own cap by unsetting its session variable; its process is what unsetting the variable does not
+# shed — every pass records it, so an id-less run counts the passes of its own agent process whatever their session.
+# A session id, when present, is trusted as the reviewer's identity on its own: one Codex app process hosts many
+# threads, each its own reviewer, so matching on the process there would cap a reviewer thread with its author's
+# passes — the defect this fixes. Inventing a new ZUVO_ADV_SESSION value therefore still starts a new count, as before.
 # The residue, accepted: a pass detached from its agent (setsid + the parent exiting first) finds no ancestor and is
 # counted with cron's passes — that takes a deliberate escape, not an unset variable.
 # One ps for the whole table: walking it with a ps per ancestor would cost a fork per level on every pass.
 _ar_pass_agent() {
-  local hit pid name start
+  local hit pid name start stat
   hit="$(ps -A -o pid= -o ppid= -o args= 2>/dev/null | awk -v me="$$" '
     { n = split($3, seg, "/"); pp[$1] = $2; nm[$1] = tolower(seg[n]) }
     END { p = me
@@ -805,9 +808,19 @@ _ar_pass_agent() {
             p = pp[p] } }')" || hit=""
   [[ -n "$hit" ]] || return 0
   pid="${hit%% *}"; name="${hit#* }"
-  start="$(ps -o lstart= -p "$pid" 2>/dev/null | tr -s ' ' | tr ' ' '_')" || start=""
+  # Linux: the start in clock ticks since boot (/proc/<pid>/stat field 22, counted after the ")" that ends the
+  # command name, which may itself hold spaces). It never changes; `ps -o lstart` is derived from the wall clock
+  # and moves with an NTP step or a resume, which would make one agent read as two. lstart elsewhere (macOS).
+  start=""
+  if [[ -r "/proc/$pid/stat" ]] && stat="$(cat "/proc/$pid/stat" 2>/dev/null)" && [[ "$stat" == *") "* ]]; then
+    start="$(printf '%s' "${stat##*) }" | awk '{ print $20 }')" || start=""
+  fi
+  [[ -n "$start" ]] || start="$(ps -o lstart= -p "$pid" 2>/dev/null | tr -s ' ' | tr ' ' '_')" || start=""
   printf '%s:%s@%s' "$name" "$pid" "${start#_}" | tr -d '\t\n\r'
 }
+
+# _ar_pass_counted_mode — the modes that count against PASS_CAP (and so always leave a proof).
+_ar_pass_counted_mode() { [[ "$REVIEW_MODE" =~ ^(code|test|security|migrate)$ ]]; }
 
 # _ar_default_proof — the proof path of a counted pass run without --artifact: <ZUVO_OUTPUT_DIR or <repo>/zuvo>/proofs/
 # auto-<branch>-<pass id>.txt (shared/includes/report-output-location.md). A pass that counts against PASS_CAP must
@@ -865,7 +878,7 @@ _ar_detached_key() {
 ar_check_pass_cap() {
 PASS_RECORD=""
 [[ "$DRY_RUN" != true && "$DOCTOR" != true && "$LIST_PROVIDERS" != true ]] || return 0
-[[ "$REVIEW_MODE" =~ ^(code|test|security|migrate)$ ]] || return 0
+_ar_pass_counted_mode || return 0
 # A test-harness run (mock providers, fake lane binaries) re-reviews the same fixture files on purpose, so it
 # neither counts nor is capped — unless the suite is testing the cap itself (ZUVO_ADV_PASS_CAP_TEST=1).
 # ZUVO_ADVERSARIAL_TEST_HARNESS is the suites' switch; a real review never sets it.

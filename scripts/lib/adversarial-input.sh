@@ -263,7 +263,7 @@ collect_files_input() {
     if [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -gt "$INPUT_MAX_BYTES" ]]; then INPUT_OVER=1; break; fi
     # A counted mode always writes a proof (ar_check_pass_cap gives an artifact-less pass a default one, decided
     # only after this collection), so its blobs are taken whether or not --artifact was passed.
-    if [[ -n "$ARTIFACT_PATH" || "$REVIEW_MODE" =~ ^(code|test|security|migrate)$ ]]; then
+    if [[ -n "$ARTIFACT_PATH" ]] || _ar_pass_counted_mode; then
       # These exact bytes, under the path's own attributes (--path: the clean filters `git add` applies, so
       # the id matches what the pre-commit gate sees staged). A file whose bytes a shell variable cannot hold
       # (a NUL) gets an id that matches no blob of it — the gate then refuses it, which is the safe side.
@@ -927,7 +927,11 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     _ck_pids[$_ck_i]=$!
   done
   while [[ "$_ck_next" -le "$_ck_i" ]]; do _ck_collect; done
-  [[ -z "$ARTIFACT_PATH" ]] || _ck_merge_artifacts || exit 2
+  # A default proof (AR_AUTO_PROOF, no --artifact) that cannot be written warns: the parts' reviews still stand.
+  if [[ -n "$ARTIFACT_PATH" ]] && ! _ck_merge_artifacts; then
+    [[ "${AR_AUTO_PROOF:-}" == 1 ]] || exit 2
+    echo "  WARN: this pass's proof could not be written to $ARTIFACT_PATH — the reviews stand, but no proof of them exists; pass --artifact <writable path> next time" >&2
+  fi
   # The aggregate: a part that FAILED (1, 2, 3, 124, 125 — no review of it at all) outranks a part reviewed
   # with its input cut (4): "completed over truncated input" must not hide a failed part.
   [[ "$_ck_fail" -gt 0 || "$_ck_cut" -eq 0 ]] || _ck_rc=4

@@ -207,6 +207,13 @@ assert_exit_code "0" "$rc" "a --files pass without --artifact is reviewed"
 pc_proof="$(awk -F'\t' '$5 == "blob.ts" { print $7 }' "$H12/adversarial-passes.tsv" | head -n 1)"
 assert_contains "$(cat "$pc_proof" 2>/dev/null)" "reviewed_blob=$(git -C "$PC_TMP/repo" hash-object blob.ts)" \
   "its proof records the reviewed file's blob"
+# Bug caught (adversarial review of this fix): the default proof sits in ARTIFACT_PATH, whose write failure exits 2 —
+# an unwritable zuvo/proofs/ turned a finished review the caller never asked to save into a failed run.
+printf 'not a directory\n' > "$PC_TMP/notadir"
+(cd "$PC_TMP/repo" && pc_diff w.ts | ZUVO_OUTPUT_DIR="$PC_TMP/notadir/out" ZUVO_HOME="$H12" ZUVO_ADV_PASS_CAP_TEST=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$ADV" --single --mode code) > "$PC_TMP/out" 2> "$PC_TMP/err"; rc=$?
+assert_exit_code "0" "$rc" "an unwritable default proof location leaves the review's exit 0"
+assert_contains "$(cat "$PC_TMP/err")" "proof could not be written" "and says the proof is missing"
 H12b="$PC_TMP/h12b"; mkdir -p "$H12b"
 (cd "$PC_TMP/repo" && pc_big x.ts y.ts z.ts | ZUVO_HOME="$H12b" ZUVO_ADV_PASS_CAP_TEST=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files \
   bash "$ADV" --single --mode code) >/dev/null 2>&1

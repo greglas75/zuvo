@@ -366,7 +366,9 @@ of the same change all count. "The same reviewer" is the agent session (`ZUVO_AD
 agent process — the nearest ancestor process named like an agent CLI (claude, codex, cursor-agent, kimi,
 agy, gemini, qwen, opencode) — so an independent reviewer that exports no id does not inherit the author's
 passes, while an agent that unsets its own id still counts the passes it ran with it. A run with neither
-(cron, CI, a bare shell) shares one count with the other such runs. Only detaching a pass from its agent
+(cron, CI, a bare shell) shares one count with the other such runs. A session id, when present, is the
+reviewer's identity on its own (one Codex app process hosts many threads, each its own reviewer), so
+setting a NEW id is still a new count — a fourth pass all the same. Only detaching a pass from its agent
 process (setsid with the parent gone) escapes that — a deliberate evasion, which this cap does not try to
 stop. **Every counted pass leaves a proof:** without `--artifact` the driver writes it to
 `zuvo/proofs/auto-<branch>-<pass id>.txt` (under `ZUVO_OUTPUT_DIR` when set), says so on stderr
