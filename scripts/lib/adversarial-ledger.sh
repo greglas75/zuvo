@@ -778,10 +778,53 @@ _ar_pass_files() {
 }
 
 # _ar_pass_session — the agent session this pass runs in: ZUVO_ADV_SESSION (a caller's own name for it), else
-# Claude Code's CLAUDE_CODE_SESSION_ID, else Codex's thread or session id. Empty for cron, CI and a bare shell:
-# those keep the cross-session count. Tabs and newlines would break the ledger's columns, so they are dropped.
+# Claude Code's CLAUDE_CODE_SESSION_ID, else Codex's thread or session id. Empty for cron, CI, a bare shell, and an
+# agent CLI that exports none: those are counted by _ar_pass_agent instead. Tabs and newlines would break the
+# ledger's columns, so they are dropped.
 _ar_pass_session() {
   printf '%s' "${ZUVO_ADV_SESSION:-${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-${CODEX_SESSION_ID:-}}}}" | tr -d '\t\n\r'
+}
+
+# _ar_pass_agent — the agent process this pass runs under: the nearest ancestor whose argv[0] names an agent CLI
+# (claude, codex, cursor-agent, kimi, agy, gemini, qwen, opencode), as <name>:<pid>@<start time>; the start time
+# keeps a reused pid from inheriting a dead process's passes. Empty when no ancestor is one (cron, CI, a bare shell).
+# Why: a run with no session id used to count EVERY session's passes on the branch, so an independent reviewer that
+# exports no id inherited the author's spent cap (tgm-flux RD-7585). Counting only id-less rows instead would let an
+# agent reset its own cap by unsetting its session variable; the process tree is what it cannot shed by an env edit
+# — every pass records it, so an id-less run counts the passes of its own agent process whatever their session.
+# The residue, accepted: a pass detached from its agent (setsid + the parent exiting first) finds no ancestor and is
+# counted with cron's passes — that takes a deliberate escape, not an unset variable.
+# One ps for the whole table: walking it with a ps per ancestor would cost a fork per level on every pass.
+_ar_pass_agent() {
+  local hit pid name start
+  hit="$(ps -A -o pid= -o ppid= -o args= 2>/dev/null | awk -v me="$$" '
+    { n = split($3, seg, "/"); pp[$1] = $2; nm[$1] = tolower(seg[n]) }
+    END { p = me
+          for (d = 0; d < 64 && p != "" && p > 1; d++) {
+            if (nm[p] ~ /^(claude|codex|cursor-agent|kimi|agy|gemini|qwen|opencode)([-_.][^ ]*)?$/) { print p, nm[p]; exit }
+            p = pp[p] } }')" || hit=""
+  [[ -n "$hit" ]] || return 0
+  pid="${hit%% *}"; name="${hit#* }"
+  start="$(ps -o lstart= -p "$pid" 2>/dev/null | tr -s ' ' | tr ' ' '_')" || start=""
+  printf '%s:%s@%s' "$name" "$pid" "${start#_}" | tr -d '\t\n\r'
+}
+
+# _ar_default_proof — the proof path of a counted pass run without --artifact: <ZUVO_OUTPUT_DIR or <repo>/zuvo>/proofs/
+# auto-<branch>-<pass id>.txt (shared/includes/report-output-location.md). A pass that counts against PASS_CAP must
+# leave a proof the pre-push gate can cite: three artifact-less passes used to spend the cap and leave nothing, so the
+# agent could neither review again (exit 7) nor reference a proof (tgm-flux RD-7585).
+_ar_default_proof() {
+  local dir slug
+  dir="${ZUVO_OUTPUT_DIR:-$(ar_repo_root)/zuvo}/proofs"
+  slug="$(printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9._-' '-' | cut -c1-60)"
+  printf '%s/auto-%s-%s.txt' "$dir" "${slug:-branch}" "$2"
+}
+
+# _ar_proof_shown <path> — <path> relative to the checkout's top when it is inside it (what an `adversarial:` header
+# cites), else as given.
+_ar_proof_shown() {
+  local top; top="$(ar_repo_root)"
+  case "$1" in "$top"/*) printf '%s' "${1#"$top"/}" ;; *) printf '%s' "$1" ;; esac
 }
 
 # _ar_detached_key — the pass-cap key of a detached HEAD, which has no branch name to count under. Bare "detached"
@@ -829,10 +872,13 @@ PASS_RECORD=""
 if [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-}" == 1 && "${ZUVO_ADV_PASS_CAP_TEST:-0}" != 1 ]]; then
   return 0
 fi
-local files root branch ledger now n window session
+local files root branch ledger now n window session agent counted proof proofs=""
 files="$(_ar_pass_files)"
-session="$(_ar_pass_session)"
 [[ -n "$files" ]] || return 0
+session="$(_ar_pass_session)"
+# Recorded on every row, with or without a session id: the passes an agent ran under its id are exactly the ones
+# its id-less re-run must still count.
+agent="$(_ar_pass_agent)"
 # The repository, not the worktree: a second worktree of the same branch is the same change.
 root="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || root=""
 [[ -n "$root" ]] || root="$(ar_repo_root)"
@@ -856,26 +902,48 @@ if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
   if [[ -s "$ledger" ]]; then
     # Through the environment, not -v: BSD awk (macOS) refuses a -v value holding a newline, and a refusal
     # here would read as "no earlier passes" — the cap silently off.
-    # Column 6 is the session (empty in rows written before it existed, or outside an agent session).
-    n="$(ZUVO_ADV_PASS_FILES="$files" ZUVO_ADV_PASS_ROOT="$root" ZUVO_ADV_PASS_BRANCH="$branch" \
-      ZUVO_ADV_PASS_SESSION="$session" awk -F'\t' -v since=$(( now - window )) '
+    # Column 6 is the session, 7 the pass's proof, 8 its agent process (_ar_pass_agent); each is empty in rows
+    # written before it existed. Whose passes count:
+    #   a session id      — that session's rows, nothing else;
+    #   no id, an agent   — the rows of that agent process, whatever their session (unsetting the session
+    #                       variable does not reset the cap), and rows with no identity at all;
+    #   no id, no agent   — rows with no identity at all (cron, CI, a bare shell, rows older than column 6).
+    # Line 1 of the result is the count; each later line is "<time>\t<proof>" of a counted pass that has one.
+    counted="$(ZUVO_ADV_PASS_FILES="$files" ZUVO_ADV_PASS_ROOT="$root" ZUVO_ADV_PASS_BRANCH="$branch" \
+      ZUVO_ADV_PASS_SESSION="$session" ZUVO_ADV_PASS_AGENT="$agent" awk -F'\t' -v since=$(( now - window )) '
       BEGIN { nc = split(ENVIRON["ZUVO_ADV_PASS_FILES"], want, "\n")
               root = ENVIRON["ZUVO_ADV_PASS_ROOT"]; branch = ENVIRON["ZUVO_ADV_PASS_BRANCH"]
-              sess = ENVIRON["ZUVO_ADV_PASS_SESSION"] }
-      $1 >= since && $3 == root && $4 == branch && $2 != ENVIRON["ZUVO_ADV_PASS_ID"] && (sess == "" || $6 == sess) {
+              sess = ENVIRON["ZUVO_ADV_PASS_SESSION"]; agent = ENVIRON["ZUVO_ADV_PASS_AGENT"] }
+      function mine() {
+        if (sess != "") return $6 == sess
+        return (agent != "" && $8 == agent) || ($6 == "" && $8 == "")
+      }
+      $1 >= since && $3 == root && $4 == branch && $2 != ENVIRON["ZUVO_ADV_PASS_ID"] && mine() {
         m = split($5, f, "\037")
         for (i = 1; i <= m; i++) if (f[i] != "" && !((($2) SUBSEP f[i]) in seen)) { seen[$2 SUBSEP f[i]] = 1; size[$2]++ }
-        pass[$2] = 1 }
+        pass[$2] = 1; if (!($2 in at)) at[$2] = $1
+        if ($7 != "" && !($2 in proof)) proof[$2] = $7 }
       END { c = 0
         for (p in pass) { hit = 0; for (i = 1; i <= nc; i++) if ((p SUBSEP want[i]) in seen) hit++
                           small = (size[p] < nc) ? size[p] : nc
-                          if (small > 0 && 2 * hit >= small) c++ }
-        print c }' "$ledger" 2>/dev/null)" || n=0
+                          if (small > 0 && 2 * hit >= small) { c++; if (p in proof) out = out at[p] "\t" proof[p] "\n" } }
+        printf "%s\n%s", c, out }' "$ledger" 2>/dev/null)" || counted=0
+    n="${counted%%$'\n'*}"
+    [[ "$counted" != *$'\n'* ]] || proofs="${counted#*$'\n'}"
   fi
   if [[ "${n:-0}" -ge "$PASS_CAP" ]]; then
-    echo "PASS CAP: ${n} adversarial passes already reviewed these files on ${branch} $( [[ -n "$session" ]] && echo "in this session" || echo "in the last $(( window / 3600 ))h") — the cap is ${PASS_CAP}, with no override." >&2
+    echo "PASS CAP: ${n} adversarial passes already reviewed these files on ${branch} $( if [[ -n "$session" ]]; then echo "in this session"; elif [[ -n "$agent" ]]; then echo "in this agent process (${agent%%:*}, no session id)"; else echo "in the last $(( window / 3600 ))h"; fi) — the cap is ${PASS_CAP}, with no override." >&2
     echo "  Nothing was reviewed. Do not run another pass: record what is still open as known concerns" >&2
     echo "  (shared/includes/adversarial-loop.md, Step 5). A verified CRITICAL left open still means 'not complete'." >&2
+    # The passes that spent the cap left proofs: name them, so the review artifact can cite them (`adversarial:`).
+    if [[ -n "$proofs" ]]; then
+      echo "  Proofs of those passes — cite them as \`adversarial:\` in memory/reviews/<base7>..<head7>-<slug>.md:" >&2
+      printf '%s' "$proofs" | LC_ALL=C sort -n | cut -f2- | while IFS= read -r proof; do
+        [[ -n "$proof" ]] || continue
+        if [[ -f "$proof" ]]; then echo "    $(_ar_proof_shown "$proof")" >&2
+        else echo "    $(_ar_proof_shown "$proof")  (missing — moved or deleted since)" >&2; fi
+      done
+    fi
     exit "$PASS_CAP_EXIT"
   fi
   # Every pass says its number: an agent that never loaded adversarial-loop.md learns the cap from the driver.
@@ -885,8 +953,21 @@ if [[ -z "${ZUVO_ADV_CHUNK:-}" ]]; then
   else
     echo "  NOTE: this is adversarial pass ${PASS_CAP} of ${PASS_CAP} for these files — the last one." >&2
   fi
+  # A counted pass always leaves a proof. Without --artifact it gets a default one — set before the input is
+  # chunked, so every part reviews into it and the parts merge there.
+  if [[ -z "$ARTIFACT_PATH" ]]; then
+    ARTIFACT_PATH="$(_ar_default_proof "$branch" "$ZUVO_ADV_PASS_ID")"
+    AR_AUTO_PROOF=1
+    echo "  PROOF: no --artifact given — this pass's proof goes to $(_ar_proof_shown "$ARTIFACT_PATH") (cite it as \`adversarial:\` in the review artifact)" >&2
+  fi
+  case "$ARTIFACT_PATH" in /*) proof="$ARTIFACT_PATH" ;; *) proof="$(pwd -P)/$ARTIFACT_PATH" ;; esac
+  # For the parts' ledger rows: a part records the parent's proof, not its own temporary one.
+  export ZUVO_ADV_PASS_PROOF="$proof"
+else
+  proof="${ZUVO_ADV_PASS_PROOF:-}"
 fi
-PASS_RECORD="$(printf '%s\t%s\t%s\t%s\t%s' "${ZUVO_ADV_PASS_ID:-$now-$$}" "$root" "$branch" "$(printf '%s' "$files" | tr '\n' '\037')" "$session")"
+PASS_RECORD="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s' "${ZUVO_ADV_PASS_ID:-$now-$$}" "$root" "$branch" \
+  "$(printf '%s' "$files" | tr '\n' '\037')" "$session" "$(printf '%s' "$proof" | tr -d '\t\n\r')" "$agent")"
 }
 
 # _ar_record_pass — append this process's row to the pass ledger once it has reviewed something. Best effort: a

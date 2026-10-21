@@ -261,7 +261,9 @@ collect_files_input() {
     # Over the ceiling already: the rest would only be read to be refused. Flagged here, not left to the
     # length check in ar_collect_input: the trailing newlines stripped below could bring it back under.
     if [[ "$(LC_ALL=C; printf '%s' "${#INPUT}")" -gt "$INPUT_MAX_BYTES" ]]; then INPUT_OVER=1; break; fi
-    if [[ -n "$ARTIFACT_PATH" ]]; then
+    # A counted mode always writes a proof (ar_check_pass_cap gives an artifact-less pass a default one, decided
+    # only after this collection), so its blobs are taken whether or not --artifact was passed.
+    if [[ -n "$ARTIFACT_PATH" || "$REVIEW_MODE" =~ ^(code|test|security|migrate)$ ]]; then
       # These exact bytes, under the path's own attributes (--path: the clean filters `git add` applies, so
       # the id matches what the pre-commit gate sees staged). A file whose bytes a shell variable cannot hold
       # (a NUL) gets an id that matches no blob of it — the gate then refuses it, which is the safe side.

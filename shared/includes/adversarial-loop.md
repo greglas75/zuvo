@@ -197,7 +197,7 @@ The script may return a non-clean `status` when not all requested providers ran.
 | *(none — stderr `adversarial-review cannot run`)* | 2 | The driver's own modules (`scripts/lib/adversarial-*.sh`) are missing, incomplete, out of step with their install stamp, or do not load — nothing was read and no provider was called; stdout is empty, so `--json` callers get no document | reinstall (`./scripts/install.sh`); record the pass as not run, never as reviewed |
 | `error` | 2 | Every provider was reached and returned no review | record `Adversarial review: skipped (provider error)` and continue. Each provider's stderr is preserved under `evidence_dir` (`~/.zuvo/adversarial-failures/<run_id>/`) — read it before claiming a cause |
 | `no_material` | **5** | **NOTHING WAS REVIEWED** — the payload carried nothing to judge (an empty or preamble-only code payload, or a document below the per-mode minimum), so no provider was called | **Do NOT record coverage, do not tick an adversarial gate, do not write an artifact citing this pass.** Fix the payload and re-run: the usual cause is a `git diff <range>` that resolved to nothing while a `PRIOR FINDINGS:` line kept the input non-empty. Until 2026-09-18 this case exited **0**, which every caller reads as a clean review |
-| *(none — stderr `PASS CAP:`)* | **7** | **NOTHING WAS REVIEWED** — three earlier passes in this agent session (with no session known: in the last 7 days, 3 h on main/master/develop/trunk), in this repository (any worktree) on this branch, shared at least half of the smaller file set with the files under review now (Step 5's hard cap — the part of it the driver can see; no override) | do not run another pass; record the open findings as known concerns and finish per Step 6 — an open VERIFIED CRITICAL still means "not complete" |
+| *(none — stderr `PASS CAP:`)* | **7** | **NOTHING WAS REVIEWED** — three earlier passes of the same reviewer (this agent session; with no session id, this agent process; with neither, cron/CI/shell runs), within the last 7 days (3 h on main/master/develop/trunk), in this repository (any worktree) on this branch, shared at least half of the smaller file set with the files under review now (Step 5's hard cap — the part of it the driver can see; no override). stderr lists the proofs those passes wrote | do not run another pass; cite the listed proofs as `adversarial:` in the review artifact, record the open findings as known concerns and finish per Step 6 — an open VERIFIED CRITICAL still means "not complete" |
 | *(none — stderr `over ZUVO_ADV_MAX_INPUT_BYTES`)* | 2 | The input is over the ceiling (default 8 MiB) — refused before any provider was called | record the pass as not run; review the change in parts (`--files` on a subset) |
 | `partial_no_material` | **4** | **A CHUNKED run reviewed some parts and never judged others** (no material, or not started because `ZUVO_RUN_DEADLINE` was spent) — same practical state as a truncated input: part of the range reached no provider | treat exactly as exit 4 below: findings are real, absence proves nothing about the unjudged parts. The stderr `CHUNKED:` line names how many |
 | `ok` / any | **4** | **Review COMPLETED but the input was TRUNCATED** — part of the change was never sent to any provider (`input_truncated=true`, and the artifact lists the omitted files) | **Do NOT report the review complete.** Findings that came back are real; the ABSENCE of findings says nothing about the omitted files. Re-run over the omitted set (`build-review-patch <those paths>`) or split the input, then merge the verdicts |
@@ -358,10 +358,20 @@ fix delta. There is no pass 4: a confirmed CRITICAL that pass 3 raises is fixed 
 regression test that fails before the fix and passes after it — never by another pass — and
 everything else still open is a known concern (Step 6 wording). INFO, NIT and robustness-only
 residuals never trigger a pass. No skill may raise this cap. The driver enforces it as far as it can
-see a "change": it refuses a pass when three earlier passes in this agent session (with no session known —
-cron, CI — in the last 7 days, 3 h on a shared default branch), in this repository (any worktree) on this branch, shared at least half of the smaller file set
+see a "change": it refuses a pass when three earlier passes of the same reviewer, within the last 7 days (3 h on a
+shared default branch), in this repository (any worktree) on this branch, shared at least half of the smaller file set
 with the files under review now (exit 7, `PASS CAP:`). A re-based `--diff`, a wider scope or a fix delta
-of the same change all count. A detached HEAD has no branch: its "branch" is `ZUVO_ADV_PASS_KEY` when
+of the same change all count. "The same reviewer" is the agent session (`ZUVO_ADV_SESSION`, else
+`CLAUDE_CODE_SESSION_ID`, else Codex's thread/session id). A run with no session id is counted by its
+agent process — the nearest ancestor process named like an agent CLI (claude, codex, cursor-agent, kimi,
+agy, gemini, qwen, opencode) — so an independent reviewer that exports no id does not inherit the author's
+passes, while an agent that unsets its own id still counts the passes it ran with it. A run with neither
+(cron, CI, a bare shell) shares one count with the other such runs. Only detaching a pass from its agent
+process (setsid with the parent gone) escapes that — a deliberate evasion, which this cap does not try to
+stop. **Every counted pass leaves a proof:** without `--artifact` the driver writes it to
+`zuvo/proofs/auto-<branch>-<pass id>.txt` (under `ZUVO_OUTPUT_DIR` when set), says so on stderr
+(`PROOF:`), and records it in `~/.zuvo/adversarial-passes.tsv`; the exit-7 refusal lists the proofs of the
+passes that spent the cap, ready to cite as `adversarial:` in `memory/reviews/<base7>..<head7>-<slug>.md`. A detached HEAD has no branch: its "branch" is `ZUVO_ADV_PASS_KEY` when
 set, else the change's first commit past the merge-base with origin's default branch (fix commits keep
 it, an unrelated detached change does not share it). Every pass prints `adversarial pass N of 3` on stderr and records
 `adversarial_pass=N/3` in its artifact. Spacing passes out or renaming a branch to get round it is still a

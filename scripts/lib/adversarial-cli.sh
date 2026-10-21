@@ -181,8 +181,10 @@ Exit codes:
   6    blind-audit: input too large (prompt over ZUVO_BLIND_AUDIT_MAX_BYTES; nothing was sent)
        (blind-audit: 0 = strict, >= 2 valid answers; 1 = no lane left after its exclusions)
   7    pass cap — 3 adversarial passes already reviewed (half or more of) these files on this branch
-       in this agent session (no session known: the last 7 days, 3 h on main/master/develop/trunk)
-       (code/test/security/migrate modes; nothing was reviewed; no override)
+       in the last 7 days (3 h on main/master/develop/trunk) by the same reviewer: this agent session;
+       with no session id, this agent process; with neither, cron/CI/shell runs
+       (code/test/security/migrate modes; nothing was reviewed; no override; stderr lists those
+       passes' proofs — a counted pass without --artifact writes one to zuvo/proofs/auto-*.txt)
   124  timeout — every ATTEMPTED lane timed out with none answering at all, even invalidly (all
        providers timed out, or the whole-run deadline fired)
   125  suspended (the HOST slept mid-run; providers never had a chance — safe to retry)

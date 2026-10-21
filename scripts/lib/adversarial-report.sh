@@ -256,7 +256,9 @@ if [[ -z "$ALL_RESULTS" ]]; then
 
   echo "ERROR: no review produced — $_fail_note. Tried: $PROVIDERS (outcomes: ${PROVIDER_OUTCOMES:-none})" >&2
 
-  if [[ -n "$ARTIFACT_PATH" ]]; then
+  # A default proof (no --artifact: ar_check_pass_cap chose it) exists to prove a review; a run that produced
+  # none would only leave a file in zuvo/proofs/ that looks like one.
+  if [[ -n "$ARTIFACT_PATH" && "${AR_AUTO_PROOF:-}" != 1 ]]; then
     write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
       || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit "$FAIL_EXIT"; }
   fi
