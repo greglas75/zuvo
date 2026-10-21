@@ -256,7 +256,9 @@ if [[ -z "$ALL_RESULTS" ]]; then
 
   echo "ERROR: no review produced — $_fail_note. Tried: $PROVIDERS (outcomes: ${PROVIDER_OUTCOMES:-none})" >&2
 
-  if [[ -n "$ARTIFACT_PATH" ]]; then
+  # A default proof (no --artifact: ar_check_pass_cap chose it) exists to prove a review; a run that produced
+  # none would only leave a file in zuvo/proofs/ that looks like one.
+  if [[ -n "$ARTIFACT_PATH" && "${AR_AUTO_PROOF:-}" != 1 ]]; then
     write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
       || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit "$FAIL_EXIT"; }
   fi
@@ -503,7 +505,12 @@ print_verdict_hint() {
 
 # ar_emit_output — write the artifact, report a tree changed under the reviewers, print the output.
 ar_emit_output() {
-if [[ -n "$ARTIFACT_PATH" ]]; then
+if [[ -n "$ARTIFACT_PATH" && "${AR_AUTO_PROOF:-}" == 1 ]]; then
+  # A default proof the caller never asked for: an unwritable zuvo/proofs/ (a read-only checkout, a full disk)
+  # must not turn a finished review into a failed run — say so, and the review stands.
+  write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" 2>/dev/null \
+    || echo "  WARN: this pass's proof could not be written to $ARTIFACT_PATH — the review below stands, but no proof of it exists; pass --artifact <writable path> next time" >&2
+elif [[ -n "$ARTIFACT_PATH" ]]; then
   write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
     || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit 2; }
 fi

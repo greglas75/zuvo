@@ -180,6 +180,74 @@ ZUVO_ADV_SESSION=s-two pc_run "$H11" mock-echo-files a.ts; rc=$?
 assert_exit_code "0" "$rc" "session two reviews the same files: session one's passes do not cap it"
 CLAUDE_CODE_SESSION_ID=s-one pc_run "$H11" mock-echo-files a.ts; rc=$?
 assert_exit_code "7" "$rc" "Claude Code's session id names the same session"
-pc_run "$H11" mock-echo-files a.ts; rc=$?
-assert_exit_code "7" "$rc" "outside any session every session's passes count"
+git -C "$PC_TMP/repo" checkout -q main
+
+# Bug caught (tgm-flux RD-7585, 2026-10-21): a pass run without --artifact counted against the cap but left no
+# proof, so an agent that reviewed three times that way was refused a fourth (exit 7) and held nothing the pre-push
+# gate accepts. A counted pass writes its proof to zuvo/proofs/ itself, and the refusal names the proofs.
+start_test "PC.12 a counted pass without --artifact leaves a proof, and the cap refusal names the proofs"
+H12="$PC_TMP/h12"; mkdir -p "$H12"
+pc_run "$H12" mock-echo-files p.ts; rc=$?
+assert_exit_code "0" "$rc" "pass 1 without --artifact is reviewed"
+pc_proof="$(cut -f7 "$H12/adversarial-passes.tsv" 2>/dev/null | head -n 1)"
+case "$pc_proof" in */repo/zuvo/proofs/auto-main-*.txt) pass "the ledger row records the proof under zuvo/proofs/" ;;
+  *) fail "the ledger row records the proof under zuvo/proofs/" "column 7: '$pc_proof'" ;; esac
+assert_contains "$(cat "$pc_proof" 2>/dev/null)" "REVIEW BY: MOCK-ECHO-FILES" "the proof carries the gate's REVIEW BY: line"
+assert_contains "$(cat "$PC_TMP/err")" "zuvo/proofs/auto-main-" "the run prints where its proof is"
+pc_run "$H12" mock-echo-files p.ts; pc_run "$H12" mock-echo-files p.ts
+pc_run "$H12" mock-echo-files p.ts; rc=$?
+assert_exit_code "7" "$rc" "pass 4 is refused"
+assert_eq "3" "$(grep -c 'zuvo/proofs/auto-main-' "$PC_TMP/err")" "the refusal lists the proof of each of the three passes"
+assert_contains "$(cat "$PC_TMP/err")" "${pc_proof##*/repo/}" "the refusal names pass 1's proof by its repository path"
+# The content-keyed gate matches reviewed_blob= ids: a --files proof without them covers nothing.
+printf 'export const v = 1;\n' > "$PC_TMP/repo/blob.ts"
+(cd "$PC_TMP/repo" && ZUVO_HOME="$H12" ZUVO_ADV_PASS_CAP_TEST=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files \
+  bash "$ADV" --single --mode code --files blob.ts) >/dev/null 2>&1; rc=$?
+assert_exit_code "0" "$rc" "a --files pass without --artifact is reviewed"
+pc_proof="$(awk -F'\t' '$5 == "blob.ts" { print $7 }' "$H12/adversarial-passes.tsv" | head -n 1)"
+assert_contains "$(cat "$pc_proof" 2>/dev/null)" "reviewed_blob=$(git -C "$PC_TMP/repo" hash-object blob.ts)" \
+  "its proof records the reviewed file's blob"
+# Bug caught (adversarial review of this fix): the default proof sits in ARTIFACT_PATH, whose write failure exits 2 —
+# an unwritable zuvo/proofs/ turned a finished review the caller never asked to save into a failed run.
+printf 'not a directory\n' > "$PC_TMP/notadir"
+(cd "$PC_TMP/repo" && pc_diff w.ts | ZUVO_OUTPUT_DIR="$PC_TMP/notadir/out" ZUVO_HOME="$H12" ZUVO_ADV_PASS_CAP_TEST=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$ADV" --single --mode code) > "$PC_TMP/out" 2> "$PC_TMP/err"; rc=$?
+assert_exit_code "0" "$rc" "an unwritable default proof location leaves the review's exit 0"
+assert_contains "$(cat "$PC_TMP/err")" "proof could not be written" "and says the proof is missing"
+# Bug caught: AR_AUTO_PROOF inherited from the environment made an unwritable --artifact the caller asked for a warning.
+(cd "$PC_TMP/repo" && pc_diff w2.ts | AR_AUTO_PROOF=1 ZUVO_HOME="$H12" ZUVO_ADV_PASS_CAP_TEST=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$ADV" --single --mode code --artifact "$PC_TMP/notadir/p.txt") >/dev/null 2>&1; rc=$?
+assert_exit_code "2" "$rc" "an unwritable --artifact still fails the run, whatever the environment says"
+H12b="$PC_TMP/h12b"; mkdir -p "$H12b"
+(cd "$PC_TMP/repo" && pc_big x.ts y.ts z.ts | ZUVO_HOME="$H12b" ZUVO_ADV_PASS_CAP_TEST=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files \
+  bash "$ADV" --single --mode code) >/dev/null 2>&1
+pc_proof="$(cut -f7 "$H12b/adversarial-passes.tsv" 2>/dev/null | sort -u)"
+assert_eq "1" "$(printf '%s\n' "$pc_proof" | grep -c .)" "every part of a chunked pass records the one proof"
+assert_ne "0" "$(grep -c '^REVIEW BY:' "$pc_proof" 2>/dev/null)" "the chunked pass's proof holds the parts' reviews"
+
+# Bug caught (tgm-flux RD-7585): a run with no session id counted every session's passes, so an independent reviewer
+# without one inherited the author's spent cap. An id-less run counts the passes of its own agent process (the
+# nearest ancestor that is an agent CLI), so an agent that drops its session id is still capped.
+start_test "PC.13 an id-less run counts its own agent process's passes, not another agent's"
+git -C "$PC_TMP/repo" checkout -q -b feature/t
+H13="$PC_TMP/h13"; mkdir -p "$H13"
+# One long-lived "agent" process runs passes in turn: "-" = no session id, anything else = that session id.
+cat > "$PC_TMP/agent.sh" <<'AGENT'
+adv="$1" home="$2"; shift 2
+for s in "$@"; do
+  if [ "$s" = - ]; then
+    printf 'diff --git a/t.ts b/t.ts\n@@ -1 +1 @@\n-a\n+b\n' | env -u ZUVO_ADV_SESSION ZUVO_HOME="$home" ZUVO_ADV_PASS_CAP_TEST=1 \
+      ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$adv" --single --mode code >/dev/null 2>&1
+  else
+    printf 'diff --git a/t.ts b/t.ts\n@@ -1 +1 @@\n-a\n+b\n' | ZUVO_ADV_SESSION="$s" ZUVO_HOME="$home" ZUVO_ADV_PASS_CAP_TEST=1 \
+      ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$adv" --single --mode code >/dev/null 2>&1
+  fi
+  printf '%s,' "$?"
+done
+AGENT
+# exec -a: the process is named like the agent CLI it stands for, which is how the driver finds it.
+pc_agent() { local name="$1"; shift; (cd "$PC_TMP/repo" && exec -a "$name" bash "$PC_TMP/agent.sh" "$ADV" "$H13" "$@"); }
+assert_eq "0,0,0,7," "$(pc_agent claude author author author -)" \
+  "the author's fourth pass, its session id dropped, is still refused"
+assert_eq "0," "$(pc_agent codex -)" "an id-less reviewer in another agent process is not capped by the author's passes"
 git -C "$PC_TMP/repo" checkout -q main
