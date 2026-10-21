@@ -214,6 +214,10 @@ printf 'not a directory\n' > "$PC_TMP/notadir"
   ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$ADV" --single --mode code) > "$PC_TMP/out" 2> "$PC_TMP/err"; rc=$?
 assert_exit_code "0" "$rc" "an unwritable default proof location leaves the review's exit 0"
 assert_contains "$(cat "$PC_TMP/err")" "proof could not be written" "and says the proof is missing"
+# Bug caught: AR_AUTO_PROOF inherited from the environment made an unwritable --artifact the caller asked for a warning.
+(cd "$PC_TMP/repo" && pc_diff w2.ts | AR_AUTO_PROOF=1 ZUVO_HOME="$H12" ZUVO_ADV_PASS_CAP_TEST=1 \
+  ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files bash "$ADV" --single --mode code --artifact "$PC_TMP/notadir/p.txt") >/dev/null 2>&1; rc=$?
+assert_exit_code "2" "$rc" "an unwritable --artifact still fails the run, whatever the environment says"
 H12b="$PC_TMP/h12b"; mkdir -p "$H12b"
 (cd "$PC_TMP/repo" && pc_big x.ts y.ts z.ts | ZUVO_HOME="$H12b" ZUVO_ADV_PASS_CAP_TEST=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-echo-files \
   bash "$ADV" --single --mode code) >/dev/null 2>&1

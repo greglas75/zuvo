@@ -372,7 +372,7 @@ setting a NEW id is still a new count — a fourth pass all the same. Only detac
 process (setsid with the parent gone) escapes that — a deliberate evasion, which this cap does not try to
 stop. **Every counted pass leaves a proof:** without `--artifact` the driver writes it to
 `zuvo/proofs/auto-<branch>-<pass id>.txt` (under `ZUVO_OUTPUT_DIR` when set), says so on stderr
-(`PROOF:`), and records it in `~/.zuvo/adversarial-passes.tsv`; the exit-7 refusal lists the proofs of the
+(`PROOF:`; a location it cannot write is a `WARN`, not a failed review — then pass `--artifact`), and records it in `~/.zuvo/adversarial-passes.tsv`; the exit-7 refusal lists the proofs of the
 passes that spent the cap, ready to cite as `adversarial:` in `memory/reviews/<base7>..<head7>-<slug>.md`. A detached HEAD has no branch: its "branch" is `ZUVO_ADV_PASS_KEY` when
 set, else the change's first commit past the merge-base with origin's default branch (fix commits keep
 it, an unrelated detached change does not share it). Every pass prints `adversarial pass N of 3` on stderr and records

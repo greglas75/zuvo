@@ -930,7 +930,7 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   # A default proof (AR_AUTO_PROOF, no --artifact) that cannot be written warns: the parts' reviews still stand.
   if [[ -n "$ARTIFACT_PATH" ]] && ! _ck_merge_artifacts; then
     [[ "${AR_AUTO_PROOF:-}" == 1 ]] || exit 2
-    echo "  WARN: this pass's proof could not be written to $ARTIFACT_PATH — the reviews stand, but no proof of them exists; pass --artifact <writable path> next time" >&2
+    echo "  WARN: this pass's proof could not be merged into $ARTIFACT_PATH (unwritable, or a part left no artifact) — the parts' reviews stand, but no proof of them exists there" >&2
   fi
   # The aggregate: a part that FAILED (1, 2, 3, 124, 125 — no review of it at all) outranks a part reviewed
   # with its input cut (4): "completed over truncated input" must not hide a failed part.

@@ -877,6 +877,9 @@ _ar_detached_key() {
 # pass counts ONCE: the parent checks, and every part records under the parent's ZUVO_ADV_PASS_ID.
 ar_check_pass_cap() {
 PASS_RECORD=""
+# Set here and nowhere else: a value inherited from the caller's environment would let an unwritable --artifact
+# the caller DID ask for pass as a mere warning.
+AR_AUTO_PROOF=0
 [[ "$DRY_RUN" != true && "$DOCTOR" != true && "$LIST_PROVIDERS" != true ]] || return 0
 _ar_pass_counted_mode || return 0
 # A test-harness run (mock providers, fake lane binaries) re-reviews the same fixture files on purpose, so it
