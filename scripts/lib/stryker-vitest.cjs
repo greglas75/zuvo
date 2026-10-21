@@ -10,6 +10,7 @@ const CONFIG_NAMES = ['vitest.config.ts', 'vitest.config.mts', 'vitest.config.ct
 const WORKSPACE_FILES = ['vitest.workspace.ts', 'vitest.workspace.mts', 'vitest.workspace.js', 'vitest.workspace.json'];
 const VITEST_DEFAULT_INCLUDE = '**/*.{test,spec}.?(c|m)[jt]s?(x)';
 const TEST_EXT = '\\.[cm]?[jt]sx?$';
+const MAX_COVERING_TESTS = 40;
 
 const P = path.posix;
 const exists = (repo, rel) => fs.existsSync(path.join(repo, rel));
@@ -107,16 +108,85 @@ function testObjects(src) {
   return objects;
 }
 
-// True when the config fans out to several projects: `test.projects` / `test.workspace` in ANY test
-// object, or a `vitest.workspace.*` file beside it. Such a config runs every project, whatever
-// `include` says.
+// True when the config declares projects in any form: `test.projects` / `test.workspace` in ANY test
+// object, or a `vitest.workspace.*` file beside it.
 function hasProjects(repo, relConfig) {
-  if (WORKSPACE_FILES.some((n) => exists(repo, P.join(P.dirname(relConfig), n)))) return true;
-  return testObjects(fs.readFileSync(path.join(repo, relConfig), 'utf8')).some((k) => k.projects || k.workspace);
+  return projectsForm(repo, relConfig).kind !== 'none';
+}
+
+// The entries of a literal array, as source slices, or null when the text is not one.
+function literalArray(text) {
+  const t = text.trim();
+  if (t[0] !== '[' || t[t.length - 1] !== ']') return null;
+  const body = t.slice(1, -1);
+  const entries = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    else if (c === ',' && depth === 0) { entries.push(body.slice(start, i)); start = i + 1; }
+  }
+  entries.push(body.slice(start));
+  return entries.map((e) => e.trim()).filter(Boolean);
+}
+
+const isProjectObject = (e) => /^\{[\s\S]*\}$/.test(e) || /^[\w$.]+\s*\(\s*\{[\s\S]*\}\s*\)$/.test(e);
+
+// How a config fans out to projects:
+//   none   — no test.projects/test.workspace anywhere and no vitest.workspace.* beside it.
+//   inline — test.projects/test.workspace is a literal array of project OBJECTS defined in this same
+//            file (`projects: [{ extends: true, test: { … } }, …]`). Dropping the key keeps every
+//            test in this config's own tree; the project files of the repo's own Stryker configs are
+//            dropped the same way. `why` names the key.
+//   opaque — a variable/shorthand/spread, entries naming OTHER project files or globs
+//            (`projects: ['apps/*']`), or a vitest.workspace.* file: the real project configs live
+//            elsewhere and no include written here can narrow them.
+function projectsForm(repo, relConfig) {
+  const beside = WORKSPACE_FILES.find((n) => exists(repo, P.join(P.dirname(relConfig), n)));
+  if (beside) return { kind: 'opaque', why: `a ${beside} file sits beside it` };
+  const src = fs.readFileSync(path.join(repo, relConfig), 'utf8');
+  const b = blank(src);
+  // EVERY declaration is read, not the first one: a second `projects`/`workspace` key (another test
+  // object, a different spelling) can still fan out after an inline array looked safe.
+  let inline = null;
+  for (const keys of testObjects(src)) {
+    for (const key of ['projects', 'workspace']) {
+      const span = keys[key];
+      if (!span) continue;
+      if (span === 'shorthand') return { kind: 'opaque', why: `test.${key} is written shorthand` };
+      const entries = literalArray(b.slice(span[0], span[1]));
+      if (!entries) return { kind: 'opaque', why: `test.${key} is not a literal array` };
+      if (!entries.length) continue;   // `projects: []` fans out to nothing
+      if (entries.every(isProjectObject)) {
+        inline = { kind: 'inline', key: inline ? inline.key : key, count: (inline ? inline.count : 0) + entries.length };
+        continue;
+      }
+      if (entries.some((e) => e.startsWith('...'))) return { kind: 'opaque', why: `test.${key} holds a spread` };
+      return { kind: 'opaque', why: `test.${key} names project files or variables, not inline project objects` };
+    }
+  }
+  return inline || { kind: 'none' };
 }
 
 // `test: shared`, `defineConfig({ test })`: the test options live elsewhere and cannot be read here.
 const opaqueTest = (src) => /(?:^|[^\w$.])(?:test\s*:\s*[^\s{]|test\s*[,}])/.test(blank(src));
+
+// The config's own `test.root`/`test.dir` when it is a literal string (the value is relative to the
+// config's directory): the directory its setupFiles, include and globals are written against. A root
+// built from a variable cannot be read here; the generated config then keeps it at run time.
+function parseTestRoot(src) {
+  if (opaqueTest(src)) return null;
+  const objects = testObjects(src);
+  if (objects.length !== 1) return null;
+  const span = objects[0].root || objects[0].dir;
+  if (!span || span === 'shorthand') return null;
+  const text = src.slice(span[0], span[1]).trim();
+  if (!/^(['"`])([^'"`\r\n]*)\1$/.test(text)) return null;
+  const value = text.slice(1, -1);
+  return value ? value : null;
+}
 
 // The config's own `test.include`: {kind:'list', globs} when it is a literal array of strings,
 // {kind:'default'} when the config demonstrably sets none, {kind:'unknown'} when it cannot be read
@@ -151,17 +221,80 @@ function parseTestInclude(src, key = 'include') {
   return { kind: 'list', globs };
 }
 
-// foo.test.*, foo.spec.* beside the source, and __tests__/foo.* (with or without .test/.spec).
-function colocatedTests(repo, relFile) {
+const listDir = (repo, d) => (exists(repo, d) ? fs.readdirSync(path.join(repo, d)) : []);
+const stripExt = (rel) => rel.replace(/\.[^./]+$/, '');
+// A file Vitest would collect as a test from its NAME alone (`.test.`/`.spec.` before the extension).
+const TEST_NAME = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+// The module specifiers a file imports, as written: `from '…'`, `import '…'`, `require('…')`,
+// `import('…')`, `vi.mock('…')`/`vi.doMock('…')`. Every one of them makes Vitest load the module
+// (mocked or not), which is all "covering" means here. Read through blank(): a comment, a prose
+// string or a regex holding `import './foo'` is not an import, and blank() keeps every quote at its
+// own offset while space-filling their contents — so the specifier itself is sliced from the source.
+function importSpecifiers(src) {
+  const b = blank(src);
+  const re = /(?:^|[^\w$.])(?:import|require|from|(?:vi|vitest)\.(?:mock|doMock))\s*\(?\s*(['"])/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(b))) {
+    const q = m.index + m[0].length - 1;
+    const end = b.indexOf(b[q], q + 1);
+    if (end < 0) break;
+    out.push(src.slice(q + 1, end).replace(/\\(.)/g, '$1'));
+    re.lastIndex = end + 1;
+  }
+  return out;
+}
+
+// The stem of every path, extension dropped, so `./foo`, `./foo.js` (a TS ESM specifier) and
+// `./foo.ts` all name the same module. A directory specifier resolves to its index file.
+const moduleStem = (rel) => stripExt(P.normalize(rel)).replace(/\/index$/, '');
+
+// Spec files in the source's own directory and its __tests__ that IMPORT the source. A sibling named
+// `foo.checked-dsl.spec.ts` is found by name (colocatedTests); an importer named after something else
+// (`compiler-variants.spec.ts` importing `./simple-script-compiler`) only by this scan. Relative
+// specifiers only: resolving an alias (`@/…`) would mean reading the config's alias table, and a wrong
+// resolution here would run an unrelated test.
+function importingTests(repo, relFile, warn) {
+  const dir = P.dirname(relFile);
+  const target = moduleStem(relFile);
+  const hit = [];
+  for (const d of [dir, P.join(dir, '__tests__')]) {
+    let entries;
+    try { entries = fs.readdirSync(path.join(repo, d), { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (!e.isFile() || !TEST_NAME.test(e.name)) continue;
+      const t = P.join(d, e.name);
+      let src;
+      // A test that cannot be read is NOT silently treated as unrelated: the printed covering list
+      // would then claim a completeness it never checked.
+      try { src = fs.readFileSync(path.join(repo, t), 'utf8'); } catch (err) {
+        if (warn) warn(`cannot read ${t} (${(err && err.code) || err}): it was not checked for an import of ${relFile}`);
+        continue;
+      }
+      const imports = importSpecifiers(src).some((s) =>
+        s.startsWith('.') && moduleStem(P.join(P.dirname(t), s)) === target);
+      if (imports) hit.push(t);
+    }
+  }
+  return hit.sort();
+}
+
+// foo.test.* / foo.spec.* and foo.<variant>.test|spec.* beside the source, __tests__/foo[.<variant>]
+// [.test|.spec].* (plus a bare __tests__/foo.* helper, which matchesOwnInclude then filters), and any
+// spec/test file beside them that imports the source. The bare stem was the whole rule until
+// 2026-10-20: a module with five sibling specs (simple-script-compiler.{,checked-dsl,legacy,
+// rule-shape,page-target}.spec.ts) had one selected and reported 42 % from tests that never ran.
+function colocatedTests(repo, relFile, warn) {
   const dir = P.dirname(relFile);
   const stem = escapeRe(P.basename(relFile).replace(/\.[^.]+$/, ''));
-  const beside = new RegExp(`^${stem}\\.(test|spec)${TEST_EXT}`);
-  const nested = new RegExp(`^${stem}(\\.(test|spec))?${TEST_EXT}`);
-  const list = (d) => (exists(repo, d) ? fs.readdirSync(path.join(repo, d)) : []);
-  return [
-    ...list(dir).filter((n) => beside.test(n)).map((n) => P.join(dir, n)),
-    ...list(P.join(dir, '__tests__')).filter((n) => nested.test(n)).map((n) => P.join(dir, '__tests__', n)),
-  ].sort();
+  const beside = new RegExp(`^${stem}\\.(?:.+\\.)?(?:test|spec)${TEST_EXT}`);
+  const nested = new RegExp(`^${stem}(?:\\.(?:.+\\.)?(?:test|spec))?${TEST_EXT}`);
+  const byName = [
+    ...listDir(repo, dir).filter((n) => beside.test(n)).map((n) => P.join(dir, n)),
+    ...listDir(repo, P.join(dir, '__tests__')).filter((n) => nested.test(n)).map((n) => P.join(dir, '__tests__', n)),
+  ];
+  return [...new Set([...byName, ...importingTests(repo, relFile, warn)])].sort();
 }
 
 // Nearest package.json directory: the workspace a file belongs to when its config is an aggregator.
@@ -185,30 +318,47 @@ function resolve({ repo, files, override, tests }) {
   if ([...files, ...tests, override || '.'].some(outsideRepo)) return { error: 'a scoped file, test or --vitest-config resolves outside the repo' };
   if (override && !exists(repo, override)) return { error: `--vitest-config: no such file: ${override}` };
   let config = override || null;
-  if (override && hasProjects(repo, override)) {
-    return { error: `--vitest-config ${override} declares test.projects/workspace: every project would run and no include can narrow it — pass a workspace config` };
+  let dropped = null;
+  if (override) {
+    const form = projectsForm(repo, override);
+    if (form.kind === 'opaque') {
+      return { error: `--vitest-config ${override} fans out to projects it does not define (${form.why}): every project would run and no include can narrow it — pass the workspace's own config` };
+    }
+    if (form.kind === 'inline') dropped = { config: override, ...form };
   }
   if (!override) {
     const byConfig = group(files, (f) => findNearestConfig(repo, f) || 'none');
     if (byConfig.length > 1) return { groups: byConfig };
     config = byConfig[0].key === 'none' ? null : byConfig[0].key;
-    if (config && hasProjects(repo, config)) {
-      return { aggregator: config,
-        groups: group(files, (f) => workspaceDir(repo, f)) };
+    if (config) {
+      const form = projectsForm(repo, config);
+      if (form.kind === 'opaque') {
+        return { aggregator: config, why: form.why, groups: group(files, (f) => workspaceDir(repo, f)) };
+      }
+      if (form.kind === 'inline') dropped = { config, ...form };
     }
   }
-  const root = config ? P.dirname(config) : '.';
-  const rel = (f) => (root === '.' ? f : P.relative(root, f));
   const src = config ? fs.readFileSync(path.join(repo, config), 'utf8') : '';
+  // The directory test paths are relative to: the config's own test.root/test.dir when it declares a
+  // literal one, else the config's directory.
+  const declaredRoot = config ? parseTestRoot(src) : null;
+  const root = declaredRoot ? P.normalize(P.join(P.dirname(config), declaredRoot)) : config ? P.dirname(config) : '.';
+  const rel = (f) => (root === '.' ? f : P.relative(root, f));
   const own = config ? parseTestInclude(src) : { kind: 'default' };
   const ownExclude = config ? parseTestInclude(src, 'exclude') : { kind: 'default' };
   // `!pattern` (a re-include) is ignored: a re-included test may be dropped, never wrongly added.
   own.exclude = ownExclude.kind === 'list' ? ownExclude.globs.filter((g) => !g.startsWith('!')) : [];
   const warnings = [];
+  // The keys are dropped by renderVitestConfig; say what that costs, loudly, BEFORE the run.
+  if (dropped) {
+    warnings.push(`${dropped.config} declares test.${dropped.key} (${dropped.count} inline project object(s)): the scoped run ` +
+      'drops them, so their project-level test options (environment, setupFiles, include, exclude) do not apply — ' +
+      `only ${dropped.config}'s own test options do`);
+  }
   if (config && ownExclude.kind === 'unknown') {
     warnings.push(`${config} test.exclude cannot be read: co-located tests are not filtered by it`);
   }
-  if (config && !opaqueTest(src) && /mergeConfig|extends|\.\.\.\s*[\w$]+\s*[,}]/.test(blank(src))) {
+  if (config && !dropped && !opaqueTest(src) && /mergeConfig|extends|\.\.\.\s*[\w$]+\s*[,}]/.test(blank(src))) {
     warnings.push(`${config} spreads or merges another config: whether it is multi-project cannot be read`);
   }
   if (config && opaqueTest(src)) {
@@ -216,15 +366,18 @@ function resolve({ repo, files, override, tests }) {
   }
   const setsRoot = config && testObjects(src).some((k) => k.root || k.dir);
   if (setsRoot || (config && /(?:^|[^\w$.])root\s*:/.test(blank(src)))) {
-    warnings.push(`${config} sets a root/test.root/test.dir; the scoped run roots it at ${root} (and test.dir too when it narrows the include)`);
+    warnings.push(`${config} sets a root/test.root/test.dir: the scoped run keeps it (its setupFiles and include ` +
+      'are written against it) and states the tests in paths relative to it');
   }
-  const out = { config: config || 'none', root, warnings };
+  const out = { config: config || 'none', root, warnings, dropped };
   const away = files.filter((f) => outsideRepo(rel(f)));
   if (away.length) warnings.push(`scoped file(s) outside vitest_root ${root}: ${away.join(', ')} — only tests under ${root} can run`);
   if (tests.length) {
     const outside = tests.filter((t) => outsideRepo(rel(t)));
     if (outside.length) return { error: `explicit test(s) outside vitest_root ${root}: ${outside.join(', ')}` };
-    return { ...out, source: 'explicit', include: tests.map((t) => escapeGlob(rel(t))) };
+    // `covering` is the same list as PLAIN repo-relative paths, for a test-runner command line.
+    return { ...out, source: 'explicit', include: tests.map((t) => escapeGlob(rel(t))), covering: [...tests],
+      note: `covering tests (explicit, ${tests.length}): ${tests.join(', ')}` };
   }
   if (typeof P.matchesGlob !== 'function') {
     warnings.push('this node has no path.matchesGlob: co-located tests are not filtered by the workspace include');
@@ -232,14 +385,28 @@ function resolve({ repo, files, override, tests }) {
   const missing = [];
   const found = new Set();
   for (const f of files) {
-    const hits = colocatedTests(repo, f).filter((t) => !outsideRepo(rel(t)) && matchesOwnInclude(own, rel(t)));
+    const hits = colocatedTests(repo, f, (m) => warnings.push(m))
+      .filter((t) => !outsideRepo(rel(t)) && matchesOwnInclude(own, rel(t)));
     if (!hits.length) missing.push(f);
     for (const t of hits) found.add(t);
   }
-  if (!missing.length) return { ...out, source: 'colocated', include: [...found].sort().map((t) => escapeGlob(rel(t))) };
+  if (!missing.length) {
+    let covering = [...found].sort();
+    // A barrel file can list half a workspace; a stated cap keeps the dry run finite. A truncated set
+    // is never silent: the warning names every dropped test, and saying so out loud stops the score
+    // from being read as the module's — it covers the selected subset only.
+    if (covering.length > MAX_COVERING_TESTS) {
+      warnings.push(`covering tests capped at ${MAX_COVERING_TESTS} of ${covering.length}: the score covers only the ` +
+        `selected subset, because ${covering.slice(MAX_COVERING_TESTS).join(', ')} did not fit — narrow the scope or ` +
+        'pass --test-file for the tests that matter');
+      covering = covering.slice(0, MAX_COVERING_TESTS);
+    }
+    return { ...out, source: 'colocated', include: covering.map((t) => escapeGlob(rel(t))), covering,
+      note: `covering tests (${covering.length}): ${covering.join(', ')}` };
+  }
   warnings.push(`covering_tests=workspace-include: no co-located test inside vitest_root ${root} for ${missing.join(', ')}`);
   const printed = own.kind === 'list' && own.globs.length ? own.globs : own.kind === 'default' ? [VITEST_DEFAULT_INCLUDE] : null;
-  return { ...out, source: 'workspace-include', include: null, printed, missing };
+  return { ...out, source: 'workspace-include', include: null, printed, missing, covering: null };
 }
 
 const group = (items, keyOf) => {
@@ -266,26 +433,124 @@ function matchesOwnInclude(own, relTest) {
 // location: Stryker copies the repo into a sandbox and runs there, and an absolute path would import
 // the unmutated originals (every mutant "survives"). Spread, never vite's mergeConfig: mergeConfig
 // concatenates arrays, which would ADD the covering tests to the workspace include, not replace it.
-function renderVitestConfig({ config, root, include }) {
+// `tests` (plain paths relative to `root`, NOT to the repo: the caller re-bases them) is the
+// relocation-safe form — the generated config resolves them against its own location plus `root`, then
+// against the root the BASE config declares at load. `include` (globs relative to `root`) stays for
+// the caller that has no plain paths (workspace-include). Passing repo-relative paths here resolves
+// them under the root twice (apps/runner/apps/runner/src/...).
+function renderVitestConfig({ config, root, include, tests }) {
   const imp = config && config !== 'none' ? `import base from ${JSON.stringify(`./${config}`)};\n` : 'const base = {};\n';
   return '// Generated by zuvo scripts/stryker-scoped-config.sh for ONE scoped Stryker run - do not commit.\n' +
     imp +
     "import path from 'node:path';\n" +
     "import { fileURLToPath } from 'node:url';\n" +
-    `const root = path.resolve(fileURLToPath(new URL('.', import.meta.url)), ${JSON.stringify(root)});\n` +
+    "const here = path.resolve(fileURLToPath(new URL('.', import.meta.url)));\n" +
+    `const scopeDir = path.resolve(here, ${JSON.stringify(root)});\n` +
+    `const baseDir = ${config && config !== 'none' ? `path.dirname(path.resolve(here, ${JSON.stringify(config)}))` : 'here'};\n` +
+    `const tests = ${JSON.stringify(tests || [])};\n` +
     `const include = ${JSON.stringify(include)};\n` +
+    "const esc = (p) => p.replace(/[*?[\\]{}()!+@|\\\\]/g, '\\\\$&');\n" +
     'export default async (env) => {\n' +
     "  const b = (typeof base === 'function' ? await base(env) : await base) ?? {};\n" +
     // Destructured away, not set to undefined: Vitest 4 rejects a present `test.workspace` key at all.
     '  const { projects, workspace, ...narrow } = b.test ?? {};\n' +
-    '  const t = b.test ?? {};\n' +
+    // A base that roots itself KEEPS that root: its setupFiles/include/globals are written against it,
+    // and a relative root is relative to the BASE file, not to this generated one. Overriding it (the
+    // first version always did) resolved apps/runner's `setupFiles: ['./test-setup.ts']` against
+    // apps/runner instead of its own test.root src/ — the initial run died on a missing module.
+    "  const declared = typeof narrow.root === 'string' ? narrow.root : typeof narrow.dir === 'string' ? narrow.dir : null;\n" +
+    '  const baseRoot = declared ? path.resolve(baseDir, declared) : scopeDir;\n' +
+    // A test the base's own root cannot reach is a scoper bug, not something to paper over: an
+    // absolute include would make Stryker's sandbox collect the UNMUTATED original (every mutant
+    // survives), so the config refuses to load and the run fails instead.
+    "  const rel = (p) => { const a = path.resolve(scopeDir, p); const r = path.relative(baseRoot, a);\n" +
+    // `..` alone or a `..<sep>` prefix is an escape; a file called `..specs/x.test.ts` is not.
+    "    if (!r || r === '..' || r.startsWith('..' + path.sep) || path.isAbsolute(r)) throw new Error('zuvo: covering test ' + p + ' is outside the base config test.root ' + baseRoot);\n" +
+    '    return r; };\n' +
+    '  const narrowed = tests.length ? tests.map(rel).map(esc) : include;\n' +
     // Narrowing clears exclude (the include lists exact files) and any projects/workspace a base
     // brought in at runtime that the static check could not see: those would run every project.
-    '  return { ...b, root, test: include ? { ...narrow, root, dir: root, include, exclude: [] } : { ...t, root } };\n' +
+    '  return { ...b, root: baseRoot, test: narrowed ? { ...narrow, root: baseRoot, dir: baseRoot, include: narrowed, exclude: [] } : { ...narrow, root: baseRoot } };\n' +
     '};\n';
 }
 
+// ── the vitest-runner's per-test filter ────────────────────────────────────────────────────────
+// Stryker's vitest-runner narrows a mutant's run to its covering tests by building a testNamePattern
+// from the test names `collectTestName` joins with its own separator; Vitest evaluates that pattern
+// against a full name built by `createTaskName` with ITS separator. Equal → per-test filtering works.
+// Different → every test is skipped, each mutant reports "Ran 0.00 tests per mutant" and is marked
+// SURVIVED (2026-10-20: vitest 5.0.5 joins with " > ", @stryker-mutator/vitest-runner 10.0.0 with
+// " ": 168 survivors on a scope whose control mutant a hand-applied edit killed).
+function packageRoot(spec, repo) {
+  let entry;
+  try { entry = require.resolve(spec, { paths: [repo] }); } catch { return null; }
+  let dir = path.dirname(entry);
+  for (;;) {
+    try {
+      if (JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).name === spec) return dir;
+    } catch { /* no package.json here: keep walking up */ }
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+const isJs = (name) => /\.(?:js|mjs|cjs)$/.test(name) && !/\.d\.[cm]?[jt]s$/.test(name);
+
+// Sorted: readdir order is filesystem-dependent, and the scan below must name the same file — and so
+// the same separator — on every machine and for every run.
+function firstMatch(dir, re, depth = 0) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)); } catch { return null; }
+  for (const e of entries) {
+    if (!e.isFile() || !isJs(e.name)) continue;
+    const m = re.exec(fs.readFileSync(path.join(dir, e.name), 'utf8'));
+    if (m) return m;
+  }
+  if (depth >= 3) return null;
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const m = firstMatch(path.join(dir, e.name), re, depth + 1);
+    if (m) return m;
+  }
+  return null;
+}
+
+const readKnownOrScan = (root, rels, re) => {
+  for (const r of rels) {
+    try { const m = re.exec(fs.readFileSync(path.join(root, r), 'utf8')); if (m) return m; } catch { /* absent: scan */ }
+  }
+  return firstMatch(root, re);
+};
+
+// Do the installed vitest and vitest-runner agree on how a test's full name is built?
+// {ok:true} · {ok:false, unknown:false, reason} a MEASURED mismatch · {ok:false, unknown:true, reason}
+// when it cannot be checked (nothing installed) — the caller keeps the plugin and relies on the
+// zero-tests guard rather than guessing.
+function vitestRunnerVerdict(repo) {
+  const vRoot = packageRoot('vitest', repo);
+  const rRoot = packageRoot('@stryker-mutator/vitest-runner', repo);
+  const missing = !vRoot ? 'vitest' : !rRoot ? '@stryker-mutator/vitest-runner' : null;
+  if (missing) return { ok: false, unknown: true, reason: `cannot resolve ${missing} from the repo` };
+  const v = readKnownOrScan(vRoot, ['dist/task-utils.js', 'dist/task-utils.mjs'],
+    /function createTaskName\([^)]*separator\s*=\s*(['"`])([^'"`]*)\1/);
+  // The window is generous (a minified or bundled build can put the join far from the signature) but
+  // still bound to collectTestName: an unrelated `.join(' ')` elsewhere in the bundle must not decide it.
+  const r = readKnownOrScan(rRoot, ['dist/src/test-helpers.js', 'dist/test-helpers.js', 'dist/src/stryker-setup.js'],
+    /function collectTestName\([\s\S]{0,4000}?return\s[\w$.]+\.join\((['"`])([^'"`]*)\1\)/);
+  if (!v) return { ok: false, unknown: true, reason: 'cannot read the suite-name separator from the installed vitest' };
+  if (!r) return { ok: false, unknown: true, reason: 'cannot read the suite-name separator from the installed @stryker-mutator/vitest-runner' };
+  const version = (root) => { try { return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; } catch { return '?'; } };
+  if (v[2] === r[2]) {
+    return { ok: true, reason: `vitest ${version(vRoot)} and @stryker-mutator/vitest-runner ${version(rRoot)} both join suite names with ${JSON.stringify(v[2])}` };
+  }
+  return { ok: false, unknown: false,
+    reason: `vitest ${version(vRoot)} builds a test's full name with ${JSON.stringify(v[2])} but @stryker-mutator/vitest-runner ` +
+      `${version(rRoot)} builds its per-test filter with ${JSON.stringify(r[2])}: that filter matches no test, so every mutant ` +
+      'runs 0 tests and is reported SURVIVED' };
+}
+
 module.exports = {
-  CONFIG_NAMES, VITEST_DEFAULT_INCLUDE, escapeGlob, findNearestConfig, hasProjects, parseTestInclude,
-  colocatedTests, workspaceDir, resolveVitest, renderVitestConfig,
+  CONFIG_NAMES, VITEST_DEFAULT_INCLUDE, escapeGlob, findNearestConfig, hasProjects, projectsForm, parseTestInclude,
+  colocatedTests, importingTests, workspaceDir, resolveVitest, renderVitestConfig, vitestRunnerVerdict,
 };

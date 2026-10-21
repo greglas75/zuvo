@@ -70,27 +70,58 @@
 # config.*, and anything under __tests__ __mocks__ __fixtures__ test tests e2e fixtures node_modules
 # dist coverage .stryker-tmp*. Deleted files are never mutated.
 #
-# Output — KEY=VALUE lines on stdout: config_path, report_path, temp_dir, test_runner,
-# coverage_analysis, ignore_static, scope_mode (changed-lines|whole-files), diff_base (<ref>@<sha7>|
-# none), file_count, mutate_count (entries), mutated_lines, changed_lines (<n>|unknown),
-# dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged | not-source |
-# glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
+# Output — KEY=VALUE lines on stdout: config_path, report_path, temp_dir, test_runner (the runner the
+# config actually runs with), test_runner_reason, coverage_analysis, ignore_static, guard_module
+# (./<file> when the zero-tests guard is wired, else none), scope_mode (changed-lines|whole-files),
+# diff_base (<ref>@<sha7>|none), file_count, mutate_count (entries), mutated_lines, changed_lines
+# (<n>|unknown), dropped_count, one dropped_file=<reason>:<path> per file left out (reason: unchanged |
+# not-source | glob-path); for the vitest runner vitest_config (repo-relative, or none), vitest_root,
 # vitest_include_source (explicit|colocated|workspace-include), vitest_include_count (<n>|unknown)
-# and one vitest_include=<glob> per glob, Vitest-root-relative; in_place (true|false) and
-# in_place_reason (--in-place | typescript <version> has no parseConfigFileTextToJson | none); then run_command, which runs Stryker
-# under stryker-run-watchdog.sh (exit 124 = no progress for --no-progress-timeout s). Plus ONE summary
-# line on stderr that repeats the vitest_* values.
+# and one vitest_include=<glob> per glob, Vitest-root-relative; one vitest_covering=<path> per covering
+# test as a PLAIN repo-relative path (what the command runner passes to Vitest);
+# vitest_projects_dropped=<config>:<key>:<n> when inline test.projects are dropped; in_place
+# (true|false) and in_place_reason (--in-place | typescript <version> has no parseConfigFileTextToJson
+# | none | deferred to the preflight …); preflight_module (./<file> | none); then run_command, which
+# runs Stryker under stryker-run-watchdog.sh (exit 124 = no progress for --no-progress-timeout s,
+# 126 = the preflight refused the run — any non-zero preflight exit becomes 126 at the watchdog).
+# Plus ONE summary line on stderr that repeats the vitest_* values.
+#
+# Preflight (vitest, and whenever TypeScript is declared but not installed where the scoper runs): a
+# generated node script run by the watchdog immediately before Stryker, in the repo. A worktree has no
+# node_modules — the farm installs them AFTER the scoper ran — so every decision that depends on the
+# installed packages is made there, against the packages the run really uses:
+#   · vitest-runner vs vitest test-name separator (root cause of "every mutant SURVIVED": the runner's
+#     per-test filter matched nothing) -> mismatch rewrites the config to testRunner "command" with the
+#     project's own `npx vitest run`.
+#   · TypeScript 7, whose missing parseConfigFileTextToJson kills Stryker's sandbox tsconfig -> in-place.
+#   · a command run is first proven to execute >0 tests (0 tests = every mutant "KILLED"), bounded by
+#     the same idle timeout the run itself uses; a refusal exits non-zero (the watchdog reports 126).
 #
 # Vitest: the config nearest each scoped file (or --vitest-config); covering tests = --test-file/
-# --tests-from, else co-located foo.test|spec.* / __tests__/foo.*, else the config's own include.
+# --tests-from, else the co-located set (foo.test|spec.*, foo.<variant>.test|spec.*,
+# __tests__/foo[.<variant>][.test|.spec].*, and any test beside them importing the file — capped at
+# 40, the chosen list printed on stderr), else the config's own include.
+#   Inline projects — `test.projects: [{ extends: true, test: { … } }, …]`, objects defined in the
+#   config itself — are DROPPED for the scoped run (their project-level options stop applying; this
+#   is what the repo's own Stryker adapters do). A config whose projects live elsewhere (glob/string
+#   entries, a variable/shorthand/spread, a vitest.workspace.* file) is still refused, exit 5.
+#   The vitest-runner is used only when its per-test filter can match the installed Vitest's test
+#   names (it joins suite names with its own separator, Vitest with `createTaskName`'s). A measured
+#   mismatch falls back to testRunner "command" with `npx vitest run --config <generated config>`
+#   and coverageAnalysis off, and says so (test_runner_reason). When that cannot be verified (the usual
+#   case: the scoper runs in a worktree without node_modules), the generated preflight decides it at run
+#   time and rewrites the config the same way. Either way the run also carries a generated reporter
+#   (guard_module) that fails it — non-zero, naming the mutants — when any Killed/Survived mutant ran
+#   0 tests: a config that silently measures nothing is never a success.
 #
 # Exit codes: 0 ok · 1 --vitest-config does not exist · 2 usage error · 3 no such file, a path
 #             outside --repo, or nothing left to mutate · 4 cannot compute the diff (not a git work
 #             tree, no base found) · 5 no single Vitest config fits the scope: the files belong to
 #             2+ configs (one `vitest_group=<config|none> -> <file>,<file>` line per config), or only
-#             to a multi-project config — test.projects/test.workspace or a vitest.workspace.* — (one
-#             `vitest_aggregator=<config>` line, then one `vitest_group=<workspace dir> -> <files>` per
-#             workspace). Nothing is written.
+#             to a config whose projects live outside it — test.projects/test.workspace naming other
+#             project files, a variable or a vitest.workspace.* file (one `vitest_aggregator=<config>`
+#             line, then one `vitest_group=<workspace dir> -> <files>` per workspace). Nothing is
+#             written. An inline `test.projects: [{…}]` is NOT this case: it is narrowed (above).
 set -uo pipefail
 
 REPO=""
@@ -180,9 +211,6 @@ if [ -z "$COVERAGE" ]; then
   if [ "$INCLUDE_STATIC" = 1 ]; then COVERAGE="off"; else COVERAGE="perTest"; fi
 fi
 case "$COVERAGE" in off|all|perTest) ;; *) die "--coverage must be off|all|perTest" ;; esac
-if [ "$INCLUDE_STATIC" = 0 ] && [ "$COVERAGE" != "perTest" ]; then
-  die "--coverage $COVERAGE cannot be combined with ignoreStatic (the default): Stryker refuses to start unless coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage $COVERAGE."
-fi
 [[ "$CONCURRENCY" =~ ^[0-9]+$ ]] || die "--concurrency must be an integer"
 [[ "$TIMEOUT_MS" =~ ^[0-9]{1,9}$ ]] || die "--timeout-ms must be an integer (at most 9 digits)"
 [[ "$IDLE_TIMEOUT" =~ ^[1-9][0-9]{0,8}$ ]] || die "--no-progress-timeout must be an integer >= 1 (seconds)"
@@ -227,6 +255,11 @@ detect_runner() {
   echo "command"
 }
 TEST_RUNNER="$(detect_runner)"
+# The vitest runner is decided later: a vitest-runner that cannot filter per test falls back to the
+# command runner, which forces `off` + no ignoreStatic. That pairing is checked in the node step.
+if [ "$INCLUDE_STATIC" = 0 ] && [ "$COVERAGE" != "perTest" ] && [ "$TEST_RUNNER" != vitest ]; then
+  die "--coverage $COVERAGE cannot be combined with ignoreStatic (the default): Stryker refuses to start unless coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage $COVERAGE."
+fi
 if [ "$TEST_RUNNER" != vitest ] && { [ -n "$VITEST_CONFIG" ] || [ "$TESTS_FLAG" = 1 ]; }; then
   die "--vitest-config/--test-file/--tests-from apply to the vitest runner only (runner: $TEST_RUNNER)"
 fi
@@ -323,6 +356,8 @@ const ME = 'stryker-scoped-config';
 
 const say = (msg) => process.stderr.write(`${ME}: ${msg}\n`);
 const fail = (code, msg) => { say(msg); process.exit(code); };
+// run_command and the command runner are handed to a shell: quote a path only when it needs it.
+const shq = (p) => (/^[\w@%+=:,./][\w@%+=:,./-]*$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
 
 // ── git ──
 function git(args, { allowFail = false } = {}) {
@@ -595,26 +630,61 @@ let vlib = null;
 // Beside the Stryker config, in the repo tree: Stryker never copies its tempDirName into the sandbox,
 // so a config under <temp_dir> would not exist where the runner looks for it (RD-121 evidence 1).
 const vitestConfigFile = `.stryker-scoped-${tag}.vitest.config.mts`;
+// A reporter that fails the run when a mutant is decided while running 0 tests (see its source below).
+const guardFile = `.stryker-scoped-${tag}.zero-tests-guard.mjs`;
+// Runs where the tests run (the farm installs node_modules; a worktree the scoper is invoked in has
+// none), so the runner choice and the TypeScript 7 workaround are decided against the INSTALLED packages.
+const preflightFile = `.stryker-scoped-${tag}.preflight.mjs`;
 // In the repo, not the plugin: `rt` ships the repo to the farm, and run_command must work there.
 const watchdogFile = `.stryker-scoped-${tag}.watchdog.sh`;
 // TypeScript 7 (the native port) has no JS `parseConfigFileTextToJson`, and Stryker's sandbox tsconfig
 // preprocessor calls it: every sandboxed run dies before the first mutant. Retros 2026-10-09/10 hand-built
 // the same two-key workaround over and over, so it is detected here — by the function, not by a version.
+// Reports `reason` when the API is provably missing, `unknown` when TypeScript is declared but not
+// installed here (a worktree without node_modules): the run happens where it IS installed, so the
+// generated preflight repeats the check there.
+const declaresTypescript = () => {
+  // A package.json deeper than the cap is not "no TypeScript": the walk never proved it. Truncation is
+  // reported as declared (→ the preflight decides), because a missed declaration ships a sandboxed TS7 run.
+  let truncated = false;
+  const walk = (dir, depth) => {
+    const pj = path.join(dir, 'package.json');
+    if (fs.existsSync(pj)) {
+      try {
+        const p = JSON.parse(fs.readFileSync(pj, 'utf8'));
+        for (const k of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+          if (p[k] && p[k].typescript) return true;
+        }
+      } catch { /* not our JSON to judge */ }
+    }
+    let names;
+    try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+    const subdirs = names.filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules');
+    // Deep enough for apps/<pkg>/ and packages/<group>/<pkg>/ (the nested-workspace monorepos seen so
+    // far): a shallower walk missed a TypeScript declaration and shipped a sandboxed TS7 run.
+    if (depth >= 6) { if (subdirs.length) truncated = true; return false; }
+    return subdirs.some((d) => walk(path.join(dir, d.name), depth + 1));
+  };
+  return walk(repo, 0) || truncated;
+};
 const tsWithoutPreprocessorApi = () => {
   // The TypeScript Stryker itself would import: resolved from where @stryker-mutator/core is installed (a
   // monorepo may hoist a different one than a workspace's own), else from the repo.
   const from = [repo];
   try { from.unshift(path.dirname(require.resolve('@stryker-mutator/core/package.json', { paths: [repo] }))); } catch { /* not installed */ }
   let entry;
-  try { entry = require.resolve('typescript', { paths: from }); } catch { return null; }  // no TypeScript: nothing to break
+  // No TypeScript: nothing to break. Declared but unresolvable: unknown HERE, decided at run time.
+  try { entry = require.resolve('typescript', { paths: from }); } catch { return { reason: null, unknown: declaresTypescript() }; }
   try {
     const ts = require(entry);
-    return typeof ts.parseConfigFileTextToJson === 'function' ? null : `typescript ${ts.version || 'unknown'}`;
+    return { reason: typeof ts.parseConfigFileTextToJson === 'function' ? null : `typescript ${ts.version || 'unknown'}`, unknown: false };
   } catch (e) {
-    return `typescript (unloadable: ${String(e && e.message).split('\n')[0]})`;
+    return { reason: `typescript (unloadable: ${String(e && e.message).split('\n')[0]})`, unknown: false };
   }
 };
-const tsBroken = inPlaceArg === 'off' ? null : tsWithoutPreprocessorApi();
+const tsProbe = inPlaceArg === 'off' ? { reason: null, unknown: false } : tsWithoutPreprocessorApi();
+const tsBroken = tsProbe.reason;
+const tsUnknown = tsProbe.unknown;
 const inPlaceReason = inPlaceArg === 'on' ? '--in-place'
   : tsBroken ? `${tsBroken} has no parseConfigFileTextToJson` : null;
 // The scoped files the watchdog backs up and restores if a killed in-place run leaves them instrumented.
@@ -626,8 +696,8 @@ if (runner === 'vitest') {
   if (r.error) fail(2, r.error);
   if (r.groups) {
     say(r.aggregator
-      ? `${r.aggregator} is a multi-project (test.projects/workspace) config: no include can narrow it. Run one campaign per ` +
-        'workspace below, each with --vitest-config <that workspace\'s config> (or give the workspace its own config).'
+      ? `${r.aggregator} fans out to projects it does not define (${r.why || 'test.projects/workspace'}): no include can narrow it. ` +
+        'Run one campaign per workspace below, each with --vitest-config <that workspace\'s config> (or give the workspace its own config).'
       : `the scoped files belong to ${r.groups.length} different Vitest configs — run one campaign per group:`);
     for (const g of r.groups) say(`  ${g.key} -> ${g.files.join(', ')}`);
     process.stdout.write((r.aggregator ? `vitest_aggregator=${r.aggregator}\n` : '') +
@@ -635,10 +705,53 @@ if (runner === 'vitest') {
     process.exit(5);
   }
   for (const w of r.warnings) say(`WARNING ${w}`);
+  // The tests the run will admit, named before it starts: a missing sibling spec is visible here
+  // instead of only in the score.
+  if (r.note) say(r.note);
   const known = r.include || r.printed;
   const printed = known || [`<inherited from ${r.config}>`];
   vitest = { ...r, printed, count: known ? known.length : 'unknown' };
 }
+
+// The runner the config actually runs with. A vitest-runner whose per-test filter cannot match the
+// installed vitest's test names marks EVERY mutant SURVIVED (vlib.vitestRunnerVerdict): fall back to
+// the project's own Vitest command, and say so — never emit a config that silently runs 0 tests.
+let effectiveRunner = runner;
+let runnerReason = runner === 'vitest' ? '' : `--runner ${runner}`;
+// Decided again at run time, where the packages are installed (the preflight repeats both checks).
+let preflightNeeded = tsUnknown;
+if (runner === 'vitest' && vitest) {
+  const verdict = vlib.vitestRunnerVerdict(repo);
+  runnerReason = verdict.reason;
+  if (verdict.ok) {
+    // The plugin's per-test filter can match; nothing to say.
+  } else if (verdict.unknown) {
+    preflightNeeded = true;
+    say(`WARNING per-test filtering cannot be verified (${verdict.reason}): keeping the vitest runner, and the ` +
+      'zero-tests guard fails the run if any mutant is decided while running 0 tests. The generated preflight ' +
+      'decides it against the installed packages before Stryker starts, so a mismatch still falls back to the command runner.');
+  } else {
+    // The command runner reports pass/fail only, and a command that runs 0 tests reads as every mutant
+    // KILLED: the preflight proves it executes tests before Stryker starts.
+    preflightNeeded = true;
+    effectiveRunner = 'command';
+    say(`test_runner=command: ${verdict.reason}. Running the project's own Vitest command once per mutant instead: ` +
+      'correct but slower (coverageAnalysis off, static mutants not ignored). A newer @stryker-mutator/vitest-runner ' +
+      'that joins suite names the way the installed vitest does restores the plugin runner.');
+  }
+}
+// The command runner reports only pass/fail: per-test coverage is impossible, and Stryker refuses
+// ignoreStatic under anything but perTest, so the pair is forced off/false there.
+const effectiveCoverage = effectiveRunner === 'command' && runner === 'vitest' ? 'off' : coverage;
+const effectiveIgnoreStatic = effectiveRunner === 'command' && runner === 'vitest' ? false : !includeStatic;
+if (runner === 'vitest' && effectiveRunner === 'vitest' && !includeStatic && coverage !== 'perTest') {
+  fail(2, `--coverage ${coverage} cannot be combined with ignoreStatic (the default): Stryker refuses to start unless ` +
+    `coverageAnalysis is perTest. Add --include-static to run static mutants under --coverage ${coverage}.`);
+}
+// The project's own command, as its own Stryker adapters run it: one Vitest per mutant, narrowed to
+// the covering tests by the generated config (and by explicit file filters when they are known).
+const vitestCommand = ['VITE_CONFIG_NATIVE_IGNORE_WARNING=true npx vitest run', '--config', shq(`./${vitestConfigFile}`),
+  '--maxWorkers=1', ...((vitest && vitest.covering) || []).map(shq)].join(' ');
 
 // Resolve runner-config candidates against the REPO, never against CWD: this script is routinely
 // invoked from somewhere else, and a CWD-relative existsSync silently reports "no jest config"
@@ -653,10 +766,11 @@ const cfg = {
   // deliberately absent — this file is the whole configuration for this run. Entries are
   // `file:startLine-endLine` per changed hunk (decision 6), or a bare path for a whole file.
   mutate: entries,
-  testRunner: runner,
-  // Decision 3: perTest + ignoreStatic by default; --include-static restores `off`.
-  coverageAnalysis: coverage,
-  ignoreStatic: !includeStatic,
+  testRunner: effectiveRunner,
+  // Decision 3: perTest + ignoreStatic by default; --include-static restores `off`. The vitest
+  // command-runner fallback forces off/false (see above).
+  coverageAnalysis: effectiveCoverage,
+  ignoreStatic: effectiveIgnoreStatic,
   // progress-append-only is the watchdog's heartbeat: a moving "tested" counter is progress.
   reporters: ['json', 'clear-text', 'progress-append-only'],
   jsonReporter: { fileName: portable(report) },
@@ -690,17 +804,253 @@ if (runner === 'jest') {
   const found = candidates.find(inRepo);
   cfg.jest = { projectType: 'custom', enableFindRelatedTests: coverage !== 'off' };
   if (found) cfg.jest.configFile = found;
-} else if (runner === 'vitest') {
+} else if (runner === 'vitest' && effectiveRunner === 'vitest') {
   // vitest.related stays at its default: Stryker narrows each mutant's run to the related tests.
   cfg.vitest = { configFile: vitestConfigFile };
+  // The plugin runner can still decide a mutant while running 0 tests (a test layout or a version it
+  // cannot filter per test): this reporter turns that into a non-zero exit instead of a 0% score.
+  cfg.plugins = ['@stryker-mutator/*', `./${guardFile}`];
+  cfg.reporters = [...cfg.reporters, 'zuvo-zero-tests-guard'];
+} else if (runner === 'vitest') {
+  // The vitest-runner cannot filter per test against this vitest: run the project's own command.
+  cfg.commandRunner = { command: vitestCommand };
 } else if (runner === 'command') {
   // `npm test` with no file filter: correct everywhere, slowest. Override with --runner once the
   // project's real runner plugin is installed.
   cfg.commandRunner = { command: 'npm test' };
 }
 
-const runFiles = [watchdogFile, vitestConfigFile, path.relative(repo, out), path.relative(repo, report),
-  ...(inPlaceReason ? [inPlaceListFile] : [])]
+// The zero-tests guard. Stryker's BroadcastReporter swallows a reporter's throw, so the guard marks
+// the process (process.exitCode = 1 — the same mechanism Stryker uses for --break) after the JSON
+// report has been written: every result survives, the run still fails, loudly.
+const guardSource = `// Generated by zuvo scripts/stryker-scoped-config.sh for ONE scoped Stryker run - do not commit.
+import { declareClassPlugin, PluginKind } from '@stryker-mutator/api/plugin';
+
+class ZuvoZeroTestsGuardReporter {
+  onMutationTestReportReady(report) {
+    let decided = 0;
+    let empty = 0;
+    let first = null;
+    for (const [file, result] of Object.entries((report && report.files) || {})) {
+      for (const mutant of result.mutants || []) {
+        // Killed/Survived are the two verdicts that REQUIRE a test run; NoCoverage legitimately ran
+        // none, and Timeout/CompileError/... are already non-zero verdicts on their own.
+        if (mutant.status !== 'Survived' && mutant.status !== 'Killed') continue;
+        decided += 1;
+        if (!mutant.testsCompleted) {
+          empty += 1;
+          if (!first) first = \`\${file}:\${(mutant.location && mutant.location.start && mutant.location.start.line) || '?'} \${mutant.mutatorName || '?'} (\${mutant.status})\`;
+        }
+      }
+    }
+    this.empty = empty;
+    this.decided = decided;
+    this.first = first;
+  }
+  wrapUp() {
+    if (!this.empty) return;
+    process.stderr.write(
+      'zuvo-zero-tests-guard: ' + this.empty + ' of ' + this.decided + ' Killed/Survived mutant(s) ran 0 tests (first: ' + this.first + ').\\n' +
+      'The test runner filtered every test out, so those results mean nothing (a 0-test mutant is reported Survived).\\n' +
+      'Run the scoper again: it falls back to the project\\'s own Vitest command when the vitest-runner cannot filter per test.\\n',
+    );
+    process.exitCode = 1;
+  }
+}
+
+export const strykerPlugins = [declareClassPlugin(PluginKind.Reporter, 'zuvo-zero-tests-guard', ZuvoZeroTestsGuardReporter)];
+`;
+
+// The preflight. The scoper is routinely run in a worktree that has no node_modules (a farm job installs
+// them afterwards), so anything decided by reading the installed packages here is a guess: the preflight
+// is the same decision made where the run actually happens, and it refuses a command run that runs no test.
+const preflightSource = `// Generated by zuvo scripts/stryker-scoped-config.sh for ONE scoped Stryker run - do not commit.
+// Runs in the repo, just before Stryker, with the packages the run will use installed.
+import fs from 'node:fs';
+import path from 'node:path';
+import cp from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const CONF = ${JSON.stringify(portable(out))};
+const GUARD = ${JSON.stringify('./' + guardFile)};
+const COMMAND = ${JSON.stringify(runner === 'vitest' ? vitestCommand : (cfg.commandRunner ? cfg.commandRunner.command : ''))};
+// Only the vitest command is proven here (one file-scoped run that ends): an arbitrary 'npm test' may
+// watch, or start a server. The probe is bounded by the run's own idle-timeout SECONDS as a wall-clock
+// limit (not idleness: it gets no heartbeat) and killed as a process group.
+const VERIFY_COMMAND = ${runner === 'vitest' ? 'true' : 'false'};
+const PROBE_TIMEOUT_MS = ${Math.max(1, Number(idleTimeout)) * 1000};
+// A machine-readable count: a repo reporter that drops or reformats the text summary must not make a
+// run that DID execute tests look like a 0-test run (the text line stays as a fallback).
+// ABSOLUTE: Vitest resolves a relative --outputFile against its root (the app's test.root), not the
+// directory the command runs in, and the preflight reads it back from there.
+const PROBE_JSON = path.resolve(process.cwd(), ${JSON.stringify(`.stryker-scoped-${tag}.probe.`)} + process.pid + '.json');
+const NO_TSCONFIG = ${JSON.stringify(`.stryker-scoped-${tag}.no-tsconfig.json`)};
+const ME = 'zuvo-preflight';
+const say = (m) => process.stderr.write(ME + ': ' + m + '\\n');
+
+const conf = JSON.parse(fs.readFileSync(CONF, 'utf8'));
+const cwd = process.cwd();
+const req = createRequire(path.join(cwd, 'package.json'));
+const tryResolve = (spec, dir) => {
+  try { return createRequire(path.join(dir, 'package.json')).resolve(spec); } catch { return null; }
+};
+let changed = false;
+
+// ── TypeScript 7: Stryker's sandbox tsconfig preprocessor calls a JS API the native port does not have ──
+const tsCheck = () => {
+  const core = tryResolve('@stryker-mutator/core', cwd);
+  for (const dir of core ? [path.dirname(core), cwd] : [cwd]) {
+    const entry = tryResolve('typescript', dir);
+    if (!entry) continue;
+    try {
+      const ts = createRequire(entry)(entry);
+      if (typeof ts.parseConfigFileTextToJson === 'function') return { installed: true, broken: false };
+      return { installed: true, broken: true, version: ts.version || 'unknown' };
+    } catch { return { installed: false }; }
+  }
+  return { installed: false };
+};
+const ts = tsCheck();
+if (ts.installed && ts.broken && !conf.inPlace) {
+  // A path that does not exist: Stryker skips the preprocessor, which TypeScript 7 cannot run.
+  conf.inPlace = true;
+  conf.tsconfigFile = NO_TSCONFIG;
+  changed = true;
+  say('in-place: typescript ' + ts.version + ' has no parseConfigFileTextToJson, so Stryker\\'s sandbox ' +
+    'tsconfig preprocessor cannot run: mutating the working tree instead (the watchdog restores the scoped files).');
+}
+
+// ── the vitest plugin runner filters per test by joining suite names: it must join them the way the ──
+// ── installed vitest does, or every per-test filter matches nothing and every mutant "survives"    ──
+const packageRoot = (spec, entry) => {
+  let dir = path.dirname(entry);
+  for (let i = 0; i < 8; i += 1) {
+    const pj = path.join(dir, 'package.json');
+    if (fs.existsSync(pj)) {
+      try { if (JSON.parse(fs.readFileSync(pj, 'utf8')).name === spec) return dir; } catch { /* skip */ }
+    }
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return null;
+};
+const scan = (dir, re, depth) => {
+  let names;
+  try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  for (const d of names) {
+    const p = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      if (d.name === 'node_modules' || depth >= 3) continue;
+      const hit = scan(p, re, depth + 1);
+      if (hit) return hit;
+      continue;
+    }
+    if (!/\\.(?:c|m)?js$/.test(d.name) || /\\.d\\.ts$/.test(d.name)) continue;
+    let text;
+    try { text = fs.readFileSync(p, 'utf8'); } catch { continue; }
+    const m = re.exec(text);
+    if (m) return m[2];  // group 1 is the quote character, group 2 the separator itself
+  }
+  return null;
+};
+const separator = (spec, re) => {
+  const entry = tryResolve(spec, cwd);
+  if (!entry) return { installed: false };
+  const root = packageRoot(spec, entry);
+  if (!root) return { installed: true, separator: null };
+  let version = 'unknown';
+  try { version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version || version; } catch { /* unknown */ }
+  return { installed: true, separator: scan(root, re, 0), version };
+};
+if (conf.testRunner === 'vitest') {
+  const v = separator('vitest', /createTaskName\\([^)]*separator\\s*=\\s*(['"\`])([^'"\`]*)\\1/);
+  const r = separator('@stryker-mutator/vitest-runner', /collectTestName\\([\\s\\S]{0,800}?return\\s[\\w$.]+\\.join\\((['"\`])([^'"\`]*)\\1\\)/);
+  const why = 'vitest ' + (v.version || '?') + ' joins test names with ' + JSON.stringify(v.separator) +
+    ', @stryker-mutator/vitest-runner ' + (r.version || '?') + ' with ' + JSON.stringify(r.separator);
+  if (!v.installed || !r.installed || !v.separator || !r.separator) {
+    say('per-test filtering not verifiable here (vitest ' + (v.installed ? JSON.stringify(v.separator) : 'not installed') +
+      ', runner ' + (r.installed ? JSON.stringify(r.separator) : 'not installed') + '): the zero-tests guard decides the run.');
+  } else if (v.separator !== r.separator) {
+    conf.testRunner = 'command';
+    conf.commandRunner = { command: COMMAND };
+    conf.coverageAnalysis = 'off';
+    conf.ignoreStatic = false;
+    delete conf.vitest;
+    if (Array.isArray(conf.plugins)) conf.plugins = conf.plugins.filter((p) => p !== GUARD);
+    if (Array.isArray(conf.reporters)) conf.reporters = conf.reporters.filter((p) => p !== 'zuvo-zero-tests-guard');
+    changed = true;
+    say('test_runner=command: ' + why + '. The plugin runner would filter every test out and report every mutant ' +
+      'SURVIVED; running the project\\'s own Vitest command once per mutant instead (correct, slower).');
+  } else {
+    say(why + ': the plugin runner filters per test.');
+  }
+}
+
+// Written before the verification below: a refused run must still leave the config matching what was
+// decided (a re-run then reports the same thing instead of re-deciding from scratch).
+if (changed) fs.writeFileSync(CONF, JSON.stringify(conf, null, 2) + '\\n');
+
+// ── a command run that executes 0 tests reports every mutant KILLED: prove it runs tests first ──
+// Async + detached: the watchdog's idle timer only covers Stryker, so a hanging Vitest here would
+// block the run with no progress signal at all. On expiry the whole process group is killed.
+const probe = (cmd, timeoutMs) => new Promise((resolve) => {
+  const child = cp.spawn('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  let out = '';
+  const cap = 1 << 28;
+  const take = (d) => { out += d; if (out.length > cap) out = out.slice(-cap); };
+  child.stdout.on('data', take);
+  child.stderr.on('data', take);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
+  }, timeoutMs);
+  child.on('error', (err) => { out += '\\n' + String(err && err.message); });
+  child.on('close', (status) => { clearTimeout(timer); resolve({ status, out, timedOut }); });
+});
+if (VERIFY_COMMAND && conf.testRunner === 'command' && COMMAND) {
+  // Per-process report path (two concurrent preflights of one config must not read each other's), and
+  // the file is removed first anyway: a report left behind is never counted as this run's tests.
+  try { fs.unlinkSync(PROBE_JSON); } catch { /* absent */ }
+  const r = await probe(COMMAND + ' --reporter=json --outputFile=' + JSON.stringify(PROBE_JSON), PROBE_TIMEOUT_MS);
+  if (r.timedOut) {
+    say('ERROR: the verification run made no progress in ' + (PROBE_TIMEOUT_MS / 1000) + 's and was killed: ' +
+      'the command runner cannot be proven to execute tests, so the run is refused.');
+    process.exit(1);
+  }
+  // Count from the JSON report; fall back to the summary line for a Vitest that wrote none.
+  let ran = 0;
+  let how = 'json';
+  try {
+    const j = JSON.parse(fs.readFileSync(PROBE_JSON, 'utf8'));
+    ran = Number(j.numPassedTests || 0) + Number(j.numFailedTests || 0);
+  } catch {
+    how = 'text';
+    // Vitest colours its summary even off a TTY ("Tests \\x1b[22m \\x1b[1m\\x1b[32m2 passed"): strip
+    // the escapes first, or a run that DID execute tests reads as "no Tests line" and is refused.
+    const out = r.out.replace(/\\x1b\\[[0-9;]*m/g, '');
+    const testsLine = (out.match(/^[ \\t]*Tests\\s+(.*)$/m) || [])[1] || '';
+    ran = [...testsLine.matchAll(/(\\d+)\\s+(?:passed|failed)/g)].reduce((n, m) => n + Number(m[1]), 0);
+    r.summary = testsLine.trim();
+  }
+  try { fs.unlinkSync(PROBE_JSON); } catch { /* never written */ }
+  if (r.status !== 0 || !ran) {
+    say('ERROR: the command runner ' + (ran ? 'ran ' + ran + ' test(s) but exited ' + r.status : 'ran no test(s)') + ': ' +
+      (r.summary || 'no test count in its report') + '. A run whose tests do not execute reports every ' +
+      'mutant KILLED or SURVIVED by accident. Last output:');
+    say(r.out.replace(/\\x1b\\[[0-9;]*m/g, '').split('\\n').filter((l) => l.trim()).slice(-15).join('\\n'));
+    process.exit(1);
+  }
+  say('command runner verified: ' + ran + ' test(s) ran (exit 0, ' + how + ').');
+}
+`;
+
+const useGuard = runner === 'vitest' && effectiveRunner === 'vitest';
+const usePreflight = preflightNeeded;
+const runFiles = [watchdogFile, vitestConfigFile, ...(useGuard ? [guardFile] : []),
+  ...(usePreflight ? [preflightFile] : []), path.relative(repo, out),
+  path.relative(repo, report), ...(inPlaceReason || tsUnknown ? [inPlaceListFile] : [])]
   .filter((f) => !f.startsWith('..'));
 const ignored = isGit() ? runFiles.filter((f) => git(['check-ignore', '-q', f], { allowFail: true }) !== null) : [];
 if (ignored.length) {
@@ -715,10 +1065,20 @@ const write = (file, body) => { if (!fs.existsSync(file)) written.push(file); fs
 try {
   if (vitest) {
     write(path.join(repo, vitestConfigFile),
-      vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
+      vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include,
+        // Relative to vitest.root (the config's own directory or the root it declares), NOT the repo:
+        // the generated config resolves them against that same directory. Repo-relative paths here
+        // became apps/runner/apps/runner/src/... and the config refused to load (farm 1792490064-3105511-31783).
+        tests: vitest.covering && vitest.source !== 'workspace-include'
+          ? vitest.covering.map((t) => (vitest.root && vitest.root !== '.' ? path.relative(vitest.root, t) : t))
+          : [] }));
   }
+  if (useGuard) write(path.join(repo, guardFile), guardSource);
+  if (usePreflight) write(path.join(repo, preflightFile), preflightSource);
   write(path.join(repo, watchdogFile), fs.readFileSync(watchdogSrc));
-  if (inPlaceReason) write(path.join(repo, inPlaceListFile), [...scopedFiles].map((f) => `${f}\n`).join(''));
+  // Written whenever the run may end up in-place: decided here (TypeScript 7 found), or by the preflight
+  // (TypeScript unresolvable here, installed where the run happens).
+  if (inPlaceReason || tsUnknown) write(path.join(repo, inPlaceListFile), [...scopedFiles].map((f) => `${f}\n`).join(''));
   write(out, JSON.stringify(cfg, null, 2) + '\n');
 } catch (e) {
   for (const f of written) { try { fs.unlinkSync(f); } catch { /* already gone */ } }
@@ -729,20 +1089,23 @@ const rangeCount = entries.filter((e) => /:\d+-\d+$/.test(e)).length;
 const pct = changedLines ? ` (${Math.round((100 * mutatedLines) / changedLines)}% of changed)` : '';
 say(`scope=${wholeFiles ? 'WHOLE-FILES' : 'changed-lines'} base=${baseLabel} files=${scopedFiles.size} ` +
   `line_ranges=${rangeCount} whole_files=${entries.length - rangeCount} mutated_lines=${mutatedLines} ` +
-  `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${!includeStatic}` +
-  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length} in_place=${Boolean(inPlaceReason)}` +
+  `changed_lines=${changedLines === null ? 'unknown' : changedLines}${pct} ignoreStatic=${effectiveIgnoreStatic}` +
+  (changed ? ` skipped_non_source=${skippedNonMutable}` : '') + ` dropped=${dropped.length} in_place=${Boolean(inPlaceReason)} ` +
+  `test_runner=${effectiveRunner}` +
   (vitest ? ` vitest_config=${vitest.config} vitest_root=${vitest.root} vitest_include_source=${vitest.source} ` +
     `vitest_include_count=${vitest.count} vitest_include=${vitest.printed.join(' ')}` : ''));
 
-// run_command is handed to a shell: quote a path only when it needs it, so plain paths read as before.
-const shq = (p) => (/^[\w@%+=:,./][\w@%+=:,./-]*$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
 const kv = [
   ['config_path', out],
   ['report_path', report],
   ['temp_dir', tempDir],
-  ['test_runner', runner],
-  ['coverage_analysis', coverage],
-  ['ignore_static', String(!includeStatic)],
+  ['test_runner', effectiveRunner],
+  // Why this runner: a measured vitest-runner/vitest separator mismatch (fallback to command), an
+  // unverifiable one (plugin + guard), an explicit --runner, or the detected framework.
+  ['test_runner_reason', runnerReason || 'none'],
+  ['coverage_analysis', effectiveCoverage],
+  ['ignore_static', String(effectiveIgnoreStatic)],
+  ['guard_module', useGuard ? `./${guardFile}` : 'none'],
   ['scope_mode', wholeFiles ? 'whole-files' : 'changed-lines'],
   ['diff_base', baseLabel],
   ['file_count', scopedFiles.size],
@@ -756,16 +1119,25 @@ const kv = [
   ...(vitest ? [['vitest_config', vitest.config], ['vitest_root', vitest.root],
     ['vitest_include_source', vitest.source], ['vitest_include_count', vitest.count],
     ...vitest.printed.map((g) => ['vitest_include', g]),
+    // The same tests as plain repo-relative paths — what the command runner passes to Vitest.
+    ...(vitest.covering || []).map((f) => ['vitest_covering', f]),
+    // Inline test.projects the scoped run drops (their project-level options no longer apply).
+    ...(vitest.dropped ? [['vitest_projects_dropped', `${vitest.dropped.config}:${vitest.dropped.key}:${vitest.dropped.count}`]] : []),
     // workspace-include is all-or-nothing: these files are why the narrowing was given up.
     ...(vitest.missing || []).map((f) => ['vitest_missing_tests', f])] : []),
   ['in_place', String(Boolean(inPlaceReason))],
-  ['in_place_reason', inPlaceReason || 'none'],
+  ['in_place_reason', inPlaceReason || (tsUnknown ? 'deferred to the preflight (typescript not installed here)' : 'none')],
+  // When set, run_command runs it before Stryker: the runner and in-place decisions are made THERE, where
+  // node_modules exist, and a command run that executes 0 tests aborts instead of reporting a fake score.
+  ['preflight_module', usePreflight ? `./${preflightFile}` : 'none'],
   // The CWD is pinned on purpose: `mutate` entries are repo-relative and Stryker resolves them
   // against the RUN's working directory. This script is routinely invoked from elsewhere, and a
   // command run from the wrong directory matches zero files — which Stryker reports as a successful
   // 100% run, the exact silent failure the scope validation above exists to prevent.
-  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile} --idle-timeout ${idleTimeout}` +
-    `${inPlaceReason ? ` --in-place-files ./${inPlaceListFile}` : ''} -- npx stryker run ${shq(portable(out))})`],
+  ['run_command', `(cd ${shq(repo)} && bash ./${watchdogFile}` +
+    `${inPlaceReason || tsUnknown ? ` --in-place-files ./${inPlaceListFile}` : ''}` +
+    `${usePreflight ? ` --preflight ./${preflightFile}` : ''} --idle-timeout ${idleTimeout}` +
+    ` -- npx stryker run ${shq(portable(out))})`],
 ];
 process.stdout.write(kv.map(([k, v]) => `${k}=${v}\n`).join(''));
 if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFileSync(out, 'utf8'));
