@@ -57,6 +57,20 @@ printf 'refs/heads/feature %s refs/heads/feature %s\n' "$FHEAD" "$ZEROS" | agent
 printf 'refs/heads/feature %s refs/heads/feature %s\n' "$FHEAD" "$MAIN" | ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$GATE" >/dev/null 2>&1
 [ "$?" -eq 0 ] && pass "(e) ZUVO_ALLOW_ADHOC=1 → pass (exit 0)" || bad "(e) adhoc escape should pass"
 
+# (e2) the bypass is really logged: the gate said "(logged)" while nothing was written, so 24 caretaker
+# bypasses in rdesigner (B-307, 2026-10-23) could not be audited from any log.
+ADHOC_LOG="$TMP/adhoc/bypass.log"
+printf 'refs/heads/feature %s refs/heads/feature %s\n' "$FHEAD" "$MAIN" \
+  | ZUVO_ADHOC_LOG="$ADHOC_LOG" ZUVO_ADHOC_REASON="take review ran in step 3a" ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$GATE" 2>"$TMP/adhoc.err" >/dev/null
+if [ "$(wc -l <"$ADHOC_LOG" 2>/dev/null)" -eq 1 ] && awk -F'\t' -v h="$FHEAD" '$3=="pre-push" && index($7,h) && $8=="take review ran in step 3a"' "$ADHOC_LOG" | grep -q . \
+  && grep -q "logged to $ADHOC_LOG" "$TMP/adhoc.err"; then
+  pass "(e2) ZUVO_ALLOW_ADHOC=1 writes one bypass line with the pushed ref and the reason"
+else bad "(e2) adhoc bypass not logged: $(cat "$ADHOC_LOG" "$TMP/adhoc.err" 2>&1)"; fi
+# (e3) an unwritable log still lets the push through, and the message no longer claims it was logged
+printf 'refs/heads/feature %s refs/heads/feature %s\n' "$FHEAD" "$MAIN" \
+  | ZUVO_ADHOC_LOG="/dev/null/nope/bypass.log" ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$GATE" 2>"$TMP/adhoc.err" >/dev/null
+[ "$?" -eq 0 ] && grep -q "NOT logged" "$TMP/adhoc.err" && pass "(e3) unwritable bypass log → pass, says NOT logged" || bad "(e3) unwritable log: $(cat "$TMP/adhoc.err")"
+
 # (g) human push (no agent env) → 0 even though substantial+unreviewed
 printf 'refs/heads/feature %s refs/heads/feature %s\n' "$FHEAD" "$MAIN" | human_gate >/dev/null 2>&1
 [ "$?" -eq 0 ] && pass "(g) human push exempt (exit 0)" || bad "(g) human push should pass"
