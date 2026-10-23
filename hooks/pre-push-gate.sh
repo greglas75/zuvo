@@ -51,7 +51,12 @@ gate_native() {
   [ "${PG_LIB_LOADED:-}" = "1" ] || return 0          # no lib → fail-open
   pg_is_agent_env || return 0                          # human push exempt (G8)
   if pg_allow_adhoc; then
-    echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (logged)." >&2
+    local _adhoc_log
+    if _adhoc_log="$(pg_log_adhoc pre-push "$INPUT")"; then
+      echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (logged to $_adhoc_log)." >&2
+    else
+      echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (NOT logged: the bypass log is not writable)." >&2
+    fi
     return 0
   fi
 
@@ -146,7 +151,12 @@ gate_legacy() {
   if [ "${PG_LIB_LOADED:-}" = "1" ]; then
     pg_is_agent_env || return 0          # human push exempt (G8)
     if pg_allow_adhoc; then
-      echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (logged)." >&2
+      local _adhoc_log
+      if _adhoc_log="$(pg_log_adhoc pre-push-tool "$(pg_unpushed_range 2>/dev/null)")"; then
+        echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (logged to $_adhoc_log)." >&2
+      else
+        echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (NOT logged: the bypass log is not writable)." >&2
+      fi
       return 0
     fi
     local range rr _ur

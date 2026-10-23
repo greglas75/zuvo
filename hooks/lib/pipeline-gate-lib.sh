@@ -23,6 +23,7 @@
 #   pg_uncovered_files   : 0 = computed (stdout = uncovered files, may be empty),
 #                          2 = unknown/error, 3 = no production files in range
 #   pg_allow_adhoc       : 0 = escape active, 1 = not
+#   pg_log_adhoc         : 0 = bypass line written (stdout = log path), 1 = not written
 #   pg_is_agent_env      : 0 = agent invocation, 1 = human
 #   pg_is_production      : 0 = production path, 1 = non-production
 
@@ -1202,6 +1203,23 @@ PEU_JOINED
 pg_allow_adhoc() {
   [ "${ZUVO_ALLOW_ADHOC:-}" = "1" ] && return 0
   return 1
+}
+
+# One line per bypass in ${ZUVO_ADHOC_LOG:-~/.zuvo/adhoc-bypass.log}, tab-separated:
+# time, host, gate, repo root, branch, head, detail ($2, e.g. the pushed refs), ZUVO_ADHOC_REASON.
+# The gates said "bypassed (logged)" while nothing was written, so no bypass could be audited afterwards.
+# Prints the log path on success; returns 1 (and prints nothing) when the line could not be written.
+pg_log_adhoc() {
+  local log="${ZUVO_ADHOC_LOG:-${HOME:-/tmp}/.zuvo/adhoc-bypass.log}" root branch head detail reason
+  root="$(pg_repo_root 2>/dev/null)" || root="$PWD"
+  branch="$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  head="$(git -C "$root" rev-parse --short=10 HEAD 2>/dev/null)"
+  detail="$(printf '%s' "${2:-}" | tr '\t\n' '  ')"
+  reason="$(printf '%s' "${ZUVO_ADHOC_REASON:-no reason given}" | tr '\t\n' '  ')"
+  mkdir -p "$(dirname "$log")" 2>/dev/null
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname -s 2>/dev/null)" \
+    "${1:-unknown}" "$root" "${branch:-?}" "${head:-?}" "$detail" "$reason" >>"$log" 2>/dev/null || return 1
+  printf '%s\n' "$log"
 }
 
 pg_is_agent_env() {
