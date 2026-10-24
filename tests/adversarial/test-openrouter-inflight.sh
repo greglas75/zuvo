@@ -127,3 +127,11 @@ start_test "if.6 a file in a slot's place: the call runs uncapped instead of que
 mkdir -p "$ITMP/slots6/inception_mercury-3"; : > "$ITMP/slots6/inception_mercury-3/slot.1"
 SLOTS="$ITMP/slots6" run_i c6 ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3=1
 assert_eq "1 0" "$(chats c6) $(cat "$ITMP/c6/rc")" "one request, the review completes"
+
+# Bug caught: one unusable slot dropping the whole cap, so every call ran uncapped while other slots were in use.
+start_test "if.7 one unusable slot is skipped: with the rest busy, the call still waits for its cap"
+mkdir -p "$ITMP/slots7/inception_mercury-3/slot.2"; : > "$ITMP/slots7/inception_mercury-3/slot.1"
+printf '%s\n' "$$" > "$ITMP/slots7/inception_mercury-3/slot.2/pid"
+SLOTS="$ITMP/slots7" run_i c7 ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3=2 ZUVO_REVIEW_TIMEOUT=20
+assert_eq "0" "$(chats c7)" "no request past the busy cap"
+assert_contains "$(cat "$ITMP/c7/err")" "stayed busy" "not run, with the reason"

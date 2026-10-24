@@ -188,9 +188,12 @@ overlap.
 
 - While every slot is busy, the call polls once a second inside its own time budget. If no slot frees before too
   little budget is left, the lane is not run and not held against it (outcome `no-key`).
-- A slot whose holder died, for example a review killed by a timeout, is broken the way a stale lock is.
-- A slot directory that cannot be created or written (a read-only or full disk, a file where a slot belongs)
-  leaves the call uncapped, with a NOTE, rather than not run.
+- A slot whose holder died, for example a review killed by a timeout, is broken the way a stale lock is
+  (`_ar_lock_stale`): the slot's `pid` file names no live process, or one started after the slot was taken (a
+  reused pid), or the slot has no `pid` for over 2 minutes.
+- A slot directory that cannot be created or written (a read-only or full disk) leaves the call uncapped, with a
+  NOTE, rather than not run. A single unusable slot (a file where it belongs) is skipped; the call runs uncapped
+  only when no slot can be kept.
 
 **429 policy on a paid lane.** HTTP 429 is transient: up to 3 requests in all (`OR_ATTEMPTS`), 3 s then 6 s apart,
 with the in-flight slot held throughout, so a throttled lane has no more calls open than its cap (except in the

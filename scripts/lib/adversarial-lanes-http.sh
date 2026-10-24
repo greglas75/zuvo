@@ -583,6 +583,16 @@ _or_slot_take() {
   fi
 }
 
+# _or_self_pid — sets OR_SELF_PID to this (sub)shell's own pid, the slot owner (a variable, not output: inside a
+# command substitution BASHPID would be the substitution's pid). bash 3.2 (macOS /bin/bash) has no BASHPID, and its $$ is
+# the driver's for every lane subshell: a lane killed by its timeout would leave a slot whose pid stays alive until
+# the driver exits. The child exec'd from a command substitution reports its parent, which is this shell.
+_or_self_pid() {
+  if [[ -n "${BASHPID:-}" ]]; then OR_SELF_PID="$BASHPID"; return 0; fi
+  # shellcheck disable=SC2016  # $PPID belongs to the child sh
+  OR_SELF_PID="$(exec sh -c 'echo "$PPID"')"
+}
+
 # or_inflight_acquire <lane> <model> <deadline-epoch> — takes a slot when the model has a cap, waiting (1 s polls)
 # while every slot is busy; OR_INFLIGHT_SLOT names it (empty: no cap, or slots that cannot be kept — then the call
 # runs uncapped, said once). Status 1 when no slot freed before too little of the budget was left for a request: the
@@ -590,7 +600,7 @@ _or_slot_take() {
 # own calls is no fault of the host. The wait comes out of the call's own budget: a longer one would outlive the
 # run deadline derived from PROVIDER_TIMEOUT.
 or_inflight_acquire() {
-  local lane="$1" model="$2" deadline="$3" cap dir i slot rc me="${BASHPID:-$$}" waited=0 gone
+  local lane="$1" model="$2" deadline="$3" cap dir i slot rc me waited=0 gone bad
   OR_INFLIGHT_SLOT=""
   cap="$(openrouter_inflight_cap "$model")"
   (( cap > 0 )) || return 0
@@ -599,7 +609,9 @@ or_inflight_acquire() {
     echo "  NOTE: $lane: in-flight slots cannot be kept in $dir — this call runs without the cap of $cap" >&2
     return 0
   fi
+  local OR_SELF_PID; _or_self_pid; me="$OR_SELF_PID"
   while : ; do
+    bad=0
     for (( i = 1; i <= cap; i++ )); do
       slot="$dir/slot.$i"
       rc=0; _or_slot_take "$slot" "$me" || rc=$?
@@ -615,12 +627,23 @@ or_inflight_acquire() {
       fi
       if (( rc == 0 )); then
         OR_INFLIGHT_SLOT="$slot"
+        if (( waited > 0 && $(date +%s) + OR_MIN_ATTEMPT_SECONDS >= deadline )); then
+          # Freed during the last poll, too late for one request: still this ZUVO_HOME's queue, not the host.
+          or_inflight_release
+          lane_not_run "$lane" "an in-flight slot for $model freed after ${waited}s, too late for a request ($(_or_inflight_var "$model"))"
+          return 1
+        fi
         (( waited == 0 )) || echo "  NOTE: $lane [$model] waited ${waited}s for one of $cap in-flight slots" >&2
         return 0
       fi
       if (( rc == 2 )); then
-        echo "  NOTE: $lane: in-flight slot $slot cannot be kept — this call runs without the cap of $cap" >&2
-        return 0
+        # This slot cannot be kept; the others may. Only when none can does the call run uncapped.
+        bad=$(( bad + 1 ))
+        if (( bad == cap )); then
+          echo "  NOTE: $lane: no in-flight slot can be kept in $dir — this call runs without the cap of $cap" >&2
+          return 0
+        fi
+        continue
       fi
       # A breaker killed mid-break leaves its marker: one older than a minute is cleared, as _ar_lock clears it.
       [[ -d "$slot.break" && -n "$(find "$slot.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]] \
@@ -641,7 +664,8 @@ or_inflight_release() {
   [[ -n "${OR_INFLIGHT_SLOT:-}" ]] || return 0
   local holder
   holder="$(cat "$OR_INFLIGHT_SLOT/pid" 2>/dev/null)" || holder=""
-  if [[ -n "$holder" && "$holder" == "${BASHPID:-$$}" ]]; then
+  local OR_SELF_PID; _or_self_pid
+  if [[ -n "$holder" && "$holder" == "$OR_SELF_PID" ]]; then
     rm -f -- "$OR_INFLIGHT_SLOT/pid" 2>/dev/null; rmdir -- "$OR_INFLIGHT_SLOT" 2>/dev/null || true
   fi
   OR_INFLIGHT_SLOT=""
