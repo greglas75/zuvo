@@ -127,6 +127,10 @@ write_artifact() {
     printf 'input_chars=%s\n' "${#INPUT}"
     printf 'input_chars_original=%s\n' "${ORIG_CHARS:-${#INPUT}}"
     printf 'input_truncated=%s\n' "${INPUT_TRUNCATED:-false}"
+    # What the input left out on purpose (ar_omit_oversized_content), one line each: a deleted file or a
+    # removed/context line over the chunk cap, and an added line over it that truncates its part.
+    [[ -z "${INPUT_OMITTED:-}" ]] || printf '%s\n' "$INPUT_OMITTED" | sed 's/^/input_omitted=/'
+    [[ -z "${INPUT_UNSPLITTABLE:-}" ]] || printf '%s\n' "$INPUT_UNSPLITTABLE" | sed 's/^/input_unsplittable=/'
     printf 'total_findings=%s\n' "$TOTAL_FINDINGS"
     printf 'critical=%s\n' "$CRITICAL_COUNT"
     printf 'warning=%s\n' "$WARNING_COUNT"
@@ -455,12 +459,14 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --argjson input_size "${#INPUT}" \
     --argjson input_original "${ORIG_CHARS:-${#INPUT}}" \
     --argjson truncated "${INPUT_TRUNCATED:-false}" \
+    --arg omitted "${INPUT_OMITTED:-}" \
+    --arg unsplittable "${INPUT_UNSPLITTABLE:-}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --slurpfile results "$json_results_file" \
     --argjson models "$json_models" \
     --arg review_access "$(review_access_name)" \
     --slurpfile agreement "$json_agreement_file" \
-    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, models: $models, review_access: $review_access, results: $results[0], agreement: $agreement[0]}')
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, input_omitted: ($omitted | split("\n") | map(select(. != ""))), input_unsplittable: ($unsplittable | split("\n") | map(select(. != ""))), date: $date, models: $models, review_access: $review_access, results: $results[0], agreement: $agreement[0]}')
 else
   # Text output: the agreement goes to stderr (ar_emit_output), never into the banners.
   _ar_agreement_json "" "$JSON_TMPDIR/agreement.json"

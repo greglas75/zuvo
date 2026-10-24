@@ -5,10 +5,10 @@
 # Sourced by scripts/adversarial-review.sh only; never executed.
 #
 # Phases: ar_guard_file_list, ar_collect_input, ar_set_input_cap, ar_set_chunk_boundary,
-# ar_check_material, ar_chunk_input, ar_truncate_input. Functions: build_file_list, collect_input,
-# collect_files_input, _no_material, _ck_count_units, _ck_count_hunks, _ck_split_hunks,
-# _ck_split_oversized_sections, _ck_merge_part_note, _ck_build_chunk_note, _tamper_capture (called from Main),
-# _tamper_verify.
+# ar_check_material, ar_omit_oversized_content, ar_chunk_input, ar_truncate_input. Functions: build_file_list,
+# collect_input, collect_files_input, _no_material, _ck_count_units, _ck_count_hunks, _ck_split_hunks,
+# _ck_split_oversized_sections, _ck_omit_oversized, _ck_part_omissions, _ck_merge_part_note, _ck_build_chunk_note,
+# _tamper_capture (called from Main), _tamper_verify.
 #
 # Phase bodies sit at column 0, as the top-level code they were cut from: indenting them would change the
 # multi-line prompt strings and heredocs several carry. Each runs once, from the driver's Main.
@@ -366,8 +366,9 @@ ar_set_chunk_boundary() {
 # single hunk bigger than the budget at its lines, into sub-hunks with recomputed headers
 # (2026-10-20: a NEW file over the cap is one hunk, and was cut on every retry).
 # Truncation remains only for: input with no boundary, hunk or line to cut at, a section
-# that cannot be split (a --files section) or a single LINE bigger than the cap (the
-# child's truncate path, loud WARN), or an explicit --no-chunk / ZUVO_ADV_NO_CHUNK=1.
+# that cannot be split (a --files section) or a single ADDED line bigger than the cap (the
+# child's truncate path, loud WARN), or an explicit --no-chunk / ZUVO_ADV_NO_CHUNK=1. A deleted
+# file, a removed or a context line over it is shortened first (ar_omit_oversized_content).
 #
 # 2026-08-03 — document modes were chunk-EXEMPT until now, on the reasoning that a
 # spec/plan is "one artifact, no file boundaries to cut at". That reasoning was
@@ -696,6 +697,143 @@ _ck_build_chunk_note() {
   printf '%s]' "$note"
 }
 
+# ─── Content no part can hold (2026-10-24, RD-5751) ───────────────────────────
+#
+# The hunk split cuts at LINE boundaries, so one line longer than the chunk budget still cannot be split: the
+# part holding it was truncated and the run exited 4 — on every retry, for as long as the change existed. The
+# case that hit it deleted a generated baseline that was ONE JSON line of 185,649 chars; the truncate path then
+# sent 486 chars of that part, i.e. nothing of the file at all. What happens now depends on which side of the
+# change the content is on:
+#
+#   * a DELETED file whose diff section is over the budget is rendered as its diff header plus one
+#     `=== OMITTED: deleted file … ===` line, the way `git diff -D` shows a deletion — the content of a file
+#     being removed is not code anyone ships. Only over the budget: a deleted test suite under it keeps its
+#     content, which is how a review catches deleted tests.
+#   * a REMOVED (`-`) or CONTEXT (` `) line over the budget in any other file keeps its first
+#     OMIT_LINE_HEAD_BYTES bytes and an explicit `[zuvo: line truncated …]` tail — still one line, so the hunk's
+#     line counts stay right. Neither side is code the change adds.
+#   * an ADDED (`+`) line over the budget is left as it is: its part is truncated and the run exits 4, as before.
+#     Shortening it and exiting 0 would let a minified or generated payload into the tree with a green review
+#     of 200 bytes of it — the one outcome this driver exists to prevent. It is named on stderr and in the proof.
+#
+# Every omission is recorded: a NOTE on stderr, an `input_omitted=` line in the proof (each chunk's proof names
+# the omissions in its own part), and `input_omitted` in --json output; an added line over the budget, an
+# `input_unsplittable=` line. The coverage gate is not involved: a deleted file is covered by an artifact whose
+# `files:` header lists it (pipeline-gate-lib.sh), never by the bytes the reviewer saw.
+OMIT_LINE_HEAD_BYTES=200
+INPUT_OMITTED=""        # one note per line: content left out of the input, the run proceeding
+INPUT_UNSPLITTABLE=""   # one note per line: an added line over the budget (its part is truncated, exit 4)
+_OMIT_NOTES=""          # one per line: kind<US>note<US>the exact line standing in for the omitted content
+
+# _ck_omit_oversized <budget> <notes> — stdin, a diff, to stdout with the content above replaced; one line per
+# omission written to <notes>. Budget arithmetic as _ck_split_hunks rules it: a line is over when it cannot fit a
+# part with its file header, trailer and 200 bytes for a sub-hunk header.
+_ck_omit_oversized() {
+  LC_ALL=C awk -v budget="$1" -v notes="$2" -v head="$OMIT_LINE_HEAD_BYTES" -v us=$'\037' '
+    function emitnote(kind, text, marker) { printf "%s%s%s%s%s\n", kind, us, text, us, marker > notes }
+    # cuthead(s, n) — the first n bytes of s, never ending inside a UTF-8 sequence.
+    function cuthead(s, n,   c) {
+      if (length(s) <= n) return s
+      while (n > 0) { c = substr(s, n + 1, 1); if (c < "\200" || c > "\277") break; n-- }
+      return substr(s, 1, n)
+    }
+    function flush(   i, fixed, size, del, nl, nb, c, len, mk, o, nw, ab, oo, nn) {
+      if (n == 0) return
+      if (!indiff || h0 == 0) { for (i = 1; i <= n; i++) print S[i]; n = 0; return }
+      fixed = 0; size = 0; del = 0
+      for (i = 1; i <= n; i++) {
+        size += length(S[i]) + 1
+        if (i < h0 || (ts && i >= ts)) fixed += length(S[i]) + 1
+        if (i < h0 && S[i] ~ /^deleted file mode /) del = 1
+      }
+      if (del && size > budget) {
+        nl = 0; nb = 0
+        for (i = h0; i <= (ts ? ts - 1 : n); i++) if (substr(S[i], 1, 1) == "-") { nl++; nb += length(S[i]) }
+        mk = sprintf("=== OMITTED: deleted file %s: %d line%s, %d bytes — content omitted: over the chunk cap (%d bytes). The deletion itself is under review: judge whether removing it is intended and whether anything still refers to it ===", path, nl, nl == 1 ? "" : "s", nb, budget)
+        for (i = 1; i < h0; i++) print S[i]
+        print mk
+        if (ts) for (i = ts; i <= n; i++) print S[i]
+        emitnote("omitted", sprintf("deleted file %s: %d line%s, %d bytes — content omitted: over the chunk cap", path, nl, nl == 1 ? "" : "s", nb), mk)
+        n = 0; return
+      }
+      for (i = 1; i <= n; i++) {
+        if (i < h0 || (ts && i >= ts)) { print S[i]; continue }
+        if (S[i] ~ /^@@ /) {
+          if (match(S[i], /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+/)) {
+            split(substr(S[i], 5, RLENGTH - 4), ab, " ")
+            split(ab[1], o, ","); oo = o[1] + 0; nn = substr(ab[2], 2) + 0
+          }
+          print S[i]; continue
+        }
+        c = substr(S[i], 1, 1); len = length(S[i]) - 1
+        if (len + 1 + fixed + 200 > budget && (c == "-" || c == " ")) {
+          mk = sprintf("%s%s … [zuvo: line truncated — %d of %d bytes omitted: over the chunk cap; %s content, not added by this change]", c, cuthead(substr(S[i], 2), head), len - length(cuthead(substr(S[i], 2), head)), len, c == "-" ? "removed" : "unchanged context")
+          print mk
+          emitnote("omitted", sprintf("%s: %s line %d of %d bytes cut to its first %d — content omitted: over the chunk cap", path, c == "-" ? "removed" : "context", oo, len, head), mk)
+        } else {
+          if (len + 1 + fixed + 200 > budget && c == "+")
+            emitnote("unsplittable", sprintf("%s: added line %d of %d bytes is over the chunk cap and cannot be split — NOT omitted: the part holding it is truncated and the run exits 4", path, nn, len), "")
+          print S[i]
+        }
+        if (c == "-" || c == " ") oo++
+        if (c == "+" || c == " ") nn++
+      }
+      n = 0
+    }
+    /^(diff --git |=== FILE: )/ { flush(); indiff = ($0 ~ /^diff --git /); h0 = 0; ts = 0; st = 0; path = substr($0, 12) }
+    { S[++n] = $0 }
+    indiff && st < 2 && /^=== CONTEXT: / { st = 2; ts = n }
+    indiff && st == 0 && /^@@ / { st = 1; h0 = n }
+    indiff && st == 0 && /^\+\+\+ b\// { path = substr($0, 7) }
+    indiff && st == 0 && /^--- a\// { path = substr($0, 7) }
+    END { flush() }'
+}
+
+# ar_omit_oversized_content — the rules above, applied to a diff input before it is chunked or truncated. A chunk
+# child omits nothing itself (its parent did, and its part fits): it takes the notes for its own part from
+# ZUVO_ADV_INPUT_OMITTED, and records an added line over the budget it still holds.
+ar_omit_oversized_content() {
+[[ "$REVIEW_MODE" =~ $AR_DOC_MODES || "$REVIEW_MODE" == blind-audit ]] && return 0
+local budget=$((MAX_CHARS - CHUNK_NOTE_HEADROOM_CHARS)) nf out kind rest note us=$'\037' line child=false
+if [[ "${ZUVO_ADV_CHUNK:-}" =~ ^[0-9]+/([0-9]+)$ ]] && [[ "$(ar_decimal "${BASH_REMATCH[1]}" 0 999999999)" -ge 2 ]]; then
+  child=true
+  INPUT_OMITTED="${ZUVO_ADV_INPUT_OMITTED:-}"
+fi
+[[ ${#INPUT} -gt $budget ]] || return 0
+nf=$(mktemp "${TMPDIR:-/tmp}/zuvo-adv-omit.XXXXXX")
+out=$(mktemp "${TMPDIR:-/tmp}/zuvo-adv-omit-in.XXXXXX")
+printf '%s\n' "$INPUT" | _ck_omit_oversized "$budget" "$nf" > "$out"
+_OMIT_NOTES="$(cat "$nf")"
+if grep -q "^omitted$us" "$nf"; then
+  INPUT="$(cat "$out")"
+fi
+rm -f "$out" "$nf"
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  kind="${line%%"$us"*}"; rest="${line#*"$us"}"; note="${rest%%"$us"*}"
+  if [[ "$kind" == omitted ]]; then
+    INPUT_OMITTED="${INPUT_OMITTED:+$INPUT_OMITTED$'\n'}$note"
+  else
+    INPUT_UNSPLITTABLE="${INPUT_UNSPLITTABLE:+$INPUT_UNSPLITTABLE$'\n'}$note"
+  fi
+  # A child's notes reach stderr through its parent, which printed them already.
+  [[ "$child" == true ]] || echo "NOTE: input ${kind}: $note" >&2
+done <<< "$_OMIT_NOTES"
+return 0
+}
+
+# _ck_part_omissions <chunk> — the omission notes whose stand-in line is in <chunk>, one per line.
+_ck_part_omissions() {
+  local line kind rest note marker us=$'\037' out=""
+  [[ -n "$_OMIT_NOTES" ]] || return 0
+  while IFS= read -r line; do
+    kind="${line%%"$us"*}"; rest="${line#*"$us"}"; note="${rest%%"$us"*}"; marker="${rest#*"$us"}"
+    [[ "$kind" == omitted && -n "$marker" ]] || continue
+    if grep -qxF -- "$marker" "$1"; then out="${out:+$out$'\n'}$note"; fi
+  done <<< "$_OMIT_NOTES"
+  printf '%s' "$out"
+}
+
 # ar_chunk_input — input over the cap with 2+ boundaries (or 2+ diff hunks): review it chunk by chunk in child
 # runs, then exit with the merged result.
 ar_chunk_input() {
@@ -922,6 +1060,9 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     _ck_note=$(_ck_build_chunk_note "$_ck_fence" "$_ck_i" "$_ck_n" "$_ck_dir/cnote-${_ck##*/chunk-}")
     _ck_args+=(--context "${CONTEXT_HINT:+$CONTEXT_HINT }${_ck_note}")
     [[ -z "$ARTIFACT_PATH" ]] || _ck_args+=(--artifact "$_ck_dir/art-${_ck_i}")
+    # The omissions in THIS part (ar_omit_oversized_content), for its proof — always set, so a caller's own
+    # ZUVO_ADV_INPUT_OMITTED never reaches a part.
+    _ck_env+=("ZUVO_ADV_INPUT_OMITTED=$(_ck_part_omissions "$_ck")")
     env ${_ck_env[@]+"${_ck_env[@]}"} ZUVO_ADV_STRIKE_GROUP="$_ck_strike" ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
       < "$_ck" > "$_ck_dir/out-${_ck_i}" 2> "$_ck_dir/err-${_ck_i}" &
     _ck_pids[$_ck_i]=$!
