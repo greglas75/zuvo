@@ -2259,7 +2259,7 @@ echo "=== F64 with no kimi CLI, kimi-api is offered exactly when MOONSHOT_API_KE
 # detect_providers alone, on a PATH with no client at all and no opt-in lane.
 mkdir -p "$T/f64-empty"
 f64() {   # [MOONSHOT_API_KEY=…]
-  env -u MOONSHOT_API_KEY ZUVO_ADVERSARIAL_TEST_HARNESS=0 ZUVO_ADV_OPENROUTER=0 ZUVO_ADV_BYTEPLUS=0 ZUVO_ADV_QWEN=0 "$@" \
+  env -u MOONSHOT_API_KEY ZUVO_ADVERSARIAL_TEST_HARNESS=0 ZUVO_ADV_OPENROUTER=0 ZUVO_ADV_BYTEPLUS=0 ZUVO_ADV_QWEN=0 ZUVO_ADV_ZAI=0 "$@" \
     bash -c '. "$1/adversarial-providers.sh" || exit 9; client_available() { return 1; }; PATH="$2"; detect_providers' \
     _ "$(dirname "$AR")/lib" "$T/f64-empty" 2>&1
 }

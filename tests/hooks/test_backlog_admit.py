@@ -267,7 +267,8 @@ class ValidationTests(unittest.TestCase):
         ("list as fix crashed the secret scan", f(fix=["patch"]), "bad-field:fix"),
         ("number as severity crashed the secret scan", f(severity=3), "bad-field:severity"),
         ("number as missing assertion crashed the promotion check",
-         dataclasses.replace(gap(), missing_assertion=0), "bad-field:missing_assertion"),
+         dataclasses.replace(gap(), missing_assertion=0),  # type: ignore[arg-type]  # the wrong type is the input
+         "bad-field:missing_assertion"),
         ("a non-UTF-8 argv byte (a lone surrogate) passed validation and failed only at the ledger write",
          dataclasses.replace(gap(), missing_assertion="bad\udcffbyte"), "bad-field:missing_assertion"),
         ("a non-UTF-8 argv byte in the anchor passed validation", f(anchor="if total \udcff> limit:"),

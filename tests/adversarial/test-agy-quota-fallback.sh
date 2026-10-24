@@ -133,7 +133,7 @@ assert_contains "$out" "mock json finding" "the .response text is the review"
 if [[ "$out" == *'"status":"success"'* ]]; then fail "the JSON envelope is not passed on as the review" "$out"
 else pass "the JSON envelope is not passed on as the review"; fi
 reset_calls
-out=$(FB= run_adv json-error)
+out=$(FB='' run_adv json-error)
 if [[ "$out" == *"MOCK-UNSEEN-ERROR"* ]]; then fail "an error object is not consumed as a review" "$out"
 else pass "an error object is not consumed as a review"; fi
 

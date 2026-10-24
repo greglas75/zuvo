@@ -69,8 +69,9 @@ python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1
 echo "=== structural canonical detection: unknown/digit skills are not drift ==="
 python3 - <<'PYEOF'
 import os
+import importlib.util
 from importlib.machinery import SourceFileLoader
-S=SourceFileLoader('s',os.path.join(os.environ['ROOT'] if 'ROOT' in os.environ else '.','scripts/zuvo-home/sanitize-retros')).load_module()
+_L=SourceFileLoader('s',os.path.join(os.environ['ROOT'] if 'ROOT' in os.environ else '.','scripts/zuvo-home/sanitize-retros')); S=importlib.util.module_from_spec(importlib.util.spec_from_loader('s',_L)); _L.exec_module(S)
 c17='RETRO: 2026-07-25T10:00:00Z\tbrand-new-2027\tp\t-\t-\t-\t-\t1\t1\t1\t1\tm\ts\tc\t2f\ti\tok'
 a='RETRO: 2026-07-24T10:00:00Z\ta11y-audit\tp\t-\t-\t-\t-\t1\t1\t1\t1\tm\ts\tc\t2f\ti\tok'
 d='RETRO: skill=plan project=X at=2026-05-29T11:00:00Z'
@@ -81,8 +82,9 @@ print('OK')
 PYEOF
 [ "$(ROOT="$ROOT" python3 - <<'PYEOF' 2>/dev/null
 import os
+import importlib.util
 from importlib.machinery import SourceFileLoader
-S=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')).load_module()
+_L=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')); S=importlib.util.module_from_spec(importlib.util.spec_from_loader('s',_L)); _L.exec_module(S)
 c='RETRO: 2026-07-25T10:00:00Z\tbrand-new-2027\tp\t-\t-\t-\t-\t1\t1\t1\t1\tm\ts\tc\t2f\ti\tok'
 print('yes' if S.is_drifted(c) is False else 'no')
 PYEOF
@@ -91,8 +93,9 @@ PYEOF
 echo "=== release only removes OUR lock (never another process's) ==="
 python3 - <<'PYEOF'
 import os
+import importlib.util
 from importlib.machinery import SourceFileLoader
-S=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')).load_module()
+_L=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')); S=importlib.util.module_from_spec(importlib.util.spec_from_loader('s',_L)); _L.exec_module(S)
 os.makedirs(S.LOCK, exist_ok=True); open(os.path.join(S.LOCK,'pid'),'w').write('999999')
 S.release_lock()
 assert os.path.isdir(S.LOCK), 'released another process lock'
@@ -104,8 +107,9 @@ PYEOF
 # ValueError is caught next to the OSError — narrowing that except to OSError alone crashed the release.
 python3 - <<'PYEOF'
 import os
+import importlib.util
 from importlib.machinery import SourceFileLoader
-S=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')).load_module()
+_L=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')); S=importlib.util.module_from_spec(importlib.util.spec_from_loader('s',_L)); _L.exec_module(S)
 os.makedirs(S.LOCK, exist_ok=True); open(os.path.join(S.LOCK,'pid'),'w').write('not-a-pid')
 S.release_lock()
 assert not os.path.isdir(S.LOCK), 'unowned lock left behind'

@@ -146,7 +146,8 @@ def parse_args(argv):
 
 def env_int(name, default):
     raw = os.environ.get(name, "")
-    # ASCII digits only ("²" passes isdigit() and int() refuses it), at most 12: no runaway window from a typo.
+    # ASCII digits only ("²" passes isdigit() and int() refuses it), at most 12: no runaway window
+    # from a typo.
     return int(raw) if re.fullmatch(r"[0-9]{1,12}", raw) and int(raw) >= 1 else default
 
 
@@ -168,7 +169,8 @@ def cooldowns(path, now=None):
     except OSError:
         return []
     rows = {}
-    for line in lines:   # one row per (lane, model), the last one written wins — as the driver's awk keys them
+    # one row per (lane, model), the last one written wins — as the driver's awk keys them
+    for line in lines:
         f = line.split("\t")
         if len(f) >= 4:
             rows[(f[0], f[1])] = f
@@ -296,7 +298,8 @@ def tokens(cols, idx):
     if len(cols) <= idx:
         return None
     v = cols[idx].strip()
-    # ASCII digits only: str.isdigit() also passes "²", which int() then refuses — one odd cell would end the report.
+    # ASCII digits only: str.isdigit() also passes "²", which int() then refuses — one odd cell would
+    # end the report.
     return int(v) if re.fullmatch(r"[0-9]+", v) else None
 
 

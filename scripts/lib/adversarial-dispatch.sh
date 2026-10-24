@@ -138,7 +138,7 @@ run_byteplus() {
     _byteplus_fallback "$lane" "$model" "$until"
     return
   fi
-  ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_GUARD_LANE="$lane" ZUVO_OR_PROVIDER_ORDER= ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
+  ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_GUARD_LANE="$lane" ZUVO_OR_PROVIDER_ORDER='' ZUVO_OR_KEY_FILE="${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" \
     OPENROUTER_API_KEY="${BYTEPLUS_API_KEY:-}" ZUVO_OPENROUTER_BASE_URL="${ZUVO_BYTEPLUS_BASE_URL:-https://ark.ap-southeast.bytepluses.com/api/coding/v3}" \
     ZUVO_OPENROUTER_MODEL="$model" ZUVO_OR_STREAM=1 run_openrouter || rc=$?
   [[ $rc -ne 0 && -s "$JSON_TMPDIR/bpquota_$lane" ]] || return "$rc"
@@ -228,8 +228,8 @@ _byteplus_or_step() {
   # Step 2's not-run marker must not turn a real failure here into `no-key`.
   rm -f -- "$JSON_TMPDIR/nokey_$lane" 2>/dev/null || true
   printf '%s' "$or_model" > "$JSON_TMPDIR/byteplus-effective-model-$lane" 2>/dev/null || true
-  PROVIDER_TIMEOUT="$left" ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_GUARD_LANE=openrouter ZUVO_OPENROUTER_BASE_URL= \
-    ZUVO_OR_KEY_FILE= ZUVO_OPENROUTER_MODEL="$or_model" ZUVO_OR_PROVIDER_ORDER="$order" ZUVO_OR_STREAM=0 \
+  PROVIDER_TIMEOUT="$left" ZUVO_OR_LANE_LABEL="$lane" ZUVO_OR_GUARD_LANE=openrouter ZUVO_OPENROUTER_BASE_URL='' \
+    ZUVO_OR_KEY_FILE='' ZUVO_OPENROUTER_MODEL="$or_model" ZUVO_OR_PROVIDER_ORDER="$order" ZUVO_OR_STREAM=0 \
     run_openrouter || rc=$?
   # The run log, the artifact and the health ledger name the endpoint that answered: <model>@<provider>.
   if served="$(cat "$JSON_TMPDIR/or-served-$lane" 2>/dev/null)" && [[ -n "$served" ]]; then
