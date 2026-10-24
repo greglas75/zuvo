@@ -133,6 +133,8 @@ class StubDecisions:
     @property
     def url(self) -> str:
         host, port = self.server.server_address[:2]
+        if isinstance(host, bytes):  # typeshed allows bytes, and f"{bytes}" would print b'...'
+            host = host.decode()
         return f"http://{host}:{port}/api/alpha/decisions"
 
 
@@ -387,7 +389,10 @@ class AnswerCase(unittest.TestCase):
         hash of the very fields it is being asked to compare, and the hint silently measures the
         structural key instead of second-guessing it."""
         seen: List[str] = []
-        self.advise(lambda key, url, state, timeout: seen.append(state) or {"probabilities": {"DUP": 0.9}})
+        def post(key: Any, url: Any, state: str, timeout: Any) -> Dict[str, Any]:
+            seen.append(state)
+            return {"probabilities": {"DUP": 0.9}}
+        self.advise(post)
         self.assertTrue(seen)
         for state in seen:
             self.assertNotIn(adm.fingerprint(self.f), state)

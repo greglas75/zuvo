@@ -429,7 +429,8 @@ class TagTests(unittest.TestCase):
         sb.git("checkout", "-q", "-b", "feat/x")
         pidfile = sb.tmp / "orphan.pid"
         sb.stub_gh(f"{shlex.quote(SLEEP)} 30 &\necho $! > {shlex.quote(str(pidfile))}\nwait")
-        with sb.env({"ZUVO_GH_TIMEOUT": "0.5"}):
+        # 2 s, not 0.5: on a loaded host the timeout killed the stub before it wrote the pid (no pidfile, 2026-10-25)
+        with sb.env({"ZUVO_GH_TIMEOUT": "2"}):
             tag = vcs.resolve_tag(str(sb.repo), None).render()
         orphan = int(pidfile.read_text(encoding="utf-8"))
         self.assertEqual(("[branch:feat/x]", True), (tag, dead_within(orphan, 5)))

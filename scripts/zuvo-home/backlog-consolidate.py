@@ -151,7 +151,7 @@ def append(main_file: Path, block: str):
             f.seek(-1, 2)
             if f.read(1) != b"\n":
                 block = "\n" + block  # else the first appended line joins main's unterminated last one
-    with main_file.open("a", **ENC) as f:
+    with main_file.open("a", encoding=ENC["encoding"], errors=ENC["errors"]) as f:  # no overload takes **dict
         f.write(block)  # header and entries in one write call, not two
 
 def merge_md(main_file: Path, wt_text: str, label: str, *, write: bool):

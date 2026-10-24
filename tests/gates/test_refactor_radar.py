@@ -305,7 +305,8 @@ export function deep(x) { if (x) { if (x) { if (x) { if (x) { return 1; } } } } 
         self.write(".radar.json", json.dumps({"source_roots": ["src"]}))
         scoped = self.scan()
         self.assertEqual(scoped["meta"]["test_files"], 1)
-        self.assertEqual(self.row(scoped, "src/order-service.ts")["test_files"], ["src/order-service.test.ts"])
+        self.assertEqual(self.row(scoped, "src/order-service.ts")["test_files"],
+                         ["src/order-service.test.ts"])
         self.write(".radar.json", json.dumps({"source_roots": ["src"], "test_roots": ["."]}))
         widened = self.scan()
         self.assertEqual(widened["meta"]["test_files"], 2)

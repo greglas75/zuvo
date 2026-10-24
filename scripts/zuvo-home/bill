@@ -23,7 +23,8 @@ USAGE
 
 ENV
 
-    BILL_MODEL (gpt-6.1-sol; claude-* runs through claude)  BILL_EFFORT (high)  BILL_WORKERS (5)  BILL_TICK_SECONDS (540)
+    BILL_MODEL (gpt-6.1-sol; claude-* runs through claude)  BILL_EFFORT (high)  BILL_WORKERS (5)
+    BILL_TICK_SECONDS (540)
     BILL_MAX_AGE_HOURS (48)  BILL_MIN_AGE_MINUTES (30)  BILL_MAX_TRIES (3)  ZUVO_HOME (~/.zuvo)
     touch ~/.zuvo/bill-data/PAUSE to stop it without unscheduling
 """

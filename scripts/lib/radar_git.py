@@ -222,7 +222,8 @@ def local_busy(root: Path, sha: str) -> dict:
             # branch keeps its old merge-base, so merge-base..HEAD alone lists every landed file.
             changed = path_records(git(root, "diff", "--name-only", "--no-renames", "-z", base, head, "--"))
             if changed:
-                differs = path_records(git(root, "diff", "--name-only", "--no-renames", "-z", sha, head, "--"))
+                differs = path_records(
+                    git(root, "diff", "--name-only", "--no-renames", "-z", sha, head, "--"))
                 candidates = set(changed) & set(differs)
                 if candidates:
                     committed.append((branch, head, candidates, base))

@@ -38,7 +38,6 @@ REVISIONS of one entry) and are a LOWER bound, not a promise.
 
 from __future__ import annotations
 
-import http.client
 import ipaddress
 import json
 import math
@@ -49,7 +48,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
 import zuvo_backlog_admit as adm
 import zuvo_backlog_findings as fnd
@@ -70,8 +69,8 @@ THRESHOLD = 0.55
 TIMEOUT_ENV = "ZUVO_BACKLOG_SIMILAR_TIMEOUT"
 TIMEOUT_S = 8.0
 # A budget for the WHOLE advisory, not one call (a bound, not a wall clock: no call STARTS
-# once it is spent and each socket timeout is clipped to what is left). Without it the per-call timeout multiplies by
-# the number of candidates (5 x 8 s = 40 s) and a degraded endpoint stalls the caller before the
+# once it is spent and each socket timeout is clipped to what is left). Without it the per-call timeout
+# multiplies by the number of candidates (5 x 8 s = 40 s) and a degraded endpoint stalls the caller before the
 # verdict is printed — the lock is safe, the human is not. Calls stop when the budget is spent; the
 # answers already in hand are still used.
 BUDGET_ENV = "ZUVO_BACKLOG_SIMILAR_BUDGET"

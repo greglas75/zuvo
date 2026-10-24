@@ -308,9 +308,10 @@ def _looked_up_pr(repo: str, branch: str) -> Optional[str]:
 
 def _own_pr(out: str) -> Optional[str]:
     """The newest same-repo PR in gh's JSON list, "" when there is none or it is past the intake's 6 digits
-    (cached like no PR, so gh is not asked on every add; the entry waits as `[branch:<name>]`), None for anything
-    else. `--head` matches the branch NAME, so a fork's PR from an equally named branch is listed too; only
-    `isCrossRepository: false` is this branch's (that already pins the head owner to the base repo's)."""
+    (cached like no PR, so gh is not asked on every add; the entry waits as `[branch:<name>]`), None for
+    anything else. `--head` matches the branch NAME, so a fork's PR from an equally named branch is listed
+    too; only `isCrossRepository: false` is this branch's (that already pins the head owner to the base
+    repo's)."""
     try:
         own = [str(p.get("number")) for p in json.loads(out) if p.get("isCrossRepository") is False]
     except (ValueError, TypeError, AttributeError):     # not JSON, not a list, not a list of objects

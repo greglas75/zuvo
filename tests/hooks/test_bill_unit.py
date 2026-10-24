@@ -1001,7 +1001,8 @@ class CodexJudge(BillTestCase):
         """A fake `codex` printing `events` as JSONL; it logs its argv and the CODEX_HOME config it got."""
         out = self.write("codex.out", "".join(json.dumps(e) + "\n" for e in events))
         log = os.path.join(self.tmp, "codex.log")
-        self.fake_exe("codex", f'cat >/dev/null; echo "$*" >> "{log}"; cat "$CODEX_HOME/config.toml" >> "{log}"\n'
+        self.fake_exe("codex", f'cat >/dev/null; echo "$*" >> "{log}"; '
+                               f'cat "$CODEX_HOME/config.toml" >> "{log}"\n'
                                f'ls "$CODEX_HOME" >> "{log}"; cat "{out}"; exit {rc}\n')
         self.setenv(BILL_MODEL="gpt-6.1-sol", BILL_EFFORT="high", CODEX_HOME=self.write_dir("codex-src"))
         self.write(os.path.join(self.tmp, "codex-src", "auth.json"), "{}")
@@ -1017,7 +1018,8 @@ class CodexJudge(BillTestCase):
         self.queue_review("r-1", ["a.py:1:x"], hours=2)
         self.fake_driver()
         answer = {"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}], "lessons": []}
-        log = self.codex([{"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(answer)}},
+        message = {"type": "agent_message", "text": json.dumps(answer)}
+        log = self.codex([{"type": "item.completed", "item": message},
                           {"type": "turn.completed", "usage": {"input_tokens": 900, "output_tokens": 70}}])
         import zuvo_bill_tick
         self.assertEqual(zuvo_bill_tick.tick(False), 0)
@@ -1036,8 +1038,9 @@ class CodexJudge(BillTestCase):
         self.queue_review("r-1", ["a.py:1:x"], hours=2)
         self.fake_driver()
         answer = {"defects": [{"verdict": "real", "finding_ids": ["a.py:1:x"]}], "lessons": []}
+        message = {"type": "agent_message", "text": json.dumps(answer)}
         self.codex([{"type": "error", "message": "Reconnecting... 1/5 (stream disconnected)"},
-                    {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(answer)}}])
+                    {"type": "item.completed", "item": message}])
         import zuvo_bill_tick
         self.assertEqual(zuvo_bill_tick.tick(False), 0)
         rec = json.loads(self.read_lines(os.path.join(self.zuvo, "bill-data", "bill.log"))[-1])

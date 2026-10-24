@@ -79,9 +79,10 @@ def codex_argv() -> list[str]:
 
 
 def _codex_home(model: str, effort: str) -> str:
-    """A throwaway CODEX_HOME (mode 700): the account's auth.json copied (mode 600) from ${CODEX_HOME:-~/.codex}
-    — read per call, so an account switch (cswap) takes effect on the next call — and a config naming only
-    the model, effort, sandbox and approval: none of the user's MCP servers, profiles or instructions."""
+    """A throwaway CODEX_HOME (mode 700): the account's auth.json copied (mode 600) from
+    ${CODEX_HOME:-~/.codex} — read per call, so an account switch (cswap) takes effect on the next call —
+    and a config naming only the model, effort, sandbox and approval: none of the user's MCP servers,
+    profiles or instructions."""
     home = tempfile.mkdtemp(prefix="zuvo-codex.")
     try:
         src = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "auth.json")
@@ -152,7 +153,8 @@ def _parse_codex(rc: int, out: str, err: str, secs: int, keys: tuple[str, ...]) 
                 failures.append(str(item.get("message") or item))
         elif ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
             u = {k: v for k, v in ev["usage"].items() if isinstance(v, int) and not isinstance(v, bool)}
-            usage = {"tokens_in": u.get("input_tokens", 0), "tokens_out": u.get("output_tokens", 0), "usd": None}
+            usage = {"tokens_in": u.get("input_tokens", 0), "tokens_out": u.get("output_tokens", 0),
+                     "usd": None}
         elif ev.get("type") in ("error", "turn.failed"):
             e = ev.get("error")
             failures.append(str(ev.get("message") or (e.get("message") if isinstance(e, dict) else e) or ev))

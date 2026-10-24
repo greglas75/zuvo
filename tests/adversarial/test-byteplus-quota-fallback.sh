@@ -268,6 +268,7 @@ mkdir -p "$QTMP/c17a" "$QTMP/c17b"
   export ADV_USAGE_LANE=byteplus-alt
   JSON_TMPDIR="$QTMP/c17a"; lane_usage_add 0 0 0 0; lane_usage_add - 0 - -
   printf '%s|' "$(lane_usage_cols byteplus-alt | tr '\t' ',')"
+  # shellcheck disable=SC2034  # read by lane_usage_add
   JSON_TMPDIR="$QTMP/c17b"; lane_usage_add 0 0 0 0; lane_usage_add 120 40 9 -
   printf '%s\n' "$(lane_usage_cols byteplus-alt | tr '\t' ',')"
 ) > "$QTMP/q17.out" 2>&1
