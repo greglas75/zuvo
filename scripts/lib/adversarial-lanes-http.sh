@@ -31,11 +31,15 @@ chat_payload() {
 # cheapest host, which serves it 4-bit (mxfp4), so the lane's measured quality depended on whichever host answered.
 # Owner's calls (2026-10-20): mimo on Makora, DeepInfra when Makora does not answer; ling-3.1-flash on Novita only
 # (#108). deepseek-v4.1-flash and glm-5.3-flash are the BytePlus lanes' OpenRouter step (_byteplus_or_step), fp8
-# endpoints first. openrouter_provider_routing sends any pin with `allow_fallbacks: false`.
+# endpoints first. minimax-m3.1-flash (openrouter-mini, 2026-10-24): Parasail fp8, GMICloud fp8 when Parasail does not
+# answer — the five slowest bench batches per host, wall s median/max, over the 300 s ceiling: parasail/fp8 64/85, 0/5;
+# gmicloud/fp8 223/502, 2/5; novita/fp16 330/464, 3/5; minimax 383/509, 3/5 (docs/adversarial-providers.md).
+# openrouter_provider_routing sends any pin with `allow_fallbacks: false`.
 openrouter_pin_order() {
   case "$1" in
     xiaomi/mimo-v2.6-flash)            echo "makora,deepinfra" ;;
     inclusionai/ling-3.1-flash)        echo "novita" ;;
+    minimax/minimax-m3.1-flash)        echo "parasail/fp8,gmicloud/fp8" ;;
     deepseek/deepseek-v4.1-flash-1017) echo "inference-net/fp8,parasail/fp8,atlas-cloud/fp8" ;;
     z-ai/glm-5.3-flash)                echo "baseten/fp8,baseten/fp8/us,wafer/nvfp4" ;;
   esac
@@ -520,6 +524,245 @@ openrouter_provider_routing() {
     '(if $s == "" then {} else {sort: $s} end) + (if $q == "" then {} else {quantizations: ($q | split(","))} end)'
 }
 
+# ─── In-flight cap: how many calls one OpenRouter model may have open at once ────────────────────────────────────
+# WHY: a small host rate-limits overlapping calls. inception/mercury-3 has one endpoint (Inception), and the benchmark
+# got HTTP 429 on 10 of 20 batches at 8 parallel workers (2026-10-20). One review already sends ZUVO_ADV_CHUNK_PARALLEL
+# (3) chunks at once and several reviews run side by side, so without a cap the lane's 429s would be the fleet's own
+# overlap, retried into a storm. The cap is a set of slot directories under ZUVO_HOME — so it holds per user's ZUVO_HOME
+# on one machine, not across machines (mkdir is atomic on every OS this runs on; no flock on macOS): a call takes one
+# before its first request and gives it back when its attempts end. A slot whose holder died (killed by a timeout) is
+# broken the way _ar_lock breaks a stale lock. The pool, its cap and its override are all keyed by the MODEL: every lane
+# that runs the model shares one pool, so they must share one number too.
+
+# _or_inflight_var <model> — the override's name: ZUVO_OR_MAX_INFLIGHT_ + the model id upper-cased, every character
+# outside [A-Z0-9] as `_` (inception/mercury-3 → ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3).
+_or_inflight_var() {
+  printf 'ZUVO_OR_MAX_INFLIGHT_%s\n' "$(printf '%s' "$1" | LC_ALL=C tr 'a-z' 'A-Z' | LC_ALL=C tr -c 'A-Z0-9' '_')"
+}
+
+# openrouter_inflight_cap <model> — the cap for the model's calls, 0 = none. Its override (_or_inflight_var) wins: set
+# but empty, or 0 = no cap; a value that is not a number gets a WARN and the model's default.
+openrouter_inflight_cap() {
+  local v cap def=0
+  case "$1" in
+    inception/mercury-3) def=3 ;;
+  esac
+  v="$(_or_inflight_var "$1")"
+  [[ -n "${!v+x}" ]] || { echo "$def"; return 0; }
+  cap="${!v}"
+  if [[ -z "$cap" ]]; then echo 0; return 0; fi
+  if [[ ! "$cap" =~ ^[0-9]{1,4}$ ]]; then
+    echo "  WARN: $v='${cap//[[:cntrl:]]/?}' is not a number — using $def" >&2
+    echo "$def"; return 0
+  fi
+  echo $(( 10#$cap ))
+}
+
+# _or_inflight_dir <model> — the model's slot directory, <root>/<model with every character outside [a-zA-Z0-9.-] as
+# `_`> (ZUVO_OR_INFLIGHT_DIR overrides the root). Two ids that differ only in such characters share one pool, each
+# counting the slots up to its own cap — no OpenRouter model id pair does today.
+_or_inflight_dir() {
+  printf '%s/%s\n' "${ZUVO_OR_INFLIGHT_DIR:-${ZUVO_HOME:-$HOME/.zuvo}/or-inflight}" \
+    "$(printf '%s' "$1" | LC_ALL=C tr -c 'a-zA-Z0-9.-' '_')"
+}
+
+# _or_slot_take <slot> <pid> — status 0 when the slot is now ours: created (mkdir is the claim) and its pid written.
+# Status 1 when another call holds it — including one that broke this slot as stale and took it while we stood
+# between our mkdir and our pid write: the pid is written with noclobber, so we never write over its pid. Status 2
+# when the slot cannot be kept at all (a file in its place, or a pid that cannot be written on a full disk): the
+# caller runs uncapped rather than queue for a slot no call can take.
+_or_slot_take() {
+  if ! mkdir -- "$1" 2>/dev/null; then
+    [[ -e "$1" && ! -d "$1" ]] && return 2
+    return 1
+  fi
+  if ! ( set -C; printf '%s\n' "$2" > "$1/pid" ) 2>/dev/null; then
+    [[ -e "$1/pid" ]] && return 1
+    rmdir -- "$1" 2>/dev/null || true
+    return 2
+  fi
+}
+
+# _or_self_pid — sets OR_SELF_PID to this (sub)shell's own pid, the slot owner (a variable, not output: inside a
+# command substitution BASHPID would be the substitution's pid). bash 3.2 (macOS /bin/bash) has no BASHPID, and its $$ is
+# the driver's for every lane subshell: a lane killed by its timeout would leave a slot whose pid stays alive until
+# the driver exits. The child exec'd from a command substitution reports its parent, which is this shell.
+_or_self_pid() {
+  if [[ -n "${BASHPID:-}" ]]; then OR_SELF_PID="$BASHPID"; return 0; fi
+  # shellcheck disable=SC2016  # $PPID belongs to the child sh
+  OR_SELF_PID="$(exec sh -c 'echo "$PPID"')"
+}
+
+# or_inflight_acquire <lane> <model> <deadline-epoch> — takes a slot when the model has a cap, waiting (1 s polls)
+# while every slot is busy; OR_INFLIGHT_SLOT names it (empty: no cap, or slots that cannot be kept — then the call
+# runs uncapped, said once). Status 1 when no slot freed before too little of the budget was left for a request: the
+# lane is not run and not held against it (lane_not_run, the driver's not-run outcome) — a queue of this ZUVO_HOME's
+# own calls is no fault of the host. The wait comes out of the call's own budget: a longer one would outlive the
+# run deadline derived from PROVIDER_TIMEOUT.
+or_inflight_acquire() {
+  local lane="$1" model="$2" deadline="$3" cap dir i slot rc me waited=0 gone bad
+  OR_INFLIGHT_SLOT=""
+  cap="$(openrouter_inflight_cap "$model")"
+  (( cap > 0 )) || return 0
+  dir="$(_or_inflight_dir "$model")"
+  if ! mkdir -p -- "$dir" 2>/dev/null || [[ ! -w "$dir" ]]; then
+    echo "  NOTE: $lane: in-flight slots cannot be kept in $dir — this call runs without the cap of $cap" >&2
+    return 0
+  fi
+  local OR_SELF_PID; _or_self_pid; me="$OR_SELF_PID"
+  while : ; do
+    bad=0
+    for (( i = 1; i <= cap; i++ )); do
+      slot="$dir/slot.$i"
+      rc=0; _or_slot_take "$slot" "$me" || rc=$?
+      if (( rc == 1 )) && _ar_lock_stale "$slot" && mkdir -- "$slot.break" 2>/dev/null; then
+        # Its holder is gone: broken (one breaker at a time, re-checked under the marker, as _ar_lock does) and taken
+        # at once, before another call's next poll can. The stale copy gets a name no earlier break left behind.
+        gone="$slot.stale.$me.$(date +%s).$RANDOM"
+        if _ar_lock_stale "$slot" && mv -- "$slot" "$gone" 2>/dev/null; then
+          rm -f -- "$gone/pid"; rmdir -- "$gone" 2>/dev/null || true
+        fi
+        rmdir -- "$slot.break" 2>/dev/null || true
+        rc=0; _or_slot_take "$slot" "$me" || rc=$?
+      fi
+      if (( rc == 0 )); then
+        OR_INFLIGHT_SLOT="$slot"
+        if (( waited > 0 && $(date +%s) + OR_MIN_ATTEMPT_SECONDS >= deadline )); then
+          # Freed during the last poll, too late for one request: still this ZUVO_HOME's queue, not the host.
+          or_inflight_release
+          lane_not_run "$lane" "an in-flight slot for $model freed after ${waited}s, too late for a request ($(_or_inflight_var "$model"))"
+          return 1
+        fi
+        (( waited == 0 )) || echo "  NOTE: $lane [$model] waited ${waited}s for one of $cap in-flight slots" >&2
+        return 0
+      fi
+      if (( rc == 2 )); then
+        # This slot cannot be kept; the others may. Only when none can does the call run uncapped.
+        bad=$(( bad + 1 ))
+        if (( bad == cap )); then
+          echo "  NOTE: $lane: no in-flight slot can be kept in $dir — this call runs without the cap of $cap" >&2
+          return 0
+        fi
+        continue
+      fi
+      # A breaker killed mid-break leaves its marker: one older than a minute is cleared, as _ar_lock clears it.
+      [[ -d "$slot.break" && -n "$(find "$slot.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]] \
+        && { rmdir -- "$slot.break" 2>/dev/null || true; }
+    done
+    if (( $(date +%s) + OR_MIN_ATTEMPT_SECONDS + 1 >= deadline )); then
+      lane_not_run "$lane" "all $cap in-flight slots for $model under this ZUVO_HOME stayed busy for ${waited}s ($(_or_inflight_var "$model"))"
+      return 1
+    fi
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+}
+
+# or_inflight_release — gives back OR_INFLIGHT_SLOT, only while its pid is ours: a slot broken as stale and taken by
+# another call — even one that has made the directory and not yet written its pid — is that call's.
+or_inflight_release() {
+  [[ -n "${OR_INFLIGHT_SLOT:-}" ]] || return 0
+  local holder
+  holder="$(cat "$OR_INFLIGHT_SLOT/pid" 2>/dev/null)" || holder=""
+  local OR_SELF_PID; _or_self_pid
+  if [[ -n "$holder" && "$holder" == "$OR_SELF_PID" ]]; then
+    rm -f -- "$OR_INFLIGHT_SLOT/pid" 2>/dev/null; rmdir -- "$OR_INFLIGHT_SLOT" 2>/dev/null || true
+  fi
+  OR_INFLIGHT_SLOT=""
+}
+
+# _openrouter_attempts — run_openrouter's request loop, in ITS scope (bash scoping is dynamic: the loop reads and sets
+# run_openrouter's locals — response, http_code, status, api_err, _until …). Status 0 = a 2xx answer in $response;
+# anything else is the lane's exit status. A function of its own so the in-flight slot is given back on every path.
+_openrouter_attempts() {
+  while : ; do
+    _or_try=$(( _or_try + 1 ))
+    _or_left=$(( _or_deadline - $(date +%s) ))
+    if [[ $_or_left -lt $OR_MIN_ATTEMPT_SECONDS ]]; then
+      echo "  WARN: $_lane out of time budget after $((_or_try - 1)) attempt(s)" >&2
+      return 124
+    fi
+    status=0
+    # No -f: it would discard HTTP>=400 bodies, which is exactly where the {"error":...}
+    # diagnostics live (401 bad key, 402 out of credit, 429 throttled).
+    # -S: with -s alone curl writes nothing on failure, and a stream reset reads like a model that said nothing.
+    response=$(curl -sS --max-time "$_or_left" -w '\n%{http_code}' \
+      "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
+      -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
+    http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
+    # Only a 2xx body is a stream to fold; a 429/5xx keeps its raw bytes for the retry and the failure quote.
+    if [[ $status -eq 0 && $_or_stream -eq 1 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+      response=$(openrouter_assemble_stream "$response" "$_lane")
+    fi
+    api_err=""
+    # .message is the OpenAI shape; some gateways send only a code, or a bare string
+    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
+      elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
+
+    # A spent BytePlus plan is a 429 too, but asking again cannot help until its reset: recorded, never retried.
+    # Keyed on the endpoint, not the lane label, which a stand-in on another endpoint keeps.
+    if [[ "$_plan" == byteplus && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
+      byteplus_quota_record "$_lane" "$response"
+      return 1
+    fi
+    # A free model's 429 is its ration spent (per minute, per day, or upstream): recorded, never retried.
+    if (( _free )) && [[ "$http_code" == 429 ]]; then
+      _until="$(openrouter_free_quota_record "$_lane" "$response")"
+      lane_not_run "$_lane" "OpenRouter free-model quota spent until $(_ar_epoch_text "$_until") (HTTP 429: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS"))"
+      return 1
+    fi
+    # No stop file for Z.ai: no fallback reads one, and a chunk's one refused request costs nothing.
+    if [[ "$_plan" == zai && "$http_code" == 429 ]] && _zai_plan_refusal "$response"; then
+      echo "  WARN: $_lane: Z.ai GLM Coding Plan refused (code $(printf '%s' "$response" | jq -r '.error.code' 2>/dev/null)): $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS") — not retried" >&2
+      return 1
+    fi
+
+    # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
+    # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset, 18 partial body, 92 HTTP/2
+    # stream not closed cleanly). Everything else is a real answer or a real refusal — 401/402/404 do not
+    # improve by asking again and must fail fast.
+    local _transient=0
+    case "$http_code" in 429|5??) _transient=1 ;; esac
+    case "$status" in 52|56|35|16|18|92) _transient=1 ;; esac
+    # A 2xx stream that arrived broken (cut off, a torn event, an assembly failure) is a dropped connection
+    # curl did not notice: asked again within the budget.
+    if [[ $_or_stream -eq 1 && -n "$api_err" ]] \
+       && printf '%s' "$response" | jq -e '.error.stream_integrity == true' >/dev/null 2>&1; then
+      _transient=1
+    fi
+    if [[ $_transient -eq 1 && $_or_try -lt $OR_ATTEMPTS ]]; then
+      echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/$(( OR_ATTEMPTS - 1 ))" >&2
+      sleep $(( _or_try * 3 ))
+      continue
+    fi
+
+    if [[ $status -ne 0 ]]; then
+      lane_exit_warn "$_lane" "$status" 28 "$err_file"
+      [[ $status -eq 28 ]] && return 124
+      return "$status"
+    fi
+    if [[ -n "$api_err" ]]; then
+      echo "  WARN: $_lane returned error: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+      return 1
+    fi
+    # Any non-2xx that reached here is a failure even without an OpenAI-style .error.message: a
+    # gateway 502/503 HTML page after the retries, or a 4xx with an empty or foreign body, used
+    # to fall through to `break` and be read as a successful provider answer.
+    if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+      # Upstream bytes are untrusted. Take a bounded slice first (no pipe over a large body),
+      # then keep printable ASCII only: a denylist of control bytes let C1 controls (0x80-0x9F,
+      # also UTF-8-encoded as C2 80-9F), bidi overrides and U+2028/2029 through, which can still
+      # drive a terminal or forge a log line. Every other byte becomes '?', so a diagnostic loses
+      # accents but cannot carry an escape sequence.
+      local _or_body="${response:0:$LANE_ERR_RESPONSE_QUOTE_CHARS}"
+      printf '  WARN: %s HTTP %s: %s\n' "$_lane" "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr -c '[:print:]' '?')" >&2
+      return 1
+    fi
+    break
+  done
+  return 0
+}
+
 run_openrouter() {
   # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
   # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.
@@ -655,91 +898,14 @@ run_openrouter() {
   # derived from PROVIDER_TIMEOUT, and the outer `timeout` wrappers that sit above it.
   local _or_deadline=$(( $(date +%s) + PROVIDER_TIMEOUT ))
   local _or_try=0 _or_left http_code api_err
-  while : ; do
-    _or_try=$(( _or_try + 1 ))
-    _or_left=$(( _or_deadline - $(date +%s) ))
-    if [[ $_or_left -lt $OR_MIN_ATTEMPT_SECONDS ]]; then
-      echo "  WARN: $_lane out of time budget after $((_or_try - 1)) attempt(s)" >&2
-      return 124
-    fi
-    status=0
-    # No -f: it would discard HTTP>=400 bodies, which is exactly where the {"error":...}
-    # diagnostics live (401 bad key, 402 out of credit, 429 throttled).
-    # -S: with -s alone curl writes nothing on failure, and a stream reset reads like a model that said nothing.
-    response=$(curl -sS --max-time "$_or_left" -w '\n%{http_code}' \
-      "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
-      -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
-    http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
-    # Only a 2xx body is a stream to fold; a 429/5xx keeps its raw bytes for the retry and the failure quote.
-    if [[ $status -eq 0 && $_or_stream -eq 1 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-      response=$(openrouter_assemble_stream "$response" "$_lane")
-    fi
-    api_err=""
-    # .message is the OpenAI shape; some gateways send only a code, or a bare string
-    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
-      elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
-
-    # A spent BytePlus plan is a 429 too, but asking again cannot help until its reset: recorded, never retried.
-    # Keyed on the endpoint, not the lane label, which a stand-in on another endpoint keeps.
-    if [[ "$_plan" == byteplus && "$http_code" == 429 ]] && _byteplus_quota_error "$response"; then
-      byteplus_quota_record "$_lane" "$response"
-      return 1
-    fi
-    # A free model's 429 is its ration spent (per minute, per day, or upstream): recorded, never retried.
-    if (( _free )) && [[ "$http_code" == 429 ]]; then
-      _until="$(openrouter_free_quota_record "$_lane" "$response")"
-      lane_not_run "$_lane" "OpenRouter free-model quota spent until $(_ar_epoch_text "$_until") (HTTP 429: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS"))"
-      return 1
-    fi
-    # No stop file for Z.ai: no fallback reads one, and a chunk's one refused request costs nothing.
-    if [[ "$_plan" == zai && "$http_code" == 429 ]] && _zai_plan_refusal "$response"; then
-      echo "  WARN: $_lane: Z.ai GLM Coding Plan refused (code $(printf '%s' "$response" | jq -r '.error.code' 2>/dev/null)): $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS") — not retried" >&2
-      return 1
-    fi
-
-    # Transient: throttling, provider-side 5xx, and the curl codes for a connection that died
-    # mid-flight (52 empty reply, 56 recv error, 35 TLS, 16 HTTP/2 stream reset, 18 partial body, 92 HTTP/2
-    # stream not closed cleanly). Everything else is a real answer or a real refusal — 401/402/404 do not
-    # improve by asking again and must fail fast.
-    local _transient=0
-    case "$http_code" in 429|5??) _transient=1 ;; esac
-    case "$status" in 52|56|35|16|18|92) _transient=1 ;; esac
-    # A 2xx stream that arrived broken (cut off, a torn event, an assembly failure) is a dropped connection
-    # curl did not notice: asked again within the budget.
-    if [[ $_or_stream -eq 1 && -n "$api_err" ]] \
-       && printf '%s' "$response" | jq -e '.error.stream_integrity == true' >/dev/null 2>&1; then
-      _transient=1
-    fi
-    if [[ $_transient -eq 1 && $_or_try -lt $OR_ATTEMPTS ]]; then
-      echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $_or_try/$(( OR_ATTEMPTS - 1 ))" >&2
-      sleep $(( _or_try * 3 ))
-      continue
-    fi
-
-    if [[ $status -ne 0 ]]; then
-      lane_exit_warn "$_lane" "$status" 28 "$err_file"
-      [[ $status -eq 28 ]] && return 124
-      return "$status"
-    fi
-    if [[ -n "$api_err" ]]; then
-      echo "  WARN: $_lane returned error: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
-      return 1
-    fi
-    # Any non-2xx that reached here is a failure even without an OpenAI-style .error.message: a
-    # gateway 502/503 HTML page after the retries, or a 4xx with an empty or foreign body, used
-    # to fall through to `break` and be read as a successful provider answer.
-    if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-      # Upstream bytes are untrusted. Take a bounded slice first (no pipe over a large body),
-      # then keep printable ASCII only: a denylist of control bytes let C1 controls (0x80-0x9F,
-      # also UTF-8-encoded as C2 80-9F), bidi overrides and U+2028/2029 through, which can still
-      # drive a terminal or forge a log line. Every other byte becomes '?', so a diagnostic loses
-      # accents but cannot carry an escape sequence.
-      local _or_body="${response:0:$LANE_ERR_RESPONSE_QUOTE_CHARS}"
-      printf '  WARN: %s HTTP %s: %s\n' "$_lane" "${http_code:-?}" "$(printf '%s' "$_or_body" | LC_ALL=C tr -c '[:print:]' '?')" >&2
-      return 1
-    fi
-    break
-  done
+  # The in-flight cap (openrouter_inflight_cap): a slot is taken inside this call's budget and held through its
+  # retries, so a throttled host's backoff does not let another call in; given back however the attempts end.
+  local OR_INFLIGHT_SLOT=""
+  or_inflight_acquire "$_lane" "$model" "$_or_deadline" || return 1
+  local _or_rc=0
+  _openrouter_attempts || _or_rc=$?
+  or_inflight_release
+  (( _or_rc == 0 )) || return "$_or_rc"
 
   # The endpoint OpenRouter routed to (`provider` in the answer), for the log and, on a fallback, the run log's model.
   local _served
