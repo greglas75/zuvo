@@ -284,7 +284,8 @@ AR_MODULES="adversarial-cli.sh adversarial-ledger.sh adversarial-input.sh advers
 AR_REQUIRED_FNS="ar_init_options ar_init_failure_cache ar_parse_args ar_reconcile_append_artifact
   ar_init_findings_ledger ar_cmd_record_disposition ar_cmd_effectiveness ar_resolve_provider_env
   ar_validate_mode ar_ba_setup ar_check_plan_budget ar_guard_file_list ar_collect_input
-  ar_set_input_cap ar_set_chunk_boundary ar_check_material ar_check_pass_cap ar_chunk_input ar_truncate_input
+  ar_set_input_cap ar_set_chunk_boundary ar_check_material ar_check_pass_cap ar_omit_oversized_content
+  ar_chunk_input ar_truncate_input
   _tamper_capture ar_detect_language ar_select_focus ar_set_output_instruction
   ar_compose_review_prompt ar_exclude_host_lanes ar_list_providers_if_asked
   ar_resolve_candidates ar_apply_excludes ar_ba_filter_lanes ar_apply_exclude_last
@@ -383,6 +384,7 @@ ar_set_input_cap                  # input
 ar_set_chunk_boundary             # input
 ar_check_material                 # input
 ar_check_pass_cap                 # ledger
+ar_omit_oversized_content         # input
 ar_chunk_input                    # input
 ar_truncate_input                 # input
 _tamper_capture                   # input

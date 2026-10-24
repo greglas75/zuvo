@@ -923,6 +923,10 @@ start_test "CK.43 one LINE over the cap is the only thing still cut: exit 4, the
 ck_run_parts 43 "$CK_HK/longline.diff"; rc=$?
 assert_exit_code "4" "$rc" "the part holding the over-cap line is reviewed with its input cut: exit 4"
 assert_contains "$(cat "$CK_HK/art-43" 2>/dev/null)" "input_truncated=true" "the proof records the truncation"
+# Added code over the cap is never shortened to a green review (ar_omit_oversized_content): it is named instead.
+assert_contains "$(cat "$CK_HK/art-43" 2>/dev/null)" "input_unsplittable=huge.min.js: added line 3 of 40004 bytes is over the chunk cap and cannot be split" \
+  "the proof names the added line that could not be split"
+assert_contains "$(cat "$CK_HK/err-43")" "NOTE: input unsplittable: huge.min.js: added line 3" "stderr names it"
 assert_eq "1|1" "$(grep -c -- 'n=1 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')|$(grep -c -- 'n=2 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')" \
   "the two short lines before it reached a part whole"
 
@@ -950,3 +954,125 @@ ck_run_parts 45 "$CK_HK/blank.diff"; rc=$?
 assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
 assert_eq "hunks=2 lines=440 unique=440 old=442 new=442 bad=0" "$(ck_hunk_verify 45 blank.ts)" \
   "the sub-hunks' counts add up to the header's 442, the two stripped blank lines included"
+
+# ─── 15: content no part can hold (ar_omit_oversized_content, RD-5751) ───────────────────────────────────────
+#
+# One line over the budget cannot be split at a line boundary, so the part holding it was truncated and the run
+# exited 4 on every retry. A deleted file over the budget is now shown as its header plus an OMITTED line, a
+# removed or context line over it is shortened in place; an ADDED line over it still truncates (CK.43: exit 4).
+
+# ck_deleted_file_diff <path> <n> — a deleted file of ONE line: <n> x bytes in a 15-byte JSON wrapper, so its
+# content is <n> + 15 bytes (the `-` prefix not counted, as the omission note counts it).
+ck_deleted_file_diff() {
+  printf 'diff --git a/%s b/%s\ndeleted file mode 100644\nindex 8888888..0000000\n--- a/%s\n+++ /dev/null\n@@ -1 +0,0 @@\n' "$1" "$1" "$1"
+  awk -v n="$2" 'BEGIN { printf "-{\"baseline\":\""; for (i = 0; i < n; i++) printf "x"; printf "\"}\n" }'
+}
+# ck_small_diff <path> <tag> — a one-hunk modification whose added line is +MARKER-<tag>.
+ck_small_diff() {
+  printf 'diff --git a/%s b/%s\nindex 1111111..2222222 100644\n--- a/%s\n+++ b/%s\n@@ -1 +1 @@\n-old %s\n+MARKER-%s\n' "$1" "$1" "$1" "$1" "$2" "$2"
+}
+# ck_parts_count <case> <fixed line> — in how many lines of all the case's prompts <fixed line> is, whole. File by
+# file: a prompt ends without a newline, so concatenated prompts would glue its last line to the next.
+ck_parts_count() {
+  local f c=0
+  for f in "$CK_HK/parts-$1"/*.in; do
+    [[ -f "$f" ]] && c=$((c + $(grep -cxF -- "$2" "$f")))
+  done
+  echo "$c"
+}
+
+start_test "CK.46 a deleted ONE-line file over the cap: shown as a header, the run proceeds (it exited 4 on every retry)"
+# The shape of RD-5751: a generated baseline, one JSON line of ~185k chars, deleted beside ordinary changes.
+{ ck_small_diff .gitignore GITIGNORE
+  ck_hunk_diff src/a.ts A 12000 12000
+  ck_deleted_file_diff profiles/tests-perf-designer.json 60000
+  ck_small_diff README.md README; } > "$CK_HK/delbig.diff"
+ck_run_parts 46 "$CK_HK/delbig.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0 (the over-cap line truncated its part: exit 4)"
+assert_eq "1" "$(cat "$CK_HK/parts-46"/*.in | grep -c '^=== OMITTED (zuvo-omit #1): deleted file profiles/tests-perf-designer.json: 1 line, 60015 bytes — content omitted: a line over the chunk cap')" \
+  "one part names the deleted file, its line and byte count, in place of its content"
+assert_eq "0" "$(cat "$CK_HK/parts-46"/*.in | grep -c 'xxxxxxxxxx')" "none of the deleted content is sent"
+assert_eq "1 1 1 1" "$(ck_parts_count 46 +MARKER-GITIGNORE) $(ck_parts_count 46 +MARKER-A-H1) $(ck_parts_count 46 +MARKER-A-H2) $(ck_parts_count 46 +MARKER-README)" \
+  "every other file reached a part whole, once"
+assert_eq "1" "$(grep -c '^input_omitted=deleted file profiles/tests-perf-designer.json: 1 line, 60015 bytes — content omitted: a line over the chunk cap$' "$CK_HK/art-46" 2>/dev/null)" \
+  "the proof records the omission once: only the part holding it names it"
+assert_eq "0" "$(grep -c 'input_truncated=true' "$CK_HK/art-46" 2>/dev/null)" "the proof records no truncation"
+assert_contains "$(cat "$CK_HK/err-46")" "NOTE: input omitted: deleted file profiles/tests-perf-designer.json" "stderr names the omission"
+
+start_test "CK.47 a deleted file UNDER the cap keeps its content, even in an input over the cap: deleted tests stay reviewable"
+{ printf 'diff --git a/src/old.test.ts b/src/old.test.ts\ndeleted file mode 100644\nindex 9999999..0000000\n--- a/src/old.test.ts\n+++ /dev/null\n@@ -1,2 +0,0 @@\n'
+  printf -- '-it("rejects quota above sample size", () => {});\n-MARKER-DELETED-TEST\n'
+  ck_hunk_diff src/b.ts B 20000 20000; } > "$CK_HK/delsmall.diff"
+ck_run_parts 47 "$CK_HK/delsmall.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+assert_eq "1" "$(ck_parts_count 47 -MARKER-DELETED-TEST)" "the deleted test's lines reached a part"
+assert_eq "0|0" "$(cat "$CK_HK/parts-47"/*.in | grep -c 'zuvo-omit')|$(grep -c '^input_omitted=' "$CK_HK/art-47" 2>/dev/null)" \
+  "nothing is omitted, and the proof claims nothing"
+
+start_test "CK.48 a REMOVED line over the cap in a modified file is shortened in place: exit 0, recorded"
+{ printf 'diff --git a/data/fixture.json b/data/fixture.json\nindex aaaaaaa..bbbbbbb 100644\n--- a/data/fixture.json\n+++ b/data/fixture.json\n@@ -1,2 +1,2 @@\n'
+  awk 'BEGIN { printf "-"; for (i = 0; i < 40000; i++) printf "y"; printf "\n" }'
+  printf '+MARKER-NEW-SMALL\n ctx-after\n'
+  ck_small_diff other.ts OTHER; } > "$CK_HK/remlong.diff"
+ck_run_parts 48 "$CK_HK/remlong.diff"; rc=$?
+assert_exit_code "0" "$rc" "the run is reviewed whole: exit 0 (it exited 4)"
+assert_eq "1" "$(cat "$CK_HK/parts-48"/*.in | grep -c '^-y\{200\} … \[line truncated (zuvo-omit #1): 39800 of 40000 bytes omitted, over the chunk cap; removed content, not added by this change\]$')" \
+  "the removed line keeps its first 200 bytes and says how much was left out"
+assert_eq "1|1|1" "$(ck_parts_count 48 +MARKER-NEW-SMALL)|$(ck_parts_count 48 ' ctx-after')|$(ck_parts_count 48 +MARKER-OTHER)" \
+  "the added line, the context after it and the other file all reached a part"
+assert_contains "$(cat "$CK_HK/art-48" 2>/dev/null)" "input_omitted=data/fixture.json: removed line 1 of 40000 bytes cut to its first 200" \
+  "the proof records the shortened line"
+
+start_test "CK.49 one deleted file over the cap, alone: the --json result lists the omission"
+ck_deleted_file_diff gen/baseline.json 50000 > "$CK_HK/delalone.diff"
+ck49_json=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --single --json < "$CK_HK/delalone.diff" 2>"$CK_HK/err-49"); rc=$?
+assert_exit_code "0" "$rc" "reviewed whole: exit 0"
+assert_eq "false|1|deleted file gen/baseline.json: 1 line, 50015 bytes — content omitted: a line over the chunk cap" \
+  "$(printf '%s' "$ck49_json" | jq -r '"\(.input_truncated)|\(.input_omitted | length)|\(.input_omitted[0])"' 2>/dev/null)" \
+  "input_omitted names the file; input_truncated stays false"
+
+start_test "CK.50 a deleted file of ordinary lines over the cap is split and reviewed whole, never omitted"
+# Omitting by section size would hide every big deleted test suite behind a green review; only a line no part can
+# hold is omitted.
+{ printf 'diff --git a/src/big.test.ts b/src/big.test.ts\ndeleted file mode 100644\nindex 9999999..0000000\n--- a/src/big.test.ts\n+++ /dev/null\n@@ -1,600 +0,0 @@\n'
+  awk 'BEGIN { for (i = 1; i <= 600; i++) printf "-  it(\"case %d\", () => { expect(run(%d)).toBe(true) }); o=%d padding padding padding\n", i, i, i }'
+  ck_small_diff other.ts OTHER; } > "$CK_HK/delnormal.diff"
+ck_run_parts 50 "$CK_HK/delnormal.diff"; rc=$?
+assert_exit_code "0" "$rc" "every part reviewed whole: exit 0"
+assert_eq "hunks=2 lines=600 unique=600 old=600 new=0 bad=0" "$(ck_hunk_verify 50 src/big.test.ts)" \
+  "every deleted line reached a part, under a valid sub-hunk header"
+assert_eq "0|0" "$(cat "$CK_HK/parts-50"/*.in | grep -c 'zuvo-omit')|$(grep -c '^input_omitted=' "$CK_HK/art-50" 2>/dev/null)" \
+  "nothing is omitted, and the proof claims nothing"
+
+start_test "CK.51 an input UNDER the cap is sent whole, even with a long deleted line in it"
+# ~29k in one line: no part of a chunked run could hold it with its header, but this input is never chunked.
+ck_deleted_file_diff gen/near.json 29000 > "$CK_HK/delnear.diff"
+ck_run_parts 51 "$CK_HK/delnear.diff"; rc=$?
+assert_exit_code "0" "$rc" "reviewed whole: exit 0"
+assert_eq "1|0" "$(cat "$CK_HK/parts-51"/*.in | awk '/xxxxxxxxxx/ && length($0) >= 29000' | wc -l | tr -d ' ')|$(cat "$CK_HK/parts-51"/*.in | grep -c 'zuvo-omit')" \
+  "the deleted line reached the reviewer in full, nothing omitted"
+
+start_test "CK.52 a removed line that fits the budget alone but not with a long path's header is still shortened"
+# The rule counts the file header each part repeats: a 28k line under a ~2.4k header has no part that holds it,
+# though line + 200 alone is under the ~29.5k budget. Judged without the header it was kept, and cut (exit 4).
+ck52_path="src/$(awk 'BEGIN { for (i = 0; i < 59; i++) printf "segment%02d/", i }')fixture.json"
+{ printf 'diff --git a/%s b/%s\nindex aaaaaaa..bbbbbbb 100644\n--- a/%s\n+++ b/%s\n@@ -1 +1 @@\n' "$ck52_path" "$ck52_path" "$ck52_path" "$ck52_path"
+  awk 'BEGIN { printf "-"; for (i = 0; i < 28000; i++) printf "z"; printf "\n" }'
+  printf '+MARKER-SHORT\n'; } > "$CK_HK/remhdr.diff"
+assert_eq "1" "$(wc -c < "$CK_HK/remhdr.diff" | awk '{ print ($1 > 30000) }')" "premise: the input is over the 30000 cap"
+ck_run_parts 52 "$CK_HK/remhdr.diff"; rc=$?
+assert_exit_code "0" "$rc" "reviewed whole: exit 0 (the part holding the line was cut: exit 4)"
+assert_eq "1|1" "$(cat "$CK_HK/parts-52"/*.in | grep -c '^-z\{200\} … \[line truncated (zuvo-omit #1): 27800 of 28000 bytes omitted, over the chunk cap; removed content, not added by this change\]$')|$(ck_parts_count 52 +MARKER-SHORT)" \
+  "the removed line is shortened, the added line reached the reviewer"
+
+start_test "CK.53 an unchanged CONTEXT line over the cap is shortened in place: exit 0, recorded in its part's proof"
+{ printf 'diff --git a/data/ctx.json b/data/ctx.json\nindex aaaaaaa..bbbbbbb 100644\n--- a/data/ctx.json\n+++ b/data/ctx.json\n@@ -1,2 +1,2 @@\n'
+  printf -- '-old-first\n+MARKER-CTX-NEW\n'
+  awk 'BEGIN { printf " "; for (i = 0; i < 40000; i++) printf "w"; printf "\n" }'
+  ck_small_diff other.ts OTHER; } > "$CK_HK/ctxlong.diff"
+ck_run_parts 53 "$CK_HK/ctxlong.diff"; rc=$?
+assert_exit_code "0" "$rc" "the run is reviewed whole: exit 0 (the part holding the line was cut: exit 4)"
+assert_eq "1|1|1" "$(cat "$CK_HK/parts-53"/*.in | grep -c '^ w\{200\} … \[line truncated (zuvo-omit #1): 39800 of 40000 bytes omitted, over the chunk cap; unchanged context content, not added by this change\]$')|$(ck_parts_count 53 +MARKER-CTX-NEW)|$(ck_parts_count 53 +MARKER-OTHER)" \
+  "the context line keeps its first 200 bytes; the added line and the other file reached a part"
+assert_contains "$(cat "$CK_HK/art-53" 2>/dev/null)" "input_omitted=data/ctx.json: context line 2 of 40000 bytes cut to its first 200" \
+  "the proof records the shortened context line"
