@@ -87,6 +87,10 @@ assert_contains "$(cat "$OTMP/c1/err")" "Done: byteplus-alt (fallback step 3: Op
 # endpoint wrote, so the ledger and the stats bill and judge the wrong thing.
 start_test "or.2 the run log names the OpenRouter model and the endpoint that answered"
 assert_eq "deepseek/deepseek-v4.1-flash-1017@InferenceNet" "$(logged c1 byteplus-alt)" "model column of the lane's row"
+# Bug caught: the fallback's OpenRouter answer missing from the host column (23), so the BytePlus lane's OpenRouter
+# spend could not be told apart by host; the answer has no cost or id, so those cells stay empty, not 0.
+assert_eq "InferenceNet||" "$(awk -F'\t' '$14 == "byteplus-alt" { r = $23 "|" $24 "|" $25 } END { print r }' "$OTMP/c1/adversarial.log" 2>/dev/null)" \
+  "served_by is the endpoint; cost_usd and gen_id empty when the answer lacks them"
 
 # Bug caught: glm restored without its chain, or pinned with an fp8-only filter that removes its own Wafer (nvfp4)
 # endpoint (OpenRouter answers 404).

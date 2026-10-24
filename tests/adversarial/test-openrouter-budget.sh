@@ -54,6 +54,21 @@ assert_eq "1200 800 90 40" "$(awk -F'\t' '$14 == "openrouter-alt" { r = $19 " " 
 run_b c0b openrouter-alt ORB_USED=1.5 >/dev/null
 assert_eq "[|||]" "$(awk -F'\t' '$14 == "openrouter-alt" { r = "[" $19 "|" $20 "|" $21 "|" $22 "]" } END { print r }' "$BTMP/c0b/adversarial.log" 2>/dev/null)" "no usage reported -> empty cells"
 
+# Bug caught: which upstream host answered and what OpenRouter billed lost with the run's stderr — the pinned order
+# names the hosts that MAY answer, only the response says which did; and a plan endpoint's answer (prepaid, no
+# OpenRouter bill) credited with an OpenRouter cost.
+start_test "b.0c an OpenRouter answer's host, cost and generation id land in columns 23-25; a plan's never"
+ORMETA='{"id":"gen-1792853592-HnzzwvLLA0YAcIz3KiIz","provider":"Parasail","choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"prompt_tokens":4,"completion_tokens":7,"cost":2.76e-06}}'
+run_b c0c openrouter-mini ORB_USED=1.5 ORB_CHAT_BODY="$ORMETA" >/dev/null
+assert_eq "Parasail|0.00000276|gen-1792853592-HnzzwvLLA0YAcIz3KiIz" \
+  "$(awk -F'\t' '$14 == "openrouter-mini" { r = $23 "|" $24 "|" $25 } END { print r }' "$BTMP/c0c/adversarial.log" 2>/dev/null)" "host|cost|id"
+run_b c0d byteplus ZUVO_ADV_BYTEPLUS=1 ORB_CHAT_BODY="$ORMETA" >/dev/null
+assert_eq "[||] 25" "$(awk -F'\t' '$14 == "byteplus" { r = "[" $23 "|" $24 "|" $25 "] " NF } END { print r }' "$BTMP/c0d/adversarial.log" 2>/dev/null)" \
+  "a BytePlus plan answer: empty cells, the row still 25 fields"
+run_b c0e openrouter-mini ORB_USED=1.5 ORB_CHAT_BODY='{"id":"gen-1\tX","provider":"Parasail","choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"cost":"1;rm"}}' >/dev/null
+assert_eq "Parasail|| 25" "$(awk -F'\t' '$14 == "openrouter-mini" { r = $23 "|" $24 "|" $25 " " NF } END { print r }' "$BTMP/c0e/adversarial.log" 2>/dev/null)" \
+  "an id with a tab and a cost that is no number are dropped, never written into the row"
+
 # Bug caught: the cap blocking a key that is under it, so the cheap lanes never review.
 start_test "b.1 under the cap the review runs, and the day's spend is kept for the other lanes"
 run_b c1 openrouter-alt ORB_USED=1.5 >/dev/null

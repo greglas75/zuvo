@@ -290,10 +290,18 @@ INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 #               and until now each lane printed them to a stderr that is deleted when the run ends, so the
 #               cost of a lane could only be estimated from output_chars, which leaves reasoning out entirely
 #               (52k of 53k output tokens on a DeepSeek review).
-LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+#   served_by, cost_usd, gen_id — columns 23-25, added 2026-10-24, OpenRouter calls only (an OpenRouter lane, or a
+#               BytePlus lane's OpenRouter fallback step; empty for every other lane and on older rows). served_by:
+#               the upstream host that answered (the response's `provider`, e.g. Parasail, GMICloud), several
+#               comma-joined in call order when the lane made several calls; cost_usd: the summed `usage.cost` the
+#               vendor billed, in USD; gen_id: the generation ids (`gen-…`), comma-joined. A pinned host order says
+#               which hosts MAY serve a model; only the answer says which one did, and what it cost — OpenRouter's
+#               own per-generation activity endpoint needs a management key the review key is not.
+LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
   "date" "run_id" "mode" "model" "input_chars" "output_chars" "findings" "critical" \
   "warning" "info" "duration" "exit" "input_file" "provider" "outcome" "provider_duration" \
-  "project" "effort" "tokens_in" "tokens_cached" "tokens_out" "tokens_reasoning")
+  "project" "effort" "tokens_in" "tokens_cached" "tokens_out" "tokens_reasoning" \
+  "served_by" "cost_usd" "gen_id")
 return 0
 }
 
@@ -309,11 +317,12 @@ init_log_header() {
 adversarial_log_row() {
   local model="$1" duration="$2" exit_code="$3" out_chars="$4" c="$5" w="$6" i="$7" \
         provider="$8" outcome="$9" p_dur="${10}"
-  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\t%s\t%s\t%s\t%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "$model" \
     "${#INPUT}" "$out_chars" "${11:-$(( c + w + i ))}" "$c" "$w" "$i" \
     "$duration" "$exit_code" "$INPUT_FILE" "$provider" "$outcome" "$p_dur" \
     "${LOG_PROJECT:-unknown}" "$(provider_effort "$provider")" "$(lane_usage_cols "$provider")" \
+    "$(lane_or_cols "$provider")" \
     >> "$LOG_FILE" 2>/dev/null || true
 }
 
@@ -374,6 +383,36 @@ lane_usage_cols() {
   if [[ -z "${JSON_TMPDIR:-}" || ! -s "$f" ]]; then printf '\t\t\t'; return 0; fi
   awk '{ for (i = 1; i <= 4; i++) if ($i ~ /^[0-9]+$/) { s[i] += $i; h[i] = 1 } }
        END { printf "%s\t%s\t%s\t%s", (h[1] ? s[1] : ""), (h[2] ? s[2] : ""), (h[3] ? s[3] : ""), (h[4] ? s[4] : "") }' "$f"
+}
+
+# ─── OpenRouter host, cost and generation id per lane (columns 23-25) ─────────
+# Each OpenRouter call that answered 2xx adds "<host>\t<cost>\t<gen id>" to $JSON_TMPDIR/orcall_<lane>.txt (the lane
+# is ADV_USAGE_LANE, as for the tokens), any field empty when the answer lacked it; the row folds them.
+
+# lane_or_call_add <host> <cost> <gen-id> — one OpenRouter answer for the running lane; a no-op outside one. The
+# values are upstream bytes: a host or id outside [A-Za-z0-9._-] (40 / 80 chars) and a cost that is not a plain
+# non-negative decimal are dropped, never written — a tab or newline in them would shift the row's columns.
+lane_or_call_add() {
+  [[ -n "${ADV_USAGE_LANE:-}" && -n "${JSON_TMPDIR:-}" ]] || return 0
+  local host="${1:-}" cost="${2:-}" id="${3:-}"
+  [[ "$host" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || host=""
+  [[ "$cost" =~ ^[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?$ ]] || cost=""
+  [[ "$id" =~ ^[A-Za-z0-9._-]{1,80}$ ]] || id=""
+  [[ -n "$host$cost$id" ]] || return 0
+  printf '%s\t%s\t%s\n' "$host" "$cost" "$id" >> "$JSON_TMPDIR/orcall_${ADV_USAGE_LANE}.txt" 2>/dev/null || true
+}
+
+# lane_or_cols <lane> — served_by, cost_usd, gen_id, tab-separated: the distinct hosts and the ids comma-joined in
+# call order, the costs summed (8 decimals — a short call costs fractions of a cent); empty when no call
+# reported the field.
+lane_or_cols() {
+  local f="${JSON_TMPDIR:-}/orcall_$1.txt"
+  if [[ -z "${JSON_TMPDIR:-}" || ! -s "$f" ]]; then printf '\t\t'; return 0; fi
+  awk -F'\t' '
+    $1 != "" && !($1 in seen) { seen[$1] = 1; hosts = hosts (hosts == "" ? "" : ",") $1 }
+    $2 != "" { cost += $2; hc = 1 }
+    $3 != "" { ids = ids (ids == "" ? "" : ",") $3 }
+    END { printf "%s\t%s\t%s", hosts, (hc ? sprintf("%.8f", cost) : ""), ids }' "$f"
 }
 
 # ─── Provider health ledger (persistent, across runs) ───────────────────────

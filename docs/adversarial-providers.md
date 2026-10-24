@@ -50,6 +50,17 @@ claude reviewer's `--effort` (empty for Sonnet, which runs at its default), kimi
 not run — read it with the `outcome` column. Values are lowercased; one that then does not match
 `[a-z][a-z0-9_-]{0,15}` is logged as `?`. Columns 1-17 are unchanged.
 
+**Tokens, OpenRouter host and cost in the run log.** Columns 19-22 (`tokens_in`, `tokens_cached`,
+`tokens_out`, `tokens_reasoning`, since 2026-10-19) are the lane's calls as the vendor counted them, empty
+when it reported none. Columns 23-25 (since 2026-10-24) are filled for OpenRouter calls only — an
+`openrouter*` lane or a BytePlus lane's OpenRouter fallback step — and are empty for every other lane and
+on older rows: `served_by` is the upstream host that answered (the response's `provider`, e.g. `Parasail`,
+`GMICloud`; several comma-joined in call order), `cost_usd` the summed `usage.cost` OpenRouter billed, and
+`gen_id` the generation ids (`gen-…`, comma-joined) to look a call up in OpenRouter's activity page. The
+pin table (`openrouter_pin_order`) says which hosts MAY serve a model; only these columns say which did.
+`adversarial-stats` shows them as COST and HOSTS. The header line of an old log is never rewritten: read
+the newest `#schema` line for the current column names (the first line can be several schemas old).
+
 The prompt is passed to `agy -p` as an **argument, not stdin** (stdin makes agy answer an empty
 prompt). `--model` values for `agy`/`cursor-agent` are the **display / id strings** from
 `agy models` / `cursor-agent models`.
