@@ -285,6 +285,6 @@ assert_eq "High" "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=High)" 
 assert_eq "high" "$(logged_effort codex-5.3)" "the row: high — the level that ran, in the column's one spelling"
 assert_eq "very high" "$(effort_of "$ADV" codex-5.3 "ZUVO_CODEX_EFFORT_PRIMARY=very high")" "premise: the client got 'very high'"
 assert_eq "?" "$(logged_effort codex-5.3)" "the row: ? (a space is not a plain word)"
-assert_eq "22" "$(awk -F'\t' '$14 == "codex-5.3" { n = NF } END { print n }' "$CLTMP/spyhome/.zuvo/adversarial.log" 2>/dev/null)" \
-  "…in a row of exactly 22 fields (the header's count)"
+assert_eq "25" "$(awk -F'\t' '$14 == "codex-5.3" { n = NF } END { print n }' "$CLTMP/spyhome/.zuvo/adversarial.log" 2>/dev/null)" \
+  "…in a row of exactly 25 fields (the header's count)"
 

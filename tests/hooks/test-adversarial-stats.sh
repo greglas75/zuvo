@@ -49,7 +49,7 @@ out="$("$TOOL" --log "$LOG" 2>&1)"; rc=$?
 
 # Assert on --markdown cells: a vendor name with a different word count must not shift the fields.
 md0="$("$TOOL" --log "$LOG" --markdown 2>&1)"
-cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90 FIND CRIT TOK/RUN CACHE% TOKENS FIND/1M FAILURES>
+cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90 FIND CRIT TOK/RUN CACHE% TOKENS FIND/1M COST HOSTS FAILURES>
   printf '%s\n' "$md0" | awk -F' [|] ' -v lane="\`$1\`" -v n="$2" '{ sub(/^[|] /, ""); sub(/ [|]$/, "") } $1 == lane { print $n; exit }'
 }
 [ "$(cell byteplus-3 2)" = '`dola-seed-2.0-code`' ] && pass "a row names its lane AND its model" || bad "model cell: [$(cell byteplus-3 2)]"
@@ -62,7 +62,7 @@ cell() { # cell <lane> <column-number, 1-based: LANE MODEL PAYS RUNS OK% P50/P90
 [ "$(cell byteplus-3 6)" = "100/200s" ] && pass "P50/P90 uses successful reviews only" || bad "P50/P90: [$(cell byteplus-3 6)]"
 [ "$(cell byteplus-3 7)" = "3.0" ] && [ "$(cell byteplus-3 8)" = "1.00" ] && pass "FIND/CRIT average over successful reviews only" \
   || bad "FIND/CRIT: [$(cell byteplus-3 7)]/[$(cell byteplus-3 8)]"
-[ "$(cell byteplus-3 13)" = "timeout 1" ] && pass "failures are listed by outcome" || bad "FAILURES: [$(cell byteplus-3 13)]"
+[ "$(cell byteplus-3 15)" = "timeout 1" ] && pass "failures are listed by outcome" || bad "FAILURES: [$(cell byteplus-3 15)]"
 [ "$(cell byteplus-3 9)" = "-" ] && [ "$(cell byteplus-3 11)" = "-" ] && pass "rows written before the token columns show no token figures, not zero" \
   || bad "pre-token rows: TOK/RUN [$(cell byteplus-3 9)] TOKENS [$(cell byteplus-3 11)]"
 
@@ -187,6 +187,21 @@ md0="$("$TOOL" --log "$TMP/tok2.log" --markdown 2>&1)"
 md0="$("$TOOL" --log "$TMP/tok.log" --markdown 2>&1)"
 [ "$(cell qwen 12)" = "2500.0" ] && pass "FIND/1M leaves out findings of reviews that reported no usage" || bad "FIND/1M: [$(cell qwen 12)]"
 
+# Columns 23-25 (2026-10-24). Bug caught: OpenRouter's billed cost left out for a failed call (it was billed), a
+# lane with no cost column shown as $0 instead of "-", or the hosts not counted per host.
+orrow() { # outcome host cost
+  printf '%s\trid\tcode\tm/x\t1\t1\t0\t0\t0\t0\t1s\t0\t/x\topenrouter-mini\t%s\t5s\tprojA\t\t10\t\t5\t\t%s\t%s\tgen-1\n' "$T" "$1" "$2" "$3"
+}
+{ orrow ok Parasail 0.0125; orrow empty GMICloud 0.0025; orrow ok Parasail ''; tokrow ok 1 10 0 5; } > "$TMP/or.log"
+md0="$("$TOOL" --log "$TMP/or.log" --markdown 2>&1)"
+[ "$(cell openrouter-mini 13)" = '\$0.0150' ] && pass "COST sums cost_usd over every row, the failed call included" || bad "COST: [$(cell openrouter-mini 13)] $md0"
+[ "$(cell openrouter-mini 14)" = "\`Parasail 2, GMICloud 1\`" ] && pass "HOSTS counts each upstream host" || bad "HOSTS: [$(cell openrouter-mini 14)]"
+[ "$(cell qwen 13)" = "-" ] && pass "a lane without cost_usd shows -, never \$0" || bad "COST non-OR: [$(cell qwen 13)]"
+# Bug caught: a lane of fractional-cent calls printed as $0.0000 ("free"), and an out-of-range cost summed to $inf.
+{ orrow ok Parasail 0.00000276; orrow ok Parasail 1e999; } > "$TMP/or2.log"
+md0="$("$TOOL" --log "$TMP/or2.log" --markdown 2>&1)"
+[ "$(cell openrouter-mini 13)" = '\$2.8e-06' ] && pass "a sub-cent lane total keeps its digits; a non-finite cost is ignored" || bad "COST tiny: [$(cell openrouter-mini 13)] $md0"
+
 # Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
 # The writer's LOG_HEADER is in a module: hand python the program as one text (driver + modules).
 . "$ROOT/tests/lib/adversarial-driver.sh"
@@ -203,7 +218,8 @@ m = re.search(r'LOG_HEADER=\$\(printf [^\n]*\\\n((?:\s*"[^\n]*\n)+)', src) if n_
 fields = re.findall(r'"([a-z_]+)"', m.group(1)) if m else []
 want = {"C_DATE": "date", "C_MODEL": "model", "C_FIND": "findings", "C_CRIT": "critical", "C_DUR": "duration",
         "C_PROVIDER": "provider", "C_OUTCOME": "outcome", "C_PDUR": "provider_duration", "C_PROJECT": "project",
-        "C_TIN": "tokens_in", "C_TCACHED": "tokens_cached", "C_TOUT": "tokens_out", "C_TREASON": "tokens_reasoning"}
+        "C_TIN": "tokens_in", "C_TCACHED": "tokens_cached", "C_TOUT": "tokens_out", "C_TREASON": "tokens_reasoning",
+        "C_SERVED": "served_by", "C_COST": "cost_usd", "C_GEN": "gen_id"}
 bad = ["%s=%s is %r" % (k, g[k], fields[g[k]] if g[k] < len(fields) else None) for k, v in want.items()
        if g[k] >= len(fields) or fields[g[k]] != v]
 docs = open(sys.argv[3]).read()

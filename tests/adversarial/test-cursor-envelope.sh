@@ -36,7 +36,7 @@ run_cur() {
 start_test "cur.1 cursor's own envelope: .result is the review and its tokens reach the log"
 out=$(run_cur envelope)
 assert_contains "$out" "mock cursor finding" "the .result text is the review"
-assert_eq "140|40|7|" "$(awk -F'\t' '!/^#/ && NF==22 {r=$19"|"$20"|"$21"|"$22} END{print r}' "$CURHOME/adv.log")" \
+assert_eq "140|40|7|" "$(awk -F'\t' '!/^#/ && NF==25 {r=$19"|"$20"|"$21"|"$22} END{print r}' "$CURHOME/adv.log")" \
   "tokens_in counts cache reads, cached and output as reported, reasoning left empty (not reported)"
 
 # Bug caught: a reply that is itself JSON with "type"/"result" keys taken for the envelope and emptied.
@@ -47,5 +47,5 @@ assert_contains "$out" "mock bare cursor finding" "the reply's own JSON is kept 
 # Bug caught: cursor's error envelope (is_error true, a string .result) recorded as a clean zero-finding review.
 start_test "cur.3 cursor's error envelope fails the lane instead of passing as a clean review"
 out=$(run_cur error)
-assert_eq "all-failed" "$(awk -F'\t' '!/^#/ && NF==22 {r=$15} END{print r}' "$CURHOME/adv.log")" \
+assert_eq "all-failed" "$(awk -F'\t' '!/^#/ && NF==25 {r=$15} END{print r}' "$CURHOME/adv.log")" \
   "the run is logged as failed, not as a clean review"

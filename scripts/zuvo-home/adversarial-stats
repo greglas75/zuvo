@@ -37,6 +37,9 @@ COLUMNS
     FIND/1M   findings per million tokens, over successful reviews that reported usage — what a
               lane returns for what it burns (still not precision, see CRIT)
     A lane whose calls report no usage (rows written before the token columns existed) shows "-".
+    COST      what OpenRouter billed (cost_usd, column 24; OpenRouter calls only, since 2026-10-24) — "-"
+              when no row in the window carries it. Plans and CLI subscriptions bill no per-call cost.
+    HOSTS     the upstream hosts that answered an OpenRouter lane (served_by, column 23), with the rows each appears in
 
 Test rows (`mock-*` lanes) and summary rows are never counted.
 """
@@ -72,7 +75,8 @@ BILLING = [
 # is the source; tests/hooks/test-adversarial-stats.sh fails if these indices stop naming the same
 # fields there.
 (C_DATE, C_MODEL, C_FIND, C_CRIT, C_DUR, C_PROVIDER, C_OUTCOME, C_PDUR,
- C_PROJECT, C_TIN, C_TCACHED, C_TOUT, C_TREASON) = 0, 3, 6, 7, 10, 13, 14, 15, 16, 18, 19, 20, 21
+ C_PROJECT, C_TIN, C_TCACHED, C_TOUT, C_TREASON,
+ C_SERVED, C_COST, C_GEN) = 0, 3, 6, 7, 10, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24
 SKIP_LANES = {"", "none", "input_file"}
 ROW_DATE = re.compile(r"\d{4}-\d\d-\d\dT")  # a data row; the header row and "#schema" lines are not
 
@@ -228,7 +232,8 @@ def collect(args):
     groups = defaultdict(lambda: {"runs": 0, "ok": 0, "find": 0, "crit": 0, "dur": [],
                                   "fail": defaultdict(int), "tok_runs": 0, "tin": 0, "tcached": 0,
                                   "tout": 0, "ok_tok": 0, "ok_find": 0,
-                                  "cache_in": 0})
+                                  "cache_in": 0, "cost": 0.0, "costed": 0,
+                                  "hosts": defaultdict(int)})
     try:
         fh = open(args.log, encoding="utf-8", errors="replace")
     except OSError as exc:
@@ -261,6 +266,14 @@ def collect(args):
                 if cached is not None and tin is not None:  # CACHE% only over calls that reported their cache
                     g["tcached"] += cached
                     g["cache_in"] += tin
+            # A failed call that got an answer was billed too: cost and host count on every row.
+            cost = usd(cols, C_COST)
+            if cost is not None:
+                g["cost"] += cost
+                g["costed"] += 1
+            if len(cols) > C_SERVED:
+                for host in filter(None, (h.strip() for h in cols[C_SERVED].split(","))):
+                    g["hosts"][host] += 1
             if outcome != "ok":
                 g["fail"][outcome or "?"] += 1
                 continue
@@ -285,6 +298,17 @@ def tokens(cols, idx):
     v = cols[idx].strip()
     # ASCII digits only: str.isdigit() also passes "²", which int() then refuses — one odd cell would end the report.
     return int(v) if re.fullmatch(r"[0-9]+", v) else None
+
+
+def usd(cols, idx):
+    """The cost column: a float, or None when the row is too short, empty, not a plain decimal, or not finite."""
+    if len(cols) <= idx:
+        return None
+    v = cols[idx].strip()
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?", v):
+        return None
+    f = float(v)
+    return f if math.isfinite(f) else None
 
 
 def human(n):
@@ -313,14 +337,19 @@ def rows(groups):
             "cache": "%d%%" % (100 * g["tcached"] // g["cache_in"]) if g["cache_in"] else "-",
             "tokens": human(g["tin"] + g["tout"]) if tr else "-",
             "fpm": "%.1f" % (g["ok_find"] * 1e6 / g["ok_tok"]) if g["ok_tok"] else "-",
+            # a lane of fractional-cent calls must not read as $0.0000 ("free")
+            "cost": ("$%.4f" % g["cost"] if g["cost"] == 0 or g["cost"] >= 0.00005 else "$%.2g" % g["cost"]) if g["costed"] else "-",
+            "hosts": ", ".join("%s %d" % (k, v) for k, v
+                               in sorted(g["hosts"].items(), key=lambda kv: (-kv[1], kv[0]))) or "-",
         })
     return out
 
 
 HEAD = [("lane", "LANE"), ("model", "MODEL"), ("pays", "PAYS"), ("runs", "RUNS"), ("ok", "OK%"),
         ("time", "P50/P90"), ("find", "FIND"), ("crit", "CRIT"), ("tokrun", "TOK/RUN"),
-        ("cache", "CACHE%"), ("tokens", "TOKENS"), ("fpm", "FIND/1M"), ("fail", "FAILURES")]
-RIGHT = {"runs", "ok", "time", "find", "crit", "tokrun", "cache", "tokens", "fpm"}
+        ("cache", "CACHE%"), ("tokens", "TOKENS"), ("fpm", "FIND/1M"), ("cost", "COST"), ("hosts", "HOSTS"),
+        ("fail", "FAILURES")]
+RIGHT = {"runs", "ok", "time", "find", "crit", "tokrun", "cache", "tokens", "fpm", "cost"}
 
 
 def render_text(table):
@@ -348,7 +377,7 @@ def render_markdown(table):
     lines = ["| " + " | ".join(h for _, h in HEAD) + " |",
              "|" + "|".join("---:" if k in RIGHT else "---" for k, _ in HEAD) + "|"]
     for r in table:
-        cells = [("`%s`" % md_code(r[k])) if k in ("lane", "model") else md_text(r[k]) for k, _ in HEAD]
+        cells = [("`%s`" % md_code(r[k])) if k in ("lane", "model", "hosts") else md_text(r[k]) for k, _ in HEAD]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
