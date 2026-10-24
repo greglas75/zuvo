@@ -524,47 +524,69 @@ openrouter_provider_routing() {
     '(if $s == "" then {} else {sort: $s} end) + (if $q == "" then {} else {quantizations: ($q | split(","))} end)'
 }
 
-# ─── In-flight cap: how many calls one OpenRouter model may have open at once on this machine ─────────────────────
+# ─── In-flight cap: how many calls one OpenRouter model may have open at once ────────────────────────────────────
 # WHY: a small host rate-limits overlapping calls. inception/mercury-3 has one endpoint (Inception), and the benchmark
 # got HTTP 429 on 10 of 20 batches at 8 parallel workers (2026-10-20). One review already sends ZUVO_ADV_CHUNK_PARALLEL
 # (3) chunks at once and several reviews run side by side, so without a cap the lane's 429s would be the fleet's own
-# overlap, retried into a storm. The cap is a set of slot directories under ZUVO_HOME (mkdir is atomic on every OS
-# this runs on; no flock on macOS): a call takes one before its first request and gives it back when its attempts
-# end. A slot whose holder died (killed by a timeout) is broken the way _ar_lock breaks a stale lock.
+# overlap, retried into a storm. The cap is a set of slot directories under ZUVO_HOME — so it holds per user's ZUVO_HOME
+# on one machine, not across machines (mkdir is atomic on every OS this runs on; no flock on macOS): a call takes one
+# before its first request and gives it back when its attempts end. A slot whose holder died (killed by a timeout) is
+# broken the way _ar_lock breaks a stale lock. The pool, its cap and its override are all keyed by the MODEL: every lane
+# that runs the model shares one pool, so they must share one number too.
 
-# openrouter_inflight_cap <lane> <model> — the cap for this lane's calls, 0 = none. ZUVO_OR_MAX_INFLIGHT_<LANE> wins
-# (set but empty, or 0 = no cap); a value that is not a number gets a WARN and the model's default.
+# _or_inflight_var <model> — the override's name: ZUVO_OR_MAX_INFLIGHT_ + the model id upper-cased, every character
+# outside [A-Z0-9] as `_` (inception/mercury-3 → ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3).
+_or_inflight_var() {
+  printf 'ZUVO_OR_MAX_INFLIGHT_%s\n' "$(printf '%s' "$1" | LC_ALL=C tr 'a-z' 'A-Z' | LC_ALL=C tr -c 'A-Z0-9' '_')"
+}
+
+# openrouter_inflight_cap <model> — the cap for the model's calls, 0 = none. Its override (_or_inflight_var) wins: set
+# but empty, or 0 = no cap; a value that is not a number gets a WARN and the model's default.
 openrouter_inflight_cap() {
-  local suffix v cap def=0
-  case "$2" in
+  local v cap def=0
+  case "$1" in
     inception/mercury-3) def=3 ;;
   esac
-  suffix="$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
-  v="ZUVO_OR_MAX_INFLIGHT_$suffix"
+  v="$(_or_inflight_var "$1")"
   [[ -n "${!v+x}" ]] || { echo "$def"; return 0; }
   cap="${!v}"
   if [[ -z "$cap" ]]; then echo 0; return 0; fi
   if [[ ! "$cap" =~ ^[0-9]{1,4}$ ]]; then
-    echo "  WARN: $1: ZUVO_OR_MAX_INFLIGHT_$suffix='${cap//[[:cntrl:]]/?}' is not a number — using $def" >&2
+    echo "  WARN: $v='${cap//[[:cntrl:]]/?}' is not a number — using $def" >&2
     echo "$def"; return 0
   fi
   echo $(( 10#$cap ))
 }
 
-# _or_inflight_dir <model> — the model's slot directory (ZUVO_OR_INFLIGHT_DIR overrides the root).
+# _or_inflight_dir <model> — the model's slot directory, <root>/<model with every character outside [a-zA-Z0-9.-] as
+# `_`> (ZUVO_OR_INFLIGHT_DIR overrides the root). Two ids that differ only in such characters share a pool: a
+# stricter cap, never a looser one.
 _or_inflight_dir() {
   printf '%s/%s\n' "${ZUVO_OR_INFLIGHT_DIR:-${ZUVO_HOME:-$HOME/.zuvo}/or-inflight}" \
     "$(printf '%s' "$1" | LC_ALL=C tr -c 'a-zA-Z0-9.-' '_')"
 }
 
-# or_inflight_acquire <lane> <model> <deadline-epoch> — takes a slot when the lane has a cap, waiting (1 s polls) while
-# every slot is busy; OR_INFLIGHT_SLOT names it (empty: no cap, or no slot directory — then the call runs uncapped,
-# said once). Status 1 when no slot freed before too little of the budget was left for a request: the lane is not
-# run and not held against it (lane_not_run) — waiting on this machine's own calls is no fault of the host.
+# _or_slot_take <slot> <pid> — status 0 when the slot is now ours: created (mkdir is the claim) and its pid written.
+# Status 2 when it was created but the pid could not be written (a full disk): given back, so no slot exists that a
+# release could not tell from another call's. Status 1 when another call holds it.
+_or_slot_take() {
+  mkdir -- "$1" 2>/dev/null || return 1
+  if ! printf '%s\n' "$2" > "$1/pid" 2>/dev/null; then
+    rm -f -- "$1/pid" 2>/dev/null; rmdir -- "$1" 2>/dev/null || true
+    return 2
+  fi
+}
+
+# or_inflight_acquire <lane> <model> <deadline-epoch> — takes a slot when the model has a cap, waiting (1 s polls)
+# while every slot is busy; OR_INFLIGHT_SLOT names it (empty: no cap, or slots that cannot be kept — then the call
+# runs uncapped, said once). Status 1 when no slot freed before too little of the budget was left for a request: the
+# lane is not run and not held against it (lane_not_run, the driver's not-run outcome) — a queue of this ZUVO_HOME's
+# own calls is no fault of the host. The wait comes out of the call's own budget: a longer one would outlive the
+# run deadline derived from PROVIDER_TIMEOUT.
 or_inflight_acquire() {
-  local lane="$1" model="$2" deadline="$3" cap dir i slot me="${BASHPID:-$$}" waited=0
+  local lane="$1" model="$2" deadline="$3" cap dir i slot rc me="${BASHPID:-$$}" waited=0 gone
   OR_INFLIGHT_SLOT=""
-  cap="$(openrouter_inflight_cap "$lane" "$model")"
+  cap="$(openrouter_inflight_cap "$model")"
   (( cap > 0 )) || return 0
   dir="$(_or_inflight_dir "$model")"
   if ! mkdir -p -- "$dir" 2>/dev/null || [[ ! -w "$dir" ]]; then
@@ -574,24 +596,31 @@ or_inflight_acquire() {
   while : ; do
     for (( i = 1; i <= cap; i++ )); do
       slot="$dir/slot.$i"
-      if mkdir -- "$slot" 2>/dev/null; then
-        printf '%s\n' "$me" > "$slot/pid" 2>/dev/null || true
+      rc=0; _or_slot_take "$slot" "$me" || rc=$?
+      if (( rc == 1 )) && _ar_lock_stale "$slot" && mkdir -- "$slot.break" 2>/dev/null; then
+        # Its holder is gone: broken (one breaker at a time, re-checked under the marker, as _ar_lock does) and taken
+        # at once, before another call's next poll can. The stale copy gets a name no earlier break left behind.
+        gone="$slot.stale.$me.$(date +%s).$RANDOM"
+        if _ar_lock_stale "$slot" && mv -- "$slot" "$gone" 2>/dev/null; then
+          rm -f -- "$gone/pid"; rmdir -- "$gone" 2>/dev/null || true
+        fi
+        rmdir -- "$slot.break" 2>/dev/null || true
+        rc=0; _or_slot_take "$slot" "$me" || rc=$?
+      fi
+      if (( rc == 0 )); then
         OR_INFLIGHT_SLOT="$slot"
         (( waited == 0 )) || echo "  NOTE: $lane [$model] waited ${waited}s for one of $cap in-flight slots" >&2
         return 0
       fi
-      # Its holder is gone: break the slot (one breaker at a time, as _ar_lock does); it is taken on the next poll.
-      if _ar_lock_stale "$slot" && mkdir -- "$slot.break" 2>/dev/null; then
-        if _ar_lock_stale "$slot" && mv -- "$slot" "$slot.stale.$me" 2>/dev/null; then
-          rm -f -- "$slot.stale.$me/pid"; rmdir -- "$slot.stale.$me" 2>/dev/null || true
-        fi
-        rmdir -- "$slot.break" 2>/dev/null || true
+      if (( rc == 2 )); then
+        echo "  NOTE: $lane: an in-flight slot's owner could not be written in $dir — this call runs without the cap of $cap" >&2
+        return 0
       fi
       # A breaker killed mid-break leaves its marker: one older than a minute is cleared, as _ar_lock clears it.
       [[ -z "$(find "$slot.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]] || rmdir -- "$slot.break" 2>/dev/null || true
     done
     if (( $(date +%s) + OR_MIN_ATTEMPT_SECONDS + 1 >= deadline )); then
-      lane_not_run "$lane" "all $cap in-flight slots for $model on this machine stayed busy for ${waited}s (ZUVO_OR_MAX_INFLIGHT_$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_'))"
+      lane_not_run "$lane" "all $cap in-flight slots for $model under this ZUVO_HOME stayed busy for ${waited}s ($(_or_inflight_var "$model"))"
       return 1
     fi
     sleep 1
@@ -599,13 +628,13 @@ or_inflight_acquire() {
   done
 }
 
-# or_inflight_release — gives back OR_INFLIGHT_SLOT, unless its pid is no longer ours (it was broken as stale and
-# taken by another call, which keeps it).
+# or_inflight_release — gives back OR_INFLIGHT_SLOT, only while its pid is ours: a slot broken as stale and taken by
+# another call — even one that has made the directory and not yet written its pid — is that call's.
 or_inflight_release() {
   [[ -n "${OR_INFLIGHT_SLOT:-}" ]] || return 0
   local holder
   holder="$(cat "$OR_INFLIGHT_SLOT/pid" 2>/dev/null)" || holder=""
-  if [[ -z "$holder" || "$holder" == "${BASHPID:-$$}" ]]; then
+  if [[ -n "$holder" && "$holder" == "${BASHPID:-$$}" ]]; then
     rm -f -- "$OR_INFLIGHT_SLOT/pid" 2>/dev/null; rmdir -- "$OR_INFLIGHT_SLOT" 2>/dev/null || true
   fi
   OR_INFLIGHT_SLOT=""

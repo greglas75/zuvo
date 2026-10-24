@@ -362,10 +362,11 @@ Environment variables:
                            `:free` model set here costs $0 and skips the daily cap; its 429 (ration spent) is
                            kept in ~/.zuvo/openrouter-free-quota-until and the lane is left out until then.
   ZUVO_MODEL_OPENROUTER_5    Provider `openrouter-5`   (default: inception/mercury-3)
-  ZUVO_OR_MAX_INFLIGHT_<LANE>  OpenRouter calls one host's lane may have open at once, across every review on this
-                           machine (default: 3 for inception/mercury-3, no cap for other models; 0 or empty = no
-                           cap). A call waits for a slot inside its time budget; one that gets none is not run
-                           and not held against the lane.
+  ZUVO_OR_MAX_INFLIGHT_<MODEL>  OpenRouter calls one model may have open at once, across every review and lane
+                           under this ZUVO_HOME; <MODEL> is the model id upper-cased, every other character as _
+                           (ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3). Default: 3 for inception/mercury-3, no cap
+                           for other models; 0 or empty = no cap. A call waits for a slot inside its time budget;
+                           one that gets none is not run and not held against the lane.
   ZUVO_OPENROUTER_DAILY_USD  Daily spend cap on the OpenRouter key, USD (default 5; "off" lifts it). At or over
                            it, or when /key cannot be read, OpenRouter lanes are not run (BytePlus is exempt).
   ZUVO_BYTEPLUS_FALLBACK_<LANE>  Alibaba Token Plan model (qwen CLI, needs ZUVO_ADV_QWEN=1) a BytePlus lane

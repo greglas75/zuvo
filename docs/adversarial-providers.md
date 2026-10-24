@@ -132,7 +132,7 @@ with `allow_fallbacks: false` (and, when every entry names its quantization, onl
 |---|---|---|
 | `xiaomi/mimo-v2.6-flash` | `makora` > `deepinfra` | `openrouter-alt` (owner's call, #108) |
 | `inclusionai/ling-3.1-flash` | `novita` | `openrouter-3` (owner's call, #108) |
-| `minimax/minimax-m3.1-flash` | `parasail/fp8 > gmicloud/fp8` | `openrouter-mini` (measured 2026-10-24, below) |
+| `minimax/minimax-m3.1-flash` | `parasail/fp8` > `gmicloud/fp8` | `openrouter-mini` (measured 2026-10-24, below) |
 | `deepseek/deepseek-v4.1-flash-1017` | `inference-net/fp8` > `parasail/fp8` > `atlas-cloud/fp8` | `byteplus-alt` step 3 |
 | `z-ai/glm-5.3-flash` | `baseten/fp8` > `baseten/fp8/us` > `wafer/nvfp4` | `byteplus` step 3 |
 
@@ -154,8 +154,9 @@ overrides it). Both lanes answer to `ZUVO_OPENROUTER_DAILY_USD`.
   the `:free` id; the free period ended on 2026-10-22, the id left OpenRouter, and the lane only timed out after
   that. Benchmark (frozen harness, 19/20 batches): 79 REAL / 27 FP (75% precision), **+28 defects over the 215 the
   rest of the roster finds**, the best marginal coverage of any lane. Unpinned it was slow: median ~122 s per
-  batch, and 5/20 batches ran past the 300 s lane timeout. Its hosts are now pinned to `parasail/fp8 > gmicloud/fp8` with no
-  fallbacks. Measured 2026-10-24 on the five slowest bench batches, one request per batch and host, through the
+  batch, and 5/20 batches ran past the 300 s lane timeout. Its hosts are now pinned to `parasail/fp8`, then `gmicloud/fp8`.
+  `allow_fallbacks: false` still tries the listed hosts in order; it only keeps OpenRouter off every host not
+  listed. Measured 2026-10-24 on the five slowest bench batches, one request per batch and host, through the
   frozen driver's prompt:
 
   | Host (tag) | Wall time per batch, s | Median | Over 300 s | Clean / empty answers | Findings |
@@ -166,23 +167,30 @@ overrides it). Both lanes answer to `ZUVO_OPENROUTER_DAILY_USD`.
   | `minimax` | 68, 235, 509, 476, 383 | 383 | 3/5 | 1 / 0 | 18 |
 
   Parasail was the only host that kept every batch inside the ceiling. The slowest batch from the 2026-10-20
-  run (365 s, empty) took 20 s there with 7 findings. GMICloud is the fallback: the second fastest and also fp8.
-  The 20 calls cost $0.38 in total.
+  run (365 s, empty) took 20 s there with 7 findings. GMICloud is the fallback: the second fastest and also fp8, but
+  2/5 of its slowest batches still passed 300 s, so a review that lands there may time out. One sample per batch
+  and host: a host's speed moves with its load, so re-measure before changing the order. The 20 calls cost $0.38
+  in total.
 
 - `openrouter-5` runs `inception/mercury-3` ($0.10/M in, $0.35/M out): cheap and fast, 81-88% precision, +5-6
   defects over the roster, 2/10 missed. Its only host, Inception, answers HTTP 429 when calls overlap (10 of 20
   batches at 8 parallel workers). So the lane runs under an **in-flight cap**.
 
 **In-flight cap (`openrouter_inflight_cap`, since 2026-10-24).** This is the most calls one model may have open
-at once on this machine, across every review: 3 for `inception/mercury-3` and none for any other model.
-`ZUVO_OR_MAX_INFLIGHT_<LANE>` overrides it (`0` or empty = no cap). A call takes a slot (a directory under
-`~/.zuvo/or-inflight/<model>/`, or under `ZUVO_OR_INFLIGHT_DIR`) before its first request and holds it through its
+at once under one `ZUVO_HOME` (one user on one machine), across every review and every lane that runs the model: 3
+for `inception/mercury-3` and none for any other model. `ZUVO_OR_MAX_INFLIGHT_<MODEL>` overrides it, `<MODEL>` being
+the model id upper-cased with every other character as `_` (`ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3`; `0` or empty
+= no cap). A call takes a slot (a directory under `~/.zuvo/or-inflight/<model-slug>/`, the slug being the model id
+with `/` and every other character outside `a-zA-Z0-9.-` as `_`, or under `ZUVO_OR_INFLIGHT_DIR`) before its first
+request and holds it through its
 retries. One review already sends 3 chunks at once (`ZUVO_ADV_CHUNK_PARALLEL`), so the cap bounds the fleet's own
 overlap.
 
 - While every slot is busy, the call polls once a second inside its own time budget. If no slot frees before too
   little budget is left, the lane is not run and not held against it (outcome `no-key`).
 - A slot whose holder died, for example a review killed by a timeout, is broken the way a stale lock is.
+- A slot directory that cannot be created or written (a read-only or full disk) leaves the call uncapped, with a
+  NOTE, rather than not run.
 
 **429 policy on a paid lane.** HTTP 429 is transient: up to 3 requests in all (`OR_ATTEMPTS`), 3 s then 6 s apart,
 with the in-flight slot held throughout, so a throttled lane never has more calls open than its cap. After that it
@@ -191,7 +199,9 @@ It counts toward the cooldown (2 failures → 30 min, `#115`), and the parts of 
 
 A `:free` model set by hand (`ZUVO_MODEL_OPENROUTER_MINI=…:free`) is still handled as before. It is rationed, not
 billed, so it never answers to the spend cap. Its HTTP 429 is a quota stop and is not retried: the reset goes to
-`~/.zuvo/openrouter-free-quota-until`, and the lane is left out until then. Free-model providers may log prompts.
+`~/.zuvo/openrouter-free-quota-until`, and the lane is left out until then. Free-model providers may log prompts:
+for repos whose code must not be logged, leave `ZUVO_ADV_OPENROUTER` off or narrow `ZUVO_ADV_OPENROUTER_LANES` to
+paid lanes.
 
 **GLM runs on Z.ai's own plan, lane `zai` (since 2026-10-16).** `byteplus` (glm-5.3-flash) left the
 default BytePlus set that day and came back on 2026-10-20 with its fallback chain (owner's decisions). Setup:
