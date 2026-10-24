@@ -37,9 +37,9 @@ COLUMNS
     FIND/1M   findings per million tokens, over successful reviews that reported usage — what a
               lane returns for what it burns (still not precision, see CRIT)
     A lane whose calls report no usage (rows written before the token columns existed) shows "-".
-    COST      what OpenRouter billed (cost_usd, columns 24; OpenRouter calls only, since 2026-10-24) — "-"
+    COST      what OpenRouter billed (cost_usd, column 24; OpenRouter calls only, since 2026-10-24) — "-"
               when no row in the window carries it. Plans and CLI subscriptions bill no per-call cost.
-    HOSTS     the upstream hosts that answered an OpenRouter lane (served_by, column 23), with their counts
+    HOSTS     the upstream hosts that answered an OpenRouter lane (served_by, column 23), with the rows each appears in
 
 Test rows (`mock-*` lanes) and summary rows are never counted.
 """
@@ -301,11 +301,14 @@ def tokens(cols, idx):
 
 
 def usd(cols, idx):
-    """The cost column: a float, or None when the row is too short, empty, or not a plain decimal."""
+    """The cost column: a float, or None when the row is too short, empty, not a plain decimal, or not finite."""
     if len(cols) <= idx:
         return None
     v = cols[idx].strip()
-    return float(v) if re.fullmatch(r"[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?", v) else None
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?", v):
+        return None
+    f = float(v)
+    return f if math.isfinite(f) else None
 
 
 def human(n):
@@ -334,7 +337,8 @@ def rows(groups):
             "cache": "%d%%" % (100 * g["tcached"] // g["cache_in"]) if g["cache_in"] else "-",
             "tokens": human(g["tin"] + g["tout"]) if tr else "-",
             "fpm": "%.1f" % (g["ok_find"] * 1e6 / g["ok_tok"]) if g["ok_tok"] else "-",
-            "cost": "$%.4f" % g["cost"] if g["costed"] else "-",
+            # a lane of fractional-cent calls must not read as $0.0000 ("free")
+            "cost": ("$%.4f" % g["cost"] if g["cost"] == 0 or g["cost"] >= 0.00005 else "$%.2g" % g["cost"]) if g["costed"] else "-",
             "hosts": ", ".join("%s %d" % (k, v) for k, v
                                in sorted(g["hosts"].items(), key=lambda kv: (-kv[1], kv[0]))) or "-",
         })

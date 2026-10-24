@@ -197,6 +197,10 @@ md0="$("$TOOL" --log "$TMP/or.log" --markdown 2>&1)"
 [ "$(cell openrouter-mini 13)" = '\$0.0150' ] && pass "COST sums cost_usd over every row, the failed call included" || bad "COST: [$(cell openrouter-mini 13)] $md0"
 [ "$(cell openrouter-mini 14)" = "\`Parasail 2, GMICloud 1\`" ] && pass "HOSTS counts each upstream host" || bad "HOSTS: [$(cell openrouter-mini 14)]"
 [ "$(cell qwen 13)" = "-" ] && pass "a lane without cost_usd shows -, never \$0" || bad "COST non-OR: [$(cell qwen 13)]"
+# Bug caught: a lane of fractional-cent calls printed as $0.0000 ("free"), and an out-of-range cost summed to $inf.
+{ orrow ok Parasail 0.00000276; orrow ok Parasail 1e999; } > "$TMP/or2.log"
+md0="$("$TOOL" --log "$TMP/or2.log" --markdown 2>&1)"
+[ "$(cell openrouter-mini 13)" = '\$2.8e-06' ] && pass "a sub-cent lane total keeps its digits; a non-finite cost is ignored" || bad "COST tiny: [$(cell openrouter-mini 13)] $md0"
 
 # Contracts: the column indices name the writer's fields; the docs table carries every BILLING vendor.
 # The writer's LOG_HEADER is in a module: hand python the program as one text (driver + modules).
