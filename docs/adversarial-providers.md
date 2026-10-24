@@ -55,7 +55,7 @@ not run — read it with the `outcome` column. Values are lowercased; one that t
 when it reported none. Columns 23-25 (since 2026-10-24) are filled for OpenRouter calls only — an
 `openrouter*` lane or a BytePlus lane's OpenRouter fallback step — and are empty for every other lane and
 on older rows: `served_by` is the upstream host that answered (the response's `provider`, e.g. `Parasail`,
-`GMICloud`; several comma-joined in call order), `cost_usd` the summed `usage.cost` OpenRouter billed, and
+`GMICloud`; several distinct hosts comma-joined in first-seen order), `cost_usd` the summed `usage.cost` OpenRouter billed, and
 `gen_id` the generation ids (`gen-…`, comma-joined) to look a call up in OpenRouter's activity page. The
 pin table (`openrouter_pin_order`) says which hosts MAY serve a model; only these columns say which did.
 `adversarial-stats` shows them as COST and HOSTS. The header line of an old log is never rewritten: read

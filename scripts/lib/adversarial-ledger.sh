@@ -293,7 +293,7 @@ INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 #   served_by, cost_usd, gen_id — columns 23-25, added 2026-10-24, OpenRouter calls only (an OpenRouter lane, or a
 #               BytePlus lane's OpenRouter fallback step; empty for every other lane and on older rows). served_by:
 #               the upstream host that answered (the response's `provider`, e.g. Parasail, GMICloud), several
-#               comma-joined in call order when the lane made several calls; cost_usd: the summed `usage.cost` the
+#               distinct, comma-joined in first-seen order when the lane made several calls; cost_usd: the summed `usage.cost` the
 #               vendor billed, in USD; gen_id: the generation ids (`gen-…`), comma-joined. A pinned host order says
 #               which hosts MAY serve a model; only the answer says which one did, and what it cost — OpenRouter's
 #               own per-generation activity endpoint needs a management key the review key is not.
@@ -404,8 +404,8 @@ lane_or_call_add() {
   printf '%s\t%s\t%s\n' "$host" "$cost" "$id" >> "$JSON_TMPDIR/orcall_${ADV_USAGE_LANE}.txt" 2>/dev/null || true
 }
 
-# lane_or_cols <lane> — served_by, cost_usd, gen_id, tab-separated: the distinct hosts and the ids comma-joined in
-# call order, the costs summed (8 decimals — a short call costs fractions of a cent); empty when no call
+# lane_or_cols <lane> — served_by, cost_usd, gen_id, tab-separated: the distinct hosts in first-seen order and every
+# id in call order, comma-joined, the costs summed (8 decimals — a short call costs fractions of a cent); empty when no call
 # reported the field.
 lane_or_cols() {
   local f="${JSON_TMPDIR:-}/orcall_$1.txt"
