@@ -317,7 +317,7 @@ ZUVO_ADVERSARIAL_LOG_FILE="$TEST_LOG" \
 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
   bash "$ADV" --single --json --files "$EMPTY" >/dev/null 2>&1
 row=$(grep -v '^SUMMARY' "$TEST_LOG" | grep 'mock-fail' | tail -1)
-assert_eq "22" "$(echo "$row" | awk -F'\t' '{print NF}')" "row matches the 22-column log schema (empty effort and token cells still fields)"
+assert_eq "25" "$(echo "$row" | awk -F'\t' '{print NF}')" "row matches the 25-column log schema (empty effort, token and OpenRouter host/cost/id cells still fields)"
 assert_eq "mock-fail"     "$(echo "$row" | awk -F'\t' '{print $14}')" "provider column names the provider"
 assert_eq "not-attempted" "$(echo "$row" | awk -F'\t' '{print $15}')" "outcome column (never dispatched)"
 assert_eq "" "$(echo "$row" | awk -F'\t' '{print $18}')" "effort column empty: the lane never ran, so it ran at nothing"
