@@ -24,6 +24,7 @@
 #                          2 = unknown/error, 3 = no production files in range
 #   pg_allow_adhoc       : 0 = escape active, 1 = not
 #   pg_log_adhoc         : 0 = bypass line written (stdout = log path), 1 = not written
+#   pg_dangling_hooks_path : 0 = core.hooksPath names a missing dir (stdout = "<scope> <dir>"), 1 = not
 #   pg_is_agent_env      : 0 = agent invocation, 1 = human
 #   pg_is_production      : 0 = production path, 1 = non-production
 
@@ -1197,6 +1198,23 @@ PEU_JOINED
     fi
   fi
   return 0
+}
+
+# pg_dangling_hooks_path — core.hooksPath names a directory that does not exist, so git runs NO hook for this
+# checkout: the git-native gates and every repo hook are silently off. `git worktree add` copies config.worktree
+# from the worktree it runs in, so a per-worktree hooksPath (zuvo's private refactor hooks, the PR caretaker's
+# repair guard) outlives the worktree that owned it (2026-10-24: 5 tgm-survey-platform worktrees pushed ungated).
+# Prints "<scope> <dir>" (scope: worktree, local, global, system); returns 1 when the hooks directory exists or
+# none is configured.
+pg_dangling_hooks_path() {
+  local root line scope cfg dir
+  root="$(pg_repo_root 2>/dev/null)" || return 1
+  line="$(git -C "$root" config --show-scope --path --get core.hooksPath 2>/dev/null)" || return 1
+  scope="${line%%[[:space:]]*}"; cfg="${line#*[[:space:]]}"
+  [ -n "$cfg" ] || return 1
+  case "$cfg" in /*) dir="$cfg" ;; *) dir="$root/$cfg" ;; esac
+  [ -d "$dir" ] && return 1
+  printf '%s %s\n' "$scope" "$dir"
 }
 
 # --- escape valves / env detection ------------------------------------------

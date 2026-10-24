@@ -145,4 +145,28 @@ cp "$GATE" "$NOLIB/pre-push-gate.sh"   # copied alone → no sibling lib/ → PG
 printf '{"command":"git push origin ptu"}\n' | env HOME="$TMP/fakehome" ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$NOLIB/pre-push-gate.sh" >/dev/null 2>&1
 [ "$?" -eq 0 ] && pass "(p5) lib-absent → legacy runs.log fallback (no runs.log → warn+pass)" || bad "(p5) legacy fallback regressed"
 
+# (p6) a worktree created inside a hooks-private worktree inherits its core.hooksPath (git copies config.worktree);
+# once that worktree is gone git runs no hook at all (2026-10-24: 5 tgm-survey-platform worktrees) → BLOCK even
+# under ZUVO_ALLOW_ADHOC, naming the fix; the unset restores the push.
+git config extensions.worktreeConfig true
+git worktree add -q --detach "$TMP/owner" ptu
+git -C "$TMP/owner" config --worktree core.hooksPath "$TMP/owner-hooks"
+mkdir -p "$TMP/owner-hooks"
+git -C "$TMP/owner" worktree add -q --detach "$TMP/copy" ptu
+rm -rf "$TMP/owner-hooks"
+out=$(pj | env ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_ROOT="$TMP/copy" bash "$GATE" 2>&1)
+[ "$?" -eq 1 ] && case "$out" in *"git config --worktree --unset core.hooksPath"*) true ;; *) false ;; esac \
+  && pass "(p6) PreToolUse: inherited core.hooksPath to a missing dir → BLOCK with the fix" || bad "(p6) dangling hooksPath should block: $out"
+git -C "$TMP/copy" config --worktree --unset core.hooksPath
+pj | env ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_ROOT="$TMP/copy" bash "$GATE" >/dev/null 2>&1
+[ "$?" -eq 0 ] && pass "(p6b) after the unset the push goes through" || bad "(p6b) unset should restore the push"
+
+# (p6c) a repo-wide relative hooksPath missing in this worktree (husky's .husky/_ before npm install) is shared with
+# the main checkout: unsetting it would be the wrong fix, so it only warns and the push goes on
+git config --local core.hooksPath .husky/_
+out=$(pj | env ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_ROOT="$TMP/copy" bash "$GATE" 2>&1)
+[ "$?" -eq 0 ] && case "$out" in *"WARNING core.hooksPath (local config)"*) true ;; *) false ;; esac \
+  && pass "(p6c) repo-wide missing hooksPath → warning, push allowed" || bad "(p6c) repo-wide missing hooksPath should only warn: $out"
+git config --local --unset core.hooksPath
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi
