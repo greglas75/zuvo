@@ -1043,3 +1043,16 @@ ck_run_parts 51 "$CK_HK/delnear.diff"; rc=$?
 assert_exit_code "0" "$rc" "reviewed whole: exit 0"
 assert_eq "1|0" "$(cat "$CK_HK/parts-51"/*.in | grep -c 'x\{29000\}')|$(cat "$CK_HK/parts-51"/*.in | grep -c 'zuvo-omit')" \
   "the deleted line reached the reviewer in full, nothing omitted"
+
+start_test "CK.52 a removed line that fits the budget alone but not with a long path's header is still shortened"
+# The rule counts the file header each part repeats: a 28k line under a ~2.4k header has no part that holds it,
+# though line + 200 alone is under the ~29.5k budget. Judged without the header it was kept, and cut (exit 4).
+ck52_path="src/$(awk 'BEGIN { for (i = 0; i < 59; i++) printf "segment%02d/", i }')fixture.json"
+{ printf 'diff --git a/%s b/%s\nindex aaaaaaa..bbbbbbb 100644\n--- a/%s\n+++ b/%s\n@@ -1 +1 @@\n' "$ck52_path" "$ck52_path" "$ck52_path" "$ck52_path"
+  awk 'BEGIN { printf "-"; for (i = 0; i < 28000; i++) printf "z"; printf "\n" }'
+  printf '+MARKER-SHORT\n'; } > "$CK_HK/remhdr.diff"
+assert_eq "1" "$(wc -c < "$CK_HK/remhdr.diff" | awk '{ print ($1 > 30000) }')" "premise: the input is over the 30000 cap"
+ck_run_parts 52 "$CK_HK/remhdr.diff"; rc=$?
+assert_exit_code "0" "$rc" "reviewed whole: exit 0 (the part holding the line was cut: exit 4)"
+assert_eq "1|1" "$(cat "$CK_HK/parts-52"/*.in | grep -c '^-z\{200\} … \[line truncated (zuvo-omit #1): 27800 of 28000 bytes omitted')|$(ck_parts_count 52 +MARKER-SHORT)" \
+  "the removed line is shortened, the added line reached the reviewer"

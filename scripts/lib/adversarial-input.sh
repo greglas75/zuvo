@@ -742,15 +742,16 @@ _ck_omit_oversized() {
       while (n > 0) { c = substr(s, n + 1, 1); if (c < "\200" || c > "\277") break; n-- }
       return substr(s, 1, n)
     }
-    # over(i) — line i of the section cannot be held by any hunk part (the split rule above).
-    function over(i) { return length(S[i]) + fixed + 200 > budget }
+    # over(i) — line i of the section cannot be held by any hunk part (the split rule above); fx = the
+    # section file header and trailer bytes, set by flush (a global: an awk local is not visible to a function it calls).
+    function over(i) { return length(S[i]) + fx + 200 > budget }
     function nextkey() { return sprintf("(zuvo-omit #%d)", ++nk) }
-    function flush(   i, fixed, del, big, nl, nb, c, len, key, hd, o, ab, oo, nn) {
+    function flush(   i, del, big, eb, nl, nb, c, len, key, hd, o, ab, oo, nn) {
       if (n == 0) return
       if (!indiff || h0 == 0) { for (i = 1; i <= n; i++) print S[i]; n = 0; return }
-      fixed = 0; del = 0; big = 0
+      fx = 0; del = 0; big = 0
       for (i = 1; i <= n; i++) {
-        if (i < h0 || (ts && i >= ts)) fixed += length(S[i]) + 1
+        if (i < h0 || (ts && i >= ts)) fx += length(S[i]) + 1
         if (i < h0 && S[i] ~ /^deleted file mode /) del = 1
       }
       if (del) for (i = h0; i <= (ts ? ts - 1 : n); i++) if (substr(S[i], 1, 1) == "-" && over(i)) big = 1
@@ -760,6 +761,9 @@ _ck_omit_oversized() {
         key = nextkey()
         for (i = 1; i < h0; i++) print S[i]
         printf "=== OMITTED %s: deleted file %s: %d line%s, %d bytes — content omitted: a line over the chunk cap (%d bytes). The deletion itself is under review: judge whether removing it is intended and whether anything still refers to it ===\n", key, path, nl, nl == 1 ? "" : "s", nb, budget
+        # Empty lines closing the body are separators (or the trailing newlines of the input): they stay.
+        for (eb = (ts ? ts - 1 : n); eb >= h0 && S[eb] == ""; eb--) ;
+        for (i = eb + 1; i <= (ts ? ts - 1 : n); i++) print S[i]
         if (ts) for (i = ts; i <= n; i++) print S[i]
         emitnote("omitted", sprintf("deleted file %s: %d line%s, %d bytes — content omitted: a line over the chunk cap", path, nl, nl == 1 ? "" : "s", nb), key)
         n = 0; return
@@ -779,7 +783,7 @@ _ck_omit_oversized() {
           printf "%s%s … [line truncated %s: %d of %d bytes omitted, over the chunk cap; %s content, not added by this change]\n", c, hd, key, len - length(hd), len, c == "-" ? "removed" : "unchanged context"
           emitnote("omitted", sprintf("%s: %s line %d of %d bytes cut to its first %d — content omitted: over the chunk cap", path, c == "-" ? "removed" : "context", oo, len, length(hd)), key)
         } else {
-          if (c == "+" && length(S[i]) + 1 + fixed > cap)
+          if (c == "+" && length(S[i]) + 1 + fx > cap)
             emitnote("unsplittable", sprintf("%s: added line %d of %d bytes is over the chunk cap and cannot be split — NOT omitted: the part holding it is truncated and the run exits 4", path, nn, len), "")
           print S[i]
         }
@@ -790,7 +794,7 @@ _ck_omit_oversized() {
     }
     # setpath(p) — the path a note names, a quoted one ("a/x\ty") unquoted, never holding the note separator.
     function setpath(p) { if (p ~ /^".*"$/) p = substr(p, 2, length(p) - 2); sub(/^[ab]\//, "", p); gsub(us, "?", p); path = p }
-    /^(diff --git |=== FILE: )/ { flush(); indiff = ($0 ~ /^diff --git /); h0 = 0; ts = 0; st = 0; setpath(substr($0, 12)) }
+    /^(diff --git |=== FILE: )/ { flush(); indiff = ($0 ~ /^diff --git /); h0 = 0; ts = 0; st = 0; if (indiff) setpath(substr($0, 12)) }
     { S[++n] = $0 }
     indiff && st < 2 && /^=== CONTEXT: / { st = 2; ts = n }
     indiff && st == 0 && /^@@ / { st = 1; h0 = n }
@@ -840,15 +844,19 @@ done <<< "$_OMIT_NOTES"
 return 0
 }
 
-# _ck_part_omissions <chunk> — the omission notes whose key `(zuvo-omit #N)` is in <chunk>, one per line. The key
-# is numbered per run, so two identical omitted lines in different parts are each credited to their own part.
+# _ck_part_omissions <chunk> — the omission notes whose stand-in line, found by its key `(zuvo-omit #N)`, is in
+# <chunk>, one per line. The key is numbered per run, so two identical omitted lines in different parts are each
+# credited to their own part; it is matched only in a stand-in line's own shape, not anywhere in the code.
 _ck_part_omissions() {
-  local line kind rest note key us=$'\037' out=""
+  local line kind rest note key num us=$'\037' out=""
   [[ -n "$_OMIT_NOTES" ]] || return 0
   while IFS= read -r line; do
     kind="${line%%"$us"*}"; rest="${line#*"$us"}"; note="${rest%%"$us"*}"; key="${rest#*"$us"}"
-    [[ "$kind" == omitted && -n "$key" ]] || continue
-    if grep -qF -- "$key" "$1"; then out="${out:+$out$'\n'}$note"; fi
+    [[ "$kind" == omitted && "$key" =~ ^\(zuvo-omit\ \#([0-9]+)\)$ ]] || continue
+    num="${BASH_REMATCH[1]}"
+    if grep -qE -- "^(=== OMITTED \(zuvo-omit #${num}\): deleted file |[- ].* … \[line truncated \(zuvo-omit #${num}\): )" "$1"; then
+      out="${out:+$out$'\n'}$note"
+    fi
   done <<< "$_OMIT_NOTES"
   printf '%s' "$out"
 }
