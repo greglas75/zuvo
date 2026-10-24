@@ -918,10 +918,13 @@ run_openrouter() {
   # Host, billed cost and generation id into the row (columns 23-25) — OpenRouter only, never a plan endpoint, whose
   # answer is no OpenRouter bill. Recorded before the text is judged: an empty answer was billed all the same.
   if [[ -z "$_plan" ]]; then
-    local _or_meta _or_cost _or_gen
-    _or_meta="$(printf '%s' "$response" | jq -r '[(.usage.cost // "" | tostring), (.id // "" | tostring)] | join("|")' 2>/dev/null)" || _or_meta=""
+    local _or_meta _or_cost _or_gen _or_rest
+    # jq keeps only a JSON number as the cost and only a plain token as the id, so neither can carry the `|` the
+    # split below cuts on — a string cost of "999|gen-x" would otherwise forge both fields.
+    _or_meta="$(printf '%s' "$response" | jq -r '[(.usage.cost | if type == "number" then tostring else "" end),
+      (.id | if type == "string" and test("^[A-Za-z0-9._-]{1,80}$") then . else "" end)] | join("|")' 2>/dev/null)" || _or_meta=""
     # `|`, not whitespace: IFS whitespace collapses, so a missing cost would hand the id to the cost field.
-    IFS='|' read -r _or_cost _or_gen _ <<< "$_or_meta"
+    IFS='|' read -r _or_cost _or_gen _or_rest <<< "$_or_meta"
     lane_or_call_add "$_served" "${_or_cost:-}" "${_or_gen:-}"
   fi
   openrouter_review_text "$response" "$model" "$_lane"

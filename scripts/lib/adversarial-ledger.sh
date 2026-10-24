@@ -391,12 +391,14 @@ lane_usage_cols() {
 
 # lane_or_call_add <host> <cost> <gen-id> — one OpenRouter answer for the running lane; a no-op outside one. The
 # values are upstream bytes: a host or id outside [A-Za-z0-9._-] (40 / 80 chars) and a cost that is not a plain
-# non-negative decimal are dropped, never written — a tab or newline in them would shift the row's columns.
+# non-negative decimal under $1000 are dropped, never written — a tab or newline in them would shift the row's columns.
 lane_or_call_add() {
   [[ -n "${ADV_USAGE_LANE:-}" && -n "${JSON_TMPDIR:-}" ]] || return 0
   local host="${1:-}" cost="${2:-}" id="${3:-}"
   [[ "$host" =~ ^[A-Za-z0-9._-]{1,40}$ ]] || host=""
-  [[ "$cost" =~ ^[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?$ ]] || cost=""
+  # jq writes a large or round double as 1e+21 — the sign is allowed; a cost of $1000 or more per call is no real
+  # bill (1e309 would sum to `inf`) and is dropped like any other bad value.
+  [[ "$cost" =~ ^[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]{1,3})?$ ]] && awk -v c="$cost" 'BEGIN { exit !(c + 0 < 1000) }' || cost=""
   [[ "$id" =~ ^[A-Za-z0-9._-]{1,80}$ ]] || id=""
   [[ -n "$host$cost$id" ]] || return 0
   printf '%s\t%s\t%s\n' "$host" "$cost" "$id" >> "$JSON_TMPDIR/orcall_${ADV_USAGE_LANE}.txt" 2>/dev/null || true

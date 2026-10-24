@@ -68,6 +68,12 @@ assert_eq "[||] 25" "$(awk -F'\t' '$14 == "byteplus" { r = "[" $23 "|" $24 "|" $
 run_b c0e openrouter-mini ORB_USED=1.5 ORB_CHAT_BODY='{"id":"gen-1\tX","provider":"Parasail","choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"cost":"1;rm"}}' >/dev/null
 assert_eq "Parasail|| 25" "$(awk -F'\t' '$14 == "openrouter-mini" { r = $23 "|" $24 "|" $25 " " NF } END { print r }' "$BTMP/c0e/adversarial.log" 2>/dev/null)" \
   "an id with a tab and a cost that is no number are dropped, never written into the row"
+run_b c0f openrouter-mini ORB_USED=1.5 ORB_CHAT_BODY='{"id":"gen-2","provider":"Parasail","choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"cost":"999|gen-forged"}}' >/dev/null
+assert_eq "Parasail||gen-2" "$(awk -F'\t' '$14 == "openrouter-mini" { r = $23 "|" $24 "|" $25 } END { print r }' "$BTMP/c0f/adversarial.log" 2>/dev/null)" \
+  "a string cost carrying a separator forges neither the cost nor the id"
+run_b c0g openrouter-mini ORB_USED=1.5 ORB_CHAT_BODY='{"id":"gen-3","provider":"Parasail","choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"cost":1e309}}' >/dev/null
+assert_eq "Parasail||gen-3" "$(awk -F'\t' '$14 == "openrouter-mini" { r = $23 "|" $24 "|" $25 } END { print r }' "$BTMP/c0g/adversarial.log" 2>/dev/null)" \
+  "an out-of-range cost is dropped, never summed into inf"
 
 # Bug caught: the cap blocking a key that is under it, so the cheap lanes never review.
 start_test "b.1 under the cap the review runs, and the day's spend is kept for the other lanes"
