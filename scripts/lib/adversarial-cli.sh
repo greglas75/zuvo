@@ -351,16 +351,21 @@ Environment variables:
   ZUVO_QWEN_MODEL          qwen lane model (default: qwen3.8-flash; qwen3.8-max finds more at ~375 s/diff)
   ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
-                           Adds `openrouter-alt openrouter-3 openrouter-mini` (ZUVO_ADV_OPENROUTER_LANES
+                           Adds `openrouter-alt openrouter-3 openrouter-mini openrouter-5` (ZUVO_ADV_OPENROUTER_LANES
                            overrides, e.g. "openrouter openrouter-alt openrouter-3 openrouter-4"). Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: ZUVO_MODEL_OPENROUTER from model-registry.sh, z-ai/glm-5.3-flashx)
   ZUVO_MODEL_OPENROUTER_ALT  Provider `openrouter-alt` (default: xiaomi/mimo-v2.6-flash)
   ZUVO_MODEL_OPENROUTER_3    Provider `openrouter-3`   (default: inclusionai/ling-3.1-flash)
   ZUVO_MODEL_OPENROUTER_4    Provider `openrouter-4`   (default: thinkingmachines/inkling-small)
-  ZUVO_MODEL_OPENROUTER_MINI Provider `openrouter-mini` (default: minimax/minimax-m3.1-flash:free). A `:free`
-                           model costs $0 and skips the daily cap; its 429 (ration spent) is kept in
-                           ~/.zuvo/openrouter-free-quota-until and the lane is left out until then.
+  ZUVO_MODEL_OPENROUTER_MINI Provider `openrouter-mini` (default: minimax/minimax-m3.1-flash, paid, pinned hosts). A
+                           `:free` model set here costs $0 and skips the daily cap; its 429 (ration spent) is
+                           kept in ~/.zuvo/openrouter-free-quota-until and the lane is left out until then.
+  ZUVO_MODEL_OPENROUTER_5    Provider `openrouter-5`   (default: inception/mercury-3)
+  ZUVO_OR_MAX_INFLIGHT_<LANE>  OpenRouter calls one host's lane may have open at once, across every review on this
+                           machine (default: 3 for inception/mercury-3, no cap for other models; 0 or empty = no
+                           cap). A call waits for a slot inside its time budget; one that gets none is not run
+                           and not held against the lane.
   ZUVO_OPENROUTER_DAILY_USD  Daily spend cap on the OpenRouter key, USD (default 5; "off" lifts it). At or over
                            it, or when /key cannot be read, OpenRouter lanes are not run (BytePlus is exempt).
   ZUVO_BYTEPLUS_FALLBACK_<LANE>  Alibaba Token Plan model (qwen CLI, needs ZUVO_ADV_QWEN=1) a BytePlus lane
@@ -376,7 +381,7 @@ Environment variables:
                            cap. Set but empty = no step 3.
   ZUVO_OR_SORT_<LANE> / ZUVO_OR_QUANTS_<LANE>
                            OpenRouter routing of a model with no host pin (openrouter_pin_order pins mimo,
-                           ling-3.1-flash and the step-3 models): sort
+                           ling-3.1-flash, minimax-m3.1-flash and the step-3 models): sort
                            price|throughput|latency (default throughput) and the allowed quantizations (default
                            fp8,fp16,bf16,fp32 for a model with such endpoints, else none). Empty = not sent.
   ZUVO_ADV_ZAI=1           Opt IN to the `zai` lane: Z.ai GLM Coding Plan (prepaid). Key in ZAI_API_KEY or

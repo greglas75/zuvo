@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# test-openrouter-free-quota.sh — the free OpenRouter lane `openrouter-mini` (minimax/minimax-m3.1-flash:free):
-# in the default roster, never priced against the daily spend cap, and a 429 (its free ration spent) kept as a
-# quota stop (openrouter_free_quota_*, adversarial-lanes-http.sh) instead of retried on every chunk.
+# test-openrouter-free-quota.sh — an OpenRouter lane on a `:free` model (here `openrouter-mini` set to
+# minimax/minimax-m3.1-flash:free, the model it ran 2026-10-20..22; its default is the paid id since 2026-10-24):
+# never priced against the daily spend cap, and a 429 (its free ration spent) kept as a quota stop
+# (openrouter_free_quota_*, adversarial-lanes-http.sh) instead of retried on every chunk.
 
 ADV="$ROOT/scripts/adversarial-review.sh"
 EMPTY="$ADV_TEST_EMPTY"
@@ -30,13 +31,14 @@ printf '%s\n%s' '{"choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage"
 EOF
 chmod +x "$FTMP/bin/curl"
 
+FREE_MODEL="minimax/minimax-m3.1-flash:free"
 # [RUN_LANE=<lane>] run_f <case> [VAR=value…] -> the stderr of the lane (default openrouter-mini); exit code in <home>/rc; stop file <home>/quota.
 run_f() {
   local home="$FTMP/$1"; shift
   mkdir -p "$home/.zuvo"
   ( umask 077; printf 'fake-or-key' > "$home/.zuvo/openrouter.key" )
-  env -u OPENROUTER_API_KEY -u ZUVO_OPENROUTER_BASE_URL -u ZUVO_MODEL_OPENROUTER_MINI -u ORF_429 -u ORF_USED \
-    PATH="$FTMP/bin:$PATH" ORF_REC="$home" HOME="$home" ZUVO_HOME="$home" \
+  env -u OPENROUTER_API_KEY -u ZUVO_OPENROUTER_BASE_URL -u ORF_429 -u ORF_USED \
+    PATH="$FTMP/bin:$PATH" ORF_REC="$home" HOME="$home" ZUVO_HOME="$home" ZUVO_MODEL_OPENROUTER_MINI="$FREE_MODEL" \
     ZUVO_ADVERSARIAL_LOG_FILE="$home/adversarial.log" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
     ZUVO_OPENROUTER_FREE_QUOTA_FILE="$home/quota" ZUVO_OPENROUTER_USAGE_FILE="$home/usage" \
     ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT=25 ZUVO_OPENROUTER_DAILY_USD=5 "$@" \
@@ -63,7 +65,7 @@ assert_eq "openrouter-mini" "$listed" "listed by detection"
 
 # Bug caught: the wrong model sent (a paid id, or "unknown"), or a $0 model stopped by the spend cap that bounds
 # the paid lanes — today's spend is over the cap here, and the free lane still reviews without asking /key.
-start_test "fq.2 the review goes to OpenRouter with the exact :free model id, and the spend cap does not stop it"
+start_test "fq.2 the review goes to OpenRouter with the exact :free model id set, and the spend cap does not stop it"
 run_f c2 ORF_USED=9 >/dev/null
 assert_eq "minimax/minimax-m3.1-flash:free" "$(cat "$FTMP/c2/curl.models" 2>/dev/null)" "the exact model id"
 assert_eq "https://openrouter.ai/api/v1/chat/completions" "$(cat "$FTMP/c2/curl.urls" 2>/dev/null)" "one chat request to OpenRouter, no /key"
@@ -132,7 +134,7 @@ assert_eq "no" "$([ -e "$FTMP/c8/quota" ] && echo yes || echo no)" "no free-mode
 # Bug caught: a spent free ration still drawn into the fan-out, taking a slot a working lane could fill.
 start_test "fq.9 a free-model stop ahead leaves openrouter-mini out before the fan-out draw"
 mkdir -p "$FTMP/c9"; printf '%s\topenrouter-mini\n' "$(( $(date +%s) + 3600 ))" > "$FTMP/c9/quota"
-out=$(PATH="$HERE/mocks:$PATH" ZUVO_OPENROUTER_FREE_QUOTA_FILE="$FTMP/c9/quota" ZUVO_REVIEW_PROVIDER_PICK=ranked ZUVO_REVIEW_MAX_PROVIDERS=2 \
+out=$(PATH="$HERE/mocks:$PATH" ZUVO_MODEL_OPENROUTER_MINI="$FREE_MODEL" ZUVO_OPENROUTER_FREE_QUOTA_FILE="$FTMP/c9/quota" ZUVO_REVIEW_PROVIDER_PICK=ranked ZUVO_REVIEW_MAX_PROVIDERS=2 \
   ZUVO_REVIEW_TEST_PROVIDERS="openrouter-mini mock-success mock-success" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$FTMP/c9/err")
 assert_contains "$(cat "$FTMP/c9/err")" "openrouter-mini (OpenRouter free-model quota until" "named among the known stops, with its reason"

@@ -265,8 +265,17 @@ ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}"
 # deepseek-v4.1-flash left openrouter-3 on 2026-10-16 ($72 in one day); it runs on BytePlus / the Token Plan.
 ZUVO_MODEL_OPENROUTER_3="${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}"
 ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-thinkingmachines/inkling-small}"
-# openrouter-mini: a `:free` model — $0 a call, rationed per minute and per day instead (openrouter_free_quota_*).
-ZUVO_MODEL_OPENROUTER_MINI="${ZUVO_MODEL_OPENROUTER_MINI:-minimax/minimax-m3.1-flash:free}"
+# openrouter-mini = minimax/minimax-m3.1-flash, PAID since 2026-10-24 ($0.15/M in, $0.60/M out). The `:free` id it ran
+# from 2026-10-20 left OpenRouter when the free period ended (2026-10-22); from then the lane only timed out. Benchmark
+# (frozen harness, 19/20 batches): 79 REAL / 27 FP (75%), +28 defects over the 215 the rest of the roster finds — the
+# best marginal coverage of any lane. Slow when unpinned (median ~122 s, 5/20 batches over 300 s), so its hosts are
+# pinned (openrouter_pin_order, adversarial-lanes-http.sh). Owner's decision 2026-10-24.
+ZUVO_MODEL_OPENROUTER_MINI="${ZUVO_MODEL_OPENROUTER_MINI:-minimax/minimax-m3.1-flash}"
+# openrouter-5 = inception/mercury-3 (added 2026-10-24, owner's decision): cheap ($0.10/M in, $0.35/M out) and fast;
+# benchmark precision 81-88%, +5-6 defects over the roster, 2/10 missed. Its host (Inception, the only endpoint)
+# answers HTTP 429 when many calls overlap (10/20 at 8 parallel workers), so the lane runs under a per-host in-flight
+# cap (openrouter_inflight_cap, adversarial-lanes-http.sh).
+ZUVO_MODEL_OPENROUTER_5="${ZUVO_MODEL_OPENROUTER_5:-inception/mercury-3}"
 
 # ── BytePlus ModelArk Coding Plan (prepaid, opt-in via ZUVO_ADV_BYTEPLUS=1) ──
 # A SUBSCRIPTION, not a meter. Two consequences that shape everything below:

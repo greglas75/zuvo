@@ -1196,9 +1196,9 @@ echo "-- bap_vendor_excluded --"
 for _p in "claude=claude" "codex=codex-5.3 codex-5.4" "antigravity=agy gemini" "cursor=cursor-agent" \
           "kimi=kimi kimi-api" "qwen=qwen" "unknown-host=" "=" \
           "codestral=codestral" "codestral-latest=codestral" \
-          "openrouter=openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini" \
-          "openrouter-alt=openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini" \
-          "openrouter-4=openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini" \
+          "openrouter=openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini openrouter-5" \
+          "openrouter-alt=openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini openrouter-5" \
+          "openrouter-4=openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini openrouter-5" \
           "byteplus=byteplus byteplus-alt byteplus-3" "byteplus-3=byteplus byteplus-alt byteplus-3" \
           "openrouterx=" "byteplusplus=" "codestralish="; do
   run bap_vendor_excluded "${_p%%=*}"
@@ -1232,7 +1232,7 @@ run with_env LC_ALL=C bap_build_prompt "$PROTO" "$T/utf8.sh" "$FX/fix.txt"
 expect_eq "prompt: multi-byte UTF-8 text is NOT binary under LC_ALL=C either (status 0)" "0" "$RC"
 
 echo "-- bap_allowlist --"
-ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini byteplus byteplus-alt byteplus-3'
+ISOLATED='codex-5.3 codex-5.4 claude agy kimi kimi-api qwen codestral openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini openrouter-5 byteplus byteplus-alt byteplus-3'
 without_allow() { ( unset ZUVO_BLIND_AUDIT_ALLOWLIST; "$@" ); }
 in_dir() { local d="$1"; shift; ( cd "$d" && "$@" ); }
 run without_allow bap_allowlist

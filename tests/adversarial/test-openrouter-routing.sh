@@ -36,7 +36,9 @@ run_r() {
   env -u OPENROUTER_API_KEY -u ZUVO_OPENROUTER_BASE_URL -u ZUVO_BYTEPLUS_BASE_URL -u BYTEPLUS_API_KEY \
     -u ZUVO_OR_SORT_OPENROUTER -u ZUVO_OR_QUANTS_OPENROUTER -u ZUVO_OR_SORT_OPENROUTER_4 -u ZUVO_OR_QUANTS_OPENROUTER_4 \
     -u ZUVO_OR_SORT_OPENROUTER_MINI -u ZUVO_OR_QUANTS_OPENROUTER_MINI -u ZUVO_OR_PROVIDER_ORDER \
+    -u ZUVO_OR_SORT_OPENROUTER_5 -u ZUVO_OR_QUANTS_OPENROUTER_5 -u ZUVO_OR_MAX_INFLIGHT_OPENROUTER_5 \
     -u ZUVO_MODEL_OPENROUTER -u ZUVO_MODEL_OPENROUTER_ALT -u ZUVO_MODEL_OPENROUTER_3 -u ZUVO_MODEL_OPENROUTER_MINI \
+    -u ZUVO_MODEL_OPENROUTER_5 ZUVO_OR_INFLIGHT_DIR="$home/slots" \
     PATH="$RTMP/bin:$PATH" RR_REC="$home" HOME="$home" ZUVO_HOME="$home" ZUVO_BYTEPLUS_KEY_FILE="$BPKEY" \
     ZUVO_ADVERSARIAL_LOG_FILE="$home/adversarial.log" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
     ZUVO_OPENROUTER_USAGE_FILE="$home/usage" ZUVO_BYTEPLUS_QUOTA_FILE="$home/bpquota" \
@@ -51,12 +53,20 @@ assert_eq '{"sort":"throughput","quantizations":["fp8","fp16","bf16","fp32"]}' "
 
 # Bug caught: a quantization filter on a model served only at fp4 / undeclared, which leaves it no endpoint (404).
 start_test "rr.2 a model without fp8 endpoints gets the sort and no quantization filter"
-assert_eq '{"sort":"throughput"}' "$(run_r c2 openrouter-mini)" "openrouter-mini (minimax :free)"
+assert_eq '{"sort":"throughput"}' "$(run_r c2 openrouter-5)" "openrouter-5 (mercury-3, one undeclared endpoint)"
 
 # Bug caught: the sort or filter overriding the owner's host pins, or a second pin table drifting from #108's.
 start_test "rr.7 pinned models keep exactly their hosts, no fallbacks, no sort"
 assert_eq '{"order":["makora","deepinfra"],"allow_fallbacks":false}' "$(run_r c7 openrouter-alt)" "mimo: Makora, then DeepInfra"
 assert_eq '{"order":["novita"],"allow_fallbacks":false}' "$(run_r c7b openrouter-3)" "ling-3.1-flash: Novita only"
+
+# Bug caught: openrouter-mini still sending the retired :free id (the lane only timed out from 2026-10-22), or the paid
+# minimax balanced onto the slow hosts measured 2026-10-24 (3/5 of the slowest batches past the 300 s ceiling).
+start_test "rr.8 openrouter-mini sends the paid minimax-m3.1-flash pinned to Parasail fp8, then GMICloud fp8"
+assert_eq '{"order":["parasail/fp8","gmicloud/fp8"],"allow_fallbacks":false,"quantizations":["fp8"]}' "$(run_r c8 openrouter-mini)" "the pinned hosts"
+assert_eq '"minimax/minimax-m3.1-flash"' "$(jq -c '.model' "$RTMP/c8/bodies.jsonl")" "the paid model id"
+run_r c8b openrouter-5 >/dev/null
+assert_eq '"inception/mercury-3"' "$(jq -c '.model' "$RTMP/c8b/bodies.jsonl")" "openrouter-5 sends mercury-3"
 
 # Bug caught: no way to turn the routing off for one lane when a provider change breaks it.
 start_test "rr.3 the per-lane env overrides set or empty the sort and the filter"
