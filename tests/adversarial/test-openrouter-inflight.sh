@@ -51,7 +51,8 @@ run_i() {
     PATH="$ITMP/bin:$PATH" IF_REC="$home" HOME="$home" ZUVO_HOME="$home" \
     ZUVO_OR_INFLIGHT_DIR="${SLOTS:-$ITMP/slots}" \
     ZUVO_ADVERSARIAL_LOG_FILE="$home/adversarial.log" ZUVO_PROVIDER_HEALTH_FILE="$home/health" \
-    ZUVO_OPENROUTER_USAGE_FILE="$home/usage" ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=1 \
+    ZUVO_OPENROUTER_USAGE_FILE="$home/usage" ZUVO_OPENROUTER_FREE_QUOTA_FILE="$home/openrouter-free-quota-until" \
+    ZUVO_ADV_OPENROUTER=1 ZUVO_PROVIDER_BENCH=1 \
     ZUVO_REVIEW_TIMEOUT=40 ZUVO_OPENROUTER_DAILY_USD=5 "$@" \
     bash "$ADV" --provider openrouter-5 --mode code --files "$EMPTY" >/dev/null 2>"$home/err"
   echo "$?" > "$home/rc"
@@ -120,3 +121,9 @@ assert_eq "inception/mercury-3" "$(sort -u "$ITMP/c5/models")" "the default mode
 assert_eq "1" "$(strikes c5)" "counted against the lane"
 assert_eq "no" "$([ -e "$ITMP/c5/openrouter-free-quota-until" ] && echo yes || echo no)" "no free-model stop written"
 assert_eq "0" "$(slots_left)" "the slot given back after the failure"
+
+# Bug caught: a stray file where a slot belongs read as a busy slot forever, so every call queued out its budget.
+start_test "if.6 a file in a slot's place: the call runs uncapped instead of queuing out its budget"
+mkdir -p "$ITMP/slots6/inception_mercury-3"; : > "$ITMP/slots6/inception_mercury-3/slot.1"
+SLOTS="$ITMP/slots6" run_i c6 ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3=1
+assert_eq "1 0" "$(chats c6) $(cat "$ITMP/c6/rc")" "one request, the review completes"

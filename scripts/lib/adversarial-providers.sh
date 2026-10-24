@@ -372,7 +372,7 @@ detect_providers() {
   # 2026-10-24 the lane runs the PAID minimax-m3.1-flash on pinned hosts (owner's decision: +28 defects over the rest
   # of the roster, the best marginal coverage measured). A `:free` model set by hand is still rationed, not billed
   # (openrouter_free_quota_*). 2026-10-24: openrouter-5 (inception/mercury-3, cheap and fast) joins the default,
-  # under a per-host in-flight cap (openrouter_inflight_cap) because its only host answers 429 to overlapping calls.
+  # under a per-model in-flight cap (openrouter_inflight_cap) because its only host answers 429 to overlapping calls.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
       providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3 openrouter-mini openrouter-5}"

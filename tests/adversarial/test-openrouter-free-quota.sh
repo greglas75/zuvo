@@ -131,6 +131,13 @@ start_test "fq.8 a paid OpenRouter lane's 429 writes no free-model stop"
 RUN_LANE=openrouter-alt run_f c8 ORF_429="$(rl_body "Rate limit exceeded")" ZUVO_OPENROUTER_FREE_QUOTA_FILE="$FTMP/c8/quota" >/dev/null
 assert_eq "no" "$([ -e "$FTMP/c8/quota" ] && echo yes || echo no)" "no free-model stop file"
 
+# Bug caught: the paid default of openrouter-mini (since 2026-10-24) still exempt from the spend cap like the :free id
+# it replaced — billed with no ceiling.
+start_test "fq.10 the paid default of openrouter-mini is stopped by the spend cap"
+run_f c10 ORF_USED=9 ZUVO_MODEL_OPENROUTER_MINI= >/dev/null
+assert_eq "0" "$(chats c10)" "no chat request over the cap"
+assert_eq "1" "$(keys c10)" "the spend asked of /key"
+
 # Bug caught: a spent free ration still drawn into the fan-out, taking a slot a working lane could fill.
 start_test "fq.9 a free-model stop ahead leaves openrouter-mini out before the fan-out draw"
 mkdir -p "$FTMP/c9"; printf '%s\topenrouter-mini\n' "$(( $(date +%s) + 3600 ))" > "$FTMP/c9/quota"

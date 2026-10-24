@@ -559,20 +559,26 @@ openrouter_inflight_cap() {
 }
 
 # _or_inflight_dir <model> — the model's slot directory, <root>/<model with every character outside [a-zA-Z0-9.-] as
-# `_`> (ZUVO_OR_INFLIGHT_DIR overrides the root). Two ids that differ only in such characters share a pool: a
-# stricter cap, never a looser one.
+# `_`> (ZUVO_OR_INFLIGHT_DIR overrides the root). Two ids that differ only in such characters share one pool, each
+# counting the slots up to its own cap — no OpenRouter model id pair does today.
 _or_inflight_dir() {
   printf '%s/%s\n' "${ZUVO_OR_INFLIGHT_DIR:-${ZUVO_HOME:-$HOME/.zuvo}/or-inflight}" \
     "$(printf '%s' "$1" | LC_ALL=C tr -c 'a-zA-Z0-9.-' '_')"
 }
 
 # _or_slot_take <slot> <pid> — status 0 when the slot is now ours: created (mkdir is the claim) and its pid written.
-# Status 2 when it was created but the pid could not be written (a full disk): given back, so no slot exists that a
-# release could not tell from another call's. Status 1 when another call holds it.
+# Status 1 when another call holds it — including one that broke this slot as stale and took it while we stood
+# between our mkdir and our pid write: the pid is written with noclobber, so we never write over its pid. Status 2
+# when the slot cannot be kept at all (a file in its place, or a pid that cannot be written on a full disk): the
+# caller runs uncapped rather than queue for a slot no call can take.
 _or_slot_take() {
-  mkdir -- "$1" 2>/dev/null || return 1
-  if ! printf '%s\n' "$2" > "$1/pid" 2>/dev/null; then
-    rm -f -- "$1/pid" 2>/dev/null; rmdir -- "$1" 2>/dev/null || true
+  if ! mkdir -- "$1" 2>/dev/null; then
+    [[ -e "$1" && ! -d "$1" ]] && return 2
+    return 1
+  fi
+  if ! ( set -C; printf '%s\n' "$2" > "$1/pid" ) 2>/dev/null; then
+    [[ -e "$1/pid" ]] && return 1
+    rmdir -- "$1" 2>/dev/null || true
     return 2
   fi
 }
@@ -613,11 +619,12 @@ or_inflight_acquire() {
         return 0
       fi
       if (( rc == 2 )); then
-        echo "  NOTE: $lane: an in-flight slot's owner could not be written in $dir — this call runs without the cap of $cap" >&2
+        echo "  NOTE: $lane: in-flight slot $slot cannot be kept — this call runs without the cap of $cap" >&2
         return 0
       fi
       # A breaker killed mid-break leaves its marker: one older than a minute is cleared, as _ar_lock clears it.
-      [[ -z "$(find "$slot.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]] || rmdir -- "$slot.break" 2>/dev/null || true
+      [[ -d "$slot.break" && -n "$(find "$slot.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]] \
+        && { rmdir -- "$slot.break" 2>/dev/null || true; }
     done
     if (( $(date +%s) + OR_MIN_ATTEMPT_SECONDS + 1 >= deadline )); then
       lane_not_run "$lane" "all $cap in-flight slots for $model under this ZUVO_HOME stayed busy for ${waited}s ($(_or_inflight_var "$model"))"

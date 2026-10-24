@@ -273,7 +273,7 @@ ZUVO_MODEL_OPENROUTER_4="${ZUVO_MODEL_OPENROUTER_4:-thinkingmachines/inkling-sma
 ZUVO_MODEL_OPENROUTER_MINI="${ZUVO_MODEL_OPENROUTER_MINI:-minimax/minimax-m3.1-flash}"
 # openrouter-5 = inception/mercury-3 (added 2026-10-24, owner's decision): cheap ($0.10/M in, $0.35/M out) and fast;
 # benchmark precision 81-88%, +5-6 defects over the roster, 2/10 missed. Its host (Inception, the only endpoint)
-# answers HTTP 429 when many calls overlap (10/20 at 8 parallel workers), so the lane runs under a per-host in-flight
+# answers HTTP 429 when many calls overlap (10/20 at 8 parallel workers), so the lane runs under a per-model in-flight
 # cap (openrouter_inflight_cap, adversarial-lanes-http.sh).
 ZUVO_MODEL_OPENROUTER_5="${ZUVO_MODEL_OPENROUTER_5:-inception/mercury-3}"
 

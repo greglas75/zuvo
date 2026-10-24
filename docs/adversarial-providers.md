@@ -189,11 +189,12 @@ overlap.
 - While every slot is busy, the call polls once a second inside its own time budget. If no slot frees before too
   little budget is left, the lane is not run and not held against it (outcome `no-key`).
 - A slot whose holder died, for example a review killed by a timeout, is broken the way a stale lock is.
-- A slot directory that cannot be created or written (a read-only or full disk) leaves the call uncapped, with a
-  NOTE, rather than not run.
+- A slot directory that cannot be created or written (a read-only or full disk, a file where a slot belongs)
+  leaves the call uncapped, with a NOTE, rather than not run.
 
 **429 policy on a paid lane.** HTTP 429 is transient: up to 3 requests in all (`OR_ATTEMPTS`), 3 s then 6 s apart,
-with the in-flight slot held throughout, so a throttled lane never has more calls open than its cap. After that it
+with the in-flight slot held throughout, so a throttled lane has no more calls open than its cap (except in the
+uncapped fallback above, when slots cannot be kept at all). After that it
 is the lane's own failure.
 It counts toward the cooldown (2 failures → 30 min, `#115`), and the parts of one chunked review count as one strike.
 
