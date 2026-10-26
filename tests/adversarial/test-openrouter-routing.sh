@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-openrouter-routing.sh — the `provider` object an OpenRouter request carries (openrouter_provider_routing,
 # adversarial-lanes-http.sh): a model in the pin table keeps its hosts (#108), an unpinned one is sorted by throughput
-# and kept off fp4 where it has fp8-or-better endpoints, per-lane env overrides, and none of it sent to a plan.
+# and kept off fp4 where it has fp8-or-better endpoints, per-lane env overrides, and none of it sent to a plan; and the
+# `reasoning` effort a lane asks for (openrouter_reasoning).
 
 ADV="$ROOT/scripts/adversarial-review.sh"
 EMPTY="$ADV_TEST_EMPTY"
@@ -36,6 +37,7 @@ run_r() {
   env -u OPENROUTER_API_KEY -u ZUVO_OPENROUTER_BASE_URL -u ZUVO_BYTEPLUS_BASE_URL -u BYTEPLUS_API_KEY \
     -u ZUVO_OR_SORT_OPENROUTER -u ZUVO_OR_QUANTS_OPENROUTER -u ZUVO_OR_SORT_OPENROUTER_4 -u ZUVO_OR_QUANTS_OPENROUTER_4 \
     -u ZUVO_OR_SORT_OPENROUTER_MINI -u ZUVO_OR_QUANTS_OPENROUTER_MINI -u ZUVO_OR_PROVIDER_ORDER \
+    -u ZUVO_OR_REASONING_OPENROUTER_MINI -u ZUVO_OR_REASONING_OPENROUTER_ALT \
     -u ZUVO_OR_SORT_OPENROUTER_5 -u ZUVO_OR_QUANTS_OPENROUTER_5 -u ZUVO_OR_MAX_INFLIGHT_INCEPTION_MERCURY_3 \
     -u ZUVO_MODEL_OPENROUTER -u ZUVO_MODEL_OPENROUTER_ALT -u ZUVO_MODEL_OPENROUTER_3 -u ZUVO_MODEL_OPENROUTER_MINI \
     -u ZUVO_MODEL_OPENROUTER_5 ZUVO_OR_INFLIGHT_DIR="$home/slots" \
@@ -87,3 +89,22 @@ assert_eq '"none"' "$(run_r c5 byteplus-alt)" "byteplus-alt on the plan"
 start_test "rr.6 the endpoint that answered is named on stderr"
 run_r c6 openrouter >/dev/null
 assert_contains "$(cat "$RTMP/c6/err")" "Done: openrouter (answered by provider DeepInfra)" "named"
+
+# Bug caught: openrouter-mini left at minimax's default `max` effort (~17k reasoning tokens a review, 10x mimo's cost),
+# or the cap leaking onto a lane whose model was never measured with it.
+start_test "rr.9 openrouter-mini asks minimax for xhigh reasoning; other lanes send none"
+run_r c9 openrouter-mini >/dev/null
+assert_eq '{"effort":"xhigh"}' "$(jq -c '.reasoning // "none"' "$RTMP/c9/bodies.jsonl")" "minimax one level below max"
+run_r c9b openrouter-alt >/dev/null
+assert_eq '"none"' "$(jq -c '.reasoning // "none"' "$RTMP/c9b/bodies.jsonl")" "mimo keeps its own default"
+run_r c9c byteplus-alt >/dev/null
+assert_eq '"none"' "$(jq -c '.reasoning // "none"' "$RTMP/c9c/bodies.jsonl")" "the plan gets no OpenRouter field"
+
+# Bug caught: no way to move the effort back (or off) for one lane without a release, or a typo sent as the effort.
+start_test "rr.10 ZUVO_OR_REASONING_<LANE> sets or empties the effort; a malformed one sends nothing"
+run_r c10 openrouter-mini ZUVO_OR_REASONING_OPENROUTER_MINI=high >/dev/null
+assert_eq '{"effort":"high"}' "$(jq -c '.reasoning // "none"' "$RTMP/c10/bodies.jsonl")" "set"
+run_r c10b openrouter-mini ZUVO_OR_REASONING_OPENROUTER_MINI= >/dev/null
+assert_eq '"none"' "$(jq -c '.reasoning // "none"' "$RTMP/c10b/bodies.jsonl")" "emptied: the model's default"
+assert_eq "" "$(run_r c10c openrouter-mini ZUVO_OR_REASONING_OPENROUTER_MINI=hihg)" "no request sent"
+assert_contains "$(cat "$RTMP/c10c/err")" "not max/xhigh/high/medium/low/minimal/none" "the lane says why"
