@@ -491,6 +491,28 @@ openrouter_quants_default() {
   esac
 }
 
+# openrouter_reasoning_default <model> — the reasoning effort an OpenRouter lane asks this model for; empty = none
+# sent, so the model keeps its own default. minimax-m3.1-flash defaults to `max`: ~17k reasoning tokens a review,
+# $0.0123 a call against mimo's $0.0013 (2026-10-26, 1,244 calls, $15 a day); the owner chose one level down.
+openrouter_reasoning_default() {
+  case "$1" in
+    minimax/minimax-m3.1-flash) echo xhigh ;;
+  esac
+}
+
+# openrouter_reasoning <lane> <model> — the effort to send: ZUVO_OR_REASONING_<LANE> when set (empty = none sent),
+# else the model's default above. A value OpenRouter does not name is refused (return 1), never sent.
+openrouter_reasoning() {
+  local lane="$1" model="$2" suffix v effort
+  suffix="$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
+  v="ZUVO_OR_REASONING_$suffix"
+  if [[ -n "${!v+x}" ]]; then effort="${!v}"; else effort="$(openrouter_reasoning_default "$model")"; fi
+  case "$effort" in ""|max|xhigh|high|medium|low|minimal|none) printf '%s' "$effort" ;;
+    *) echo "  WARN: $lane: ZUVO_OR_REASONING_$suffix='$effort' is not max/xhigh/high/medium/low/minimal/none — not sent" >&2
+       return 1 ;;
+  esac
+}
+
 # openrouter_provider_routing <lane> <model> — the `provider` object as compact JSON, or nothing. Pinned (the order
 # in ZUVO_OR_PROVIDER_ORDER, else the model's row in openrouter_pin_order): that order, no fallbacks, and when every
 # entry names its quantization only those. Unpinned: ZUVO_OR_SORT_<LANE> and ZUVO_OR_QUANTS_<LANE> (set but empty =
@@ -877,6 +899,14 @@ run_openrouter() {
     local _route
     _route="$(openrouter_provider_routing "$_lane" "$model")" || return 1
     [[ -z "$_route" ]] || _or_extra="$(jq -cn --argjson a "${_or_extra:-null}" --argjson r "$_route" '($a // {}) + {provider: $r}')" || return 1
+  fi
+  # Reasoning effort (openrouter_reasoning): an OpenRouter lane only — the BytePlus fallback keeps the plan model's
+  # default — and recorded for the log's effort column.
+  if [[ -z "$_plan" && "$_lane" == openrouter* ]]; then
+    local _effort
+    _effort="$(openrouter_reasoning "$_lane" "$model")" || return 1
+    record_lane_effort "$_lane" "$_effort"
+    [[ -z "$_effort" ]] || _or_extra="$(jq -cn --argjson a "${_or_extra:-null}" --arg e "$_effort" '($a // {}) + {reasoning: {effort: $e}}')" || return 1
   fi
   chat_payload "$payload_file" "$model" 0.2 "$_or_stream" "$_or_extra" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
 
