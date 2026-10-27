@@ -138,8 +138,8 @@ bp_listed() { # bp_listed <ZUVO_ADV_BYTEPLUS value> -> the byteplus lanes detect
     ZUVO_ADV_BYTEPLUS="$1" bash "$ADV" --list-providers 2>/dev/null | awk '/^byteplus/' | tr '\n' ' ' | sed 's/ $//'
 }
 assert_eq "" "$(bp_listed 0)" "without ZUVO_ADV_BYTEPLUS=1 the lane is not detected"
-# Bug caught: glm (byteplus) missing from the default set.
-assert_eq "byteplus byteplus-alt byteplus-3" "$(bp_listed 1)" "anchor: with it (and the key), the three default lanes are"
+# Bug caught: glm on the plan (`byteplus`) back in the default set while the owner runs it on its own Z.ai account.
+assert_eq "byteplus-alt byteplus-3" "$(bp_listed 1)" "anchor: with it (and the key), the two default lanes are"
 
 # ─── 7. the plan's own key, never the OpenRouter one ──────────────────────
 # run_byteplus reuses the OpenRouter client, which reads OPENROUTER_API_KEY FIRST. A BytePlus lane must
