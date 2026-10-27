@@ -394,8 +394,10 @@ detect_providers() {
   if [[ "${ZUVO_ADV_BYTEPLUS:-0}" == "1" ]]; then
     if [[ -n "${BYTEPLUS_API_KEY:-}" || -f "${ZUVO_BYTEPLUS_KEY_FILE:-$HOME/.zuvo/byteplus.key}" ]]; then
       # While the plan's quota is spent run_byteplus runs glm and deepseek on the Alibaba Token Plan, then on pinned
-      # OpenRouter endpoints, and leaves dola-seed out.
-      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus byteplus-alt byteplus-3}"
+      # OpenRouter endpoints, and leaves dola-seed out. glm (`byteplus`) is no longer a default lane: the owner has its own
+      # Z.ai account for glm-5.3-flash (lane `zai`), and on the plan it timed out 87 of 94 calls (2026-10-26).
+      # ZUVO_ADV_BYTEPLUS_LANES="byteplus byteplus-alt byteplus-3" brings it back.
+      providers="${providers:+$providers }${ZUVO_ADV_BYTEPLUS_LANES:-byteplus-alt byteplus-3}"
     else
       echo "  NOTE: ZUVO_ADV_BYTEPLUS=1 but no key (~/.zuvo/byteplus.key) — lane skipped" >&2
     fi
