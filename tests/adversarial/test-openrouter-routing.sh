@@ -91,11 +91,11 @@ start_test "rr.6 the endpoint that answered is named on stderr"
 run_r c6 openrouter >/dev/null
 assert_contains "$(cat "$RTMP/c6/err")" "Done: openrouter (answered by provider DeepInfra)" "named"
 
-# Bug caught: openrouter-mini left at minimax's default `max` effort (~17k reasoning tokens a review, 10x mimo's cost),
-# or the cap leaking onto a lane whose model was never measured with it.
-start_test "rr.9 openrouter-mini asks minimax for xhigh reasoning; other lanes send none"
+# Bug caught: an effort sent by default — minimax at xhigh cost more a call and judged worse than at its own `max`
+# (2026-10-27), so no lane sends one unless ZUVO_OR_REASONING_<LANE> says so.
+start_test "rr.9 no OpenRouter lane sends a reasoning effort by default"
 run_r c9 openrouter-mini >/dev/null
-assert_eq '{"effort":"xhigh"}' "$(jq -c '.reasoning // "none"' "$RTMP/c9/bodies.jsonl")" "minimax one level below max"
+assert_eq '"none"' "$(jq -c '.reasoning // "none"' "$RTMP/c9/bodies.jsonl")" "minimax keeps its own default"
 run_r c9b openrouter-alt >/dev/null
 assert_eq '"none"' "$(jq -c '.reasoning // "none"' "$RTMP/c9b/bodies.jsonl")" "mimo keeps its own default"
 run_r c9c byteplus-alt >/dev/null

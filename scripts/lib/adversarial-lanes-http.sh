@@ -492,11 +492,12 @@ openrouter_quants_default() {
 }
 
 # openrouter_reasoning_default <model> — the reasoning effort an OpenRouter lane asks this model for; empty = none
-# sent, so the model keeps its own default. minimax-m3.1-flash defaults to `max`: ~17k reasoning tokens a review,
-# $0.0123 a call against mimo's $0.0013 (2026-10-26, 1,244 calls, $15 a day); the owner chose one level down.
+# sent, so the model keeps its own default. No model has a row: minimax-m3.1-flash at xhigh (v1.6.110) cost 22% more
+# a call than at its own `max` ($0.0155 vs $0.0127, 22k vs 18k reasoning tokens) and its precision fell 23% -> 18%
+# (1,143 vs 2,883 calls, 2026-10-27), so the owner put it back on the model's default.
 openrouter_reasoning_default() {
   case "$1" in
-    minimax/minimax-m3.1-flash) echo xhigh ;;
+    *) ;;
   esac
 }
 
