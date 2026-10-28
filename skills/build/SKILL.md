@@ -587,6 +587,11 @@ Run stack-appropriate checks:
 
 All must pass. If any fails, fix and re-run.
 
+**Duplication gate (all tiers, when the `codesift` CLI has `dup-check`):** run `codesift dup-check` from the
+checkout root. It compares every function this branch adds or changes with the repo index. Exit 1 → replace
+the copy with the existing symbol (or extend that one) and re-run; keep a copy only with a
+`// codesift-dup-ok: <reason>` comment above it and say why in the report. Record `dup-check: <N>`.
+
 Read `../../shared/includes/verification-protocol.md` — no completion claims without fresh evidence.
 
 **Verification commands check implementation health (compiles, types, tests). They do NOT check that user-observable behavior matches the AP entries. That is Phase 4.2b.**
