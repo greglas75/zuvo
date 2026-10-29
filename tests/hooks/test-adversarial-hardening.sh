@@ -1194,7 +1194,7 @@ chmod +x "$FAKE/codex"
 HF="$T/f27-health.tsv"; : > "$HF"
 rc="$(drive f27-codex ZUVO_CODEX_BIN="$FAKE/codex" ZUVO_CODEX_APP_BIN= ZUVO_PROVIDER_HEALTH_FILE="$HF" -- --provider codex-5.3)"
 same "F27 premise: the only lane, codex, fails: no review (exit 2)" "2" "$rc"
-same "F27 a failing codex lane is recorded under its configured model" "gpt-6-sol" "$(awk -F'\t' '$1 == "codex-5.3" { print $2 }' "$HF")"
+same "F27 a failing codex lane is recorded under its configured model" "gpt-6.1-terra" "$(awk -F'\t' '$1 == "codex-5.3" { print $2 }' "$HF")"
 
 # ZUVO_SHARED_HOST=1: no lane that hands the diff to its client as an argument.
 rc="$(LANES="agy mock-ok mock-ok2" drive f27-shared ZUVO_SHARED_HOST=1 -- --multi --dry-run)"
@@ -1738,7 +1738,7 @@ f43() {
 }
 same "F43 the global override sets both lanes" "high high" "$(f43 ZUVO_CODEX_EFFORT=high)"
 same "F43 a per-lane effort still wins over it" "low high" "$(f43 ZUVO_CODEX_EFFORT=high ZUVO_CODEX_EFFORT_PRIMARY=low)"
-same "F43 neither set: the registry's own defaults" "none medium" "$(f43)"
+same "F43 neither set: the registry's own defaults" "low medium" "$(f43)"
 fi
 
 if only F44; then

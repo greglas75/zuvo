@@ -11,7 +11,7 @@
 # "luna high" and "luna max" under one label overwrite each other and one measurement poses as two.
 #
 #   run-lane.sh cursor-grok-4.7-high cursor-agent ZUVO_CURSOR_MODEL=grok-4.7-high
-#   run-lane.sh sol-light codex-5.3 ZUVO_MODEL_CODEX_PRIMARY=gpt-6-sol ZUVO_CODEX_EFFORT_PRIMARY=none
+#   run-lane.sh sol-light codex-5.3 ZUVO_MODEL_CODEX_53=gpt-6-sol ZUVO_CODEX_EFFORT_PRIMARY=none
 #   run-lane.sh tp-qwen3.8-max qwen ZUVO_ADV_QWEN=1 ZUVO_QWEN_MODEL=qwen3.8-max
 #   run-lane.sh glm-5.3-flash-byteplus byteplus
 #

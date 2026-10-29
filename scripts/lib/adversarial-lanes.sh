@@ -152,7 +152,8 @@ codex_cli_guard() {
 # coverage, judged against the shared defect dictionary). The number that decided them is
 # MARGINAL coverage — defects no other model in the set finds — not raw finding counts:
 #
-#   gpt-6-sol  / none    93% precision, 38 REAL, 5 NEW, 33s, $0.042 per new defect  <- primary
+#   gpt-6-sol  / none    93% precision, 38 REAL, 5 NEW, 33s, $0.042 per new defect  <- primary until 2026-10-29
+#   (codex-5.3 now runs gpt-6.1-terra / low: 97%, +4, ~14 s — see model-registry.sh)
 #   gpt-6-luna / medium  82% precision, 14 REAL, 2 NEW, 32s, $0.008 per new defect  <- alt
 #   gpt-5.6-sol (the previous primary) costs $4/$20 per 1M — twice gpt-6-sol, for less.
 #
@@ -169,8 +170,8 @@ run_codex_54() {
 }
 run_codex_53() {
   runner_ready "codex-5.3" || return 2
-  run_codex "$(codex_cli_guard "$(lane_model codex-5.3)" ZUVO_MODEL_CODEX_PRIMARY)" \
-            "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
+  run_codex "$(codex_cli_guard "$(lane_model codex-5.3)" ZUVO_MODEL_CODEX_53)" \
+            "codex-5.3" "${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-low}}"
 }
 
 # claude_lane_note — the claude lane reviews with Sonnet by DEFAULT, not by proof (CLAUDE_MODEL unset, or an
