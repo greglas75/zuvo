@@ -330,7 +330,7 @@ reg_val() { env -i PATH=/usr/bin:/bin bash -c '. "$1" && eval "printf %s \"\${$2
 _alt_m="$(reg_val ZUVO_MODEL_CODEX_ALT)"; _alt_e="$(reg_val ZUVO_CODEX_EFFORT_ALT)"
 _pri_m="$(reg_val ZUVO_MODEL_CODEX_53)"; _pri_e="$(reg_val ZUVO_CODEX_EFFORT_PRIMARY)"
 L="1b codex-5.4"
-if [ -n "$_alt_m" ] && [ -n "$_alt_e" ] && [ "$_alt_m" != "$_pri_m" ] && [ "$_alt_e" != "$_pri_e" ]; then
+if [ -n "$_alt_m" ] && [ -n "$_alt_e" ] && [ -n "$_pri_m" ] && [ -n "$_pri_e" ] && [ "$_alt_m" != "$_pri_m" ] && [ "$_alt_e" != "$_pri_e" ]; then
   ok "$L: premise — the registry gives the alt lane its own model and effort ($_alt_m/$_alt_e vs $_pri_m/$_pri_e)"
 else
   bad "$L: premise — registry values unusable: alt=[$_alt_m/$_alt_e] primary=[$_pri_m/$_pri_e] ($_reg)"

@@ -72,7 +72,7 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 | Provider | Model | Status | Typical latency |
 |----------|-------|--------|-----------------|
 | `agy` | Gemini 3.8 Flash (Medium) | ✅ working (benchmarked 2026-09-23, effort sweep: +25 defects nobody else finds, 75% precision, 0 timeouts — see `docs/runbook/model-benchmark.md`) | ~90-150s |
-| `codex-5.3` | gpt-6.1-terra @`low` | ✅ working (benchmarked 2026-10-27 on the same 20 diffs: 97% precision, +4 new, ~14s; replaced gpt-6-sol @`none`, 81%/+5, ~141s in production) — before: (benchmarked 2026-09-23 on 20 diffs: 93% precision, 38 REAL, 5 defects nobody else finds, 33s; needs codex CLI ≥0.156) | ~20-35s |
+| `codex-5.3` | gpt-6.1-terra @`low` | ✅ working (benchmarked 2026-10-27 on the same 20 diffs: 97% precision, +4 new, ~14s; replaced gpt-6-sol @`none`, 81%/+5, ~141s in production; needs codex CLI ≥0.165) | ~14s (bench) |
 | `claude` | Sonnet 5 (Opus author) | ✅ working (benchmarked 2026-09-23: +21 defects nobody else finds, 83% precision) | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |
 | `gemini` (free CLI) | — | ❌ dead: `IneligibleTierError: UNSUPPORTED_CLIENT` | — |

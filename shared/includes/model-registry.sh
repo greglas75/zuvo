@@ -94,7 +94,7 @@ ZUVO_MODEL_CLAUDE_REVIEWER_SONNET="${ZUVO_MODEL_CLAUDE_REVIEWER_SONNET:-claude-s
 #
 # Requires codex CLI >=0.156 (0.153 rejects gpt-6 ids with "Model metadata not found" + an opaque
 # 400 that reads like an ACCOUNT problem). codex_cli_guard() in adversarial-review.sh downgrades
-# automatically on an older CLI rather than failing every review.
+# automatically on an older CLI rather than failing every review. gpt-6.1-terra (below) needs >=0.165.
 ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}"  # strong tier + cross-vendor reviewer
 # The codex-5.3 review LANE has its own id since 2026-10-29 (owner's call): gpt-6.1-terra / low.
 # Same 20 diffs, judged by Opus: terra/low 97% precision, +4 new, ~14 s, ~23 reasoning tokens;

@@ -177,9 +177,10 @@ start_test "cx.7 each lane reads its own effort variable"
 # The repo driver loads the model registry, which gives each lane its own default.
 assert_eq "low"    "$(effort_of "$ADV" codex-5.3)" "codex-5.3 (terra): low, the registry's per-lane default"
 assert_eq "medium" "$(effort_of "$ADV" codex-5.4)" "codex-5.4 (luna): medium"
-assert_eq "low"  "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=low ZUVO_CODEX_EFFORT_ALT=high)" \
+# Neither value is a lane default (low/medium), so a lane that ignored its variable would show it.
+assert_eq "xhigh" "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=xhigh ZUVO_CODEX_EFFORT_ALT=high)" \
   "codex-5.3 takes ZUVO_CODEX_EFFORT_PRIMARY…"
-assert_eq "high" "$(effort_of "$ADV" codex-5.4 ZUVO_CODEX_EFFORT_PRIMARY=low ZUVO_CODEX_EFFORT_ALT=high)" \
+assert_eq "high" "$(effort_of "$ADV" codex-5.4 ZUVO_CODEX_EFFORT_PRIMARY=xhigh ZUVO_CODEX_EFFORT_ALT=high)" \
   "…and codex-5.4 ZUVO_CODEX_EFFORT_ALT, each its own"
 # A driver that finds no registry (an install without it) falls back inside the lane wrappers: the lane's
 # own variable, then the global ZUVO_CODEX_EFFORT, then the lane's benchmarked default.
