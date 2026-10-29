@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# The Claude installer removes old plugin version dirs (scripts/install.d/claude_cache.py). It used to
-# keep only the 2 newest; on 2026-10-29 sessions on the sessions host that had started on 1.6.112 lost
-# every plugin hook ("Plugin directory does not exist") once 1.6.114 and 1.6.115 had been installed,
-# and four project-scope registry entries on the Mac pointed at dirs it had already deleted.
+# The Claude installer removes old plugin version dirs (scripts/install.d/claude_cache.py). A dir a
+# live session or a registry entry still uses must survive it, or that session loses every plugin hook
+# ("Plugin directory does not exist").
 # Medium unit test: temporary filesystem only.
 set -uo pipefail
 

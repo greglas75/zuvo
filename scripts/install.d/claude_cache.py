@@ -6,10 +6,8 @@ Called by install_claude (claude.sh).
 
 A Claude Code session reads `installPath` once, when it starts, and loads its hooks from that dir for
 as long as it runs. Deleting the dir under it turns every plugin hook into "Plugin directory does not
-exist: …/zuvo/<version>" until that session is restarted. The old rule kept the 2 newest version dirs,
-which held for sessions shorter than two releases. On the sessions host, sessions run for 10 days and
-release-autoinstall installs several releases a day: on 2026-10-29 every session started on 1.6.112
-lost its hooks once 1.6.114 and 1.6.115 had landed.
+exist: …/zuvo/<version>" until that session is restarted. Sessions outlive many releases
+(release-autoinstall installs several a day), so keeping only the newest dirs is not enough.
 
 prune keeps a version dir that is any of:
   - the current version, or the newest other one (the previous rule, kept as a floor);
@@ -27,9 +25,8 @@ say which dirs the registry names. A missing registry names none.
 
 registry stamps <sha> on every zuvo entry (the stale-SHA workaround) and repoints an entry whose
 installPath (inside this cache) no longer exists to the current version dir, when that dir is
-loadable. It replaces the file atomically, and leaves it alone when it changed while being checked. Entries the old
-prune left pointing at deleted dirs (Mac, 2026-10-29: four data-lab project entries on 1.6.83-1.6.110)
-broke every session started in those projects.
+loadable: an entry on a deleted dir breaks every session started in its project. It replaces the
+file atomically, and leaves it alone when it changed while being checked.
 """
 import json
 import os
