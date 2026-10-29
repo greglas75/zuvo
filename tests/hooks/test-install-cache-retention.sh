@@ -57,6 +57,10 @@ printf '{"version": 2, "plugins": {"zuvo@zuvo-marketplace": [{"installPath": "%s
 python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null 2>&1; rc=$?
 [ -d "$B2/1.6.90" ] && [ "$rc" -ne 0 ] && t_ok "prune removes nothing and fails when the registry does not parse" \
   || t_no "unparseable registry: rc=$rc, left: $(ls "$B2" | tr '\n' ' ')"
+printf '{"version": 2, "plugins": null}\n' > "$R2"
+python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null 2>&1; rc=$?
+[ -d "$B2/1.6.90" ] && [ "$rc" -ne 0 ] && t_ok "prune removes nothing and fails when the registry parses but is not one" \
+  || t_no "registry of another shape: rc=$rc, left: $(ls "$B2" | tr '\n' ' ')"
 rm -f "$R2"
 python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null; rc=$?
 [ ! -e "$B2/1.6.90" ] && [ "$rc" -eq 0 ] && t_ok "prune treats a missing registry as naming no dir" \
@@ -82,14 +86,15 @@ python3 "$PY" prune "$TMP/c4/none.json" "$B4" 1.6.115 >/dev/null
 [ -d "$B4/1.6.114" ] && [ ! -e "$B4/1.6.113" ] && t_ok "prune keeps the newest other VERSION, not a SHA-named dir" \
   || t_no "newest-other floor: left: $(ls "$B4" | tr '\n' ' ')"
 
-# registry only repoints entries that live in this cache; a dev checkout elsewhere is the user's.
-R5="$TMP/c5.json"
-printf '{"plugins": {"zuvo@zuvo-marketplace": ["junk", {"scope": "local", "installPath": "%s/gone-dev-checkout"}]}}\n' "$TMP" > "$R5"
-python3 "$PY" registry "$R5" "$BASE" 1.6.115 "" >/dev/null 2>&1; rc=$?
-p5="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"]["zuvo@zuvo-marketplace"][1]["installPath"])' "$R5")"
-[ "$rc" -eq 0 ] && [ "$p5" = "$TMP/gone-dev-checkout" ] \
-  && t_ok "registry skips a non-object entry and leaves an installPath outside the cache alone" \
-  || t_no "registry outside cache: rc=$rc path=$p5"
+# registry only touches entries that live in this cache; a dev checkout elsewhere is the user's. An
+# entry on a dir a failed removal left without its manifest is repointed like one on a deleted dir.
+R5="$TMP/c5.json"; mkdir -p "$BASE/1.6.111"
+printf '{"plugins": {"zuvo@zuvo-marketplace": ["junk", {"scope": "local", "installPath": "%s/gone-dev-checkout", "gitCommitSha": "dev"}, {"scope": "project", "installPath": "%s/1.6.111", "gitCommitSha": "old"}]}}\n' "$TMP" "$BASE" > "$R5"
+python3 "$PY" registry "$R5" "$BASE" 1.6.115 newsha >/dev/null 2>&1; rc=$?
+p5="$(python3 -c 'import json,sys; print(" ".join(e["installPath"].rsplit("/",1)[1]+"@"+e["gitCommitSha"] for e in json.load(open(sys.argv[1]))["plugins"]["zuvo@zuvo-marketplace"][1:]))' "$R5")"
+[ "$rc" -eq 0 ] && [ "$p5" = "gone-dev-checkout@dev 1.6.115@newsha" ] \
+  && t_ok "registry leaves an entry outside the cache alone and repoints one on a dir without its manifest" \
+  || t_no "registry outside cache / gutted dir: rc=$rc entries=$p5"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -20,11 +20,11 @@ prune keeps a version dir that is any of:
     (Windows, Cygwin/MSYS: os.kill(pid, 0) would terminate the process there), or the `.in_use` dir
     cannot be listed, the dir is kept.
 
-prune removes nothing, and exits 1, when installed_plugins.json exists but does not parse: it cannot
-say which dirs the registry names. A missing registry names none.
+prune removes nothing, and exits 1, when installed_plugins.json exists but does not parse or is not
+a plugin registry: it cannot say which dirs the registry names. A missing registry names none.
 
-registry stamps <sha> on every zuvo entry (the stale-SHA workaround) and repoints an entry whose
-installPath (inside this cache) no longer exists to the current version dir, when that dir is
+registry stamps <sha> on every zuvo entry of this cache (the stale-SHA workaround) and repoints an entry whose
+installPath (inside this cache) is no longer loadable to the current version dir, when that dir is
 loadable: an entry on a deleted dir breaks every session started in its project. It replaces the
 file atomically, and leaves it alone when it changed while being checked.
 """
@@ -40,51 +40,63 @@ PLUGIN_KEY = 'zuvo@zuvo-marketplace'
 # take the newest-other slot.
 VERSION_RE = re.compile(r'\d+(\.\d+)+')
 # A marker name that is a pid. Not "0" (os.kill(0, 0) signals the whole process group, always
-# "alive"), not a 20-digit name (os.kill raises OverflowError).
-PID_RE = re.compile(r'[1-9][0-9]{0,9}')
+# "alive"); at most 7 digits, above every pid_max (Linux 4194304), so os.kill never overflows.
+PID_RE = re.compile(r'[1-9][0-9]{0,6}')
+MARKER_MAX = 4096
 
 
 class Unreadable(Exception):
-    """installed_plugins.json exists but cannot be read or parsed."""
+    """installed_plugins.json exists but cannot be read, parsed, or is not a registry."""
 
 
 def _entries(data):
-    plugins = data.get('plugins') if isinstance(data, dict) else None
-    entries = plugins.get(PLUGIN_KEY) if isinstance(plugins, dict) else None
-    return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+    entries = data.get('plugins', {}).get(PLUGIN_KEY, [])
+    return [e for e in entries if isinstance(e, dict)]
 
 
 def _load(path):
     """The registry's data; {} when the file does not exist. Raises Unreadable otherwise: a file that
-    is half-written or corrupt says nothing about which dirs it names."""
+    is half-written, corrupt or of another shape says nothing about which dirs it names."""
     try:
         with open(path, encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as e:
         raise Unreadable('%s: %s' % (path, e))
+    plugins = data.get('plugins', {}) if isinstance(data, dict) else None
+    entries = plugins.get(PLUGIN_KEY, []) if isinstance(plugins, dict) else None
+    if not isinstance(entries, list):
+        raise Unreadable('%s: not a plugin registry' % path)
+    return data
 
 
 def _write_atomic(path, data, mtime):
-    # Claude Code reads the registry at every session start: a reader never sees a truncated file.
-    # A registry that changed since it was read (a session or another installer wrote it) is left
-    # alone; the next install fixes it.
+    """Replace the registry. Claude Code reads it at every session start, so a reader never sees a
+    truncated file. Returns False, writing nothing, when the file changed since it was read (a
+    session or another installer wrote it); the next install fixes it. Claude Code takes no lock,
+    so this narrows the lost-update window to the stat before os.replace; it cannot close it."""
     target = os.path.realpath(path)
-    st = os.stat(target)
-    if st.st_mtime_ns != mtime:
-        return False
     tmp = '%s.zuvo.%d.tmp' % (target, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                 stat.S_IMODE(os.stat(target).st_mode))
     try:
-        with open(tmp, 'w', encoding='utf-8') as f:
-            os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
+        if os.stat(target).st_mtime_ns != mtime:
+            return False
         os.replace(tmp, target)
     finally:
-        if os.path.exists(tmp):
+        if os.path.lexists(tmp):
             os.unlink(tmp)
+    if os.name == 'posix':
+        dfd = os.open(os.path.dirname(target), os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     return True
 
 
@@ -110,18 +122,26 @@ def registry(plugins_json, cache_base, current, sha):
     base = os.path.realpath(cache_base)
     changed = []
     for entry in _entries(data):
+        path = entry.get('installPath')
+        # Only entries of this cache: an installPath elsewhere (a dev checkout) is the user's.
+        if not _in_cache(path, base):
+            continue
         if sha and entry.get('gitCommitSha') != sha:
             entry['gitCommitSha'] = sha
             changed.append('sha')
-        path = entry.get('installPath')
-        # Only entries of this cache: an installPath elsewhere (a dev checkout) is the user's.
-        if _in_cache(path, base) and not os.path.isdir(os.path.expanduser(path)) and _loadable(current_dir):
+        # Not loadable covers a dir that is gone and one a failed removal left without its manifest.
+        if not _loadable(os.path.expanduser(path)) and _loadable(current_dir):
             entry['installPath'] = current_dir
             entry['version'] = current
             changed.append('repointed %s entry %s -> %s' % (entry.get('scope', '?'), path, current))
     if not changed:
         return 0
-    if not _write_atomic(plugins_json, data, mtime):
+    try:
+        written = _write_atomic(plugins_json, data, mtime)
+    except OSError as e:
+        print('  ⚠ installed_plugins.json not updated: %s' % e, file=sys.stderr)
+        return 1
+    if not written:
         print('  ⚠ installed_plugins.json changed while it was checked — left as it is', file=sys.stderr)
         return 1
     if 'sha' in changed:
@@ -144,7 +164,7 @@ def _alive(pid):
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    except (OSError, OverflowError, ValueError):   # EPERM: alive, owned by someone else
+    except OSError:          # EPERM: alive, owned by someone else
         return True
     return True
 
@@ -152,9 +172,14 @@ def _alive(pid):
 def _marker_pid(marks, name):
     if PID_RE.fullmatch(name):
         return int(name)
-    # Not named by its pid: the content carries it ({"pid": N, "procStart": …}).
+    # Not named by its pid: the content carries it ({"pid": N, "procStart": …}). Only a small regular
+    # file is read — never a FIFO or a link to one, which would hang the install.
+    path = os.path.join(marks, name)
     try:
-        with open(os.path.join(marks, name), encoding='utf-8') as f:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MARKER_MAX:
+            return None
+        with open(path, encoding='utf-8') as f:
             pid = json.load(f).get('pid')
     except (OSError, ValueError, AttributeError):
         return None
@@ -180,7 +205,12 @@ def prune(plugins_json, cache_base, current):
     except Unreadable as e:
         print('  ⚠ old cache dirs kept — installed_plugins.json unreadable: %s' % e, file=sys.stderr)
         return 1
-    dirs = sorted((n for n in os.listdir(cache_base)
+    try:
+        names = os.listdir(cache_base)
+    except OSError as e:
+        print('  ⚠ old cache dirs not pruned: %s' % e, file=sys.stderr)
+        return 1
+    dirs = sorted((n for n in names
                    if not n.startswith('.') and os.path.isdir(os.path.join(cache_base, n))
                    and not os.path.islink(os.path.join(cache_base, n))), key=_version_key)
     keep = {current}
