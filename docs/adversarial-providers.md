@@ -30,7 +30,7 @@ self-exclusion below enforces it.
 | Provider | Vendor | Default model | Override env | Invocation (headless) |
 |----------|--------|---------------|--------------|-----------------------|
 | `agy` | Google (Antigravity) | `Gemini 3.8 Flash (Medium)`; no quota fallback by default (Opus 4.6 retired by Antigravity) | `ZUVO_AGY_MODEL` / `ZUVO_AGY_FALLBACK_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
-| `codex-5.3` | OpenAI | `gpt-6-sol` @ effort `none` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_CODEX_EFFORT_PRIMARY` (`ZUVO_CODEX_EFFORT` sets both codex lanes' effort when the per-lane one is unset) | `codex` (gpt-6 ids need codex CLI ≥0.156; `codex_cli_guard` downgrades automatically on older) |
+| `codex-5.3` | OpenAI | `gpt-6.1-terra` @ effort `low` (since 2026-10-29; was `gpt-6-sol` @ `none`) | `ZUVO_MODEL_CODEX_53` / `ZUVO_CODEX_EFFORT_PRIMARY` (`ZUVO_CODEX_EFFORT` sets both codex lanes' effort when the per-lane one is unset) | `codex` (gpt-6.1-terra needs codex CLI ≥0.165, gpt-6 ids ≥0.156; `codex_cli_guard` downgrades automatically on older) |
 | `codex-5.4` | OpenAI | `gpt-6-luna` @ effort `medium` | `ZUVO_MODEL_CODEX_ALT` / `ZUVO_CODEX_EFFORT_ALT` | **not auto-selected** — reachable only by `--provider codex-5.4` (see roster note below) |
 | `claude` | Anthropic | Opposite of author: `claude-sonnet-5-5` (Opus author; `ZUVO_MODEL_CLAUDE_REVIEWER_SONNET`) or `claude-opus-5-5` @ effort `high` (Sonnet/Haiku author or a Codex host; `ZUVO_MODEL_CLAUDE_REVIEWER_OPUS`) | `ZUVO_CLAUDE_REVIEWER_MODEL` (Sonnet branch, wins over the registry) / `ZUVO_MODEL_CLAUDE_REVIEWER_SONNET` / `ZUVO_MODEL_CLAUDE_REVIEWER_OPUS` | `claude --model <m> --print --output-format text` |
 | `cursor-agent` | Cursor | `composer-2.5-fast` | `ZUVO_CURSOR_MODEL` | `… \| cursor-agent -p --model <m> --mode ask --trust --workspace /tmp` (prompt = **stdin**) |
@@ -72,7 +72,7 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 | Provider | Model | Status | Typical latency |
 |----------|-------|--------|-----------------|
 | `agy` | Gemini 3.8 Flash (Medium) | ✅ working (benchmarked 2026-09-23, effort sweep: +25 defects nobody else finds, 75% precision, 0 timeouts — see `docs/runbook/model-benchmark.md`) | ~90-150s |
-| `codex-5.3` | gpt-6-sol @`none` | ✅ working (benchmarked 2026-09-23 on 20 diffs: 93% precision, 38 REAL, 5 defects nobody else finds, 33s; needs codex CLI ≥0.156) | ~20-35s |
+| `codex-5.3` | gpt-6.1-terra @`low` | ✅ working (benchmarked 2026-10-27 on the same 20 diffs: 97% precision, +4 new, ~14s; replaced gpt-6-sol @`none`, 81%/+5, ~141s in production; needs codex CLI ≥0.165) | ~14s (bench) |
 | `claude` | Sonnet 5 (Opus author) | ✅ working (benchmarked 2026-09-23: +21 defects nobody else finds, 83% precision) | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |
 | `gemini` (free CLI) | — | ❌ dead: `IneligibleTierError: UNSUPPORTED_CLIENT` | — |

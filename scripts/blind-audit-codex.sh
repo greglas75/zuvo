@@ -20,7 +20,7 @@
 #   --timeout N            -> ZUVO_BLIND_AUDIT_TIMEOUT=N        (unset when --timeout is not given —
 #                              the driver's own default/clamp then applies, not this script's old 600s)
 #   --effort E              -> ZUVO_BLIND_AUDIT_EFFORT=E          (codex reasoning effort only)
-#   --provider codex --model M  -> ZUVO_MODEL_CODEX_PRIMARY=M
+#   --provider codex --model M  -> ZUVO_MODEL_CODEX_53=M (the codex-5.3 lane's own id since v1.6.116)
 #   --provider claude --model M -> ZUVO_CLAUDE_REVIEWER_MODEL=M and ZUVO_MODEL_CLAUDE_REVIEWER_OPUS=M
 #                                  (both: claude_reviewer_model() in the driver picks one or the other
 #                                  by host/CLAUDE_MODEL, and this wrapper cannot know which in advance)
@@ -196,7 +196,7 @@ esac
 
 if [[ -n "$MODEL" ]]; then
   case "$PROVIDER" in
-    codex)  export ZUVO_MODEL_CODEX_PRIMARY="$MODEL" ;;
+    codex)  export ZUVO_MODEL_CODEX_53="$MODEL" ;;
     claude) export ZUVO_CLAUDE_REVIEWER_MODEL="$MODEL"; export ZUVO_MODEL_CLAUDE_REVIEWER_OPUS="$MODEL" ;;
     agy)    export ZUVO_AGY_MODEL="$MODEL" ;;
     *)

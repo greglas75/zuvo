@@ -55,7 +55,8 @@ python3 $B/bench-or.py --models 'xiaomi/mimo-v2.6-flash~r2=xiaomi/mimo-v2.6-flas
 
 # A driver lane — the label names model AND effort
 bash $B/bench-model.sh cli cursor-grok-4.7-high cursor-agent ZUVO_CURSOR_MODEL=grok-4.7-high
-bash $B/bench-model.sh cli sol-light codex-5.3 ZUVO_MODEL_CODEX_PRIMARY=gpt-6-sol ZUVO_CODEX_EFFORT_PRIMARY=none
+bash $B/bench-model.sh cli sol-light codex-5.3 ZUVO_MODEL_CODEX_53=gpt-6-sol ZUVO_CODEX_EFFORT_PRIMARY=none
+# (a driver older than v1.6.116 reads the codex-5.3 model from ZUVO_MODEL_CODEX_PRIMARY instead)
 bash $B/bench-model.sh cli tp-qwen3.8-max qwen ZUVO_ADV_QWEN=1 ZUVO_QWEN_MODEL=qwen3.8-max
 bash $B/bench-model.sh cli "gemini-3.8-flash-medium" agy "ZUVO_MODEL_AGY=Gemini 3.8 Flash (Medium)" \
   ZUVO_AGY_FALLBACK_MODEL= ZUVO_AGY_SILENT_COOLDOWN=0

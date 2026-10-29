@@ -71,6 +71,16 @@ assert_eq "HOME=$CLTMP/home CODEX_HOME=$CLTMP/home/.codex" "$(cat "$CLTMP/seen-e
   "the guard ran with a temp HOME and CODEX_HOME, never the user's ~/.zuvo or ~/.codex"
 assert_eq "gpt-6-luna" "$(guard gpt-6-luna)" "gpt-6-luna survives on a current CLI"
 
+# Bug caught: gpt-6.1-terra (codex-5.3 since 2026-10-29) sent to a CLI that predates it — the opaque 400 on
+# every review — or downgraded past gpt-6-sol on a CLI that can run sol.
+start_test "cx.1b gpt-6.1-terra runs on CLI 0.165 and falls back to gpt-6-sol below it"
+fake_codex "0.165.0"
+assert_eq "gpt-6.1-terra" "$(guard gpt-6.1-terra)" "kept on 0.165, the oldest CLI it was measured on"
+fake_codex "0.160.2"
+assert_eq "gpt-6-sol" "$(guard gpt-6.1-terra)" "0.160: one rung down, to the previous lane model"
+fake_codex "0.150.0"
+assert_eq "gpt-5.6-sol" "$(guard gpt-6.1-terra)" "0.150: terra -> sol -> gpt-5.6-sol"
+
 # ─── 2. an older CLI downgrades ONE rung, not to the floor ────────────────
 start_test "cx.2 CLI 0.150 downgrades gpt-6 to gpt-5.6-sol (which it can run)"
 fake_codex "0.150.0"
@@ -108,14 +118,15 @@ assert_eq "gpt-5.5" "$(guard gpt-5.5)" "gpt-5.5 is not downgraded by its own fal
 assert_eq "0" "$(probes_since_reset)" "…and codex --version was never run for it"
 
 # ─── 6. the lanes carry the benchmarked defaults ──────────────────────────
-start_test "cx.6 lane defaults match the 2026-09-23 benchmark"
+start_test "cx.6 lane defaults match the benchmarks (2026-09-23; codex-5.3 2026-10-29)"
 REG="$ROOT/shared/includes/model-registry.sh"
-assert_contains "$(cat "$REG")" 'ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol'   "primary lane = gpt-6-sol"
+assert_contains "$(cat "$REG")" 'ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol'   "strong tier / router = gpt-6-sol"
+assert_contains "$(cat "$REG")" 'ZUVO_MODEL_CODEX_53:-gpt-6.1-terra'   "codex-5.3 lane = gpt-6.1-terra"
 assert_contains "$(cat "$REG")" 'ZUVO_MODEL_CODEX_ALT:-gpt-6-luna'      "alt lane = gpt-6-luna"
 # The efforts by VALUE, from the registry sourced with no effort variable set (ZUVO_CODEX_EFFORT, when set,
 # overrides both — hardening F43): the text pin broke on the first change that kept the defaults.
-assert_eq "none medium" "$(env -u ZUVO_CODEX_EFFORT -u ZUVO_CODEX_EFFORT_PRIMARY -u ZUVO_CODEX_EFFORT_ALT \
-  bash -c '. "$1" || exit 9; echo "$ZUVO_CODEX_EFFORT_PRIMARY $ZUVO_CODEX_EFFORT_ALT"' _ "$REG")" "primary effort = none, alt effort = medium"
+assert_eq "low medium" "$(env -u ZUVO_CODEX_EFFORT -u ZUVO_CODEX_EFFORT_PRIMARY -u ZUVO_CODEX_EFFORT_ALT \
+  bash -c '. "$1" || exit 9; echo "$ZUVO_CODEX_EFFORT_PRIMARY $ZUVO_CODEX_EFFORT_ALT"' _ "$REG")" "codex-5.3 effort = low, alt effort = medium"
 
 # ─── spy fixtures for cx.7-cx.10 ───────────────────────────────────────────
 # A spy codex that records the model_reasoning_effort its isolated CODEX_HOME was built with — the one place
@@ -164,15 +175,16 @@ NOREG="$CLTMP/noreg/adversarial-review.sh"
 # reviews would still run — with the wrong dial on one lane and nothing to show for it.
 start_test "cx.7 each lane reads its own effort variable"
 # The repo driver loads the model registry, which gives each lane its own default.
-assert_eq "none"   "$(effort_of "$ADV" codex-5.3)" "codex-5.3 (sol): none, the registry's per-lane default"
+assert_eq "low"    "$(effort_of "$ADV" codex-5.3)" "codex-5.3 (terra): low, the registry's per-lane default"
 assert_eq "medium" "$(effort_of "$ADV" codex-5.4)" "codex-5.4 (luna): medium"
-assert_eq "low"  "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=low ZUVO_CODEX_EFFORT_ALT=high)" \
+# Neither value is a lane default (low/medium), so a lane that ignored its variable would show it.
+assert_eq "xhigh" "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=xhigh ZUVO_CODEX_EFFORT_ALT=high)" \
   "codex-5.3 takes ZUVO_CODEX_EFFORT_PRIMARY…"
-assert_eq "high" "$(effort_of "$ADV" codex-5.4 ZUVO_CODEX_EFFORT_PRIMARY=low ZUVO_CODEX_EFFORT_ALT=high)" \
+assert_eq "high" "$(effort_of "$ADV" codex-5.4 ZUVO_CODEX_EFFORT_PRIMARY=xhigh ZUVO_CODEX_EFFORT_ALT=high)" \
   "…and codex-5.4 ZUVO_CODEX_EFFORT_ALT, each its own"
 # A driver that finds no registry (an install without it) falls back inside the lane wrappers: the lane's
 # own variable, then the global ZUVO_CODEX_EFFORT, then the lane's benchmarked default.
-assert_eq "none"   "$(effort_of "$NOREG" codex-5.3)" "no registry: codex-5.3 falls back to none"
+assert_eq "low"    "$(effort_of "$NOREG" codex-5.3)" "no registry: codex-5.3 falls back to low"
 assert_eq "medium" "$(effort_of "$NOREG" codex-5.4)" "no registry: codex-5.4 falls back to medium"
 assert_eq "high" "$(effort_of "$NOREG" codex-5.3 ZUVO_CODEX_EFFORT=high)" "no registry: the global ZUVO_CODEX_EFFORT comes before the lane default (codex-5.3)"
 assert_eq "high" "$(effort_of "$NOREG" codex-5.4 ZUVO_CODEX_EFFORT=high)" "…(codex-5.4)"
@@ -185,7 +197,7 @@ assert_eq "low"  "$(effort_of "$NOREG" codex-5.4 ZUVO_CODEX_EFFORT=high ZUVO_COD
 # Never the empty string: run_codex turns an empty effort into NO model_reasoning_effort line (cx.9), and a
 # lane would then silently run at the model's own default instead of its benchmarked dial.
 start_test "cx.8 an empty per-lane effort variable falls through, it does not blank the dial"
-assert_eq "none"   "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=)" "registry: an empty PRIMARY gives codex-5.3 its default none"
+assert_eq "low"    "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=)" "registry: an empty PRIMARY gives codex-5.3 its default low"
 assert_eq "medium" "$(effort_of "$ADV" codex-5.4 ZUVO_CODEX_EFFORT_ALT=)" "registry: an empty ALT gives codex-5.4 its default medium"
 assert_eq "high"   "$(effort_of "$NOREG" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY= ZUVO_CODEX_EFFORT=high)" \
   "no registry: an empty PRIMARY falls through to the global ZUVO_CODEX_EFFORT"
@@ -270,12 +282,12 @@ logged_effort() {
 }
 start_test "cx.12 each codex lane's log row carries the effort its client got"
 rm -f "$CLTMP/spyhome/.zuvo/adversarial.log"
-assert_eq "none" "$(effort_of "$ADV" codex-5.3)" "premise: codex-5.3's client got none"
-assert_eq "none" "$(logged_effort codex-5.3)" "codex-5.3 row: none"
+assert_eq "low" "$(effort_of "$ADV" codex-5.3)" "premise: codex-5.3's client got low"
+assert_eq "low" "$(logged_effort codex-5.3)" "codex-5.3 row: low"
 assert_eq "medium" "$(effort_of "$ADV" codex-5.4)" "premise: codex-5.4's client got medium"
 assert_eq "medium" "$(logged_effort codex-5.4)" "codex-5.4 row: medium"
-assert_eq "low" "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=low)" "premise: an override reaches the client"
-assert_eq "low" "$(logged_effort codex-5.3)" "…and the row: the override, not the registry default"
+assert_eq "medium" "$(effort_of "$ADV" codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=medium)" "premise: an override reaches the client"
+assert_eq "medium" "$(logged_effort codex-5.3)" "…and the row: the override, not the registry default"
 
 start_test "cx.13 the logged effort is lowercased, and one that is still not a plain word is ?"
 # The runner passes these on (it refuses only quotes, backslashes and control characters, so a tab never reaches a

@@ -387,6 +387,7 @@ zms_codex_cli_guard() {
   fi
   while :; do
     case "$model" in
+      gpt-6.1-terra*) need=165; fallback="gpt-6-sol" ;;   # 0.165 is the oldest CLI it was measured on
       gpt-6*)   need=156; fallback="gpt-5.6-sol" ;;
       gpt-5.6*) need=144; fallback="gpt-5.5" ;;
       *)        break ;;

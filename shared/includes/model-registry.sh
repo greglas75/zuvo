@@ -94,14 +94,20 @@ ZUVO_MODEL_CLAUDE_REVIEWER_SONNET="${ZUVO_MODEL_CLAUDE_REVIEWER_SONNET:-claude-s
 #
 # Requires codex CLI >=0.156 (0.153 rejects gpt-6 ids with "Model metadata not found" + an opaque
 # 400 that reads like an ACCOUNT problem). codex_cli_guard() in adversarial-review.sh downgrades
-# automatically on an older CLI rather than failing every review.
-ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}"  # codex-5.3 lane + strong tier
+# automatically on an older CLI rather than failing every review. gpt-6.1-terra (below) needs >=0.165.
+ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-6-sol}"  # strong tier + cross-vendor reviewer
+# The codex-5.3 review LANE has its own id since 2026-10-29 (owner's call): gpt-6.1-terra / low.
+# Same 20 diffs, judged by Opus: terra/low 97% precision, +4 new, ~14 s, ~23 reasoning tokens;
+# terra/medium 100%, +3; production sol/none (light) 81%, +5, ~141 s in production. +4 vs +5 is
+# inside the run-to-run noise, and terra is ~10x faster and spends far less of the Codex limit.
+# The strong tier and the router keep gpt-6-sol: those are audits at effort high, a different job.
+ZUVO_MODEL_CODEX_53="${ZUVO_MODEL_CODEX_53:-gpt-6.1-terra}"
 # Reasoning effort is a SEPARATE dial from the model id and is per-lane. Valid for gpt-6-sol:
 # none|low|medium|high|xhigh|max (NOT `minimal` — sol rejects it; luna and gpt-5.5 accept it).
 # The Codex UI calls sol's `none` "Light".
 # ZUVO_CODEX_EFFORT, when set, is the manual override for BOTH codex lanes (a per-lane variable still wins):
 # defaulting the per-lane variables here unconditionally made the override the lanes document unreachable.
-ZUVO_CODEX_EFFORT_PRIMARY="${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-none}}"
+ZUVO_CODEX_EFFORT_PRIMARY="${ZUVO_CODEX_EFFORT_PRIMARY:-${ZUVO_CODEX_EFFORT:-low}}"  # the codex-5.3 lane's effort
 # codex-5.4 lane (host-flip). The LANE NAME is historical and deliberately left alone — it is a
 # token in ~/.zuvo/adversarial.log, in tests and in --provider arguments, so renaming it would
 # break every measurement built on it. What changed is the id it resolves to: gpt-5.5, which is a

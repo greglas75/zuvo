@@ -130,7 +130,7 @@ install_spy() { # install_spy <dest> — the fixture spy (records what the clien
 # that picks it up still completes — but it leaves $T/decoy.<name>, which the case then reads. It also
 # keeps the pre-refactor driver away from any real client: that driver takes whatever is on PATH.
 install_decoy() { # install_decoy <dest>
-  printf '#!/bin/sh\n: > "%s/decoy.${0##*/}"\n[ "${1:-}" = --version ] && { echo "codex-cli 0.156.1"; exit 0; }\ncat > /dev/null\necho "DECOY-REPLY ${0##*/}"\n' "$T" > "$1"
+  printf '#!/bin/sh\n: > "%s/decoy.${0##*/}"\n[ "${1:-}" = --version ] && { echo "codex-cli 0.165.0"; exit 0; }\ncat > /dev/null\necho "DECOY-REPLY ${0##*/}"\n' "$T" > "$1"
   chmod +x "$1"
 }
 SPY_BIN="$T/spybin"; OFF_BIN="$T/offpath"; DECOY_BIN="$T/decoybin"; MOCK_BIN="$T/mockbin"
@@ -242,7 +242,7 @@ golden_run() {
 
 # The NUMBER of client invocations is part of the golden: the .rec compares the last one only.
 # golden_calls <client> — what the reference driver ran, in order, first argument of each call:
-#   codex  — codex_cli_guard's `--version` probe (gpt-6-sol needs CLI >= 0.156), then ONE `exec`;
+#   codex  — codex_cli_guard's `--version` probe (gpt-6.1-terra needs CLI >= 0.165), then ONE `exec`;
 #   claude — ONE `--model …` call, nothing else.
 # Taken from the reference blob named in the fixture header (this file run with ZUVO_TEST_AR = that
 # blob): re-characterizing a driver that calls its clients differently updates this with the fixture.
@@ -328,9 +328,9 @@ _reg="$(cd "$(dirname "$AR")/.." 2>/dev/null && pwd -P)/shared/includes/model-re
 [ -f "$_reg" ] || _reg="$ROOT/shared/includes/model-registry.sh"
 reg_val() { env -i PATH=/usr/bin:/bin bash -c '. "$1" && eval "printf %s \"\${$2}\""' _ "$_reg" "$1"; }
 _alt_m="$(reg_val ZUVO_MODEL_CODEX_ALT)"; _alt_e="$(reg_val ZUVO_CODEX_EFFORT_ALT)"
-_pri_m="$(reg_val ZUVO_MODEL_CODEX_PRIMARY)"; _pri_e="$(reg_val ZUVO_CODEX_EFFORT_PRIMARY)"
+_pri_m="$(reg_val ZUVO_MODEL_CODEX_53)"; _pri_e="$(reg_val ZUVO_CODEX_EFFORT_PRIMARY)"
 L="1b codex-5.4"
-if [ -n "$_alt_m" ] && [ -n "$_alt_e" ] && [ "$_alt_m" != "$_pri_m" ] && [ "$_alt_e" != "$_pri_e" ]; then
+if [ -n "$_alt_m" ] && [ -n "$_alt_e" ] && [ -n "$_pri_m" ] && [ -n "$_pri_e" ] && [ "$_alt_m" != "$_pri_m" ] && [ "$_alt_e" != "$_pri_e" ]; then
   ok "$L: premise — the registry gives the alt lane its own model and effort ($_alt_m/$_alt_e vs $_pri_m/$_pri_e)"
 else
   bad "$L: premise — registry values unusable: alt=[$_alt_m/$_alt_e] primary=[$_pri_m/$_pri_e] ($_reg)"
@@ -410,7 +410,7 @@ done
 # pre-flight, exit 2, before any client starts — so the client capture is empty and only the runner's
 # stderr holds the reason.
 echo "-- 2c. a model id the runner rejects"
-for _pair in 'codex-5.3:ZUVO_MODEL_CODEX_PRIMARY=gpt-5.5"x' 'claude:ZUVO_CLAUDE_REVIEWER_MODEL=claude-x"y'; do
+for _pair in 'codex-5.3:ZUVO_MODEL_CODEX_53=gpt-5.5"x' 'claude:ZUVO_CLAUDE_REVIEWER_MODEL=claude-x"y'; do
   _p="${_pair%%:*}"; _kv="${_pair#*:}"; L="2c ${_kv%%=*} holding a quote, --provider $_p"
   rm -rf "$T/rspy-$_p"; mkdir -p "$T/rspy-$_p"
   rc=0; drive "rej-$_p" "$SPY_BIN:$BASE_PATH" SPY_DIR="$T/rspy-$_p" "$_kv" ZUVO_CODEX_APP_BIN=/nonexistent \
@@ -928,7 +928,7 @@ lane_ev() { cat "$T/home-$1/.zuvo/adversarial-failures"/*/"provider_$2.stderr" 2
 # (1) A client that ends with status 124 — what GNU timeout returns when the budget ran out, passed through
 # the runner unchanged (no real wait: the client exits 124 itself) — is a TIMEOUT: lane_exit_warn's first arm
 # (adversarial-lanes.sh:131-133), which names the budget, never lane_failed_warn's "failed (exit 124)".
-printf '#!/bin/sh\n[ "${1:-}" = --version ] && { echo "codex-cli 0.156.1"; exit 0; }\ncat > /dev/null\nexit 124\n' > "$T/timeout-client"
+printf '#!/bin/sh\n[ "${1:-}" = --version ] && { echo "codex-cli 0.165.0"; exit 0; }\ncat > /dev/null\nexit 124\n' > "$T/timeout-client"
 chmod +x "$T/timeout-client"
 for _pair in codex-5.3:ZUVO_CODEX_BIN claude:ZUVO_CLAUDE_BIN; do
   _p="${_pair%%:*}"; _v="${_pair#*:}"; L="5d (1) a $_p client that exits 124"
@@ -989,7 +989,7 @@ if [ -s "$T/nocapture-spy/codex.rec" ]; then
     "$(tr '\n' ' ' < "$T/nocapture-spy/codex.calls" 2>/dev/null | sed 's/ $//')"
 else bad "$L: the codex spy left no record — $(tail -3 "$T/nocapture.err" | tr '\n' ' ')"; fi
 L="5d (3) the same, with a model id the runner refuses"
-rc=0; plant_run nocapture-rej codex-5.3 runnererr_codex-5.3.txt 'ZUVO_MODEL_CODEX_PRIMARY=gpt-5.5"x' || rc=$?
+rc=0; plant_run nocapture-rej codex-5.3 runnererr_codex-5.3.txt 'ZUVO_MODEL_CODEX_53=gpt-5.5"x' || rc=$?
 expect_eq "$L: no review (exit 2)" "2" "$rc"
 _e="$(lane_ev nocapture-rej codex-5.3)"
 expect_has "$L: the runner's own error reached the lane's stderr uncaptured" "may not contain quotes" "$_e"
