@@ -156,33 +156,39 @@ _pgl_unpushed_commits() {
 # #6823, merge f86d8770eb: apps/runner/src/hooks/useResolvedImages.ts). A path is mechanical when
 # `git merge-tree --write-tree` of the two parents reports no conflict for it and the merge commit's
 # tree entry (mode + blob) equals merge-tree's. A hand edit of the result, a hand-resolved conflict,
-# an octopus merge, a git without --write-tree or any other failure prints nothing: every path
-# stays in the set. A later un-pushed commit that changes the path lists it itself.
+# an octopus merge, a path holding a newline, or a merge-tree that fails prints nothing: every such
+# path stays in the set. A later un-pushed commit that changes the path lists it itself.
 _pgl_merge_mechanical_paths() {
-  local root="$1" m="$2" parents out tree conflicts differ nl='
-' p
-  parents="$(git -C "$root" rev-parse "$m^@" 2>/dev/null)" || return 0
-  [ "$(printf '%s\n' "$parents" | grep -c .)" -eq 2 ] || return 0
-  # shellcheck disable=SC2086 # two hex object names
-  # Attributes come from the incoming parent, as for the merge itself: a `merge=union` path in its
-  # .gitattributes merges cleanly only with them. A git older than 2.40 has no --attr-source; then the
-  # merge runs without attributes, so such a path conflicts or differs and stays in the set.
-  out="$(git -C "$root" -c core.quotePath=false merge-tree --write-tree --name-only --no-messages -z \
-           --attr-source="${parents##*"$nl"}" $parents 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}")"
-  case "$?" in
-    0|1) ;;   # 1 = conflicts, listed after the tree
-    *) out="$(git -C "$root" -c core.quotePath=false merge-tree --write-tree --name-only --no-messages -z $parents \
-                2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}")"
-       case "$?" in 0|1) ;; *) return 0 ;; esac ;;
-  esac
+  local root="$1" m="$2" p1 p2 src p
+  { read -r p1; read -r p2; } < <(git -C "$root" rev-parse "$m^1" "$m^2" 2>/dev/null)
+  case "$p1$p2" in ''|*[!0-9a-f]*) return 0 ;; esac
+  [ -z "$(git -C "$root" rev-parse -q --verify "$m^3" 2>/dev/null)" ] || return 0   # octopus
+  # `.gitattributes` (a `merge=union` path merges cleanly only under it) is read from either parent:
+  # the merge saw one of them, and which one depends on how it was made. A path one of them
+  # reproduces was merged by git. A git older than 2.40 has no --attr-source; the plain run below
+  # then decides, and a union path conflicts or differs there and stays in the set.
+  { for src in "$p1" "$p2"; do _pgl_merge_tree_agrees "$root" "$m" "$p1" "$p2" --attr-source="$src"; done
+    _pgl_merge_tree_agrees "$root" "$m" "$p1" "$p2"; } | sort -u
+}
+
+# _pgl_merge_tree_agrees <root> <merge> <p1> <p2> [merge-tree option] — the -c paths of <merge> that the
+# merge-tree run of <p1> <p2> merges without a conflict into the same tree entry, one per line.
+_pgl_merge_tree_agrees() {
+  local root="$1" m="$2" p1="$3" p2="$4" nl='
+' out tree conflicts differ p
+  out="$(git -C "$root" -c core.quotePath=false merge-tree --write-tree --name-only --no-messages -z ${5:+"$5"} \
+           "$p1" "$p2" 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}")"
+  case "$?" in 0|1) ;; *) return 0 ;; esac   # 1 = conflicts, listed after the tree; else an error
   tree="${out%%"$nl"*}"
   case "$tree" in ''|*[!0-9a-f]*) return 0 ;; esac
   conflicts="${out#"$tree"}"
   differ="$(git -C "$root" -c core.quotePath=false diff-tree -r --no-renames --name-only -z "$tree" "$m" 2>/dev/null \
               | tr '\0' '\n'; exit "${PIPESTATUS[0]}")" || return 0
-  git -C "$root" -c core.quotePath=false log -1 --format= --name-only -z -c "$m" 2>/dev/null | tr '\0' '\n' \
-    | while IFS= read -r p; do
-        [ -n "$p" ] || continue
+  # A conflicted or differing path with a newline splits into pieces above; a piece can only keep a
+  # path in the set. The -c paths are read NUL-safe, and one holding a newline is never printed.
+  git -C "$root" -c core.quotePath=false log -1 --format= --name-only -z -c "$m" 2>/dev/null \
+    | while IFS= read -r -d '' p; do
+        case "$p" in ''|*"$nl"*) continue ;; esac
         case "$nl$conflicts$nl$differ$nl" in *"$nl$p$nl"*) continue ;; esac
         printf '%s\n' "$p"
       done
@@ -277,6 +283,7 @@ pg_changed_production() {
         mech="$(_pgl_merge_mechanical_paths "$root" "$m")"
         git -C "$root" -c core.quotePath=false log -1 --format= --name-only -z -c "$m" 2>/dev/null \
           | while IFS= read -r -d '' f; do
+              case "$f" in *"$_pgl_nl"*) printf '%s\0' "$f"; continue ;; esac   # never mechanical
               case "$_pgl_nl$mech$_pgl_nl" in *"$_pgl_nl$f$_pgl_nl"*) ;; *) printf '%s\0' "$f" ;; esac
             done
         [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
