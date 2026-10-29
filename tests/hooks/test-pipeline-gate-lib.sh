@@ -487,6 +487,56 @@ ml="$(cd "$MLT" && PG_REPO_ROOT="$MLT" bash -c '. "'"$LIB"'"; pg_changed_lines "
   && pass "SENTINEL: merge conflict-resolution lines COUNTED (=$ml, not dropped — no line under-count)" \
   || bad "SENTINEL: merge line-count dropped to [$ml] (combined-numstat under-count bug)"
 rm -rf "$MLT" "$MLR"
+# ---------- AUTOMERGE: a path git merged by itself is not a conflict resolution ----------
+# Bug caught: `log -c` also lists a path both sides changed in different hunks and git combined with
+# no conflict, so the gate demanded a review of the other side's content (rdesigner #6823, 2026-10-29:
+# the branch was pushed, the merge of develop was the only un-pushed commit).
+# am_fixture <dir> <bare> — feat edits a.js (top) and u.js (merge=union) and is pushed; main edits
+# a.js (bottom, +60 lines), u.js (same spot) and c.js, and is pushed. Leaves feat checked out, unmerged.
+am_fixture() {
+  new_remote_fixture "$1" "$2" || return 1
+  (
+    cd "$1" || exit 1
+    seq 1 40 > a.js; echo base > u.js; echo base > c.js; echo 'u.js merge=union' > .gitattributes
+    git add -A; git commit -qm base; git push -q origin main
+    git checkout -q -b feat; sed -i.b 's/^1$/feat1/' a.js; echo feat >> u.js; echo feat > c.js
+    rm -f a.js.b; git add -A; git commit -qm feat; git push -q origin feat
+    git checkout -q main; sed -i.b 's/^40$/main40/' a.js; seq 101 160 >> a.js; echo main >> u.js; echo main > c.js
+    rm -f a.js.b; git add -A; git commit -qm main; git push -q origin main
+    git checkout -q feat
+  ) >/dev/null 2>&1
+}
+am_files() { (cd "$1" && PG_REPO_ROOT="$1" bash -c "${2:-}"'. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | sort | tr '\n' ' '); }
+am_lines() { (cd "$1" && PG_REPO_ROOT="$1" bash -c '. "'"$LIB"'"; pg_changed_lines "@unpushed..HEAD"' 2>/dev/null); }
+
+AMT="$(mktemp -d)"; AMR="$(mktemp -d)"
+am_fixture "$AMT" "$AMR" || { bad "AMT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(cd "$AMT" && git merge -q origin/main -m "merge main"; echo resolved > c.js; git add c.js
+ git commit -qm "merge main") >/dev/null 2>&1
+af="$(am_files "$AMT")"
+[ "$af" = "c.js " ] \
+  && pass "AUTOMERGE: a clean two-sided automerge and a merge=union path need no review; the hand-resolved conflict does" \
+  || bad "AUTOMERGE: expected only the resolved conflict c.js, got [$af]"
+af="$(am_files "$AMT" 'git() { case " $* " in *" merge-tree "*) return 128 ;; esac; command git "$@"; }; ')"
+[ "$af" = "a.js c.js u.js " ] \
+  && pass "AUTOMERGE: merge-tree failing keeps every -c path (fail-closed)" \
+  || bad "AUTOMERGE: merge-tree failure dropped a path [$af]"
+(cd "$AMT" && sed -i.b 's/^20$/own20/' a.js && rm -f a.js.b && git commit -qam own) >/dev/null 2>&1
+af="$(am_files "$AMT")"; al="$(am_lines "$AMT")"
+[ "$af" = "a.js c.js " ] && { [ "${al:-0}" -ge 1 ] 2>/dev/null && [ "${al:-0}" -lt 10 ]; } \
+  && pass "AUTOMERGE: a later own edit of an automerged path counts its own lines, not main's 61 (=$al)" \
+  || bad "AUTOMERGE: later own edit got files [$af] lines [$al]"
+rm -rf "$AMT" "$AMR"
+
+AMT="$(mktemp -d)"; AMR="$(mktemp -d)"
+am_fixture "$AMT" "$AMR" || { bad "AMT fixture init failed"; echo "SOME FAILED"; exit 1; }
+(cd "$AMT" && git merge -q --no-commit origin/main; echo resolved > c.js
+ sed -i.b 's/^20$/hand20/' a.js; rm -f a.js.b; git add -A; git commit -qm "merge main") >/dev/null 2>&1
+af="$(am_files "$AMT")"
+[ "$af" = "a.js c.js " ] \
+  && pass "AUTOMERGE: a hand edit of an automerged result still needs review" \
+  || bad "AUTOMERGE: hand-edited merge result got [$af]"
+rm -rf "$AMT" "$AMR"
 fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null)"
 [ -z "$fo" ] && pass "SENTINEL/G8: @unpushed in non-repo → empty (fail-open)" || bad "SENTINEL/G8: expected empty, got [$fo]"
 

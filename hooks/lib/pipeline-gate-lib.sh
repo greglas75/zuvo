@@ -149,6 +149,45 @@ _pgl_unpushed_commits() {
   awk 'NR == FNR { twin[$1] = 1; next } !($1 in twin)' <(printf '%s\n' "$twins") <(printf '%s\n' "$all")
 }
 
+# _pgl_merge_mechanical_paths <root> <merge> — the paths of a two-parent <merge> that git merged by
+# itself, one per line. `log -c` lists a path whose result differs from EVERY parent, and that is
+# also true of a path both sides changed in different hunks and git combined without a conflict:
+# no person resolved anything there, yet the gate asked for a review of it (2026-10-29, rdesigner
+# #6823, merge f86d8770eb: apps/runner/src/hooks/useResolvedImages.ts). A path is mechanical when
+# `git merge-tree --write-tree` of the two parents reports no conflict for it and the merge commit's
+# tree entry (mode + blob) equals merge-tree's. A hand edit of the result, a hand-resolved conflict,
+# an octopus merge, a git without --write-tree or any other failure prints nothing: every path
+# stays in the set. A later un-pushed commit that changes the path lists it itself.
+_pgl_merge_mechanical_paths() {
+  local root="$1" m="$2" parents out tree conflicts differ nl='
+' p
+  parents="$(git -C "$root" rev-parse "$m^@" 2>/dev/null)" || return 0
+  [ "$(printf '%s\n' "$parents" | grep -c .)" -eq 2 ] || return 0
+  # shellcheck disable=SC2086 # two hex object names
+  # Attributes come from the incoming parent, as for the merge itself: a `merge=union` path in its
+  # .gitattributes merges cleanly only with them. A git older than 2.40 has no --attr-source; then the
+  # merge runs without attributes, so such a path conflicts or differs and stays in the set.
+  out="$(git -C "$root" -c core.quotePath=false merge-tree --write-tree --name-only --no-messages -z \
+           --attr-source="${parents##*"$nl"}" $parents 2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}")"
+  case "$?" in
+    0|1) ;;   # 1 = conflicts, listed after the tree
+    *) out="$(git -C "$root" -c core.quotePath=false merge-tree --write-tree --name-only --no-messages -z $parents \
+                2>/dev/null | tr '\0' '\n'; exit "${PIPESTATUS[0]}")"
+       case "$?" in 0|1) ;; *) return 0 ;; esac ;;
+  esac
+  tree="${out%%"$nl"*}"
+  case "$tree" in ''|*[!0-9a-f]*) return 0 ;; esac
+  conflicts="${out#"$tree"}"
+  differ="$(git -C "$root" -c core.quotePath=false diff-tree -r --no-renames --name-only -z "$tree" "$m" 2>/dev/null \
+              | tr '\0' '\n'; exit "${PIPESTATUS[0]}")" || return 0
+  git -C "$root" -c core.quotePath=false log -1 --format= --name-only -z -c "$m" 2>/dev/null | tr '\0' '\n' \
+    | while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        case "$nl$conflicts$nl$differ$nl" in *"$nl$p$nl"*) continue ;; esac
+        printf '%s\n' "$p"
+      done
+}
+
 # --- classification ---------------------------------------------------------
 # A path is PRODUCTION unless it matches a test/docs/config/generated pattern.
 # Fail-toward-enforcement: anything not clearly non-production counts as prod.
@@ -208,7 +247,8 @@ _pgl_range_optlike() {
 
 # Production files changed in <range>. Returns 1 when git fails: an empty list then means "unknown".
 pg_changed_production() {
-  local range="$1" root f tip commits
+  local range="$1" root f tip commits merges m mech _pgl_nl='
+'
   [ -n "$range" ] || return 1
   _pgl_range_optlike "$range" && return 1
   root="$(pg_repo_root)" || return 1
@@ -225,12 +265,25 @@ pg_changed_production() {
     commits="$(_pgl_unpushed_commits "$root" "$tip")" || return 1
     [ -n "$commits" ] || return 0
     # -z: NUL-delimited, path-safe (matches the git-diff path below — a filename with a newline
-    # cannot split a record). core.quotePath=false: unquoted UTF-8 paths.
-    printf '%s\n' "$commits" \
-      | git -C "$root" -c core.quotePath=false log --stdin --no-walk=unsorted --format= --name-only -z -c 2>/dev/null \
+    # cannot split a record). core.quotePath=false: unquoted UTF-8 paths. Non-merge commits list
+    # every path they touch; a merge lists its `-c` paths minus the ones git merged by itself
+    # (_pgl_merge_mechanical_paths).
+    ( printf '%s\n' "$commits" \
+        | git -C "$root" -c core.quotePath=false log --stdin --no-walk=unsorted --no-merges --format= --name-only -z \
+          2>/dev/null || exit 1
+      merges="$(printf '%s\n' "$commits" | git -C "$root" log --stdin --no-walk=unsorted --merges --format=%H 2>/dev/null)" \
+        || exit 1
+      for m in $merges; do
+        mech="$(_pgl_merge_mechanical_paths "$root" "$m")"
+        git -C "$root" -c core.quotePath=false log -1 --format= --name-only -z -c "$m" 2>/dev/null \
+          | while IFS= read -r -d '' f; do
+              case "$_pgl_nl$mech$_pgl_nl" in *"$_pgl_nl$f$_pgl_nl"*) ;; *) printf '%s\0' "$f" ;; esac
+            done
+        [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
+      done ) \
       | while IFS= read -r -d '' f; do [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"; done \
       | sort -u
-    [ "${PIPESTATUS[1]}" -eq 0 ] || return 1   # a failed git log is not an empty change set
+    [ "${PIPESTATUS[0]}" -eq 0 ] || return 1   # a failed git log is not an empty change set
     return 0
   fi
   # --no-renames: report renames as delete(old)+add(new) with CLEAN paths.
@@ -248,7 +301,7 @@ pg_changed_production() {
 # Optional 2nd arg: the range's production file set, already computed by the caller
 # (pg_is_substantial) — saves a second `git log -c --not --remotes` walk. @unpushed only.
 pg_changed_lines() {
-  local range="$1" root a d p total=0 tip _pgl_prod_set _pgl_nl _pgl_commits
+  local range="$1" root a d p total=0 tip _pgl_prod_set _pgl_nl _pgl_commits _pgl_m _pgl_mech
   [ -n "$range" ] || { printf '0\n'; return 0; }
   _pgl_range_optlike "$range" && { printf '0\n'; return 0; }
   root="$(pg_repo_root)" || { printf '0\n'; return 0; }
@@ -298,8 +351,18 @@ pg_changed_lines() {
       case "$a$d" in *[!0-9]*) continue ;; esac
       total=$(( total + a + d ))
     done < <(printf '%s\n' "$_pgl_commits" \
-               | git -C "$root" -c core.quotePath=false log --stdin --no-walk=unsorted --format= --numstat -c \
-                   2>/dev/null)
+               | git -C "$root" -c core.quotePath=false log --stdin --no-walk=unsorted --no-merges --format= --numstat \
+                   2>/dev/null
+             # A merge's row for a path git merged by itself is the other side's content, even when the
+             # path is in the set because an own commit changed it too.
+             for _pgl_m in $(printf '%s\n' "$_pgl_commits" | git -C "$root" log --stdin --no-walk=unsorted --merges \
+                               --format=%H 2>/dev/null); do
+               _pgl_mech="$(_pgl_merge_mechanical_paths "$root" "$_pgl_m")"
+               git -C "$root" -c core.quotePath=false log -1 --format= --numstat -c "$_pgl_m" 2>/dev/null \
+                 | while IFS= read -r row; do
+                     case "$_pgl_nl$_pgl_mech$_pgl_nl" in *"$_pgl_nl${row##*"$TAB"}$_pgl_nl"*) ;; *) printf '%s\n' "$row" ;; esac
+                   done
+             done)
     printf '%s\n' "$total"; return 0
   fi
   while IFS=$'\t' read -r a d p; do
