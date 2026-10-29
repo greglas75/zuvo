@@ -30,12 +30,15 @@ cat > "$REG" <<JSON
   {"scope": "project", "projectPath": "/p/b", "installPath": "$BASE/1.6.50", "version": "1.6.50", "gitCommitSha": "old"}
 ]}}
 JSON
+chmod 640 "$REG"
 
 python3 "$PY" registry "$REG" "$BASE" 1.6.115 newsha >/dev/null
 paths="$(python3 -c 'import json,sys; print(" ".join(e["installPath"].rsplit("/",1)[1]+"@"+e["gitCommitSha"] for e in json.load(open(sys.argv[1]))["plugins"]["zuvo@zuvo-marketplace"]))' "$REG")"
 if [ "$paths" = "1.6.115@newsha 1.6.110@newsha 1.6.115@newsha" ]; then
   t_ok "registry: an entry on a deleted dir is repointed to the current version, a live one stays"
 else t_no "registry entries after heal: $paths"; fi
+mode="$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$REG")"
+[ "$mode" = "0o640" ] && t_ok "registry keeps the file's mode when it rewrites it" || t_no "registry mode after rewrite: $mode"
 
 python3 "$PY" prune "$REG" "$BASE" 1.6.115 >/dev/null
 left="$(ls "$BASE" | tr '\n' ' ')"
@@ -61,6 +64,10 @@ printf '{"version": 2, "plugins": null}\n' > "$R2"
 python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null 2>&1; rc=$?
 [ -d "$B2/1.6.90" ] && [ "$rc" -ne 0 ] && t_ok "prune removes nothing and fails when the registry parses but is not one" \
   || t_no "registry of another shape: rc=$rc, left: $(ls "$B2" | tr '\n' ' ')"
+rm -f "$R2"; ln -s "$TMP/nowhere.json" "$R2"
+python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null 2>&1; rc=$?
+[ -d "$B2/1.6.90" ] && [ "$rc" -ne 0 ] && t_ok "prune removes nothing when the registry is a dangling symlink" \
+  || t_no "dangling registry symlink: rc=$rc, left: $(ls "$B2" | tr '\n' ' ')"
 rm -f "$R2"
 python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null; rc=$?
 [ ! -e "$B2/1.6.90" ] && [ "$rc" -eq 0 ] && t_ok "prune treats a missing registry as naming no dir" \

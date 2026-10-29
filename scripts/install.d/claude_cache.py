@@ -34,6 +34,7 @@ import re
 import shutil
 import stat
 import sys
+import tempfile
 
 PLUGIN_KEY = 'zuvo@zuvo-marketplace'
 # A version dir's name: 1.6.115. Claude Code also creates SHA-named dirs beside them; those never
@@ -60,11 +61,13 @@ def _load(path):
     try:
         with open(path, encoding='utf-8') as f:
             data = json.load(f)
-    except FileNotFoundError:
+    except FileNotFoundError as e:
+        if os.path.lexists(path):          # a dangling symlink: the registry is elsewhere, not absent
+            raise Unreadable('%s: %s' % (path, e))
         return {}
     except (OSError, ValueError) as e:
         raise Unreadable('%s: %s' % (path, e))
-    plugins = data.get('plugins', {}) if isinstance(data, dict) else None
+    plugins = data.get('plugins') if isinstance(data, dict) else None
     entries = plugins.get(PLUGIN_KEY, []) if isinstance(plugins, dict) else None
     if not isinstance(entries, list):
         raise Unreadable('%s: not a plugin registry' % path)
@@ -73,15 +76,16 @@ def _load(path):
 
 def _write_atomic(path, data, mtime):
     """Replace the registry. Claude Code reads it at every session start, so a reader never sees a
-    truncated file. Returns False, writing nothing, when the file changed since it was read (a
-    session or another installer wrote it); the next install fixes it. Claude Code takes no lock,
-    so this narrows the lost-update window to the stat before os.replace; it cannot close it."""
+    truncated file. Returns False, leaving the registry as it is, when the file changed since it was
+    read (a session or another installer wrote it); the next install fixes it. Claude Code takes no
+    lock, so this narrows the lost-update window to the stat before os.replace; it cannot close it."""
     target = os.path.realpath(path)
-    tmp = '%s.zuvo.%d.tmp' % (target, os.getpid())
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                 stat.S_IMODE(os.stat(target).st_mode))
+    mode = stat.S_IMODE(os.stat(target).st_mode)
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(target) + '.', suffix='.zuvo.tmp',
+                               dir=os.path.dirname(target))
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            os.fchmod(f.fileno(), mode)    # the registry's own mode, exactly; a create mode goes through the umask
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
@@ -91,12 +95,14 @@ def _write_atomic(path, data, mtime):
     finally:
         if os.path.lexists(tmp):
             os.unlink(tmp)
-    if os.name == 'posix':
+    try:                                   # durability of the rename; macOS rejects fsync on a dir
         dfd = os.open(os.path.dirname(target), os.O_RDONLY)
         try:
             os.fsync(dfd)
         finally:
             os.close(dfd)
+    except OSError:
+        pass
     return True
 
 
@@ -173,14 +179,18 @@ def _marker_pid(marks, name):
     if PID_RE.fullmatch(name):
         return int(name)
     # Not named by its pid: the content carries it ({"pid": N, "procStart": …}). Only a small regular
-    # file is read — never a FIFO or a link to one, which would hang the install.
-    path = os.path.join(marks, name)
+    # file is read: the open neither follows a link nor blocks on a FIFO, which would hang the install.
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     try:
-        st = os.lstat(path)
-        if not stat.S_ISREG(st.st_mode) or st.st_size > MARKER_MAX:
-            return None
-        with open(path, encoding='utf-8') as f:
-            pid = json.load(f).get('pid')
+        fd = os.open(os.path.join(marks, name), flags)
+    except OSError:
+        return None
+    try:
+        with os.fdopen(fd, 'rb') as f:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_size > MARKER_MAX:
+                return None
+            pid = json.loads(f.read(MARKER_MAX).decode('utf-8')).get('pid')
     except (OSError, ValueError, AttributeError):
         return None
     return pid if isinstance(pid, int) and not isinstance(pid, bool) and PID_RE.fullmatch(str(pid)) else None
