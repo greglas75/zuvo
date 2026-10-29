@@ -131,6 +131,8 @@ install_claude() {
     done
     if [[ -n "$_seed" ]]; then
       cp -R "${_seed%/}" "$_tmp" 2>/dev/null || mkdir -p "$_tmp"
+      # .in_use/<pid> names the sessions running from the SEED dir, not from this one.
+      rm -rf "$_tmp/.in_use"
     else
       mkdir -p "$_tmp"/skills "$_tmp"/shared/includes "$_tmp"/rules "$_tmp"/scripts "$_tmp"/bin "$_tmp"/docs
     fi
@@ -337,52 +339,21 @@ install_claude() {
     ok "$DIR_NAME -- $SKILL_COUNT skills"
   done
 
-  # Fix stale SHA in installed_plugins.json (Claude Code cache bug workaround)
+  # installed_plugins.json: stamp the current SHA on every zuvo entry (Claude Code cache bug
+  # workaround) and repoint an entry whose installPath dir is gone. Then remove old version dirs,
+  # keeping every one a live session or a registry entry still uses — a session loads its hooks from
+  # the installPath it STARTED with, and deleting that dir breaks them ("Plugin directory does not
+  # exist"). Rules and the incidents behind them: install.d/claude_cache.py.
   local plugins_json="$HOME/.claude/plugins/installed_plugins.json"
-  if [[ -f "$plugins_json" ]]; then
+  local cache_py="$ZUVO_DIR/scripts/install.d/claude_cache.py"
+  if ! zuvo_py_available || [[ ! -r "$cache_py" ]]; then
+    warn "no Python 3 or no $cache_py — installed_plugins.json not checked, old cache dirs kept"
+  else
     local current_sha
     current_sha=$(cd "$ZUVO_DIR" && git rev-parse --verify -q HEAD 2>/dev/null || echo "")
-    if [[ -n "$current_sha" ]]; then
-      zuvo_py -c "
-import json, sys
-sha = sys.argv[1]
-with open(sys.argv[2]) as f:
-    data = json.load(f)
-changed = False
-for entry in data.get('plugins', {}).get('zuvo@zuvo-marketplace', []):
-    if entry.get('gitCommitSha') != sha:
-        entry['gitCommitSha'] = sha
-        changed = True
-if changed:
-    with open(sys.argv[2], 'w') as f:
-        json.dump(data, f, indent=2)
-    print('  \u2713 Fixed stale SHA in installed_plugins.json')
-" "$current_sha" "$plugins_json" 2>/dev/null || true
-    fi
+    [[ -f "$plugins_json" ]] && { zuvo_py "$cache_py" registry "$plugins_json" "$CACHE_BASE" "$current_version" "$current_sha" || true; }
+    zuvo_py "$cache_py" prune "$plugins_json" "$CACHE_BASE" "$current_version" || warn "old cache dirs not pruned"
   fi
-
-  # Remove old cache dirs but KEEP the 2 newest versions (current + the most-recent
-  # previous). A live session bakes CLAUDE_PLUGIN_ROOT to whatever version was current
-  # when it STARTED; deleting that dir mid-run 404s all its plugin hooks (the
-  # 2026-05-31 regression — releasing 1.3.112 while a 1.3.111 session was live broke
-  # its hooks with "Plugin directory does not exist"). Keeping the previous version
-  # lets that session run until the user restarts it onto the current one. Truly-stale
-  # dirs (2+ behind) still get cleaned to avoid version PATH confusion.
-  local keep_versions
-  local _v_names=""
-  for _v in "$CACHE_BASE"/*/; do
-    [ -d "$_v" ] || continue
-    _v_names="$_v_names$(basename "$_v")\n"
-  done
-  keep_versions=$(printf '%b' "$_v_names" | grep -v '^$' | sort -V | tail -2)
-  for old_dir in "$CACHE_BASE"/*/; do
-    local dir_name
-    dir_name=$(basename "$old_dir")
-    if ! printf '%s\n' "$keep_versions" | grep -qx "$dir_name"; then
-      rm -rf "$old_dir"
-      echo "  Removed old cache: $dir_name (kept current + previous)"
-    fi
-  done
 
   ok "Claude Code updated"
 }
