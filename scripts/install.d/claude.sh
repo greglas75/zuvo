@@ -351,7 +351,7 @@ install_claude() {
   else
     local current_sha
     current_sha=$(cd "$ZUVO_DIR" && git rev-parse --verify -q HEAD 2>/dev/null || echo "")
-    [[ -f "$plugins_json" ]] && { zuvo_py "$cache_py" registry "$plugins_json" "$CACHE_BASE" "$current_version" "$current_sha" || true; }
+    [[ -f "$plugins_json" ]] && { zuvo_py "$cache_py" registry "$plugins_json" "$CACHE_BASE" "$current_version" "$current_sha" || warn "installed_plugins.json not updated"; }
     zuvo_py "$cache_py" prune "$plugins_json" "$CACHE_BASE" "$current_version" || warn "old cache dirs not pruned"
   fi
 

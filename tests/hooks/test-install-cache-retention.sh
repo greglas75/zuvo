@@ -50,5 +50,47 @@ left="$(ls "$BASE" | tr '\n' ' ')"
 [ -d "$BASE/1.6.114" ] && [ -d "$BASE/1.6.115" ] && t_ok "prune keeps the current and the newest other version" \
   || t_no "current/previous removed (left: $left)"
 
+# A registry that exists but does not parse (a half-written file, a concurrent writer) says nothing
+# about which dirs it names: pruning on it would delete dirs project entries still load.
+B2="$TMP/c2/zuvo"; R2="$TMP/c2/installed_plugins.json"
+for v in 1.6.90 1.6.114 1.6.115; do mkdir -p "$B2/$v/.claude-plugin"; printf '{}\n' > "$B2/$v/.claude-plugin/plugin.json"; done
+printf '{"version": 2, "plugins": {"zuvo@zuvo-marketplace": [{"installPath": "%s/1.6.90"' "$B2" > "$R2"
+python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null 2>&1; rc=$?
+[ -d "$B2/1.6.90" ] && [ "$rc" -ne 0 ] && t_ok "prune removes nothing and fails when the registry does not parse" \
+  || t_no "unparseable registry: rc=$rc, left: $(ls "$B2" | tr '\n' ' ')"
+rm -f "$R2"
+python3 "$PY" prune "$R2" "$B2" 1.6.115 >/dev/null; rc=$?
+[ ! -e "$B2/1.6.90" ] && [ "$rc" -eq 0 ] && t_ok "prune treats a missing registry as naming no dir" \
+  || t_no "missing registry: rc=$rc, left: $(ls "$B2" | tr '\n' ' ')"
+
+# Marker names: only a plain pid counts. A name that is not one (a temp file, a pid too large for
+# os.kill) must neither crash the prune nor be read as "process 0" (os.kill(0, 0) signals the group).
+B3="$TMP/c3/zuvo"
+for v in 1.6.91 1.6.92 1.6.93 1.6.114 1.6.115; do mkdir -p "$B3/$v/.claude-plugin/" "$B3/$v/.in_use"; printf '{}\n' > "$B3/$v/.claude-plugin/plugin.json"; done
+: > "$B3/1.6.91/.in_use/0"
+: > "$B3/1.6.92/.in_use/99999999999999999999"
+: > "$B3/1.6.93/.in_use/$DEAD.tmp"
+python3 "$PY" prune "$TMP/c3/none.json" "$B3" 1.6.115 >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$B3/1.6.91" ] && [ ! -e "$B3/1.6.93" ] \
+  && t_ok "prune ignores marker names that are not a pid (0, a temp-file suffix)" \
+  || t_no "marker names: rc=$rc, left: $(ls "$B3" | tr '\n' ' ')"
+
+# A SHA-named dir (Claude Code creates them beside the version dirs) sorts after every version and
+# must not take the newest-other slot from the real previous version.
+B4="$TMP/c4/zuvo"
+for v in 1.6.113 1.6.114 1.6.115 564a269f; do mkdir -p "$B4/$v/.claude-plugin"; printf '{}\n' > "$B4/$v/.claude-plugin/plugin.json"; done
+python3 "$PY" prune "$TMP/c4/none.json" "$B4" 1.6.115 >/dev/null
+[ -d "$B4/1.6.114" ] && [ ! -e "$B4/1.6.113" ] && t_ok "prune keeps the newest other VERSION, not a SHA-named dir" \
+  || t_no "newest-other floor: left: $(ls "$B4" | tr '\n' ' ')"
+
+# registry only repoints entries that live in this cache; a dev checkout elsewhere is the user's.
+R5="$TMP/c5.json"
+printf '{"plugins": {"zuvo@zuvo-marketplace": ["junk", {"scope": "local", "installPath": "%s/gone-dev-checkout"}]}}\n' "$TMP" > "$R5"
+python3 "$PY" registry "$R5" "$BASE" 1.6.115 "" >/dev/null 2>&1; rc=$?
+p5="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"]["zuvo@zuvo-marketplace"][1]["installPath"])' "$R5")"
+[ "$rc" -eq 0 ] && [ "$p5" = "$TMP/gone-dev-checkout" ] \
+  && t_ok "registry skips a non-object entry and leaves an installPath outside the cache alone" \
+  || t_no "registry outside cache: rc=$rc path=$p5"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
