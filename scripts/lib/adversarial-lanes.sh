@@ -395,17 +395,16 @@ _agy_attempt() {
   local model="$1" status=0 result err combined a0=$SECONDS
   local err_file="$JSON_TMPDIR/err_agy.txt" raw_file="$JSON_TMPDIR/raw_agy.json"
   _AGY_BODY_FILE="$JSON_TMPDIR/raw_agy.txt"
-  if [[ "$REVIEW_MODE" == blind-audit ]]; then
-    # As the 2026-09-25 spike measured it: NEVER --dangerously-skip-permissions (with it agy read outside
-    # its cwd whatever else was passed), the no-tools line first, an empty cwd; --mode plan/--sandbox add nothing.
-    local ws="$JSON_TMPDIR/agy_ws"
-    mkdir -p "$ws" 2>/dev/null || { _AGY_CLASS="failed"; _AGY_ERR_TEXT="cannot create $ws"; return 1; }
-    (cd "$ws" && OLDPWD="$ws" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" agy -p "$BA_AGY_PREFIX"$'\n\n'"$REVIEW_PROMPT" \
-      --model "$model" --output-format json) < /dev/null > "$raw_file" 2>"$err_file" || status=$?
-  else
-    timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
-      --model "$model" --dangerously-skip-permissions --output-format json > "$raw_file" 2>"$err_file" || status=$?
-  fi
+  # Every mode, as the 2026-09-25 spike measured it for blind-audit: NEVER --dangerously-skip-permissions (with it
+  # agy read outside its cwd whatever else was passed), the no-tools line first, an empty cwd; --mode plan/--sandbox
+  # add nothing. The prompt carries the whole input, so a reviewer needs no repo. Code mode once ran in the caller's
+  # worktree with permissions skipped: agy ran `npm run lint`, type-checks and `rt … vitest` there on its own
+  # (2026-10-29, ryzen-old-1: load 81 on 32 threads, ~20 live agy processes) — a reviewer of a hostile diff with
+  # auto-approved shell access.
+  local ws="$JSON_TMPDIR/agy_ws"
+  mkdir -p "$ws" 2>/dev/null || { _AGY_CLASS="failed"; _AGY_ERR_TEXT="cannot create $ws"; return 1; }
+  (cd "$ws" && OLDPWD="$ws" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" agy -p "$BA_AGY_PREFIX"$'\n\n'"$REVIEW_PROMPT" \
+    --model "$model" --output-format json) < /dev/null > "$raw_file" 2>"$err_file" || status=$?
   _agy_unpack "$raw_file"
   result="$(cat "$_AGY_BODY_FILE" 2>/dev/null)"
   err="$(cat "$err_file" 2>/dev/null)"

@@ -32,6 +32,8 @@ trap cleanup_agy EXIT
 cat > "$BIN/agy" <<'MOCK'
 #!/usr/bin/env bash
 # Fake agy. Reads --model, logs every call, behaves per MOCK_AGY_MODE.
+# MOCK_AGY_ARGV: record the cwd, how many entries it holds, then one argv element per line.
+[ -n "${MOCK_AGY_ARGV:-}" ] && { pwd; ls -A | grep -c .; printf '%s\n' "$@"; } > "$MOCK_AGY_ARGV"
 model=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -103,6 +105,20 @@ out=$(run_adv transient-then-ok)
 calls=$(grep -c . "$CALLS")
 assert_contains "$out" "after retry" "the retried attempt's body is what comes back"
 assert_eq "2" "$calls" "exactly two calls: the 503 and its single retry"
+
+# ─── 1b. code mode gets no repo and no shell ──────────────────────────────
+# Bug caught: code mode ran agy in the caller's worktree with --dangerously-skip-permissions, and agy ran
+# `npm run lint`, type-checks and `rt … vitest` there by itself (2026-10-29: load 81 on 32 threads).
+start_test "agy.1b code mode runs agy in an empty dir, without skip-permissions, no-tools line first"
+reset_calls
+out=$(MOCK_AGY_ARGV="$AGYHOME/argv.txt" run_adv ok)
+argv="$(cat "$AGYHOME/argv.txt" 2>/dev/null)"
+if grep -qx -- '--dangerously-skip-permissions' "$AGYHOME/argv.txt"; then fail "no --dangerously-skip-permissions" "$argv"
+else pass "no --dangerously-skip-permissions"; fi
+assert_eq "0" "$(sed -n 2p "$AGYHOME/argv.txt")" "the cwd is empty"
+if [[ "$(sed -n 1p "$AGYHOME/argv.txt")" == "$PWD" ]]; then fail "not the caller's directory" "$argv"
+else pass "not the caller's directory"; fi
+assert_contains "$(sed -n 4p "$AGYHOME/argv.txt")" "Do not invoke any tools" "the prompt opens with the no-tools line"
 
 # ─── 2. the avatar eligibility failure is the same class ──────────────────
 start_test "agy.2 'Eligibility check failed: profile picture' is retried too"
