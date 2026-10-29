@@ -580,13 +580,13 @@ EOF
 
   # The variable name matters, and the first version of this test had it wrong: it set
   # ZUVO_CODEX_MODEL, which adversarial-review.sh reads ZERO times (the real one is
-  # ZUVO_MODEL_CODEX_PRIMARY). So the injection payload was never on any code path — and with no
+  # ZUVO_MODEL_CODEX_53 since v1.6.116, ZUVO_MODEL_CODEX_PRIMARY before). So the injection payload was never on any code path — and with no
   # positive control the single `!= *INJECTED*` assertion was true whether the sanitizer worked,
   # was deleted, or the provider never ran at all. A test that passes for a variable the subject
   # does not read is not testing the subject.
   # `codex-5.3` is the provider ID the dispatcher knows (see provider_model()); a bare `codex` is
   # not one, which is a second reason the original test could never exercise the sanitizer.
-  export ZUVO_MODEL_CODEX_PRIMARY='gpt-4; echo INJECTED'
+  export ZUVO_MODEL_CODEX_53='gpt-4; echo INJECTED'
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider codex-5.3"
 
   # POSITIVE CONTROL FIRST — prove the provider actually ran. Without it the negative assertion
