@@ -375,10 +375,12 @@ detect_providers() {
   # under a per-model in-flight cap (openrouter_inflight_cap) because its only host answers 429 to overlapping calls.
   # 2026-10-30: openrouter-mini left the default (owner's decision): in production (Bill, 7 days) 14% precision
   # against 28% for deepseek-v4.1-flash on byteplus-alt, the same real findings per call, and ~$17/day per host.
-  # It stays reachable by ZUVO_ADV_OPENROUTER_LANES or --provider.
+  # It stays reachable by ZUVO_ADV_OPENROUTER_LANES or --provider. 2026-10-30, same decision for openrouter-5
+  # (mercury-3): 27% precision but 15.3 real findings per 100 calls and 4.3 no other lane found, against 22.1 and
+  # 8.8 for byteplus-alt; ~$34/week, ~$0.10 per real finding, 12% empty answers.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3 openrouter-5}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
