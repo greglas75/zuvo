@@ -56,12 +56,15 @@ rl_body() { # rl_body <message> [<X-RateLimit-Reset ms>] — OpenRouter's 429 sh
     '{error: ({message: $m, code: 429} + (if $r == "" then {} else {metadata: {headers: {"X-RateLimit-Reset": $r}}} end))}'
 }
 
-# Bug caught: the lane missing from the default roster, so the owner's ZUVO_ADV_OPENROUTER=1 never runs it.
-start_test "fq.1 ZUVO_ADV_OPENROUTER=1 with a key puts openrouter-mini in the default roster"
+# Bug caught: the paid lane the owner turned off (2026-10-30) still billed through the default roster.
+start_test "fq.1 ZUVO_ADV_OPENROUTER=1 with a key leaves openrouter-mini out of the default roster"
 mkdir -p "$FTMP/c1/.zuvo"; ( umask 077; printf 'k' > "$FTMP/c1/.zuvo/openrouter.key" )
 listed=$(env -u OPENROUTER_API_KEY -u ZUVO_ADV_OPENROUTER_LANES HOME="$FTMP/c1" ZUVO_HOME="$FTMP/c1" ZUVO_ADV_OPENROUTER=1 \
   bash "$ADV" --list-providers 2>/dev/null | awk '$1 == "openrouter-mini"')
-assert_eq "openrouter-mini" "$listed" "listed by detection"
+assert_eq "" "$listed" "not listed by detection"
+listed=$(env -u OPENROUTER_API_KEY HOME="$FTMP/c1" ZUVO_HOME="$FTMP/c1" ZUVO_ADV_OPENROUTER=1 ZUVO_ADV_OPENROUTER_LANES=openrouter-mini \
+  bash "$ADV" --list-providers 2>/dev/null | awk '$1 == "openrouter-mini"')
+assert_eq "openrouter-mini" "$listed" "still listed when named in ZUVO_ADV_OPENROUTER_LANES"
 
 # Bug caught: the wrong model sent (a paid id, or "unknown"), or a $0 model stopped by the spend cap that bounds
 # the paid lanes — today's spend is over the cap here, and the free lane still reviews without asking /key.
