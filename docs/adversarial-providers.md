@@ -158,7 +158,7 @@ only for the tokens produced before the cut. Each OpenRouter answer names its en
 provider …`).
 
 **`openrouter-mini` and `openrouter-5` (since 2026-10-24, owner's decision).** The default OpenRouter roster is
-`openrouter-alt openrouter-3 openrouter-5` (`ZUVO_ADV_OPENROUTER=1`; `ZUVO_ADV_OPENROUTER_LANES`
+`openrouter-alt openrouter-3` (`ZUVO_ADV_OPENROUTER=1`; `ZUVO_ADV_OPENROUTER_LANES`
 overrides it). Both lanes answer to `ZUVO_OPENROUTER_DAILY_USD`.
 
 **`openrouter-mini` left the default on 2026-10-30 (owner's decision).** Bill's verdicts on ryzen-dev,
@@ -166,6 +166,10 @@ overrides it). Both lanes answer to `ZUVO_OPENROUTER_DAILY_USD`.
 (`deepseek-v4-1-flash`, Coding Plan), 23.5 vs 22.1 real findings per 100 calls, 8.1 vs 8.8 found by no other
 lane, and ~$119 a week on one host. Its 41% precision held only at low volume before 2026-10-24. The lane still
 runs when named in `ZUVO_ADV_OPENROUTER_LANES` or `--provider`.
+
+**`openrouter-5` left the default on 2026-10-30 too (owner's decision).** Bill, same window: 27% precision (350
+real / 949 false positive), but 15.3 real findings per 100 calls and 4.3 found by no other lane (byteplus-alt 22.1
+and 8.8), 12% empty answers, ~$34 a week: ~$0.10 per real finding, the most of any OpenRouter lane.
 
 - `openrouter-mini` runs the PAID `minimax/minimax-m3.1-flash` ($0.15/M in, $0.60/M out). From 2026-10-20 it ran
   the `:free` id; the free period ended on 2026-10-22, the id left OpenRouter, and the lane only timed out after
