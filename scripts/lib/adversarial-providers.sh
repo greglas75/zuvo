@@ -373,9 +373,12 @@ detect_providers() {
   # of the roster, the best marginal coverage measured). A `:free` model set by hand is still rationed, not billed
   # (openrouter_free_quota_*). 2026-10-24: openrouter-5 (inception/mercury-3, cheap and fast) joins the default,
   # under a per-model in-flight cap (openrouter_inflight_cap) because its only host answers 429 to overlapping calls.
+  # 2026-10-30: openrouter-mini left the default (owner's decision): in production (Bill, 7 days) 14% precision
+  # against 28% for deepseek-v4.1-flash on byteplus-alt, the same real findings per call, and ~$17/day per host.
+  # It stays reachable by ZUVO_ADV_OPENROUTER_LANES or --provider.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3 openrouter-mini openrouter-5}"
+      providers="${providers:+$providers }${ZUVO_ADV_OPENROUTER_LANES:-openrouter-alt openrouter-3 openrouter-5}"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
