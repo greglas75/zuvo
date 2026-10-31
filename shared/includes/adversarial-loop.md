@@ -214,15 +214,16 @@ or one that ignores the code, which is how this went unnoticed — reports a gre
 no model ever saw. That is the exact failure the loop exists to prevent, with the loop supplying
 the green: a 50583-char patch on 2026-07-31 dropped its single largest file and exited 0 with a
 normal verdict. Chunking now handles most oversized inputs without dropping anything, so 4 fires
-only where there is nothing to split on (`--mode tests`, a single ADDED line or a `--files` section
+only where there is nothing to split on (`--mode tests`, a single ADDED line of code or a `--files` section
 over the cap, chunking disabled; a single hunk over the cap is split at its lines) — rarer, not safer.
 A LINE no part can hold that the change does NOT add exits 0 and is recorded instead: a deleted
 file holding one is sent as its header plus an `=== OMITTED (zuvo-omit #N): deleted file … ===`
 line, a removed or context line keeps its first 200 bytes, and each such omission is an
 `input_omitted=` line in the proof (`input_omitted` in each `--json` result) and a
 `NOTE: input omitted:` on stderr. A deleted file of ordinary lines is split and reviewed whole. An
-added line over the cap is named as `input_unsplittable=` and still exits 4: added code is never
-shortened to a green.
+added line no part can hold in a test fixture (`.json`, `.jsonl`, `.ndjson`, `.csv`, `.tsv` under
+`__fixtures__/`, `fixtures/`, `testdata/` or `test-data/`) is recorded the same way. Any other added line over the cap is named as `input_unsplittable=` and
+still exits 4: added code is never shortened to a green.
 
 Defence in depth: `pg_artifact_proven` REFUSES an artifact carrying `input_truncated=true`
 outright, so the gates do not depend on any individual call-site having checked the code.
