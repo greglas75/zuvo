@@ -716,7 +716,11 @@ _ck_build_chunk_note() {
 #   * a REMOVED (`-`) or CONTEXT (` `) line no part can hold, in any other file, keeps its first
 #     OMIT_LINE_HEAD_BYTES bytes and an explicit `[line truncated (zuvo-omit #N): …]` tail — still one line, so
 #     the hunk's line counts stay right. Neither side is code the change adds.
-#   * an ADDED (`+`) line over the cap is left as it is: its part is truncated and the run exits 4, as before.
+#   * an ADDED (`+`) line no part can hold in a test FIXTURE (OMIT_DATA_FILE_RE: a data file under a fixture
+#     directory) is cut the same way: no reviewer can judge a megabyte of values, a truncated part would block
+#     the change on every retry, and it is recorded in the proof. The directory matters as much as the
+#     extension: on the extension alone, naming a shipped payload `x.json` would be enough to get it through.
+#   * an ADDED line over the cap in any other file is left as it is: its part is truncated and the run exits 4.
 #     Shortening it and exiting 0 would let a minified or generated payload into the tree with a green review
 #     of 200 bytes of it — the one outcome this driver exists to prevent. It is named on stderr and in the proof.
 #
@@ -728,16 +732,17 @@ _ck_build_chunk_note() {
 # `input_unsplittable=` line. The coverage gate is not involved: a deleted file is covered by an artifact whose
 # `files:` header lists it (pipeline-gate-lib.sh), never by the bytes the reviewer saw.
 OMIT_LINE_HEAD_BYTES=200
+OMIT_DATA_FILE_RE='(^|/)(__fixtures__|fixtures|testdata|test-data)/(.*/)?[^/]*\\.(json|jsonl|ndjson|csv|tsv)$'   # against the lowercased path
 INPUT_OMITTED=""        # one note per line: content left out of the input, the run proceeding
 INPUT_UNSPLITTABLE=""   # one note per line: an added line over the cap (its part is truncated, exit 4)
 _OMIT_NOTES=""          # one per line: kind<US>note<US>the key its stand-in line carries, `(zuvo-omit #N)`
 
 # _ck_omit_oversized <budget> <cap> <notes> — stdin, a diff, to stdout with the content above replaced; one line
-# per omission written to <notes>. A removed or context line is over when it, its section's file header and
-# trailer and 200 bytes are over <budget> (no hunk part can hold it); an added line is named when it and its
-# file header and trailer are over <cap> (the part holding it is truncated).
+# per omission written to <notes>. A removed or context line, or an added line of a fixture, is over when it,
+# its section's file header and trailer and 200 bytes are over <budget> (no hunk part can hold it); any other
+# added line is named when it and its file header and trailer are over <cap> (the part holding it is truncated).
 _ck_omit_oversized() {
-  LC_ALL=C awk -v budget="$1" -v cap="$2" -v notes="$3" -v head="$OMIT_LINE_HEAD_BYTES" -v hdr="$SUBHUNK_HEADER_BYTES" -v us=$'\037' '
+  LC_ALL=C awk -v budget="$1" -v cap="$2" -v notes="$3" -v head="$OMIT_LINE_HEAD_BYTES" -v hdr="$SUBHUNK_HEADER_BYTES" -v datafile="$OMIT_DATA_FILE_RE" -v us=$'\037' '
     function emitnote(kind, text, key) { printf "%s%s%s%s%s\n", kind, us, text, us, key > notes }
     # cuthead(s, n) — the first n bytes of s, never ending inside a UTF-8 sequence.
     function cuthead(s, n,   c) {
@@ -749,10 +754,10 @@ _ck_omit_oversized() {
     # section file header and trailer bytes, set by flush (a global: an awk local is not visible to a function it calls).
     function over(i) { return length(S[i]) + fx + hdr > budget }
     function nextkey() { return sprintf("(zuvo-omit #%d)", ++nk) }
-    function flush(   i, del, big, eb, nl, nb, c, len, key, hd, o, ab, oo, nn) {
+    function flush(   i, del, big, eb, nl, nb, c, len, key, hd, o, ab, oo, nn, data, what) {
       if (n == 0) return
       if (!indiff || h0 == 0) { for (i = 1; i <= n; i++) print S[i]; n = 0; return }
-      fx = 0; del = 0; big = 0
+      fx = 0; del = 0; big = 0; data = (tolower(path) ~ datafile)
       for (i = 1; i <= n; i++) {
         if (i < h0 || (ts && i >= ts)) fx += length(S[i]) + 1
         if (i < h0 && S[i] ~ /^deleted file mode /) del = 1
@@ -781,10 +786,11 @@ _ck_omit_oversized() {
           print S[i]; continue
         }
         c = substr(S[i], 1, 1); len = length(S[i]) - 1
-        if ((c == "-" || c == " ") && over(i)) {
+        if ((c == "-" || c == " " || (c == "+" && data)) && over(i)) {
           key = nextkey(); hd = cuthead(substr(S[i], 2), head)
-          printf "%s%s … [line truncated %s: %d of %d bytes omitted, over the chunk cap; %s content, not added by this change]\n", c, hd, key, len - length(hd), len, c == "-" ? "removed" : "unchanged context"
-          emitnote("omitted", sprintf("%s: %s line %d of %d bytes cut to its first %d — content omitted: over the chunk cap", path, c == "-" ? "removed" : "context", oo, len, length(hd)), key)
+          what = (c == "-" ? "removed content, not added by this change" : c == " " ? "unchanged context content, not added by this change" : "added fixture content, not reviewed")
+          printf "%s%s … [line truncated %s: %d of %d bytes omitted, over the chunk cap; %s]\n", c, hd, key, len - length(hd), len, what
+          emitnote("omitted", sprintf("%s: %s line %d of %d bytes cut to its first %d — content omitted: over the chunk cap", path, c == "-" ? "removed" : c == " " ? "context" : "added fixture", c == "+" ? nn : oo, len, length(hd)), key)
         } else {
           if (c == "+" && length(S[i]) + 1 + fx > cap)
             emitnote("unsplittable", sprintf("%s: added line %d of %d bytes is over the chunk cap and cannot be split — NOT omitted: the part holding it is truncated and the run exits 4", path, nn, len), "")
@@ -865,7 +871,7 @@ _ck_part_omissions() {
     kind="${line%%"$us"*}"; rest="${line#*"$us"}"; note="${rest%%"$us"*}"; key="${rest#*"$us"}"
     [[ "$kind" == omitted && "$key" =~ ^\(zuvo-omit\ \#([0-9]+)\)$ ]] || continue
     num="${BASH_REMATCH[1]}"
-    if LC_ALL=C grep -qE -- "^(=== OMITTED \(zuvo-omit #${num}\): deleted file |[- ].* … \[line truncated \(zuvo-omit #${num}\): [0-9]+ of [0-9]+ bytes omitted, over the chunk cap; (removed|unchanged context) content, not added by this change\]$)" "$1"; then
+    if LC_ALL=C grep -qE -- "^(=== OMITTED \(zuvo-omit #${num}\): deleted file |[-+ ].* … \[line truncated \(zuvo-omit #${num}\): [0-9]+ of [0-9]+ bytes omitted, over the chunk cap; ((removed|unchanged context) content, not added by this change|added fixture content, not reviewed)\]$)" "$1"; then
       out="${out:+$out$'\n'}$note"
     fi
   done <<< "$_OMIT_NOTES"

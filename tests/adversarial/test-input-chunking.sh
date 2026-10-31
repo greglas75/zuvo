@@ -930,6 +930,32 @@ assert_contains "$(cat "$CK_HK/err-43")" "NOTE: input unsplittable: huge.min.js:
 assert_eq "1|1" "$(grep -c -- 'n=1 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')|$(grep -c -- 'n=2 pad' "$CK_HK/parts-43"/*.in | awk -F: '{ s += $2 } END { print s }')" \
   "the two short lines before it reached a part whole"
 
+start_test "CK.43b an added line no part can hold in a FIXTURE is omitted and recorded: exit 0, whatever the case of its path"
+# Bug it catches: a one-line JSON fixture blocking a whole change with exit 4 on every retry (RD-10252).
+for ck43b in apps/api/__fixtures__/recovery.jsonl:0 TestData/DATA.JSON:1; do
+  ck43b_path=${ck43b%:*}; ck43b_n=43${ck43b#*:}0
+  { ck_new_file_diff "$ck43b_path" 3 | sed '$d'
+    awk 'BEGIN { printf "+"; for (i = 0; i < 40000; i++) printf "x"; printf " n=3\n" }'; } > "$CK_HK/data-$ck43b_n.diff"
+  ck_run_parts "$ck43b_n" "$CK_HK/data-$ck43b_n.diff"; rc=$?
+  assert_exit_code "0" "$rc" "$ck43b_path: the over-cap line does not cut its part"
+  assert_contains "$(cat "$CK_HK/art-$ck43b_n" 2>/dev/null)" "input_omitted=$ck43b_path: added fixture line 3 of 40004 bytes cut to its first 200" \
+    "$ck43b_path: the proof records the omission"
+  assert_contains "$(cat "$CK_HK/parts-$ck43b_n"/*.in)" "added fixture content, not reviewed]" "$ck43b_path: the reviewer is told the line was cut"
+  if grep -q 'input_truncated=true\|input_unsplittable=' "$CK_HK/art-$ck43b_n" 2>/dev/null; then
+    fail "$ck43b_path: no truncation recorded" "$(grep -c 'input_truncated=true' "$CK_HK/art-$ck43b_n")"
+  else
+    pass "$ck43b_path: no truncation recorded"
+  fi
+done
+
+start_test "CK.43c a data extension OUTSIDE a fixture directory is not enough: exit 4"
+# Bug it catches: renaming a shipped payload to x.json would get a megabyte through a green review unread.
+{ ck_new_file_diff src/payload.json 3 | sed '$d'
+  awk 'BEGIN { printf "+"; for (i = 0; i < 40000; i++) printf "x"; printf " n=3\n" }'; } > "$CK_HK/data-432.diff"
+ck_run_parts 432 "$CK_HK/data-432.diff"; rc=$?
+assert_exit_code "4" "$rc" "the part holding the line is cut"
+assert_contains "$(cat "$CK_HK/art-432" 2>/dev/null)" "input_unsplittable=src/payload.json: added line 3" "the proof names the line"
+
 start_test "CK.44 one hunk UNDER the budget that a long path's repeated header pushes over: split, never cut"
 # The chunk gate must judge a hunk by the split's own rule (file header + trailer + hunk over the budget). Judged
 # by its body alone, this hunk counted as one unsplittable unit, the file never chunked and was cut (exit 4).
