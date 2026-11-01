@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"id":"child","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent"}}}}}
+{"type":"token_usage_record","timestamp":"2026-01-02T00:00:00Z","payload":{"response_id":"shared","thread_id":"parent","usage":{"input_tokens":100,"cached_input_tokens":60,"output_tokens":10}}}
+{"type":"token_usage_record","timestamp":"2026-01-02T00:01:00Z","payload":{"response_id":"child-own","usage":{"input_tokens":80,"cached_input_tokens":40,"output_tokens":10}}}
+{"type":"token_usage_record","timestamp":"2026-01-03T00:00:00Z","payload":{"response_id":"end-exclusive","usage":{"input_tokens":999,"output_tokens":99}}}

@@ -1,0 +1,2 @@
+{"type":"session_meta","payload":{"id":"retry"}}
+{"type":"token_usage_record","timestamp":"2026-01-02T00:02:00Z","payload":{"response_id":"retry-own","usage":{"input_tokens":200,"cached_input_tokens":100,"output_tokens":20}}}

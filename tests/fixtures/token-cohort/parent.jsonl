@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"id":"parent"}}
+{"type":"token_usage_record","timestamp":"2026-01-01T00:00:00Z","payload":{"response_id":"before","usage":{"input_tokens":999,"output_tokens":99}}}
+{"type":"response_item","timestamp":"2026-01-02T00:00:00Z","payload":{"type":"function_call","name":"exec","arguments":"rt --wait synthetic"}}
+{"type":"token_usage_record","timestamp":"2026-01-02T00:00:00Z","payload":{"response_id":"shared","usage":{"input_tokens":100,"cached_input_tokens":60,"output_tokens":10}}}
