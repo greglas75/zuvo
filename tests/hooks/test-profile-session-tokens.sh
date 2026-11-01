@@ -128,5 +128,260 @@ else
   no "the dedup guard does not precede the analysis phase"
 fi
 
+# Response-accounting regressions exercise the CLI with synthetic, non-sensitive records.
+if python3 - "$PS" "$TMP" <<'PYTEST'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+SCRIPT, TMP = sys.argv[1:]
+sys.argv = [sys.argv[0]]
+START, END = "2026-08-17T10:00:00Z", "2026-08-17T10:10:00Z"
+
+
+def claude(response, minute, output=10):
+    return {"type": "assistant", "sessionId": "child", "parentSessionId": "parent",
+            "timestamp": f"2026-08-17T10:{minute:02}:00Z",
+            "message": {"id": response, "content": [{"type": "text", "text": "PRIVATE_PROMPT"}],
+                        "usage": {"input_tokens": 20, "cache_creation_input_tokens": 30,
+                                  "cache_read_input_tokens": 100, "output_tokens": output}}}
+
+
+def codex(response, minute, output=10):
+    return {"type": "token_usage_record", "timestamp": f"2026-08-17T10:{minute:02}:00Z",
+            "payload": {"response_id": response, "thread_id": "child", "parent_id": "parent",
+                        "usage": {"input_tokens": 150, "cached_input_tokens": 100,
+                                  "output_tokens": output}}}
+
+
+class Accounting(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir=TMP)
+        self.addCleanup(temporary.cleanup)
+        self.tmp = Path(temporary.name)
+
+    def run_profile(self, rows, *args, export=False):
+        path = self.tmp / "regression.jsonl"
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        dest = self.tmp / "usage.jsonl"
+        cmd = [sys.executable, SCRIPT, str(path), *args]
+        if export:
+            cmd += ["--usage-jsonl", str(dest)]
+        result = subprocess.run(cmd, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        details = [json.loads(line) for line in dest.read_text().splitlines()] if export else []
+        return report, details
+
+    def test_final_fragment_replaces_claude_cost_before_excluding_end(self):
+        rows = [claude("a", 0), claude("b", 1), claude("a", 2, 30),
+                claude("moved", 3), claude("moved", 10, 90), claude("c", 4)]
+        report, _ = self.run_profile(rows, START, END)
+        self.assertEqual((report["tokens"]["model_calls"], report["tokens"]["gross"]), (3, 500))
+        self.assertEqual(report["tokens"]["source"], "message.usage")
+
+    def test_codex_copies_replace_by_id_without_collapsing_equal_costs(self):
+        rows = [codex("a", 0), codex("b", 1), codex("a", 2, 30), codex("c", 3)]
+        report, _ = self.run_profile(rows)
+        self.assertEqual((report["tokens"]["model_calls"], report["tokens"]["fresh"]), (3, 200))
+
+    def test_parent_summaries_and_compactions_obey_window_without_exporting_child_detail(self):
+        rows = [claude("a", 0), claude("b", 1), claude("c", 2)]
+        rows += [{"type": "compacted", "timestamp": f"2026-08-17T10:{m:02}:00Z"} for m in (0, 10, 11)]
+        rows += [{"type": "user", "timestamp": f"2026-08-17T10:{m:02}:00Z",
+                  "toolUseResult": {"usage": {"input_tokens": 5, "output_tokens": 2}}}
+                 for m in (0, 10, 11)]
+        report, details = self.run_profile(rows, START, END, export=True)
+        self.assertEqual(report["tokens"]["compactions"], 1)
+        self.assertEqual(report["tokens"]["subagents"], {"calls": 1, "gross": 7})
+        self.assertEqual(len(details), 3)
+
+    def test_export_keeps_missing_ids_ambiguous_and_never_leaks_text(self):
+        rows = [claude(None, 0), claude(None, 1), claude("a", 2)]
+        report, details = self.run_profile(rows, export=True)
+        self.assertEqual(report["accounting_version"], 2)
+        self.assertEqual(report["tokens"]["missing_response_ids"], 2)
+        self.assertEqual([r["missing_response_id"] for r in details], [True, True, False])
+        self.assertEqual([r["response_id"] for r in details], [None, None, "a"])
+        self.assertEqual(details[0], {"accounting_version": 2, "timestamp": START,
+            "provider": "claude", "response_id": None, "thread_id": "child", "parent_id": "parent",
+            "input": 150, "cached_input": 100, "output": 10, "reasoning_output": 0,
+            "fresh": 60, "gross": 160, "source": "message.usage", "polling_proxy": None,
+            "missing_response_id": True})
+        self.assertNotIn("PRIVATE_PROMPT", json.dumps(details))
+
+    def test_polling_proxy_cursor_preserves_nearest_tool_including_equal_timestamps(self):
+        rows = [{"type": "response_item", "timestamp": START,
+                 "payload": {"type": "custom_tool_call", "name": "exec", "input": "rt --wait 123"}},
+                codex("a", 0), codex("b", 1),
+                {"type": "response_item", "timestamp": "2026-08-17T10:02:00Z",
+                 "payload": {"type": "custom_tool_call", "name": "exec", "input": "echo PRIVATE_TOOL"}},
+                codex("c", 2)]
+        report, details = self.run_profile(rows, export=True)
+        self.assertEqual(report["tokens"]["polling"]["calls"], 2)
+        self.assertNotIn("PRIVATE_TOOL", json.dumps(details))
+        self.assertEqual([r["polling_proxy"] for r in details], ["tool-label-regex-v1", "tool-label-regex-v1", None])
+
+    def test_tool_before_window_still_attributes_usage_inside_window(self):
+        rows = [{"type": "response_item", "timestamp": "2026-08-17T09:59:59Z",
+                 "payload": {"type": "custom_tool_call", "name": "exec", "input": "rt --wait 123"}},
+                codex("a", 0)]
+        report, details = self.run_profile(rows, START, END, export=True)
+        self.assertEqual(report["counts"]["tool_uses"], 0)
+        self.assertEqual(details[0]["polling_proxy"], "tool-label-regex-v1")
+
+    def test_empty_window_and_absent_usage_emit_empty_details_without_inventing_cost(self):
+        report, details = self.run_profile([claude("a", 0)], END, export=True)
+        self.assertEqual(details, [])
+        self.assertEqual(report["tokens"]["model_calls"], 0)
+        self.assertEqual(report["tokens"]["source"], "none")
+        no_usage = claude("no-usage", 0)
+        del no_usage["message"]["usage"]
+        report, details = self.run_profile([no_usage], export=True)
+        self.assertEqual(details, [])
+        self.assertEqual(report["tokens"]["model_calls"], 0)
+        self.assertEqual(report["tokens"]["missing_response_ids"], 0)
+
+    def test_invalid_usage_cannot_replace_existing_export(self):
+        for bad in (-1, 1.5, True, "3", None):
+            with self.subTest(bad=bad):
+                row = codex("a", 0)
+                row["payload"]["usage"]["input_tokens"] = bad
+                path, dest = self.tmp / "bad.jsonl", self.tmp / "preserve.jsonl"
+                path.write_text(json.dumps(row) + "\n")
+                dest.write_text("original\n")
+                result = subprocess.run([sys.executable, SCRIPT, str(path), "--usage-jsonl", str(dest)],
+                                        text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(dest.read_text(), "original\n")
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_incomplete_usage_cannot_be_reported_as_known_zero_cost(self):
+        for usage in ({}, {"input_tokens": 10}, {"output_tokens": 10}):
+            with self.subTest(usage=usage):
+                row = codex("known", 0)
+                row["payload"]["usage"] = usage
+                path = self.tmp / "incomplete.jsonl"
+                path.write_text(json.dumps(row) + "\n")
+                result = subprocess.run([sys.executable, SCRIPT, str(path)], text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_malformed_message_and_tool_input_fail_cleanly(self):
+        bad_tool = {"content": [{"type": "tool_use", "name": "Bash", "input": ["bad"]}]}
+        for message in ("bad", ["bad"], bad_tool):
+            with self.subTest(message=message):
+                row = claude("known", 0)
+                row["message"] = message
+                path = self.tmp / "malformed.jsonl"
+                path.write_text(json.dumps(row) + "\n")
+                result = subprocess.run([sys.executable, SCRIPT, str(path)], text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_output_alias_cannot_destroy_transcript(self):
+        path = self.tmp / "protected.jsonl"
+        original = json.dumps(codex("a", 0)) + "\n"
+        path.write_text(original)
+        symbolic, hard = self.tmp / "symbolic.jsonl", self.tmp / "hard.jsonl"
+        symbolic.symlink_to(path)
+        hard.hardlink_to(path)
+        for dest in (path, symbolic, hard):
+            with self.subTest(destination=str(dest)):
+                result = subprocess.run([sys.executable, SCRIPT, str(path), "--usage-jsonl", str(dest)],
+                                        text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(path.read_text(), original)
+
+    def test_codex_authoritative_usage_does_not_add_ui_counters_and_keeps_metadata(self):
+        rows = [{"type": "session_meta", "payload": {"id": "original-thread",
+                 "source": {"subagent": {"thread_spawn": {"parent_thread_id": "root"}}}}},
+                {"type": "event_msg", "timestamp": START,
+                 "payload": {"info": {"last_token_usage": {"input_tokens": 999, "output_tokens": 999}}}},
+                codex("a", 0)]
+        del rows[2]["payload"]["thread_id"]
+        del rows[2]["payload"]["parent_id"]
+        report, details = self.run_profile(rows, export=True)
+        self.assertEqual(report["tokens"]["gross"], 160)
+        self.assertEqual((details[0]["thread_id"], details[0]["parent_id"]), ("original-thread", "root"))
+
+    def test_error_event_text_does_not_abort_valid_usage(self):
+        rows = [{"type": "error", "timestamp": START, "message": "timeout"}, codex("a", 1)]
+        report, details = self.run_profile(rows, export=True)
+        self.assertEqual(report["tokens"]["gross"], 160)
+        self.assertEqual(len(details), 1)
+
+    def test_mixed_provider_records_keep_claude_cost_but_suppress_codex_ui_duplicates(self):
+        rows = [claude("a", 0), codex("a", 1), {"type": "event_msg", "timestamp": START,
+                "payload": {"info": {"last_token_usage": {"input_tokens": 999, "output_tokens": 999}}}}]
+        report, details = self.run_profile(rows, export=True)
+        self.assertEqual((report["tokens"]["model_calls"], report["tokens"]["gross"]), (2, 320))
+        self.assertEqual(report["tokens"]["source"], "mixed")
+        self.assertEqual([row["source"] for row in details], ["message.usage", "token_usage_record"])
+
+    def test_ui_fallback_preserves_explicit_parent_over_session_parent(self):
+        rows = [{"type": "session_meta", "payload": {"id": "child",
+                 "source": {"subagent": {"thread_spawn": {"parent_thread_id": "root"}}}}},
+                {"type": "event_msg", "timestamp": START, "payload": {"parent_id": "original-parent",
+                 "info": {"last_token_usage": {"input_tokens": 150, "output_tokens": 10}}}}]
+        _, details = self.run_profile(rows, export=True)
+        self.assertEqual(details[0]["parent_id"], "original-parent")
+
+    def test_export_does_not_replace_nonregular_destination_nodes(self):
+        path = self.tmp / "source.jsonl"
+        path.write_text(json.dumps(codex("a", 0)) + "\n")
+        directory, fifo = self.tmp / "directory", self.tmp / "fifo"
+        directory.mkdir()
+        os.mkfifo(fifo)
+        target, symbolic = self.tmp / "target", self.tmp / "symbolic"
+        target.write_text("keep")
+        symbolic.symlink_to(target)
+        for destination in (directory, fifo, symbolic):
+            with self.subTest(destination=destination.name):
+                before = destination.lstat()
+                result = subprocess.run([sys.executable, SCRIPT, str(path), "--usage-jsonl", str(destination)],
+                                        text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                after = destination.lstat()
+                self.assertEqual((after.st_mode, after.st_ino), (before.st_mode, before.st_ino))
+                self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(target.read_text(), "keep")
+
+    def test_fractional_timestamps_do_not_attribute_a_future_tool(self):
+        future = codex("later", 0)
+        future["timestamp"] = "2026-08-17T10:00:00.500Z"
+        rows = [future, codex("earlier", 0), {"type": "response_item",
+                "timestamp": "2026-08-17T10:00:00.250Z", "payload": {
+                    "type": "custom_tool_call", "name": "exec", "input": "rt --wait 123"}}]
+        _, details = self.run_profile(rows, export=True)
+        self.assertEqual([r["polling_proxy"] for r in details], [None, "tool-label-regex-v1"])
+
+    def test_invalid_cli_and_impossible_cache_fail_without_traceback(self):
+        path = self.tmp / "bad-cli.jsonl"
+        row = codex("a", 0)
+        path.write_text(json.dumps(row) + "\n")
+        for args in (["--usage-jsonl"], [END, START], ["--bogus"], ["bad-date"],
+                     ["0001-01-01T00:00:00+01:00"], ["9999-12-31T23:59:59-01:00"]):
+            with self.subTest(args=args):
+                result = subprocess.run([sys.executable, SCRIPT, str(path), *args], text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+        row["payload"]["usage"]["cached_input_tokens"] = 151
+        path.write_text(json.dumps(row) + "\n")
+        result = subprocess.run([sys.executable, SCRIPT, str(path)], text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+
+unittest.main()
+PYTEST
+then ok "response identity, window, export and validation regressions"
+else no "response identity, window, export and validation regressions"
+fi
+
 echo "  --- profile-session tokens: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
