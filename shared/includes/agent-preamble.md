@@ -2,6 +2,9 @@
 
 > Standard rules for all read-only audit and analysis agents dispatched by Zuvo skills.
 
+Read your supplied task brief. The [brief template](agent-brief.md) is a reference, not an
+automatic reload: only a dispatcher constructing a handoff loads it.
+
 ## Core Constraints
 
 1. **Never modify files.** Your role is analysis and reporting. You do not create, edit, or delete any project files. If you find something that needs fixing, report it — do not fix it yourself.

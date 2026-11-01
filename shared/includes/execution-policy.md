@@ -41,3 +41,13 @@ A repo-required full battery before push remains mandatory even if targeted evid
 Keep reports, matrices and command receipts in artifacts. Human updates state new findings and
 next actions; the final response states outcome, actual checks, limitations and file links.
 Do not print every successful gate or narrate unchanged waits unless the host requires an update.
+
+## Worker handoff
+
+For authorized delegation, assign one bounded task with explicit owner constraints and all seven
+[brief fields](agent-brief.md): task_id, file ownership, acceptance, dependencies, repo/ref, owner
+constraints and proof paths. Load that template when constructing the first handoff, not at every
+stage; reload when its full contents are no longer retained. For Codex mechanical workers, use
+`fork_turns="none"` when supported; use full history only when the task needs it and record why.
+Copy required owner constraints and instruction-reference paths into the brief: a clean context
+does not waive governing instructions. Existing authorization and verification gates still apply.
