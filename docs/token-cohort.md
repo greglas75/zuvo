@@ -5,10 +5,19 @@ retries, unknown runtime and ambiguous costs. It never discovers sessions or con
 A successful process means a valid report, including `INCONCLUSIVE`, not a successful experiment.
 
 ```bash
-python3 scripts/zuvo-home/profile-session.py transcript.jsonl \
-  2026-01-02T00:00:00Z 2026-01-03T00:00:00Z --usage-jsonl usage.jsonl
+python3 scripts/zuvo-home/profile-session.py transcript.jsonl --usage-jsonl usage.jsonl
 python3 scripts/zuvo-home/token-cohort.py --manifest manifest.json --out comparison.json
 ```
+
+**Cohort usage exports must be unwindowed:** omit both positional timestamp arguments when
+calling the profiler. Export all canonical final records from every listed source transcript.
+The manifest selects the report window; T2 resolves response identity and latest timestamps
+across all exports before applying [start,end).
+
+Filtering each transcript first loses information: a parent can contain an older response inside
+the window while a child contains the same response finalized exactly at the exclusive end.
+A windowed child export removes that final record, leaving T2 unable to reject the stale parent
+record. Unwindowed exports preserve it, so the response correctly contributes no in-window cost.
 
 All paths in a manifest, including paths inside its receipts and envelopes, resolve relative to
 **the manifest directory**. Files must be regular files (input symlinks may resolve to regular
@@ -189,7 +198,9 @@ To supply it, an attempt may list `profiler_summary_paths`. Each file is a schem
 }
 ```
 
-Copy the count from that transcript's profiler summary, retaining the exact requested window.
+Generate profiler summaries separately with the desired positional window arguments, without
+replacing the unwindowed usage exports. Copy the compaction count from that windowed summary,
+retaining the exact requested window.
 Windows must match; transcript_path must be in the attempt; every supplied transcript must be
 covered to produce a total. Equal counts for the same provider/thread are counted once;
 conflicting counts fail rather than guessing which export is authoritative. Partial summary
@@ -204,6 +215,10 @@ are Codex `token_usage_record|info.last_token_usage` and Claude `message.usage`;
 provider-incompatible sources fail validation. The tool checks
 `fresh=input-cached_input+output`, `gross=input+output`, and subset bounds, then sums the exported
 fields. It never reinterprets Claude/Codex cache semantics or adds reasoning to output again.
+
+Reported completeness assumes canonical **unwindowed** usage exports from the listed transcripts.
+The tool cannot authenticate source omissions or pre-filtering from a receipt alone. Supplying a
+windowed export violates this ingestion contract even when its individual rows validate.
 
 Known response IDs are global per provider. Across exports, the latest timestamp is the final
 usage authority, applied before [start,end) filtering. Equal-time conflicting amounts fail.
@@ -254,7 +269,10 @@ criteria, not confidence intervals or a significance test. The report never auth
 ## Verification
 
 `rt --light bash tests/hooks/test-token-cohort.sh` exercises the public CLI with synthetic data.
-Its integration case invokes the real profiler on the committed raw fixtures: parent, child,
+Its integration case invokes the real profiler without window arguments on the committed raw
+fixtures: parent, child,
 copied identity, repeated Claude usage, failed attempt plus retry and both window boundaries.
 The hand-calculated combined expected result is fresh 290, gross 590 and four unique responses.
+A second raw integration case finalizes a copied response in another transcript exactly at the
+manifest end and asserts zero fresh, gross and responses after global deduplication and filtering.
 The surrounding unknown/cohort cases are intentionally unsuitable for a live savings claim.

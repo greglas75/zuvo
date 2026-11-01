@@ -139,7 +139,7 @@ class CohortContract(unittest.TestCase):
         for name in ("parent", "child", "retry", "claude"):
             raw = self.base / f"{name}.jsonl"
             raw.write_bytes((FIXTURES / raw.name).read_bytes())
-            subprocess.run([sys.executable, str(PROFILER), str(raw), START, END,
+            subprocess.run([sys.executable, str(PROFILER), str(raw),
                             "--usage-jsonl", str(self.base / f"{name}-usage.jsonl")],
                            check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
         report = self.call()
@@ -151,6 +151,26 @@ class CohortContract(unittest.TestCase):
         first["usage_paths"].append("parent-copy.jsonl")
         (self.base / "parent-copy.jsonl").write_bytes((self.base / "parent-usage.jsonl").read_bytes())
         self.assertEqual(self.call()["observed_cost"], report["observed_cost"])
+
+    def test_real_exports_retain_cross_transcript_final_usage_before_windowing(self) -> None:
+        attempt = self.manifest["attempts"][0]
+        self.manifest["attempts"] = [attempt]
+        attempt.update(root_thread_id="parent", transcript_paths=["parent.jsonl", "child.jsonl"],
+                       usage_paths=["parent-usage.jsonl", "child-usage.jsonl"])
+        for name, at, amount in (("parent", START, 100), ("child", END, 200)):
+            records = [{"type": "session_meta", "payload": {"id": name}},
+                       {"type": "token_usage_record", "timestamp": at,
+                        "payload": {"response_id": "shared-final", "thread_id": "parent",
+                                    "usage": {"input_tokens": amount, "cached_input_tokens": 60,
+                                              "output_tokens": 10}}}]
+            self.write(f"{name}.jsonl", "\n".join(json.dumps(row) for row in records))
+            # Cohort exports must retain the child's later final record outside the report window.
+            args = [sys.executable, str(PROFILER), str(self.base / f"{name}.jsonl"),
+                    "--usage-jsonl", str(self.base / f"{name}-usage.jsonl")]
+            subprocess.run(args, check=True, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=30)
+        observed = self.call()["observed_cost"]
+        self.assertEqual((observed["fresh"], observed["gross"], observed["calls"]), (0, 0, 0))
 
     def test_global_response_identity_requires_unambiguous_thread_evidence(self) -> None:
         original = 100 if arm(0) == "control" else 60
