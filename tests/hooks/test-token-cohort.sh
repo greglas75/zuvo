@@ -47,16 +47,19 @@ class CohortContract(unittest.TestCase):
         self.write("runtime.json", self.runtime)
         for order in range(6):
             self.add_task(order, 100 if arm(order) == "control" else 60)
+
     def write(self, name: str, value: Any) -> str:
         path = self.base / name
         path.write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
         return name
+
     def usage(self, identity: str, fresh: int, thread: str | None = None) -> dict[str, Any]:
         return {"accounting_version": 2, "timestamp": START, "provider": "codex",
                 "response_id": identity, "thread_id": thread or identity, "parent_id": None,
                 "input": fresh + 90, "cached_input": 100, "output": 10, "reasoning_output": 0,
                 "fresh": fresh, "gross": fresh + 100, "source": "token_usage_record",
                 "polling_proxy": None, "missing_response_id": False}
+
     def add_task(self, order: int, fresh: int) -> dict[str, Any]:
         identity = f"t{order}"
         result = {"schema_version": 1, "outcome": "completed", "reviewer_verdict": "pass",
@@ -76,7 +79,9 @@ class CohortContract(unittest.TestCase):
         self.write(attempt["result_receipt"], result)
         self.manifest["attempts"].append(attempt)
         return attempt
-    def call(self, expected: int = 0, out: str = "report.json", error: str | None = None) -> dict[str, Any]:
+
+    def call(self, expected: int = 0, out: str = "report.json", error: str | None = None,
+             diagnostic: str | None = None) -> dict[str, Any]:
         self.write("manifest.json", self.manifest)
         proc = subprocess.run([sys.executable, str(CLI), "--manifest", str(self.base / "manifest.json"),
                                "--out", str(self.base / out)], capture_output=True, text=True, check=False,
@@ -85,20 +90,26 @@ class CohortContract(unittest.TestCase):
         self.assertNotIn("Traceback", proc.stderr)
         if error is not None:
             self.assertIn(error, proc.stderr)
+        if diagnostic is not None:
+            self.assertEqual(proc.stderr.strip(), f"token-cohort: {diagnostic}")
         return json.loads((self.base / out).read_text()) if expected == 0 else {}
+
     def expect_decision(self, verdict: str) -> dict[str, Any]:
         report = self.call()
         self.assertEqual(report["decision"]["verdict"], verdict)
         return report
+
     def result(self, index: int, **updates: Any) -> None:
         name = self.manifest["attempts"][index]["result_receipt"]
         value = json.loads((self.base / name).read_text())
         value.update(updates)
         self.write(name, value)
+
     def candidate_cost(self, fresh: int) -> None:
         for attempt in self.manifest["attempts"]:
             if attempt["cohort"] == "candidate":
                 self.write(attempt["usage_paths"][0], json.dumps(self.usage(attempt["task_id"], fresh)))
+
     def test_complete_balanced_trial_keeps_with_deterministic_distributions(self) -> None:
         report = self.expect_decision("KEEP")
         self.assertEqual(report["arms"]["control"]["fresh_per_completed"], 100)
@@ -109,6 +120,7 @@ class CohortContract(unittest.TestCase):
         self.assertIsNone(report["compactions"])
         self.assertIsNone(report["observations"]["empty_poll"])
         self.assertEqual(report, self.call())
+
     def test_real_exports_deduplicate_parent_child_and_keep_failed_retry_cost(self) -> None:
         self.manifest["attempts"] = []
         first = self.add_task(0, 100)
@@ -129,16 +141,17 @@ class CohortContract(unittest.TestCase):
             raw.write_bytes((FIXTURES / raw.name).read_bytes())
             subprocess.run([sys.executable, str(PROFILER), str(raw), START, END,
                             "--usage-jsonl", str(self.base / f"{name}-usage.jsonl")],
-                           check=True, capture_output=True, text=True)
+                           check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
         report = self.call()
         self.assertEqual(report["observed_cost"], json.loads((FIXTURES / "expected.json").read_text()))
         self.assertEqual(report["attempt_outcomes"]["failed"], 1)
         self.assertEqual(report["tasks"][0]["observed_cost"]["fresh"], 220)
-        self.assertGreater(report["polling_proxy"]["calls"], 0)
+        self.assertEqual(report["polling_proxy"]["calls"], 1)
         self.assertIsNone(report["observations"]["empty_poll"])
         first["usage_paths"].append("parent-copy.jsonl")
         (self.base / "parent-copy.jsonl").write_bytes((self.base / "parent-usage.jsonl").read_bytes())
         self.assertEqual(self.call()["observed_cost"], report["observed_cost"])
+
     def test_global_response_identity_requires_unambiguous_thread_evidence(self) -> None:
         original = 100 if arm(0) == "control" else 60
         cases = (
@@ -156,16 +169,27 @@ class CohortContract(unittest.TestCase):
                 report = self.expect_decision(verdict)
                 self.assertEqual(report["unattributed_cost"]["fresh"], unattributed)
                 self.assertEqual(report["observed_cost"]["fresh"], total)
+
     def test_unknown_evidence_cannot_become_zero_or_eligible(self) -> None:
-        cases = ("transcript", "empty_usage", "response_id", "runtime", "result", "quality", "window_only")
-        for case in cases:
+        original = 100 if arm(0) == "control" else 60
+        cases = (
+            # case, known cost, unknown-arm fresh, observed task fresh, outcome, known quality, derived arm
+            ("transcript", False, 0, original, "completed", True, arm(0)),
+            ("empty_usage", False, 0, 0, "completed", True, arm(0)),
+            ("response_id", False, 0, original, "completed", True, arm(0)),
+            ("runtime", True, original, original, "completed", True, "unknown"),
+            ("result", True, 0, original, "unknown", False, arm(0)),
+            ("quality", True, 0, original, "completed", False, arm(0)),
+            ("window_only", True, 480, original, "completed", True, "unknown"),
+        )
+        for case, cost_known, unknown_fresh, fresh, outcome, quality_known, cohort in cases:
             with self.subTest(case=case):
                 self.setUp()
                 attempt = self.manifest["attempts"][0]
                 if case == "transcript": attempt["missing_transcript_paths"] = ["lost.jsonl"]
                 elif case == "empty_usage": self.write("t0-usage.jsonl", "")
                 elif case == "response_id":
-                    row = self.usage("t0", 100); row.update(response_id=None, missing_response_id=True)
+                    row = self.usage("t0", original); row.update(response_id=None, missing_response_id=True)
                     self.write("t0-usage.jsonl", json.dumps(row))
                 elif case == "runtime": attempt["runtime_receipt"] = None
                 elif case == "result": attempt["result_receipt"] = None
@@ -174,9 +198,60 @@ class CohortContract(unittest.TestCase):
                     self.runtime["confirmed"]["parent"]["compaction_threshold"] = None
                     self.write("runtime.json", self.runtime)
                 report = self.expect_decision("INCONCLUSIVE")
-                if case in ("runtime", "window_only"):
-                    self.assertGreater(report["arms"]["unknown"]["observed_cost"]["fresh"], 0)
-                if case == "empty_usage": self.assertIsNone(report["tasks"][0]["cost"])
+                task = report["tasks"][0]
+                actual = (task["cost"] is not None, report["arms"]["unknown"]["observed_cost"]["fresh"],
+                          task["observed_cost"]["fresh"], task["outcome"], task["quality_known"],
+                          task["cohort"], task["declared_cohort"])
+                self.assertEqual(actual, (cost_known, unknown_fresh, fresh, outcome, quality_known, cohort, arm(0)))
+
+    def test_runtime_mismatch_and_impossible_threshold_preserve_declared_assignment(self) -> None:
+        cases = (
+            ("different_child_model", {"parent": {}, "child": {"model": "other"}}),
+            ("threshold_above_window", {"parent": {"compaction_threshold": 900000},
+                                        "child": {"compaction_threshold": 900000}}),
+        )
+        for case, changes in cases:
+            with self.subTest(case=case):
+                self.setUp()
+                runtime = json.loads((self.base / "runtime.json").read_text())
+                for role, updates in changes.items(): runtime["confirmed"][role].update(updates)
+                self.write("runtime.json", runtime)
+                report = self.expect_decision("INCONCLUSIVE")
+                self.assertEqual(report["arms"]["unknown"]["observed_cost"]["fresh"], 480)
+                self.assertEqual(report["arms"]["unknown"]["tasks"], 6)
+                self.assertEqual([(task["declared_cohort"], task["cohort"]) for task in report["tasks"]],
+                                 [(arm(order), "unknown") for order in range(6)])
+
+    def test_final_timestamp_wins_across_exports_before_exclusive_window_filter(self) -> None:
+        original = 100 if arm(0) == "control" else 60
+        cases = (
+            ("later_inside_old_first", "2026-01-02T00:01:00Z", ["old.jsonl", "latest.jsonl"], 40, 6),
+            ("later_inside_new_first", "2026-01-02T00:01:00Z", ["latest.jsonl", "old.jsonl"], 40, 6),
+            ("later_at_end_old_first", END, ["old.jsonl", "latest.jsonl"], 0, 5),
+            ("later_at_end_new_first", END, ["latest.jsonl", "old.jsonl"], 0, 5),
+        )
+        for case, at, paths, task_fresh, calls in cases:
+            with self.subTest(case=case):
+                self.setUp()
+                self.write("old.jsonl", json.dumps(self.usage("t0", 200)))
+                latest = {**self.usage("t0", 40), "timestamp": at}
+                self.write("latest.jsonl", json.dumps(latest))
+                self.manifest["attempts"][0]["usage_paths"] = paths
+                report = self.call()
+                self.assertEqual(report["observed_cost"]["fresh"], 480 - original + task_fresh)
+                self.assertEqual(report["observed_cost"]["calls"], calls)
+                self.assertEqual(report["tasks"][0]["observed_cost"]["fresh"], task_fresh)
+
+    def test_nonconstant_task_costs_interpolate_median_and_p90(self) -> None:
+        self.add_task(6, 100 if arm(6) == "control" else 60)
+        self.add_task(7, 100 if arm(7) == "control" else 60)
+        candidates = [attempt for attempt in self.manifest["attempts"] if attempt["cohort"] == "candidate"]
+        for attempt, fresh in zip(candidates, (10, 20, 70, 100), strict=True):
+            self.write(attempt["usage_paths"][0], json.dumps(self.usage(attempt["task_id"], fresh)))
+        # Median=(20+70)/2=45; P90 lies 70% between 70 and 100, yielding 91.
+        report = self.call()
+        self.assertEqual(report["arms"]["candidate"]["fresh_distribution"], {"median": 45, "p90": 91})
+
     def test_descriptive_unknown_baseline_needs_no_invented_preregistration(self) -> None:
         self.manifest["policy"]["frozen_at"] = "2026-01-04T00:00:00Z"
         for attempt in self.manifest["attempts"]:
@@ -184,17 +259,20 @@ class CohortContract(unittest.TestCase):
         report = self.expect_decision("INCONCLUSIVE")
         self.assertEqual(report["observed_cost"]["fresh"], 480)
         self.assertEqual(report["arms"]["unknown"]["tasks"], 6)
+
     def test_zero_completions_preserves_abandoned_spend_and_null_ratio(self) -> None:
         for index in range(6): self.result(index, outcome="failed", reviewer_verdict="fail", green_at=None)
         report = self.expect_decision("INCONCLUSIVE")
         self.assertEqual(report["observed_cost"]["fresh"], 480)
         self.assertIsNone(report["arms"]["candidate"]["fresh_per_completed"])
+
     def test_one_extreme_task_cannot_create_stable_savings(self) -> None:
         control = next(a for a in self.manifest["attempts"] if a["cohort"] == "control")
         self.write(control["usage_paths"][0], json.dumps(self.usage(control["task_id"], 1000)))
         self.candidate_cost(150)
         report = self.expect_decision("INCONCLUSIVE")
         self.assertFalse(report["decision"]["leave_one_out_stable"])
+
     def test_adverse_quality_or_time_cannot_keep(self) -> None:
         cases = (
             ("critical", {"critical_regressions": 1}, {}, "ROLLBACK", ["quality_regression"]),
@@ -215,11 +293,13 @@ class CohortContract(unittest.TestCase):
                 report = self.expect_decision(verdict)
                 self.assertEqual(report["decision"]["strata"][0]["reasons"], reasons)
                 self.assertEqual(report["arms"]["candidate"]["fresh_per_completed"], 60)
+
     def test_unequal_arm_sizes_cannot_turn_equal_correction_rates_into_harm(self) -> None:
         self.add_task(6, 100 if arm(6) == "control" else 60)
         for index in range(7): self.result(index, review_corrections=1)
         report = self.expect_decision("INCONCLUSIVE")
         self.assertIn("unequal_arm_sizes", report["decision"]["strata"][0]["reasons"])
+
     def test_mixed_stratum_verdicts_expose_the_adverse_stratum(self) -> None:
         for order in range(6, 12):
             assigned = arm(order - 6, "review")
@@ -296,19 +376,27 @@ class CohortContract(unittest.TestCase):
 
     def test_observation_edges_keep_passive_telemetry_separate_and_preserve_window_context(self) -> None:
         cases = (
-            ("heartbeat_between_reads", [(START, "pending", "a"),
-             ("2026-01-02T00:00:01Z", "heartbeat", "different"),
-             ("2026-01-02T00:00:02Z", "empty_poll", "a")], 1,
+            ("heartbeat_between_reads", [(START, "pending", "a", False),
+             ("2026-01-02T00:00:01Z", "heartbeat", "different", True),
+             ("2026-01-02T00:00:02Z", "empty_poll", "a", False)], 1,
              {"pending": 1, "heartbeat": 1, "empty_poll": 1}),
-            ("nearest_prior_before_window", [("2026-01-01T23:59:59Z", "pending", "a"),
-             (START, "empty_poll", "a")], 1, {"empty_poll": 1}),
-            ("no_in_window_observations", [("2026-01-01T23:59:59Z", "pending", "a")], None, {}),
+            ("nearest_prior_before_window", [("2026-01-01T23:59:59Z", "pending", "a", False),
+             (START, "empty_poll", "a", False)], 1, {"empty_poll": 1}),
+            ("no_in_window_observations", [("2026-01-01T23:59:59Z", "pending", "a", False)], None, {}),
+            ("terminal_then_explicit_restart", [(START, "changed_result", "a", True),
+             ("2026-01-02T00:00:01Z", "pending", "a", False),
+             ("2026-01-02T00:00:02Z", "empty_poll", "a", False)], 1,
+             {"changed_result": 1, "pending": 1, "empty_poll": 1}),
+            ("nonempty_predecessor", [(START, "pending", "a", True),
+             ("2026-01-02T00:00:01Z", "empty_poll", "a", False)], 0, {"pending": 1, "empty_poll": 1}),
+            ("unknown_nonempty_predecessor", [(START, "pending", "a", None),
+             ("2026-01-02T00:00:01Z", "empty_poll", "a", False)], 0, {"pending": 1, "empty_poll": 1}),
         )
         for name, states, expected_empty, expected_events in cases:
             with self.subTest(edge=name):
                 rows = [{"schema_version": 1, "task_id": "t0", "subject_id": "job", "timestamp": at,
-                         "state_hash": state, "event": event, "nonempty": False, "source": "synthetic"}
-                        for at, event, state in states]
+                         "state_hash": state, "event": event, "nonempty": nonempty, "source": "synthetic"}
+                        for at, event, state, nonempty in states]
                 self.write("edges.jsonl", "\n".join(json.dumps(row) for row in rows))
                 self.manifest["observation_paths"] = ["edges.jsonl"]
                 observed = self.call()["observations"]
@@ -333,7 +421,7 @@ class CohortContract(unittest.TestCase):
         self.call(2)
 
     def test_invalid_input_table_fails_without_replacing_report(self) -> None:
-        cases = ("empty", "json", "deep_json", "version", "accounting", "negative", "bool", "nan", "totals",
+        cases = ("empty", "json", "deep_json", "duplicate_keys", "version", "accounting", "negative", "bool", "nan", "totals",
                  "identity", "timestamp", "assignment", "chronology", "duplicate_attempt", "retry_arm",
                  "receipt", "null_receipt", "huge", "source", "provider_source", "policy_prompt",
                  "observation", "conflicting_copy")
@@ -364,17 +452,24 @@ class CohortContract(unittest.TestCase):
                 elif case == "provider_source": row["source"] = "message.usage"
                 elif case == "policy_prompt": self.manifest["policy"]["prompt"] = "PRIVATE_PROMPT_MARKER"
                 elif case == "observation":
-                    self.write("observations.jsonl", '{"event":"invented"}')
+                    observation = {"schema_version": 1, "task_id": "t0", "subject_id": "job",
+                                   "timestamp": START, "state_hash": "a", "event": "invented",
+                                   "nonempty": False, "source": "synthetic"}
+                    self.write("observations.jsonl", json.dumps(observation))
                     self.manifest["observation_paths"] = ["observations.jsonl"]
                 elif case == "conflicting_copy":
                     self.write("copy.jsonl", json.dumps(self.usage("t0", 99)))
                     attempt["usage_paths"].append("copy.jsonl")
-                raw = {"json": "{", "deep_json": "[" * 20000 + "0" + "]" * 20000}.get(case, json.dumps(row))
+                raw = {"json": "{", "deep_json": "[" * 20000 + "0" + "]" * 20000,
+                       "duplicate_keys": json.dumps(row)[:-1] + ',"source":"token_usage_record"}'
+                       }.get(case, json.dumps(row))
                 self.write("t0-usage.jsonl", raw)
                 self.write("report.json", "sentinel")
                 expected_error = {"negative": "reasoning_output must be finite and nonnegative",
                                   "deep_json": "recursion"}.get(case)
-                self.call(2, error=expected_error)
+                diagnostic = {"duplicate_keys": "duplicate JSON key source",
+                              "observation": "invalid observation event"}.get(case)
+                self.call(2, error=expected_error, diagnostic=diagnostic)
                 self.assertEqual((self.base / "report.json").read_text(), "sentinel")
 
     def test_output_cannot_clobber_inputs_through_paths_or_aliases(self) -> None:

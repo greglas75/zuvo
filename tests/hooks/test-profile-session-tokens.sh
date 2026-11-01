@@ -258,29 +258,42 @@ class Accounting(unittest.TestCase):
                                         text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(dest.read_text(), "original\n")
+                self.assertIn("input_tokens must be a nonnegative integer", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
     def test_incomplete_usage_cannot_be_reported_as_known_zero_cost(self):
-        for usage in ({}, {"input_tokens": 10}, {"output_tokens": 10}):
-            with self.subTest(usage=usage):
+        cases = (
+            ("empty usage", {}, "usage is missing required input_tokens"),
+            ("missing output", {"input_tokens": 10}, "usage is missing required output_tokens"),
+            ("missing input", {"output_tokens": 10}, "usage is missing required input_tokens"),
+        )
+        for name, usage, diagnostic in cases:
+            with self.subTest(case=name):
                 row = codex("known", 0)
                 row["payload"]["usage"] = usage
                 path = self.tmp / "incomplete.jsonl"
                 path.write_text(json.dumps(row) + "\n")
                 result = subprocess.run([sys.executable, SCRIPT, str(path)], text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(diagnostic, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
     def test_malformed_message_and_tool_input_fail_cleanly(self):
         bad_tool = {"content": [{"type": "tool_use", "name": "Bash", "input": ["bad"]}]}
-        for message in ("bad", ["bad"], bad_tool):
-            with self.subTest(message=message):
+        cases = (
+            ("message is text", "bad", "message must be an object"),
+            ("message is array", ["bad"], "message must be an object"),
+            ("tool input is array", bad_tool, "tool input must be an object"),
+        )
+        for name, message, diagnostic in cases:
+            with self.subTest(case=name):
                 row = claude("known", 0)
                 row["message"] = message
                 path = self.tmp / "malformed.jsonl"
                 path.write_text(json.dumps(row) + "\n")
                 result = subprocess.run([sys.executable, SCRIPT, str(path)], text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30)
                 self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(diagnostic, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
     def test_output_alias_cannot_destroy_transcript(self):
@@ -308,6 +321,24 @@ class Accounting(unittest.TestCase):
         report, details = self.run_profile(rows, export=True)
         self.assertEqual(report["tokens"]["gross"], 160)
         self.assertEqual((details[0]["thread_id"], details[0]["parent_id"]), ("original-thread", "root"))
+
+    def test_thread_lifetime_comparison_does_not_claim_window_or_mixed_coverage(self):
+        cases = (
+            ("whole-thread match", 320, (), [], 320, True),
+            ("resumed thread differs", 600, (), [], 320, False),
+            ("explicit start is not lifetime", 320, (START,), [], 320, None),
+            ("explicit window is not lifetime", 320, (START, END), [], 320, None),
+            ("mixed provider costs are not one thread total", 320, (), [claude("c", 2)], 480, None),
+        )
+        for name, total, bounds, extra_rows, gross, coverage in cases:
+            with self.subTest(case=name):
+                first, final = codex("a", 0), codex("b", 1)
+                first["payload"]["thread_token_usage"] = {"total_tokens": 160}
+                final["payload"]["thread_token_usage"] = {"total_tokens": total}
+                report, _ = self.run_profile([first, final, *extra_rows], *bounds)
+                self.assertEqual(report["tokens"]["thread_total_tokens"], total)
+                self.assertEqual(report["tokens"]["gross"], gross)
+                self.assertIs(report["tokens"]["covers_full_thread"], coverage)
 
     def test_error_event_text_does_not_abort_valid_usage(self):
         rows = [{"type": "error", "timestamp": START, "message": "timeout"}, codex("a", 1)]
@@ -359,6 +390,35 @@ class Accounting(unittest.TestCase):
                     "type": "custom_tool_call", "name": "exec", "input": "rt --wait 123"}}]
         _, details = self.run_profile(rows, export=True)
         self.assertEqual([r["polling_proxy"] for r in details], [None, "tool-label-regex-v1"])
+
+    def test_bad_paths_and_message_content_fail_without_destroying_sources_or_export(self):
+        source, bad_source = self.tmp / "source.jsonl", self.tmp / "bad-content.jsonl"
+        original = json.dumps(claude("a", 0)) + "\n"
+        bad_row = claude("a", 0)
+        bad_row["message"]["content"] = 42
+        bad_original = json.dumps(bad_row) + "\n"
+        source.write_text(original)
+        bad_source.write_text(bad_original)
+        old_export, missing_output = self.tmp / "old.jsonl", self.tmp / "absent" / "usage.jsonl"
+        old_export.write_text("previous export\n")
+        cases = (
+            ("missing transcript", self.tmp / "missing.jsonl", old_export, "no such transcript:"),
+            ("invalid content", bad_source, old_export, "message content must be text or an array"),
+            ("missing output directory", source, missing_output, "cannot write usage output:"),
+        )
+        for name, transcript, destination, diagnostic in cases:
+            with self.subTest(case=name):
+                result = subprocess.run(
+                    [sys.executable, SCRIPT, str(transcript), "--usage-jsonl", str(destination)],
+                    text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=30,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(diagnostic, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(old_export.read_text(), "previous export\n")
+                self.assertEqual(source.read_text(), original)
+                self.assertEqual(bad_source.read_text(), bad_original)
+        self.assertFalse(missing_output.exists())
 
     def test_invalid_cli_and_impossible_cache_fail_without_traceback(self):
         path = self.tmp / "bad-cli.jsonl"
