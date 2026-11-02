@@ -1092,11 +1092,14 @@ Enforcement: print the gate check as a checklist with actual `[x]` / `[ ]` marks
 > printf '%s' "$VALIDITY_GATE_BLOCK" | python3 scripts/verify-review-claims.py \
 >   --claims - --anchor "<the reviewed range or artifact slug>" --strict
 > ```
-> `verify-review-claims.py` reads the HARNESS-written session transcript
-> (`~/.claude/projects/<munged-cwd>/*.jsonl`) and compares `tier2_subagents.*: DISPATCHED(...)`,
-> `adversarial.passes_run` and `self_review_flag: yes — used --multi` against the `Agent`/`Task`
-> and `adversarial-review` tool calls that ACTUALLY executed. A `DISPATCHED(<marker>)` typed
-> without a dispatch is now a reported disagreement, not an invisible one.
+> On Codex, add `--transcript "<actual current rollout JSONL>"`; resolve the path from the
+> current session's metadata. Default discovery supports Claude project logs only. Never
+> synthesize a transcript or borrow another session's evidence to satisfy the gate.
+> The verifier compares positive minimum-count claims and `used --multi` with recorded tool
+> invocation evidence. Codex supports direct JSON calls and literal orchestration requests;
+> unsupported evidence needed by a claim yields UNKNOWN (strict exit 2). A provable discrepancy
+> still fails even when another claim is unknown. Invocation evidence does not prove successful
+> execution, provider completion or review quality; those require the actual review artifacts.
 >
 > Plus the two pre-existing mechanical backstops: the content-keyed artifact (`pg_range_reviewed`)
 > and its adversarial proof file carrying >=2 `REVIEW BY:` lines (`pg_artifact_proven`).
