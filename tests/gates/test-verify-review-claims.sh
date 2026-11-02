@@ -280,5 +280,193 @@ else
   bad "review/SKILL.md no longer references verify-review-claims.py — the check is orphaned"
 fi
 
+# Codex records use direct JSON tool calls or raw JavaScript orchestration, never Claude content blocks.
+if python3 - "$V" "$TMP" <<'PYCODEX'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+VERIFIER, TEMP_ROOT = sys.argv[1:]
+sys.argv = [sys.argv[0]]
+REVIEW = "adversarial-review --multi --mode code"
+
+
+def codex(name, body, kind="function_call"):
+    field = "input" if kind == "custom_tool_call" else "arguments"
+    return {"type": "response_item", "payload": {"type": kind, "name": name, field: body}}
+
+
+def js(body):
+    return codex("exec", body, "custom_tool_call")
+
+
+class CodexEvidence(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir=TEMP_ROOT)
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def verify(self, rows, claims, expected):
+        path = self.root / "transcript.jsonl"
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        result = subprocess.run(
+            [sys.executable, VERIFIER, "--transcript", str(path), "--claims", "-", "--strict"],
+            input=claims, text=True, capture_output=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        return result.stdout
+
+    def test_direct_codex_calls_do_not_false_accuse_real_dispatch_and_review(self):
+        for kind in ("function_call", "custom_tool_call"):
+            with self.subTest(kind=kind):
+                rows = [codex("exec_command", json.dumps({"cmd": REVIEW}), kind),
+                        codex("spawn_agent", json.dumps({"task_name": "cq_audit", "message": "PRIVATE"}))]
+                output = self.verify(rows, "  cq: DISPATCHED(marker)\npasses_run: 1\nself_review_flag: yes used --multi", 0)
+                self.assertIn("dispatches=1 adversarial_calls=1 (--multi: 1)", output)
+                self.assertNotIn("PRIVATE", output)
+
+    def test_raw_js_await_and_promise_arrays_count_only_literal_command_calls(self):
+        cases = (
+            ("await wrapper", 'text(await tools.exec_command({cmd: "'+REVIEW+'", max_output_tokens: 1000}));'),
+            ("promise array", "const results = await Promise.allSettled([tools.exec_command({cmd: '"+REVIEW+
+             "'}), tools.exec_command({cmd: 'echo not-a-review'})]); text(results);"),
+            ("escaped continuation", 'await tools.exec_command({cmd: '+json.dumps("adversarial-review " + chr(92) + "\n --multi")+'});'),
+        )
+        for name, body in cases:
+            with self.subTest(case=name):
+                output = self.verify([js(body)], "passes_run: 1\nself_review_flag: yes used --multi", 0)
+                self.assertIn("adversarial_calls=1 (--multi: 1)", output)
+
+    def test_js_strings_and_comments_do_not_fabricate_invocation_evidence(self):
+        example = 'await tools.exec_command({cmd: "adversarial-review --multi"})'
+        body = ('const example = ' + json.dumps(example) + '; '
+                '// await tools.exec_command({cmd: "adversarial-review --multi"})\n'
+                '/* tools.exec_command({cmd: "adversarial-review --multi"}) */ text(example);')
+        output = self.verify([js(body)], "passes_run: 1", 1)
+        self.assertIn("ZERO adversarial-review invocations", output)
+
+    def test_unreadable_or_dynamic_calls_are_unknown_instead_of_false_zero_or_pass(self):
+        cases = (
+            ("dynamic command", js('await tools.exec_command({cmd: command});')),
+            ("concatenated command", js('await tools.exec_command({cmd: "adversarial-review " + flags});')),
+            ("interpolated command", js('await tools.exec_command({cmd: `adversarial-review ${flags}`});')),
+            ("computed tool", js('await tools[method]({cmd: "adversarial-review"});')),
+            ("unexecuted callback", js('const f = () => tools.exec_command({cmd: "adversarial-review"});')),
+            ("conditional call", js('false && tools.exec_command({cmd: "adversarial-review"});')),
+            ("truncated literal", js('await tools.exec_command({cmd: "adversarial-review')),
+            ("unreadable direct arguments", codex("exec_command", "not-json")),
+            ("object method not called", js('const o = { f() { tools.exec_command({cmd: "adversarial-review"}); }};')),
+            ("getter not read", js('const o = { get x() { tools.exec_command({cmd: "adversarial-review"}); }};')),
+            ("labeled break", js('done: { break done; tools.exec_command({cmd: "adversarial-review"}); }')),
+            ("non-ASCII identifier", js('await πtools.exec_command({cmd: "adversarial-review"});')),
+            ("global tool alias", js('globalThis["tools"].exec_command({cmd: "adversarial-review"});')),
+            ("self tool alias", js('self["tools"].exec_command({cmd: "adversarial-review"});')),
+            ("window tool alias", js('window["tools"].exec_command({cmd: "adversarial-review"});')),
+            ("global computed alias", js('global["tools"].exec_command({cmd: "adversarial-review"});')),
+            ("this computed alias", js('this["tools"].exec_command({cmd: "adversarial-review"});')),
+            ("shadowed tools", js('const tools = fake; tools.exec_command({cmd: "adversarial-review"});')),
+        )
+        for name, row in cases:
+            with self.subTest(case=name):
+                output = self.verify([row], "passes_run: 1", 2)
+                self.assertIn("UNKNOWN", output)
+                self.assertNotIn("ZERO adversarial-review", output)
+                self.assertNotIn("consistent with the transcript", output)
+
+    def test_unknown_calls_only_block_claims_that_need_their_evidence(self):
+        known = codex("exec_command", json.dumps({"cmd": REVIEW}))
+        unknown = js('await tools.exec_command({cmd: command});')
+        output = self.verify([known, unknown], "passes_run: 1", 0)
+        self.assertIn("unsupported", output.lower())
+        self.assertIn("consistent with the transcript", output)
+        output = self.verify([known, unknown], "passes_run: 0\nself_review_flag: yes used --multi", 0)
+        self.assertIn("adversarial_calls=1 (--multi: 1)", output)
+        self.assertIn("UNKNOWN", self.verify([known, unknown], "passes_run: 2", 2))
+        self.assertIn("consistent with the transcript", self.verify([unknown], "passes_run: 0", 0))
+        self.assertIn("consistent with the transcript", self.verify([unknown], "", 0))
+        self.assertIn("UNKNOWN", self.verify([codex("spawn_agent", "not-json")], "  cq: DISPATCHED(m)", 2))
+
+    def test_unknown_review_evidence_cannot_hide_a_proven_dispatch_disagreement(self):
+        cases = (
+            ("unknown reviews, false dispatch", [codex("exec_command", "not-json")],
+             "  cq: DISPATCHED(m)\npasses_run: 2", "ZERO Agent/Task", "ZERO adversarial-review"),
+            ("unknown dispatch, false review", [codex("spawn_agent", "not-json")],
+             "  cq: DISPATCHED(m)\npasses_run: 2", "ZERO adversarial-review", "ZERO Agent/Task"),
+        )
+        for name, rows, claims, proven, uncertain in cases:
+            with self.subTest(case=name):
+                output = self.verify(rows, claims, 1)
+                self.assertIn("DISAGREEMENT", output)
+                self.assertIn(proven, output)
+                self.assertNotIn(uncertain, output)
+                self.assertIn("UNKNOWN", output)
+
+    def test_nonempty_stdin_is_unknown_review_evidence_but_empty_poll_is_irrelevant(self):
+        cases = (
+            ("direct command write", codex("write_stdin", json.dumps({"chars": REVIEW + "\n"})), 2),
+            ("raw JS command write", js('await tools.write_stdin({chars: '+json.dumps(REVIEW+'\n')+'});'), 2),
+            ("direct empty poll", codex("write_stdin", json.dumps({"chars": ""})), 1),
+            ("direct absent chars", codex("write_stdin", json.dumps({"session_id": 1})), 1),
+            ("raw JS empty poll", js('await tools.write_stdin({chars: "", session_id: 1});'), 1),
+            ("raw JS absent chars", js('await tools.write_stdin({session_id: 1});'), 1),
+        )
+        for name, row, exit_code in cases:
+            with self.subTest(case=name):
+                output = self.verify([row], "passes_run: 1", exit_code)
+                self.assertIn("adversarial_calls=0", output)
+
+    def test_flat_helper_import_survives_isolated_python_and_conflicting_lib_package(self):
+        package = self.root / "lib"
+        package.mkdir()
+        (package / "__init__.py").write_text('raise RuntimeError("wrong lib package imported")\n')
+        path = self.root / "calls.jsonl"
+        path.write_text(json.dumps(codex("exec_command", json.dumps({"cmd": REVIEW}))) + "\n")
+        for flags in ((), ("-P",), ("-I",)):
+            with self.subTest(flags=flags):
+                result = subprocess.run(
+                    [sys.executable, *flags, VERIFIER, "--transcript", str(path), "--claims", "-", "--strict"],
+                    input="passes_run: 1", text=True, capture_output=True, timeout=20, cwd=self.root,
+                    env={**os.environ, "PYTHONPATH": str(self.root)},
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("adversarial_calls=1", result.stdout)
+                self.assertNotIn("wrong lib package imported", result.stderr)
+
+    def test_codex_default_does_not_borrow_an_unrelated_claude_transcript(self):
+        home = self.root / "home"
+        transcripts = home / ".claude" / "projects" / str(self.root).replace("/", "-")
+        transcripts.mkdir(parents=True)
+        row = {"message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": REVIEW}}]}}
+        (transcripts / "claude.jsonl").write_text(json.dumps(row) + "\n")
+        result = subprocess.run(
+            [sys.executable, VERIFIER, "--claims", "-", "--strict"],
+            input="passes_run: 1", text=True, capture_output=True, timeout=20, cwd=self.root,
+            env={**os.environ, "HOME": str(home), "CODEX_THREAD_ID": "synthetic-codex-thread"},
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("Codex requires explicit --transcript", result.stdout)
+        self.assertNotIn("consistent with the transcript", result.stdout)
+
+    def test_invocation_does_not_certify_review_completion_or_execute_transcript(self):
+        marker = self.root / "must-not-exist"
+        rows = [js('await tools.exec_command({cmd: '+json.dumps('touch "'+str(marker)+'"')+'});'),
+                codex("exec_command", json.dumps({"cmd": REVIEW})),
+                {"type": "response_item", "payload": {"type": "function_call_output", "output": "exit 7"}}]
+        output = self.verify(rows, "passes_run: 1", 0)
+        self.assertIn("completion/results are not verified", output)
+        self.assertFalse(marker.exists())
+
+
+unittest.main()
+PYCODEX
+then pass "Codex invocation evidence and unsupported-call boundaries"
+else bad "Codex invocation evidence and unsupported-call boundaries"
+fi
+
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

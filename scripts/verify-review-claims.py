@@ -57,16 +57,27 @@ Usage
     # strict mode for gates/CI: any disagreement exits 1
     python3 scripts/verify-review-claims.py --claims <file> --strict
 
-Exit: 0 agreement (or findings without --strict) | 1 disagreement in --strict | 2 usage/no transcript.
+Codex: pass --transcript explicitly for a rollout JSONL. Direct JSON tool calls and a
+literal-only subset of raw JavaScript orchestration are supported. Dynamic/unreadable
+Codex evidence is UNKNOWN when a claim needs it (strict exit 2; observational exit 0);
+no transcript JavaScript is executed.
+Tool-call records establish invocation evidence only, not successful review completion.
+
+Exit: 0 agreement (or findings without --strict) | 1 disagreement in --strict | 2 usage/unknown evidence.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
 from pathlib import Path
+
+# Resolve beside the real script, including Python -P/-I and conflicting third-party lib packages.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from codex_review_calls import UNSUPPORTED, codex_calls
 
 DISPATCH_TOOLS = {"Agent", "Task"}          # Task = older harness name for the same thing
 
@@ -143,7 +154,7 @@ def locate_transcripts(cwd: Path, window_min: int, anchor: str | None) -> tuple[
 
 
 def parse_tool_calls(path: Path) -> list[tuple[str, dict]]:
-    """Every tool_use in the transcript, as (tool_name, input_dict)."""
+    """Claude calls and supported Codex requests, retaining explicit unknown evidence."""
     calls: list[tuple[str, dict]] = []
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -151,6 +162,13 @@ def parse_tool_calls(path: Path) -> list[tuple[str, dict]]:
                 rec = json.loads(line)
             except ValueError:
                 continue                      # a truncated tail line is not a parse failure
+            if not isinstance(rec, dict):
+                continue
+            payload = rec.get("payload")
+            if (rec.get("type") == "response_item" and isinstance(payload, dict)
+                    and payload.get("type") in ("function_call", "custom_tool_call")):
+                calls.extend(codex_calls(payload))
+                continue
             msg = rec.get("message")
             if not isinstance(msg, dict):
                 continue
@@ -183,6 +201,7 @@ def observed(calls: list[tuple[str, dict]]) -> dict:
         for args in adversarial_invocations(str(inp.get("command", "")))
     ]
     return {
+        "unsupported": [inp for name, inp in calls if name == UNSUPPORTED],
         "dispatches": len(dispatches),
         "dispatch_labels": [str(d.get("description") or d.get("subagent_type") or "")[:60]
                             for d in dispatches],
@@ -205,19 +224,20 @@ def claims_from(text: str) -> dict:
     return c
 
 
-def verify(c: dict, o: dict) -> list[str]:
+def verify(c: dict, o: dict, unknown: set[str] | None = None) -> list[str]:
+    unknown = unknown or set()
     f: list[str] = []
-    if c["dispatch_claims"] and o["dispatches"] == 0:
+    if "dispatch" not in unknown and c["dispatch_claims"] and o["dispatches"] == 0:
         f.append(
             f"claims {c['dispatch_claims']} sub-agent DISPATCHED(...) but the transcript holds "
             f"ZERO Agent/Task tool calls — the dispatches did not happen"
         )
-    elif c["dispatch_claims"] > o["dispatches"]:
+    elif "dispatch" not in unknown and c["dispatch_claims"] > o["dispatches"]:
         f.append(
             f"claims {c['dispatch_claims']} dispatches, transcript holds {o['dispatches']} "
             f"— at least one claimed sub-agent was never dispatched"
         )
-    if c["passes_run"]:
+    if "passes" not in unknown and c["passes_run"]:
         if o["adversarial_calls"] == 0:
             f.append(
                 f"claims adversarial passes_run={c['passes_run']} but the transcript holds ZERO "
@@ -228,7 +248,8 @@ def verify(c: dict, o: dict) -> list[str]:
                 f"claims passes_run={c['passes_run']}, transcript holds "
                 f"{o['adversarial_calls']} adversarial-review invocation(s)"
             )
-    if c["self_review"] == "yes" and c["used_multi"] and o["adversarial_multi"] == 0:
+    if ("multi" not in unknown and c["self_review"] == "yes"
+            and c["used_multi"] and o["adversarial_multi"] == 0):
         f.append(
             "claims SELF-REVIEW used --multi, but no adversarial-review invocation in the "
             "transcript carries --multi (section 1.1 mandates it on self-review)"
@@ -236,12 +257,28 @@ def verify(c: dict, o: dict) -> list[str]:
     return f
 
 
+def unsupported_dependencies(claims: dict, evidence: dict) -> set[str]:
+    """Return only claim dimensions that need unknown evidence; zero imposes no minimum."""
+    scopes = {item["scope"] for item in evidence["unsupported"]}
+    unknown: set[str] = set()
+    if scopes & {"dispatch", "both"} and claims["dispatch_claims"] > evidence["dispatches"]:
+        unknown.add("dispatch")
+    if scopes & {"adversarial", "both"}:
+        passes = claims["passes_run"]
+        if passes is not None and passes > evidence["adversarial_calls"]:
+            unknown.add("passes")
+        if claims["self_review"] == "yes" and claims["used_multi"] and not evidence["adversarial_multi"]:
+            unknown.add("multi")
+    return unknown
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--claims", required=True,
                     help="file holding the Validity Gate block, or '-' for stdin")
-    ap.add_argument("--transcript", help="explicit transcript path (skips window/anchor discovery)")
+    ap.add_argument("--transcript",
+                    help="explicit transcript path (required for Codex; skips window/anchor discovery)")
     ap.add_argument("--window-min", type=int, default=240,
                     help="only consider transcripts touched in the last N minutes (default 240)")
     ap.add_argument("--anchor",
@@ -270,6 +307,10 @@ def main() -> int:
             print(f"ERROR: transcript not found: {tpaths[0]}", file=sys.stderr)
             return 2
     else:
+        if os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID"):
+            print("verify-review-claims: SKIP — Codex requires explicit --transcript; "
+                  "default discovery supports Claude only")
+            return 2 if args.strict else 0
         tpaths, note = locate_transcripts(Path.cwd().resolve(), args.window_min, args.anchor)
         if not tpaths:
             print(f"verify-review-claims: SKIP — {note}")
@@ -288,7 +329,8 @@ def main() -> int:
         calls.extend(parse_tool_calls(tp))
     c = claims_from(text)
     o = observed(calls)
-    findings = verify(c, o)
+    unknown = unsupported_dependencies(c, o)
+    findings = verify(c, o, unknown)
 
     print(f"verify-review-claims: {note}")
     for tp in sorted(tpaths)[:6]:
@@ -297,13 +339,23 @@ def main() -> int:
           f"passes_run={c['passes_run']} self_review={c['self_review']}")
     print(f"  observed: dispatches={o['dispatches']} adversarial_calls={o['adversarial_calls']} "
           f"(--multi: {o['adversarial_multi']})")
-    if not findings:
-        print("  VERDICT: claims are consistent with the transcript")
-        return 0
-    print(f"  VERDICT: {len(findings)} DISAGREEMENT(S)")
-    for x in findings:
-        print(f"    - {x}")
-    return 1 if args.strict else 0
+    print("  Invocation evidence only; completion/results are not verified.")
+    if o["unsupported"]:
+        print(f"  unsupported Codex records: {len(o['unsupported'])}; observed counts are known lower bounds")
+        for reason in sorted({item["reason"] for item in o["unsupported"]}):
+            print(f"    - {reason}")
+    if findings:
+        print(f"  VERDICT: {len(findings)} DISAGREEMENT(S)")
+        for finding in findings:
+            print(f"    - {finding}")
+        if unknown:
+            print("  Other claims UNKNOWN due to unsupported Codex evidence: " + ", ".join(sorted(unknown)))
+        return 1 if args.strict else 0
+    if unknown:
+        print("  VERDICT: UNKNOWN — claims depend on unsupported Codex evidence")
+        return 2 if args.strict else 0
+    print("  VERDICT: claims are consistent with the transcript")
+    return 0
 
 
 if __name__ == "__main__":
