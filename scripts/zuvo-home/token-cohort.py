@@ -1,5 +1,7 @@
-#!/usr/bin/env python3
-"""Compare explicit task cohorts without imputing missing evidence or hiding retries."""
+#!/bin/sh
+# Use the same sh/Python launcher as the other installed helpers for Windows Git Bash.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+# Compare explicit task cohorts without imputing missing evidence or hiding retries.
 from __future__ import annotations
 
 import argparse
