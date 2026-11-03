@@ -420,3 +420,104 @@ the checkout to origin/main; anything still needed in the driver is ported into 
   commands as STRING DATA (plan text being edited) as "shell substitution <test command>". Worked
   around by writing the script to a file. The detector should not scan heredoc bodies fed to an
   interpreter. | severity: low | category: Infrastructure | conf: 85
+
+## Archived from backlog.md on 2026-10-11 (3 completed items moved out)
+- [x] B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER — FIXED: BOTH directions it offered were taken. A closed
+      seed is no longer failed on `NOT-VERIFIABLE` (graded as an abstention and reported on a
+      `SEED-ABSTAIN` control line; a LIVE seed still misses, because its proof is the line it quotes), AND
+      the seed text is fixed at the root — the identity now comes off BEFORE the markers, so the
+      `B- -cb8b1c` residue this entry quotes cannot form. It was 40 of 55 candidates; it is 0.
+      Underivable candidates are dropped as well. The measurements and the mutants (D1b, D1c, D2b, D2c,
+      D5c-D5f) are in the closing note on [[B-20261009-SEEDS-PUNISH-HONEST-ABSTAIN]].
+
+confidence:97 source:first live verify run 2026-10-06, 2 of 4 seed misses attributable to the seed
+- [x] B-20261009-OVERLAP-WORDS-HALF-THRESHOLD [P2][correctness][conf 85] — FIXED
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_overlap.py|MIN_WORDS|window-threshold
+**Source:** first live `zuvo:backlog verify` run, 2026-10-06 (chunk 0 of this repo's backlog), measured again after
+the basename half was fixed (PR #59).
+**What:** control (c)'s second half requires >=2 of the 8 signature words to appear within +/-5 lines of the cited
+line (`MIN_WORDS`, `WINDOW`). After the basename half stopped firing, 11 rejections remain and they read
+`1 of 8 signature word(s)`. The 8 words come from `normalize_signature` — the words AFTER the cited path — so for an
+entry whose prose describes the defect in the backlog rather than quoting the code, almost none of them appear near
+the code line that proves it. The control is meant to catch FABRICATION (a citation invented to look resolving), and
+a correctly cited line whose surrounding code shares one word with the entry's prose is not fabrication.
+**Fix:** decide the threshold from measurement rather than from the 2/8 guess: over the corpus, score every (entry,
+citation) pair that a human verdict already classified, and pick the threshold and window that separate fabricated
+from genuine citations. If no threshold separates them, the words half is the wrong signal for this control and the
+basename half plus resolvability is the whole of (c) — say so in the include rather than keeping a half that only
+produces false rejections. Deliberately left out of PR #59, which fixed the basename half only.
+
+**Closed 2026-10-10 — measured, and the measurement chose the second branch.** `tests/lib/overlap-corpus.py`
+builds a labelled corpus out of this repo's own two backlog files: every citation an entry makes of a
+`path:line` that resolves is a GENUINE pair (the line the entry itself points at), and five citations of the
+SAME file more than 100 lines away are its FABRICATED pairs — same entry, same file, basename half passing,
+so the only fabrication the words half could still catch. 29 genuine against 145 fabricated:
+
+| window | AUC | perm p | best balanced accuracy |
+|---|---|---|---|
+| ±5 | 0.632 | 0.011 | 0.607 at ≥2 words — what shipped |
+| ±10 | 0.614 | 0.022 | 0.610 at ≥3 |
+| ±20 | 0.605 | 0.037 | 0.597 at ≥3 |
+| ±40 | 0.654 | 0.003 | 0.614 at ≥4 |
+
+0.500 is a coin flip. At the shipped ±5/≥2 it refuses **37.9% of genuine citations** while accepting **40.7%
+of fabrications**, and no threshold rescues it: **5 of the 29** genuine citations score ZERO in their own
+window, so even "≥1 word" refuses 17.2% of correct evidence while letting 71.0% of fabrications through. The words half is therefore the wrong signal:
+it is now COMPUTED AND REPORTED as ` ov=k/n` in control (c)'s mode string, and (c) refuses on the basename
+half alone. Two consequences written down rather than left implicit — within-file fabrication is explicitly
+control (d)'s business (Cc2b asserts it reaches the ledger), and a signature too short to score no longer
+skips the BASENAME half, which 21 of this repo's 26 short-signature entries were silently escaping (Cc4b).
+`MIN_WORDS` is gone from `zuvo_backlog_reject.py`: a constant named like a threshold and enforced by nothing
+is the next reader's trap. Fixed in passing: the `nobasename` mutation assertion still grepped `basenames
+differ`, the phrasing PR #59 replaced, so `mu3_gone` passed vacuously against a string nothing emitted.
+
+The cross-model review of the change (5 providers) objected twice to the corpus, and both objections cut
+the same way, so they are recorded in the harness rather than argued with: the fabricated citations it
+draws are the EASY negatives (far from the true line, where a real fabricated number is usually close),
+and a "genuine" label tolerates the line drift that `WINDOW` exists for. Both make these numbers a LOWER
+bound on the failure. The `--fakes` samples also share an entry, so the verdict rests on the permutation
+p-value and on re-running with several seeds, never on a confidence interval.
+- [x] B-20261009-SEEDS-PUNISH-HONEST-ABSTAIN [P2][test][conf 80] — FIXED
+**Fingerprint:** scripts/zuvo-home/zuvo_backlog_seedshape.py|closed-seed|not-verifiable
+**Source:** first live verify run, 2026-10-06 — reading WHY the 4 remaining known-answer misses missed.
+**What:** control (d) seeds each dispatch chunk with entries whose answer is known, then scores the agent against
+them. 2 of the 4 misses are the seeds' fault, not the agent's: the seeded entry is one already CLOSED, whose
+resolving evidence no longer exists in the tree (the code it cited was moved or deleted by the very commit that
+closed it). An agent that answers `NOT-VERIFIABLE` is then CORRECT about the repo and scored as a miss, which
+teaches exactly the wrong thing — the control's own measurement rewards guessing a verdict it cannot support.
+**Fix:** a seed is admissible only if its expected verdict is still derivable from the tree AT THE SHA THE CHUNK IS
+DISPATCHED AGAINST. `build_seeds` checks that (resolve the citation, confirm the evidence line is present) and
+drops a seed that fails, rather than counting the agent wrong; the drop is reported, since a chunk left with fewer
+than `SEEDS_PER_CHUNK` admissible seeds must refuse (that floor already exists and already refuses). Relates to
+[[B-20261002-SEED-NOT-IN-FILE]], which is the other half of the seed-provenance problem.
+
+**Closed 2026-10-10, together with [[B-20261007-SEEDS-PUNISH-THE-HONEST-ANSWER]] — the same 2 misses, and
+they had TWO causes, not one.** This entry blamed unreachable evidence; the earlier entry blamed the
+amputated seed text. Both were real:
+
+1. **The amputated id, the bigger half.** `strip_resolution_markers` runs `DATE_RE` over the text and eats
+   the date out of a minted id, so `B-A20261007-cb8b1c` became `B- -cb8b1c`, which `BODY_ID_RE` no longer
+   matches — `_unidentified` left the wreckage at the front of the seed, where it read as one of the
+   metadata continuation lines this backlog is full of. **40 of 55** closed-seed candidates carried it.
+   `build_seeds` now removes the identity BEFORE the markers, which leaves 0, because the id is still
+   intact when the pattern looks at it. A `striporder` mutant catches a swap of the two calls.
+2. **Admissibility**, as this entry asked: `_closed_derivable` / `_live_derivable` drop a candidate whose
+   expected verdict the dispatched tree cannot support — filtering BEFORE the slice, so a pool of 75 is not
+   refused because two of the first two were bad — and the drops print as `SEEDS_DROPPED=` /
+   `SEED_DROP=<why>`. An entry naming no path stays admissible; its proving shape is the archive line.
+   `tree` is keyword-only with no default, so a caller that was not updated gets a `TypeError` rather than
+   the check silently switched off.
+3. **And the concession the earlier entry asked for, which no predicate can replace:** `NOT-VERIFIABLE` on
+   a CLOSED seed is now an ABSTENTION, reported on a `SEED-ABSTAIN` control line, not a miss. No predicate
+   can decide whether amputated prose still states a checkable claim, and the include promises the verifier
+   that `NOT-VERIFIABLE` costs it nothing. Deliberately NOT symmetric: a live seed's proof is the line it
+   quotes, read out of the tree at dispatch and re-checked there, so abstaining on one stays a `SEED-MISS` —
+   which is what the other 2 of those 4 misses were, and they were the agent's. The gate survives the
+   concession: abstaining on everything still misses every live seed, half of every chunk (D2b/D2c).
+   And it now fails CLOSED: the cross-model review (4 of 5 providers) asked what stops an ALL-CLOSED
+   chunk from passing (d) outright. Checked: nothing can dispatch one — `build_seeds` caps each half
+   independently, so a full K means both halves filled and anything less is the shortfall the caller
+   refuses (D1f measures it). The claim was true but rested on an invariant in ANOTHER module, so
+   `check_seeds` now grants the abstention only when the key also holds a live seed (D1d/D1e). The
+   guard cannot fire today, which is what makes it safe; it exists so a later edit to the pool sizing
+   cannot turn the concession into a way past control (d).
