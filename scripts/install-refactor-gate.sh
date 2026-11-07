@@ -2,16 +2,36 @@
 # Activate refactor hooks without replacing user hooks or shared Git configuration.
 # Exit 0 means both are wired; exit 2 means installation is unavailable/incomplete.
 # Python is also a prerequisite of the refactor gate itself.
-exec python3 - "$@" <<'PY'
+exec python3 -I - "$0" "$@" <<'PY'
 import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+
+INSTALLER = sys.argv.pop(1) if len(sys.argv) > 1 else ""
+
+# Exact historical global gates and first dispatcher shipped by this installer.
+# Regenerate gate digests from origin/main and release tags:
+# git log origin/main --tags='v*' --format=%H -- hooks/refactor-safety-gate.sh |
+# while read -r c; do git show "$c:hooks/refactor-safety-gate.sh" | sha256sum; done | sort -u
+# New installations also record a digest receipt to recognize later revisions.
+LEGACY_GLOBAL_GATES = {
+    "0e0f32fc723f66bbae2a2877656e9ff3de52a63c352bbee6751b6ba8b2c890c3",
+    "1c94c2bf85ec11ff32e61d869ea5f3f582b509bcb8b68cb02268bba31b5a6d43",
+    "4d54cd298e689545a4eb5ed3da6a1d507d8a46472e0ab83e048598b0b2483902",
+    "56583f45d574ed99dde9541524bdc1bd8e0c73add301900ac1f2fac5f12911cf",
+    "7eede029774d61d7c141ca0281c8dd51b9f861d5c7e1d6407bff249bfe4c2e4a",
+    "8f01210a551b2d6f2f24f346db667c4a5283056fa438c8289e7e9bc7aa85182d",
+    "9919ce43869712146198c99dd75e7bbd3cd8431fd0528cc8f7e58f077bebdfd8",
+    "a4e90a687403f827821365e90bf4ca57fba4b477531fad125005c5703f88d8aa",
+    "e3ef0391a3dde6dc075eff9aca654e5b89cb47fd69501299520963ac4a214be1",
+}
 
 # Exact identities, not a marker that an unrelated/broken script can contain.
 # Refresh these when changing hooks/git-dispatch/{pre-commit,pre-push}; the install
@@ -40,9 +60,13 @@ def forwarding_body(origin, mode):
 
 
 def chained_body(gate, origin, mode):
+    setup, check = gate_command(gate, mode)
+    return private_body(origin, mode, setup, check)
+
+
+def private_body(origin, mode, setup, check):
     original = shlex.quote(str(origin / mode))
-    check = f"{shlex.quote(str(gate))} {mode} \"$@\""
-    prefix = "#!/bin/sh\n# zuvo:private-refactor-gate\n"
+    prefix = "#!/bin/sh\n# zuvo:private-refactor-gate\n" + setup
     if mode == "pre-push":
         return (prefix + 'refs=$(mktemp) || exit 2\n'
                 'trap \'rm -f "$refs"\' EXIT\n'
@@ -74,21 +98,36 @@ def installer_owned(path, origin, mode):
         return False
     body = path.read_text()
     if mode in DISPATCHERS:
-        return body.startswith("#!/bin/sh\n# zuvo:private-refactor-gate\n")
+        return refreshable_hook(body, mode, origin)
     return (body.startswith("#!/bin/sh\n# zuvo:private-refactor-forward\n")
             or body == legacy_forwarding_body(origin, mode))
 
 
 def file_identity(path):
-    if path.is_symlink() or not path.is_file():
+    try:
+        named = path.lstat()
+    except FileNotFoundError:
         return None
-    before = path.stat()
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    after = path.stat()
-    identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, digest)
-    if identity[:4] != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+    if not stat.S_ISREG(named.st_mode):
+        raise RuntimeError(f"hook is not a regular file: {path}; preserved")
+
+    def metadata(value):
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns,
+                value.st_ctime_ns, value.st_mode)
+
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise RuntimeError(f"hook is not a regular file: {path}; preserved")
+        digest = hashlib.sha256(stream.read()).hexdigest()
+        after = os.fstat(stream.fileno())
+    # Compare the pathname to the opened inode as the final inspection. Following
+    # a substituted symlink here would hide the swap, even with identical bytes.
+    if (metadata(named) != metadata(before) or metadata(before) != metadata(after)
+            or metadata(after) != metadata(path.lstat())):
         raise RuntimeError(f"concurrent change while reading {path}; preserved")
-    return identity
+    return (*metadata(after), digest)
 
 
 def rollback_publication(state):
@@ -287,6 +326,7 @@ def private_install(gate, gitdir, effective):
 
 
 def unavailable(message):
+    message = " ".join(str(message).splitlines())
     print(f"[refactor-gate] unavailable: {message}")
     return False
 
@@ -299,10 +339,49 @@ def usable(path):
     return path.is_file() and os.access(path, os.X_OK)
 
 
+def cached_gate(gate):
+    cache = Path.home() / ".claude/plugins/cache/zuvo-marketplace/zuvo"
+    try:
+        parts = gate.relative_to(cache.resolve()).parts
+    except ValueError:
+        return False
+    return len(parts) == 3 and parts[1:] == ("hooks", "refactor-safety-gate.sh")
+
+
+def gate_command(gate, mode):
+    if not cached_gate(gate):
+        # Explicit custom gates retain their existing missing-file rejection policy.
+        return "", f"{shlex.quote(str(gate))} {mode} \"$@\""
+    # Embed the dispatcher, so neither its file nor the installer has to survive
+    # cache eviction. The subshell preserves the private wrapper original-hook chain.
+    body = dispatcher_template(gate)
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    setup = (f"# zuvo:runtime-dispatch-sha256={digest}\n"
+             "zuvo_refactor_gate() (\n" + body + "\n)\n")
+    return setup, f"zuvo_refactor_gate {mode} \"$@\""
+
+
+def dispatcher_template(gate):
+    # The activated release owns the template. A bare $0 from `sh -s` is a
+    # shell name, never authority to read siblings from the target repository.
+    candidates = [gate.parent / "refactor-gate-dispatch.sh"]
+    installer = Path(INSTALLER)
+    if INSTALLER and (installer.is_absolute() or len(installer.parts) > 1) and installer.is_file():
+        installer = installer.resolve()
+        candidates.extend((installer.parent / "refactor-gate-dispatch.sh",
+                           installer.parent.parent / "hooks/refactor-gate-dispatch.sh"))
+    for template in candidates:
+        if template.is_file():
+            return template.read_text()
+    raise ValueError("runtime dispatcher missing; rerun the current zuvo installer")
+
+
 def hook_body(gate, mode):
-    # exec propagates failure, including a gate removed after installation.
+    setup, check = gate_command(gate, mode)
+    if not setup:
+        check = "exec " + check
     return ("#!/bin/sh\n# >>> zuvo:refactor-gate\n"
-            f"exec {shlex.quote(str(gate))} {mode} \"$@\"\n"
+            f"{setup}{check}\n"
             "# <<< zuvo:refactor-gate\n")
 
 
@@ -318,12 +397,106 @@ def dispatcher(path, mode):
             and hashlib.sha256(path.read_bytes()).hexdigest() == DISPATCHERS[mode])
 
 
+def refreshable_hook(body, mode, origin=None):
+    if origin is None:
+        prefix = "#!/bin/sh\n# >>> zuvo:refactor-gate\n# zuvo:runtime-dispatch-sha256="
+        suffix = f'\n)\nzuvo_refactor_gate {mode} "$@"\n# <<< zuvo:refactor-gate\n'
+    else:
+        header = "#!/bin/sh\n# zuvo:private-refactor-gate\n"
+        prefix = header + "# zuvo:runtime-dispatch-sha256="
+        tail = private_body(origin, mode, "", f'zuvo_refactor_gate {mode} "$@"')[len(header):]
+        suffix = "\n)\n" + tail
+    if body.startswith(prefix) and body.endswith(suffix):
+        digest, separator, template = body[len(prefix):-len(suffix)].partition("\nzuvo_refactor_gate() (\n")
+        return bool(separator) and hashlib.sha256(template.encode()).hexdigest() == digest
+    lines = body.splitlines()
+    if origin is not None:
+        # Exact pre-dispatch chained_body output, including the original hook
+        # and pre-push stdin forwarding. Marker-only or edited bodies are refused.
+        try:
+            words = shlex.split(lines[2 if mode == "pre-commit" else 6])
+        except (ValueError, IndexError):
+            return False
+        if not words or not Path(words[0]).is_absolute():
+            return False
+        check = f'{shlex.quote(words[0])} {mode} "$@"'
+        return body == private_body(origin, mode, "", check)
+    if len(lines) != 4:
+        return False
+    try:
+        words = shlex.split(lines[2])
+    except ValueError:
+        return False
+    return (len(words) == 4 and words[0] == "exec" and words[2:] == [mode, "$@"]
+            and cached_gate(Path(words[1]))
+            and body == ("#!/bin/sh\n# >>> zuvo:refactor-gate\n"
+                         f"exec {shlex.quote(words[1])} {mode} \"$@\"\n"
+                         "# <<< zuvo:refactor-gate\n"))
+
+
+def refresh_hook(path, expected, identity, mode=0o755):
+    fd, temporary = tempfile.mkstemp(prefix=".refactor-gate-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(expected)
+        os.chmod(temporary, mode)
+        # Best effort: the final fd/path comparison is immediately before the
+        # rename. An uncoordinated writer can still race the last lstat/replace.
+        if file_identity(path) != identity:
+            raise RuntimeError(f"concurrent hook change at {path}; preserved")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def install_global_dispatch(path, gate):
+    body = dispatcher_template(gate)
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    receipt = path.with_name(".refactor-safety-gate.sha256")
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        return unavailable(f"foreign global hook {path}; preserved")
+    identity = file_identity(path)
+    known = LEGACY_GLOBAL_GATES | {digest, hashlib.sha256(gate.read_bytes()).hexdigest()}
+    receipt_identity = None
+    if receipt.exists() or receipt.is_symlink():
+        if receipt.is_symlink() or not receipt.is_file():
+            return unavailable(f"foreign digest receipt {receipt}; hook preserved")
+        status = receipt.stat()
+        if status.st_uid != os.geteuid() or status.st_mode & 0o022:
+            return unavailable(f"untrusted digest receipt {receipt}; hook preserved")
+        receipt_identity = file_identity(receipt)
+        checked = (status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns,
+                   status.st_ctime_ns, status.st_mode)
+        if receipt_identity is None or receipt_identity[:-1] != checked:
+            return unavailable(f"digest receipt changed after its trust check: {receipt}; hook preserved")
+        known.update(receipt.read_text().splitlines())
+    if identity is not None and identity[-1] not in known:
+        return unavailable(f"foreign global hook {path}; preserved")
+    # Publish authorization for BOTH possible versions first. If either rename
+    # fails, the next installer can still recognize the old or new managed hook.
+    authorized = {digest} | ({identity[-1]} if identity is not None else set())
+    refresh_hook(receipt, "\n".join(sorted(authorized)) + "\n", receipt_identity, mode=0o644)
+    refresh_hook(path, body, identity)
+    print(f"[refactor-gate] active global dispatcher -> {path}")
+    return True
+
+
 def install(path, gate, mode, writable):
     expected = hook_body(gate, mode)
     if path.exists() or path.is_symlink():
         if usable(path) and path.read_text() == expected:
             print(f"[refactor-gate] active {mode} -> {path}")
             return True
+        # Refresh only a digest-verified dispatcher or an exact old cache wrapper,
+        # never a user hook that merely contains our marker.
+        if writable and not path.is_symlink() and usable(path) and cached_gate(gate):
+            identity = file_identity(path)
+            body = path.read_text()
+            if refreshable_hook(body, mode):
+                refresh_hook(path, expected, identity)
+                print(f"[refactor-gate] upgraded managed {mode} -> {path}")
+                return True
         return unavailable(f"existing {path} is not a usable hook for this gate; preserved")
     if not writable:
         return unavailable(f"{path} is outside repository-owned hooks or is version-controlled; preserved")
@@ -339,6 +512,11 @@ def install(path, gate, mode, writable):
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--global-dispatch":
+        path, gate = (Path(value) for value in sys.argv[2:])
+        if not path.is_absolute() or not gate.is_absolute():
+            return unavailable("absolute global hook and source gate paths are required")
+        return install_global_dispatch(path, gate)
     if len(sys.argv) < 2 or not sys.argv[1] or not Path(sys.argv[1]).is_absolute():
         return unavailable("an absolute gate path is required")
     gate = Path(sys.argv[1]).resolve()
