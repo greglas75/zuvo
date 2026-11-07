@@ -16,8 +16,14 @@
 # counter differs from the previous heartbeat. Every other non-blank line counts as progress, unless it
 # repeats the line before it.
 #
-# Usage: stryker-run-watchdog.sh [--idle-timeout <s>] [--in-place-files <list>] -- <command> [args...]
+# Usage: stryker-run-watchdog.sh [--idle-timeout <s>] [--in-place-files <list>] [--preflight <script>] -- <command> [args...]
 #   --idle-timeout <s>   seconds without progress before the run is aborted (integer >= 1, default 600)
+#   --preflight <script> a node script run in the foreground BEFORE the command, in the working directory
+#                        the command will run in. Its output is forwarded as-is; a non-zero exit aborts the
+#                        run with exit 126 and `ERROR: preflight <script> failed (exit <n>)` on stderr,
+#                        so nothing is mutated. For a scoped Stryker run it is where the runner choice and
+#                        the TypeScript workaround are decided: the scoper is often run where node_modules
+#                        are not installed yet (a worktree), while the run happens after the install.
 #   --in-place-files <list>  a file naming, one per line, the files an in-place Stryker run instruments.
 #                        Each is copied before the command starts; when the run is over — however it
 #                        ended — any that still holds Stryker's instrumentation (`stryMutAct_9fa48`) is
@@ -33,12 +39,14 @@
 #               `ERROR: stryker made no progress for <s>s (last: <last line>)`
 #               (a command that exits 124 by itself is told apart only by the missing ERROR line)
 #             · 125 usage error, bash older than 4, or no way to start the command in its own group
+#             · 126 the --preflight script failed; the command never started
 #             · 128+n the watchdog itself got signal n (INT/TERM/HUP/PIPE); the group was killed first
 set -u
 
 IDLE=600
 GRACE=10
 IN_PLACE_LIST=""
+PREFLIGHT=""
 INSTRUMENTED='stryMutAct_9fa48'
 ME="stryker-run-watchdog"
 
@@ -52,6 +60,9 @@ while [ $# -gt 0 ]; do
     --in-place-files)
       [ $# -ge 2 ] || usage_die "missing value for --in-place-files"
       IN_PLACE_LIST="$2"; shift 2 ;;
+    --preflight)
+      [ $# -ge 2 ] || usage_die "missing value for --preflight"
+      PREFLIGHT="$2"; shift 2 ;;
     --) shift; break ;;
     -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
     *) usage_die "unknown argument: $1 (the command goes after --)" ;;
@@ -65,6 +76,10 @@ done
 IDLE=$((10#$IDLE))  # base 10: shell arithmetic would read a zero-padded 0600 as octal 384
 [ -z "$IN_PLACE_LIST" ] || { [ -f "$IN_PLACE_LIST" ] && [ -r "$IN_PLACE_LIST" ]; } \
   || usage_die "--in-place-files: no such readable file: $IN_PLACE_LIST"
+[ -z "$PREFLIGHT" ] || { [ -f "$PREFLIGHT" ] && [ -r "$PREFLIGHT" ]; } \
+  || usage_die "--preflight: no such readable file: $PREFLIGHT"
+[ -z "$PREFLIGHT" ] || command -v node >/dev/null 2>&1 \
+  || usage_die "--preflight needs node on PATH (it runs a node script)"
 
 if command -v setsid >/dev/null 2>&1; then
   NEWGROUP=(setsid)
@@ -137,6 +152,16 @@ trap 'on_signal 141' PIPE
 trap 'kill_group; cleanup' EXIT
 
 back_up_in_place
+
+# Before the command, never in its group: a preflight that fails must leave nothing mutated behind.
+if [ -n "$PREFLIGHT" ]; then
+  node "$PREFLIGHT"
+  _pf=$?
+  if [ "$_pf" -ne 0 ]; then
+    echo "$ME: ERROR preflight $PREFLIGHT failed (exit $_pf) — the run did not start" >&2
+    exit 126
+  fi
+fi
 
 # The redirect opens the FIFO in the child; the `exec 3<` below opens the read end. Opening in this
 # order means neither side can block forever on the other.
