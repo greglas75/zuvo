@@ -1078,12 +1078,13 @@ openai_call_cost() {
 }
 
 # _openai_daily_cap — today's cap in USD (UTC day) on stdout; status 1 when there is none ("off", or the test harness
-# without an explicit cap). Default 10: the credits are a monthly allowance, and one runaway day must not spend it.
+# without an explicit cap). Default 100 (owner, 2026-11-10): the credits are a monthly allowance — $500 and $250 on two
+# of the accounts — and one runaway day must not spend it.
 _openai_daily_cap() {
-  local cap="${ZUVO_OPENAI_DAILY_USD-10}"
+  local cap="${ZUVO_OPENAI_DAILY_USD-100}"
   [[ "$cap" == off ]] && return 1
   [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENAI_DAILY_USD+x}" ]] && return 1
-  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || cap=10
+  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || cap=100
   printf '%s\n' "$cap"
 }
 
@@ -1105,14 +1106,52 @@ openai_credits_file() {
   else printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/openai-credits-until"; fi
 }
 
-# openai_credits_until — the epoch until which the credits are known spent, while it is ahead; status 1 otherwise.
-openai_credits_until() {
-  local f until=""
+# _openai_load_keys — the lane's keys into OPENAI_KEYS (an array), in order: ZUVO_OPENAI_API_KEY alone, else every
+# non-blank line of the key file (mode 600/400, lane_key_load). Several ChatGPT accounts each come with their own
+# credits; one key per line lets the lane spend them one after another. OPENAI_KEYS_WHY says why there is none.
+_openai_load_keys() {
+  local k
+  OPENAI_KEYS=() OPENAI_KEYS_WHY=""
+  if [[ -n "${ZUVO_OPENAI_API_KEY:-}" ]]; then OPENAI_KEYS=("$ZUVO_OPENAI_API_KEY"); return 0; fi
+  lane_key_load "${ZUVO_OPENAI_KEY_FILE:-$HOME/.zuvo/openai.key}" || true   # LANE_KEY_WHY says why
+  while IFS= read -r k || [[ -n "$k" ]]; do
+    k="${k//[[:space:]]/}"
+    [[ -n "$k" && "$k" != \#* ]] && OPENAI_KEYS+=("$k")
+  done <<< "$LANE_KEY"
+  LANE_KEY=""
+  (( ${#OPENAI_KEYS[@]} > 0 )) || { OPENAI_KEYS_WHY="${LANE_KEY_WHY:-no key in the key file}"; return 1; }
+}
+
+# _openai_fp <key> — a 16-hex fingerprint of a key (sha256, the key on stdin): which key a stop is for, never the key.
+_openai_fp() {
+  printf '%s' "$1" | { shasum -a 256 2>/dev/null || sha256sum; } | cut -c1-16
+}
+
+# openai_key_spent_until <fp> — the epoch until which that key's credits are known spent, while it is ahead; status 1
+# otherwise. The file holds "<epoch> <fp>" lines.
+openai_key_spent_until() {
+  local f e fp now
   f="$(openai_credits_file)" || return 1
-  { read -r until _ < "$f"; } 2>/dev/null || return 1
-  # No leading zero: (( )) would read 08 as bad octal.
-  [[ "$until" =~ ^[1-9][0-9]{8,11}$ ]] && (( until > $(date +%s) )) || return 1
-  printf '%s\n' "$until"
+  [[ -r "$f" ]] || return 1
+  now=$(date +%s)
+  while read -r e fp _; do
+    # No leading zero: (( )) would read 08 as bad octal.
+    [[ "$fp" == "$1" && "$e" =~ ^[1-9][0-9]{8,11}$ ]] && (( e > now )) && { printf '%s\n' "$e"; return 0; }
+  done < "$f"
+  return 1
+}
+
+# openai_credits_until — the epoch until which EVERY key's credits are known spent (the earliest of their stops);
+# status 1 while any key may still spend, or there is no key.
+openai_credits_until() {
+  local i fp e first=""
+  _openai_load_keys || return 1
+  for (( i = 0; i < ${#OPENAI_KEYS[@]}; i++ )); do
+    fp="$(_openai_fp "${OPENAI_KEYS[$i]}")"
+    e="$(openai_key_spent_until "$fp")" || return 1
+    [[ -z "$first" || "$e" -lt "$first" ]] && first="$e"
+  done
+  printf '%s\n' "$first"
 }
 
 # _openai_credits_error <body> — the 429 is the credit balance spent (not a rate limit): asking again cannot help.
@@ -1121,14 +1160,22 @@ _openai_credits_error() {
     | ([$c, $t] | any(. == "insufficient_quota" or . == "credit_balance_exhausted"))' >/dev/null 2>&1
 }
 
-# openai_credits_record — the balance is spent: no openai-api call until the next UTC day. The renewal date of the
-# credits is not in the response, so the lane looks again once a day (one refused request costs nothing).
+# openai_credits_record <fp> — that key's balance is spent: not used again until the next UTC day. The renewal date
+# of the credits is not in the response, so the lane looks again once a day (one refused request costs nothing).
+# Other keys' unexpired stops are kept; expired ones are dropped. No lock: two runs recording different keys at once
+# can lose one stop, which costs one more refused (free) request with that key and is recorded again then.
 openai_credits_record() {
-  local f now
+  local f now e fp
   f="$(openai_credits_file)" || return 0
   now=$(date +%s)
   mkdir -p "$(dirname "$f")" 2>/dev/null
-  printf '%s\n' "$(( (now / 86400 + 1) * 86400 ))" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$" 2>/dev/null
+  { if [[ -r "$f" ]]; then
+      while read -r e fp _; do
+        [[ "$fp" != "$1" && "$fp" =~ ^[0-9a-f]{16}$ && "$e" =~ ^[1-9][0-9]{8,11}$ ]] && (( e > now )) && printf '%s %s\n' "$e" "$fp"
+      done < "$f"
+    fi
+    printf '%s %s\n' "$(( (now / 86400 + 1) * 86400 ))" "$1"
+  } > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$" 2>/dev/null
 }
 
 # openai_lane_stop — why the lane cannot run now (credits spent, today's cap reached); status 1 when nothing stops it.
@@ -1148,12 +1195,7 @@ run_openai_api() {
   local _lane=openai-api why
   if why="$(openai_lane_stop)"; then lane_not_run "$_lane" "$why"; return 1; fi
 
-  local key="${ZUVO_OPENAI_API_KEY:-}"
-  if [[ -z "$key" ]]; then
-    lane_key_load "${ZUVO_OPENAI_KEY_FILE:-$HOME/.zuvo/openai.key}" || true   # LANE_KEY_WHY says why
-    key="$LANE_KEY" why="$LANE_KEY_WHY"
-  fi
-  [[ -n "$key" ]] || { lane_no_key "$_lane" "${why:-no key}"; return 1; }
+  _openai_load_keys || { lane_no_key "$_lane" "$OPENAI_KEYS_WHY"; return 1; }
 
   local model price p_in p_cache p_out
   model="$(lane_model "$_lane")"
@@ -1173,11 +1215,24 @@ run_openai_api() {
   chat_payload "$payload_file" "$model" "" 0 "{\"reasoning_effort\":\"$effort\"}" \
     || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
   local curl_cfg="$JSON_TMPDIR/openai_api_curl.cfg"
-  curl_auth_config "$curl_cfg" "$_lane" "$key" || return 1
 
-  local err_file="$JSON_TMPDIR/err_openai-api.txt" response http_code status api_err try=0 left deadline
+  # The keys in order, each until its credits are spent; a key already known spent today is passed over unasked.
+  local err_file="$JSON_TMPDIR/err_openai-api.txt" response http_code status api_err try=0 left deadline ki=-1 fp=""
   deadline=$(( $(date +%s) + PROVIDER_TIMEOUT ))
   while : ; do
+    if [[ -z "$fp" ]]; then
+      while :; do
+        ki=$(( ki + 1 ))
+        if (( ki >= ${#OPENAI_KEYS[@]} )); then
+          lane_not_run "$_lane" "OpenAI credits spent on all ${#OPENAI_KEYS[@]} key(s)"
+          return 1
+        fi
+        fp="$(_openai_fp "${OPENAI_KEYS[$ki]}")"
+        openai_key_spent_until "$fp" >/dev/null || break
+      done
+      curl_auth_config "$curl_cfg" "$_lane" "${OPENAI_KEYS[$ki]}" || return 1
+      try=0
+    fi
     try=$(( try + 1 ))
     left=$(( deadline - $(date +%s) ))
     if (( left < OR_MIN_ATTEMPT_SECONDS )); then
@@ -1193,9 +1248,10 @@ run_openai_api() {
     [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
       elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
     if [[ "$http_code" == 429 ]] && _openai_credits_error "$response"; then
-      openai_credits_record
-      lane_not_run "$_lane" "OpenAI credit balance spent (HTTP 429: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS"))"
-      return 1
+      openai_credits_record "$fp"
+      echo "  NOTE: $_lane key $((ki + 1))/${#OPENAI_KEYS[@]}: credit balance spent (HTTP 429: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")) — next key" >&2
+      fp=""
+      continue
     fi
     local transient=0
     case "$http_code" in 429|5??) transient=1 ;; esac

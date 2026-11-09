@@ -393,12 +393,13 @@ Environment variables:
                            bigmodel.cn path is refused: it is not the plan.
   ZUVO_ADV_OPENAI_API=1    Opt IN to the `openai-api` lane: the OpenAI API paid from the ChatGPT subscriber API
                            credits (never Codex, which the credits do not cover). Key in ZUVO_OPENAI_API_KEY or
-                           ~/.zuvo/openai.key (ZUVO_OPENAI_KEY_FILE; mode 600/400). Each call is priced from its
-                           usage at the OpenAI list price (cost column of the run log); a spent balance (429
-                           insufficient_quota) stops the lane until the next UTC day.
+                           ~/.zuvo/openai.key (ZUVO_OPENAI_KEY_FILE; mode 600/400; one key per line, used in order).
+                           Each call is priced from its usage at the OpenAI list price (cost column of the run log);
+                           a key whose balance is spent (429 insufficient_quota) is passed over until the next UTC
+                           day, and the lane stops when all are.
   ZUVO_OPENAI_MODEL        openai-api model (default gpt-6.1-sol); ZUVO_OPENAI_REASONING=low|medium|high
                            (default medium); ZUVO_OPENAI_PRICE="in,cached,out" USD/1M for a model the price table lacks
-  ZUVO_OPENAI_DAILY_USD    openai-api spend cap per host per UTC day (default 10; off = none)
+  ZUVO_OPENAI_DAILY_USD    openai-api spend cap per host per UTC day (default 100; off = none)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
   ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)

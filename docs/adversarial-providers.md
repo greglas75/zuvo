@@ -267,13 +267,15 @@ cycle (developers.openai.com/api/docs/guides/chatgpt-api-credits). So the lane i
 `https://api.openai.com/v1/chat/completions` (fixed: the key goes to OpenAI only), never `codex exec`. Setup:
 
 ```bash
-( umask 077; pbpaste > ~/.zuvo/openai.key )          # an API key of the org that claimed the credits
+( umask 077; pbpaste >> ~/.zuvo/openai.key )         # an API key of an org that claimed the credits, one per line
 echo ZUVO_ADV_OPENAI_API=1 >> ~/.zuvo/review-lanes.conf
 ~/.zuvo/adversarial-review --doctor                    # openai-api must answer
 ```
 
 - Key: `ZUVO_OPENAI_API_KEY` or `~/.zuvo/openai.key` (`ZUVO_OPENAI_KEY_FILE`, mode 600/400). Never the generic
-  `OPENAI_API_KEY`, which may belong to another org's bill.
+  `OPENAI_API_KEY`, which may belong to another org's bill. The file may hold several keys, one per line (one per
+  ChatGPT account, each with its own credits): the lane uses them in order and moves to the next key when one's
+  balance is spent.
 - Model `gpt-6.1-sol` (`ZUVO_OPENAI_MODEL` / `ZUVO_MODEL_OPENAI_API`), `reasoning_effort` medium
   (`ZUVO_OPENAI_REASONING`), no temperature (reasoning models accept only the default).
 - **Exact accounting.** Each answer's usage block is priced at the list price in `openai_price`
@@ -281,10 +283,12 @@ echo ZUVO_ADV_OPENAI_API=1 >> ~/.zuvo/review-lanes.conf
   tokens included in completion. The run log gets the tokens (columns 19-22), `served_by` `openai`, the cost in USD
   (column 24) and the `chatcmpl-…` id (column 25), so a call can be matched against platform.openai.com/usage. A
   model the table does not price is refused unless `ZUVO_OPENAI_PRICE="in,cached,out"` (USD per 1M) prices it.
-- Spend stops: `ZUVO_OPENAI_DAILY_USD` (default 10, per host per UTC day, from the log's cost column; `off` = none) —
+- Spend stops: `ZUVO_OPENAI_DAILY_USD` (default 100, per host per UTC day, all keys together, from the log's cost
+  column; `off` = none) —
   a soft cap, checked before each call: runs in flight together can pass it by their own calls;
-  a 429 `insufficient_quota` / `credit_balance_exhausted` is the balance spent — not retried, kept in
-  `~/.zuvo/openai-credits-until` until the next UTC day. A rate-limit 429 or a 5xx is retried.
+  a 429 `insufficient_quota` / `credit_balance_exhausted` is that key's balance spent — not retried with it, kept in
+  `~/.zuvo/openai-credits-until` (`<epoch> <key fingerprint>` lines, never the key) until the next UTC day; the lane
+  stops only when every key is spent. A rate-limit 429 or a 5xx is retried.
 - With the flag on, every review's diff goes to OpenAI under the API terms.
 
 ```bash

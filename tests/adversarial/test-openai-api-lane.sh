@@ -16,18 +16,26 @@ KEYFILE="$OTMP/openai.key"
 API_URL="https://api.openai.com/v1/chat/completions"
 
 # No case reaches a real host: this fake curl is first on PATH. It records the URL, the -K config (where the key
-# travels) and the -d payload under $O_REC, and answers $O_BODY with HTTP $O_CODE (default 200, a clean review).
+# travels) and the -d payload under $O_REC, and answers $O_BODY with HTTP $O_CODE (default 200, a clean review) — or,
+# when the request's key is one of the space-separated $O_SPENT_KEYS, a spent credit balance.
 cat > "$OTMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-prev=""
+prev="" cfg=""
 for a in "$@"; do
   case "$prev" in
-    -K) cat "$a" >> "$O_REC/curl.cfg" ;;
+    -K) cfg="$(cat "$a")"; printf '%s\n' "$cfg" >> "$O_REC/curl.cfg" ;;
     -d) cp "${a#@}" "$O_REC/payload.json" ;;
   esac
   case "$a" in *://*) printf '%s\n' "$a" >> "$O_REC/curl.urls" ;; esac
   prev="$a"
 done
+for k in ${O_SPENT_KEYS:-}; do
+  case "$cfg" in *"$k"*)
+    printf '%s\n' "$k" >> "$O_REC/keys.used"
+    printf '%s\n429' '{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"quota"}}'; exit 0 ;;
+  esac
+done
+for k in k-one k-two k-three; do case "$cfg" in *"$k"*) printf '%s\n' "$k" >> "$O_REC/keys.used" ;; esac; done
 ok='{"id":"chatcmpl-T1","choices":[{"message":{"content":"NO ISSUES FOUND."}}],"usage":{"prompt_tokens":10000,"prompt_tokens_details":{"cached_tokens":4000},"completion_tokens":2000,"completion_tokens_details":{"reasoning_tokens":1500}}}'
 printf '%s\n%s' "${O_BODY:-$ok}" "${O_CODE:-200}"
 EOF
@@ -117,3 +125,26 @@ assert_eq "" "$(listed)" "no opt-in: not detected"
 assert_eq "openai-api" "$(listed ZUVO_ADV_OPENAI_API=1)" "the variable turns it on"
 printf 'ZUVO_ADV_OPENAI_API=1\n' > "$OTMP/c7/review-lanes.conf"
 assert_eq "openai-api" "$(listed)" "review-lanes.conf turns it on for a process without the variable"
+
+# ─── 8. several keys: one account's credits spent → the next account's ───
+# Bugs caught: the lane stopping for the day while other accounts still have credits; a spent key asked again on every
+# run; the key itself written to the stop file instead of a fingerprint.
+start_test "openai.8 a spent key is passed over for the next one, remembered by fingerprint, and all spent stops the lane"
+MULTI="$OTMP/multi.key"
+( umask 077; printf 'k-one\n\n# a comment\nk-two\nk-three\n' > "$MULTI" )
+run_openai c8 ZUVO_OPENAI_KEY_FILE="$MULTI" ZUVO_OPENAI_CREDITS_FILE="$OTMP/c8/credits" O_SPENT_KEYS=k-one >/dev/null
+assert_eq "0" "$(cat "$OTMP/c8/rc")" "the review completes on the second key"
+assert_eq "k-one k-two" "$(tr '\n' ' ' < "$OTMP/c8/keys.used" | sed 's/ $//')" "key 1 refused, then key 2 used"
+assert_eq "1" "$(wc -l < "$OTMP/c8/credits" | tr -d ' ')" "one stop recorded"
+case "$(cat "$OTMP/c8/credits")" in *k-one*) fail "the key itself is in the stop file" ;; *) pass "the stop file holds a fingerprint, not the key" ;; esac
+rm -f "$OTMP/c8/keys.used"
+run_openai c8 ZUVO_OPENAI_KEY_FILE="$MULTI" ZUVO_OPENAI_CREDITS_FILE="$OTMP/c8/credits" >/dev/null
+assert_eq "k-two" "$(tr -d '\n' < "$OTMP/c8/keys.used")" "the next run skips the spent key without asking it"
+rm -f "$OTMP/c8/keys.used" "$OTMP/c8/curl.urls"
+out=$(run_openai c8 ZUVO_OPENAI_KEY_FILE="$MULTI" ZUVO_OPENAI_CREDITS_FILE="$OTMP/c8/credits" O_SPENT_KEYS="k-two k-three")
+assert_eq "2" "$(requests c8)" "keys 2 and 3 asked once each"
+assert_eq "2" "$(cat "$OTMP/c8/rc")" "no key left: no review (exit 2)"
+assert_contains "$out" "spent on all 3 key(s)" "…and the WARN says all keys are spent"
+rm -f "$OTMP/c8/curl.urls"
+run_openai c8 ZUVO_OPENAI_KEY_FILE="$MULTI" ZUVO_OPENAI_CREDITS_FILE="$OTMP/c8/credits" >/dev/null
+assert_eq "0" "$(requests c8)" "all keys recorded spent: the next run sends nothing"
