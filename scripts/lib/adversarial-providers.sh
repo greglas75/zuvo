@@ -421,6 +421,16 @@ detect_providers() {
     fi
   fi
 
+  # 4b''. OpenAI API on the owner's ChatGPT subscriber credits — opt-in: the credits are a monthly allowance, and a
+  # key on disk is not consent to spend it. Plain HTTP (run_openai_api), never codex: the credits do not pay for Codex.
+  if [[ "${ZUVO_ADV_OPENAI_API:-0}" == "1" ]]; then
+    if [[ -n "${ZUVO_OPENAI_API_KEY:-}" || -f "${ZUVO_OPENAI_KEY_FILE:-$HOME/.zuvo/openai.key}" ]]; then
+      providers="${providers:+$providers }openai-api"
+    else
+      echo "  NOTE: ZUVO_ADV_OPENAI_API=1 but no key (env ZUVO_OPENAI_API_KEY or ~/.zuvo/openai.key) — lane skipped" >&2
+    fi
+  fi
+
   # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet). Most
   #    reliable client on the box, but the lowest-yield reviewer and the usual wall-clock setter.
   client_available claude && providers="${providers:+$providers }claude"
@@ -499,7 +509,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|openrouter-mini|openrouter-5|byteplus|byteplus-alt|byteplus-3|zai|muse|qwen) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|openrouter-mini|openrouter-5|byteplus|byteplus-alt|byteplus-3|zai|openai-api|muse|qwen) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -508,7 +518,7 @@ if [[ -n "$PROVIDER" ]]; then
     mock-*) ;;
     *)
       echo "ERROR: unknown provider '$PROVIDER'." >&2
-      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude, muse, qwen, zai" >&2
+      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude, muse, qwen, zai, openai-api" >&2
       exit 2 ;;
   esac
   PROVIDERS="$PROVIDER"
@@ -638,6 +648,7 @@ lane_model() {
     byteplus-alt) echo "${ZUVO_MODEL_BYTEPLUS_ALT:-deepseek-v4-1-flash-260910}" ;;
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
     zai)          echo "${ZUVO_ZAI_MODEL:-${ZUVO_MODEL_ZAI:-glm-5.3-flash}}" ;;
+    openai-api)   echo "${ZUVO_OPENAI_MODEL:-${ZUVO_MODEL_OPENAI_API:-gpt-6.1-sol}}" ;;
     muse)        echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
     qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
@@ -1025,6 +1036,8 @@ return 0
 _ar_lane_stop() {   # <lane> — prints why the lane cannot run now; status 1 when nothing on record stops it
   local lane="$1" until fb spent
   case "$lane" in
+    openai-api)
+      openai_lane_stop ;;
     muse)
       until="$(_muse_quota_until)" || return 1
       echo "muse quota until $(_ar_epoch_text "$until")" ;;

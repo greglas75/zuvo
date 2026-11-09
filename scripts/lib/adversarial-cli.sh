@@ -341,7 +341,7 @@ Environment variables:
   MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
   ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
-  ~/.zuvo/review-lanes.conf  Machine-wide opt-ins, one ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER=0|1 per line,
+  ~/.zuvo/review-lanes.conf  Machine-wide opt-ins, one ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER|OPENAI_API=0|1 per line,
                            read by the driver whoever starts it (cron, timers, agents); the environment wins
   ZUVO_ADV_QWEN=1          Opt IN to the `qwen` lane: Qwen Code CLI on an Alibaba Token/Coding Plan. Set
                            it up once with `qwen` → /auth → the plan you bought. The lane refuses any model
@@ -391,6 +391,14 @@ Environment variables:
   ZUVO_ZAI_MODEL           zai lane model (default: ZUVO_MODEL_ZAI from model-registry.sh, glm-5.3-flash, reasoning effort low — ZUVO_ZAI_REASONING=low|medium|high|off)
   ZUVO_ZAI_BASE_URL        zai endpoint (default: https://api.z.ai/api/coding/paas/v4). Any other z.ai or
                            bigmodel.cn path is refused: it is not the plan.
+  ZUVO_ADV_OPENAI_API=1    Opt IN to the `openai-api` lane: the OpenAI API paid from the ChatGPT subscriber API
+                           credits (never Codex, which the credits do not cover). Key in ZUVO_OPENAI_API_KEY or
+                           ~/.zuvo/openai.key (ZUVO_OPENAI_KEY_FILE; mode 600/400). Each call is priced from its
+                           usage at the OpenAI list price (cost column of the run log); a spent balance (429
+                           insufficient_quota) stops the lane until the next UTC day.
+  ZUVO_OPENAI_MODEL        openai-api model (default gpt-6.1-sol); ZUVO_OPENAI_REASONING=low|medium|high
+                           (default medium); ZUVO_OPENAI_PRICE="in,cached,out" USD/1M for a model the price table lacks
+  ZUVO_OPENAI_DAILY_USD    openai-api spend cap per host per UTC day (default 10; off = none)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
   ZUVO_BLIND_AUDIT_PANEL     Panel size (default 3; agy pinned, the rest random)
@@ -438,7 +446,7 @@ _ar_load_lane_optins
 return 0
 }
 
-# _ar_load_lane_optins — the owner's machine-wide lane opt-ins (ZUVO_ADV_QWEN/ZAI/BYTEPLUS/OPENROUTER=0|1) from
+# _ar_load_lane_optins — the owner's machine-wide lane opt-ins (ZUVO_ADV_QWEN/ZAI/BYTEPLUS/OPENROUTER/OPENAI_API=0|1) from
 # ${ZUVO_HOME:-~/.zuvo}/review-lanes.conf, for each one the environment leaves unset.
 # 2026-10-18: the opt-ins lived only in environment variables. A session, a cron job or a timer started
 # without them (environment.d reaches systemd user units only, and only those started after it changed) got a
@@ -448,7 +456,7 @@ _ar_load_lane_optins() {
   local f="${ZUVO_REVIEW_LANES_FILE:-${ZUVO_HOME:-${HOME:-}/.zuvo}/review-lanes.conf}" k v env_set=" "
   [[ -f "$f" && -r "$f" ]] || return 0
   # Which ones the environment set (non-empty), taken BEFORE the file: the last line for a key wins.
-  for k in ZUVO_ADV_QWEN ZUVO_ADV_ZAI ZUVO_ADV_BYTEPLUS ZUVO_ADV_OPENROUTER; do
+  for k in ZUVO_ADV_QWEN ZUVO_ADV_ZAI ZUVO_ADV_BYTEPLUS ZUVO_ADV_OPENROUTER ZUVO_ADV_OPENAI_API; do
     [[ -n "${!k:-}" ]] && env_set+="$k "
   done
   while IFS='=' read -r k v || [[ -n "$k" ]]; do
@@ -456,8 +464,8 @@ _ar_load_lane_optins() {
     [[ -n "$k" ]] || continue
     v="${v%%#*}"; v="${v//[[:space:]]/}"; v="${v//\"/}"; v="${v//\'/}"
     case "$k" in
-      ZUVO_ADV_QWEN|ZUVO_ADV_ZAI|ZUVO_ADV_BYTEPLUS|ZUVO_ADV_OPENROUTER) ;;
-      *) echo "  WARN: $f: '$k' is not a lane opt-in (ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER) — ignored" >&2; continue ;;
+      ZUVO_ADV_QWEN|ZUVO_ADV_ZAI|ZUVO_ADV_BYTEPLUS|ZUVO_ADV_OPENROUTER|ZUVO_ADV_OPENAI_API) ;;
+      *) echo "  WARN: $f: '$k' is not a lane opt-in (ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER|OPENAI_API) — ignored" >&2; continue ;;
     esac
     [[ "$env_set" == *" $k "* ]] && continue
     [[ "$v" == 0 || "$v" == 1 ]] || { echo "  WARN: $f: $k='$v' is not 0 or 1 — ignored" >&2; continue; }

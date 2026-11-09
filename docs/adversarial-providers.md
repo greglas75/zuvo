@@ -242,7 +242,7 @@ echo ZUVO_ADV_ZAI=1 >> ~/.zuvo/review-lanes.conf   # opt-in: the plan's 5-hour/w
 **Opt-ins belong in `~/.zuvo/review-lanes.conf`, not only in a shell profile** (since 2026-10-18). The
 driver reads that file itself, so a cron job, a systemd timer or an agent session started without the
 variables still gets the plan lanes; an `export` reaches only the processes that inherit it. One
-`ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER=0|1` per line; a variable set in the environment wins over the file.
+`ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER|OPENAI_API=0|1` per line; a variable set in the environment wins over the file.
 
 - Endpoint `https://api.z.ai/api/coding/paas/v4` (`ZUVO_ZAI_BASE_URL`). Any other `z.ai` /
   `bigmodel.cn` path, e.g. the metered `/api/paas/v4`, is refused before a request is sent — the same
@@ -260,6 +260,33 @@ variables still gets the plan lanes; an `export` reaches only the processes that
 - Not guarded: Z.ai's account-level **extra usage**. With it enabled and a balance, requests past
   the window are paid from the balance. Keep it off for this key.
 
+**OpenAI API on the ChatGPT subscriber credits, lane `openai-api` (since 2026-11-09).** ChatGPT Pro comes with
+monthly OpenAI API credits. They pay for Chat Completions / Responses calls made with an API key of the linked org,
+but not for Codex through an API key (claiming the credits turns that off for the org), and they expire each billing
+cycle (developers.openai.com/api/docs/guides/chatgpt-api-credits). So the lane is plain HTTP to
+`https://api.openai.com/v1/chat/completions` (fixed: the key goes to OpenAI only), never `codex exec`. Setup:
+
+```bash
+( umask 077; pbpaste > ~/.zuvo/openai.key )          # an API key of the org that claimed the credits
+echo ZUVO_ADV_OPENAI_API=1 >> ~/.zuvo/review-lanes.conf
+~/.zuvo/adversarial-review --doctor                    # openai-api must answer
+```
+
+- Key: `ZUVO_OPENAI_API_KEY` or `~/.zuvo/openai.key` (`ZUVO_OPENAI_KEY_FILE`, mode 600/400). Never the generic
+  `OPENAI_API_KEY`, which may belong to another org's bill.
+- Model `gpt-6.1-sol` (`ZUVO_OPENAI_MODEL` / `ZUVO_MODEL_OPENAI_API`), `reasoning_effort` medium
+  (`ZUVO_OPENAI_REASONING`), no temperature (reasoning models accept only the default).
+- **Exact accounting.** Each answer's usage block is priced at the list price in `openai_price`
+  (`scripts/lib/adversarial-lanes-http.sh`): (prompt − cached)·input + cached·cached-input + completion·output, reasoning
+  tokens included in completion. The run log gets the tokens (columns 19-22), `served_by` `openai`, the cost in USD
+  (column 24) and the `chatcmpl-…` id (column 25), so a call can be matched against platform.openai.com/usage. A
+  model the table does not price is refused unless `ZUVO_OPENAI_PRICE="in,cached,out"` (USD per 1M) prices it.
+- Spend stops: `ZUVO_OPENAI_DAILY_USD` (default 10, per host per UTC day, from the log's cost column; `off` = none) —
+  a soft cap, checked before each call: runs in flight together can pass it by their own calls;
+  a 429 `insufficient_quota` / `credit_balance_exhausted` is the balance spent — not retried, kept in
+  `~/.zuvo/openai-credits-until` until the next UTC day. A rate-limit 429 or a 5xx is retried.
+- With the flag on, every review's diff goes to OpenAI under the API terms.
+
 ```bash
 ~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES
 ~/.zuvo/adversarial-stats --days 30 --project zuvo-plugin
@@ -275,6 +302,7 @@ prints them; a hand-made table must too. `CRIT` is what a model *reported*, not 
 | Z.ai (GLM Coding Plan) | `zai` | no usage page recorded (z.ai → GLM Coding Plan → Usage) |
 | OpenRouter (per token) | `openrouter`, `openrouter-alt`, `openrouter-3`, `openrouter-4`, `openrouter-mini`, `openrouter-5` | https://openrouter.ai/activity |
 | Alibaba Model Studio (Token Plan Intl) | `qwen` | https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal |
+| OpenAI API (ChatGPT Pro credits, per token) | `openai-api` | https://platform.openai.com/usage |
 | OpenAI (ChatGPT plan) | `codex-5.3`, `codex-5.4` | https://chatgpt.com/codex/settings/usage |
 | Anthropic (Claude plan) | `claude` | https://claude.ai/settings/usage |
 | Cursor | `cursor-agent` | https://cursor.com/dashboard?tab=usage |
