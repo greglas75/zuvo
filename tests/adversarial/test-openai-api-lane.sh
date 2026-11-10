@@ -17,7 +17,7 @@ API_URL="https://api.openai.com/v1/chat/completions"
 
 # No case reaches a real host: this fake curl is first on PATH. It records the URL, the -K config (where the key
 # travels) and the -d payload under $O_REC, and answers $O_BODY with HTTP $O_CODE (default 200, a clean review) — or,
-# when the request's key is one of the space-separated $O_SPENT_KEYS, a spent credit balance.
+# when the request's key is one of the space-separated $O_SPENT_KEYS, a spent credit balance (in $O_BAD_KEYS: a 401).
 cat > "$OTMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 prev="" cfg=""
@@ -33,6 +33,12 @@ for k in ${O_SPENT_KEYS:-}; do
   case "$cfg" in *"$k"*)
     printf '%s\n' "$k" >> "$O_REC/keys.used"
     printf '%s\n429' '{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"quota"}}'; exit 0 ;;
+  esac
+done
+for k in ${O_BAD_KEYS:-}; do
+  case "$cfg" in *"$k"*)
+    printf '%s\n' "$k" >> "$O_REC/keys.used"
+    printf '%s\n401' '{"error":{"type":"invalid_request_error","code":"invalid_api_key","message":"Incorrect API key"}}'; exit 0 ;;
   esac
 done
 for k in k-one k-two k-three; do case "$cfg" in *"$k"*) printf '%s\n' "$k" >> "$O_REC/keys.used" ;; esac; done
@@ -148,3 +154,9 @@ assert_contains "$out" "spent on all 3 key(s)" "…and the WARN says all keys ar
 rm -f "$OTMP/c8/curl.urls"
 run_openai c8 ZUVO_OPENAI_KEY_FILE="$MULTI" ZUVO_OPENAI_CREDITS_FILE="$OTMP/c8/credits" >/dev/null
 assert_eq "0" "$(requests c8)" "all keys recorded spent: the next run sends nothing"
+
+start_test "openai.8b a key refused outright (401) passes to the next key, and is not recorded as spent"
+run_openai c8b ZUVO_OPENAI_KEY_FILE="$MULTI" ZUVO_OPENAI_CREDITS_FILE="$OTMP/c8b/credits" O_BAD_KEYS=k-one >/dev/null
+assert_eq "0" "$(cat "$OTMP/c8b/rc")" "the review completes on the second key"
+assert_eq "k-one k-two" "$(tr '\n' ' ' < "$OTMP/c8b/keys.used" | sed 's/ $//')" "key 1 refused, then key 2 used"
+assert_eq "0" "$( [ -s "$OTMP/c8b/credits" ] && echo 1 || echo 0)" "a refused key is not a spent balance"

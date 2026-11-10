@@ -275,7 +275,7 @@ echo ZUVO_ADV_OPENAI_API=1 >> ~/.zuvo/review-lanes.conf
 - Key: `ZUVO_OPENAI_API_KEY` or `~/.zuvo/openai.key` (`ZUVO_OPENAI_KEY_FILE`, mode 600/400). Never the generic
   `OPENAI_API_KEY`, which may belong to another org's bill. The file may hold several keys, one per line (one per
   ChatGPT account, each with its own credits): the lane uses them in order and moves to the next key when one's
-  balance is spent.
+  balance is spent or the key is refused (401/403, not remembered).
 - Model `gpt-6.1-sol` (`ZUVO_OPENAI_MODEL` / `ZUVO_MODEL_OPENAI_API`), `reasoning_effort` medium
   (`ZUVO_OPENAI_REASONING`), no temperature (reasoning models accept only the default).
 - **Exact accounting.** Each answer's usage block is priced at the list price in `openai_price`

@@ -1253,6 +1253,13 @@ run_openai_api() {
       fp=""
       continue
     fi
+    # A key refused outright (revoked, account closed: 401/403) must not stop the accounts behind it. Not recorded:
+    # a fixed key is used again on the next run.
+    if [[ "$http_code" == 401 || "$http_code" == 403 ]] && (( ki + 1 < ${#OPENAI_KEYS[@]} )); then
+      echo "  NOTE: $_lane key $((ki + 1))/${#OPENAI_KEYS[@]} refused (HTTP $http_code: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")) — next key" >&2
+      fp=""
+      continue
+    fi
     local transient=0
     case "$http_code" in 429|5??) transient=1 ;; esac
     case "$status" in 52|56|35|16|18|92) transient=1 ;; esac
