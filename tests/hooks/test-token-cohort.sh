@@ -485,8 +485,10 @@ class CohortContract(unittest.TestCase):
                        }.get(case, json.dumps(row))
                 self.write("t0-usage.jsonl", raw)
                 self.write("report.json", "sentinel")
-                expected_error = {"negative": "reasoning_output must be finite and nonnegative",
-                                  "deep_json": "recursion"}.get(case)
+                # deep_json names no message: up to Python 3.14 the decoder hits its recursion limit ("recursion"),
+                # 3.15 parses it and the row is refused as a non-object. Either way: exit 2, no traceback, the
+                # report kept (the bug this case catches is a crash that replaces it).
+                expected_error = {"negative": "reasoning_output must be finite and nonnegative"}.get(case)
                 diagnostic = {"duplicate_keys": "duplicate JSON key source",
                               "observation": "invalid observation event"}.get(case)
                 self.call(2, error=expected_error, diagnostic=diagnostic)
