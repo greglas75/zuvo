@@ -63,10 +63,10 @@ def _load(path):
             data = json.load(f)
     except FileNotFoundError as e:
         if os.path.lexists(path):          # a dangling symlink: the registry is elsewhere, not absent
-            raise Unreadable('%s: %s' % (path, e))
+            raise Unreadable('%s: %s' % (path, e)) from e
         return {}
     except (OSError, ValueError) as e:
-        raise Unreadable('%s: %s' % (path, e))
+        raise Unreadable('%s: %s' % (path, e)) from e
     plugins = data.get('plugins') if isinstance(data, dict) else None
     entries = plugins.get(PLUGIN_KEY, []) if isinstance(plugins, dict) else None
     if not isinstance(entries, list):
@@ -85,7 +85,8 @@ def _write_atomic(path, data, mtime):
                                dir=os.path.dirname(target))
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            os.fchmod(f.fileno(), mode)    # the registry's own mode, exactly; a create mode goes through the umask
+            # the registry's own mode, exactly; a create mode goes through the umask
+            os.fchmod(f.fileno(), mode)
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())

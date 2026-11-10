@@ -485,8 +485,11 @@ class CohortContract(unittest.TestCase):
                        }.get(case, json.dumps(row))
                 self.write("t0-usage.jsonl", raw)
                 self.write("report.json", "sentinel")
+                # deep_json: up to Python 3.14 the decoder hits its recursion limit; 3.15 parses the array and
+                # the row is refused as a non-object. Both are a clean refusal (exit 2, no traceback).
+                deep = "recursion" if sys.version_info < (3, 15) else "usage row must be an object"
                 expected_error = {"negative": "reasoning_output must be finite and nonnegative",
-                                  "deep_json": "recursion"}.get(case)
+                                  "deep_json": deep}.get(case)
                 diagnostic = {"duplicate_keys": "duplicate JSON key source",
                               "observation": "invalid observation event"}.get(case)
                 self.call(2, error=expected_error, diagnostic=diagnostic)
