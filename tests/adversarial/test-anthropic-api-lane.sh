@@ -67,7 +67,7 @@ assert_eq "$API_URL" "$(cat "$ATMP/c1/curl.urls" 2>/dev/null)" "exactly one requ
 assert_eq "0" "$(cat "$ATMP/c1/rc")" "the review completes (exit 0)"
 cfg="$(cat "$ATMP/c1/curl.cfg" 2>/dev/null)"
 assert_contains "$cfg" 'header = "x-api-key: sk-ant-api-secret-for-test"' "the key travels as x-api-key"
-assert_contains "$cfg" 'anthropic-version: 2026-10-21' "the API version header is sent"
+assert_contains "$cfg" 'header = "anthropic-version: 2026-10-21"' "the API version header is sent"
 case "$cfg" in *Bearer*|*sk-ant-other-must-not-leak*) fail "a Bearer header or the generic ANTHROPIC_API_KEY was sent" ;;
   *) pass "no Bearer header, no generic ANTHROPIC_API_KEY" ;; esac
 assert_eq "claude-sonnet-5-5 medium default null" \
@@ -86,6 +86,8 @@ FB='{"id":"msg_F","model":"claude-opus-4-8","stop_reason":"end_turn","content":[
 A_BODY="$FB" run_anthropic c2 >/dev/null
 # Opus 4.8: 1000·$5 + 1000·$25 per 1M = $0.03
 assert_eq "0.03000000" "$(lane_row c2 24)" "a fallback answer is priced at the fallback model's rate"
+A_BODY="${FB/claude-opus-4-8/claude-opus-4-8-20260815}" run_anthropic c2b >/dev/null
+assert_eq "0.03000000" "$(lane_row c2b 24)" "a dated snapshot is priced as its family"
 
 # ─── 3. a spent balance: the next key, then stop ─────────────────────────
 # Bug caught: Anthropic's spent balance is a 400, not OpenAI's 429 — unrecognized, it would end the review as a lane

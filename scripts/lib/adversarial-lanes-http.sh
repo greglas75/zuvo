@@ -1376,11 +1376,11 @@ run_openai_api() {
 # the same model reviewing its own diff is self-review; ZUVO_ANTHROPIC_MODEL names another.
 
 # anthropic_price <model> — "<input> <cache read> <output>" in USD per 1M tokens, the Anthropic list price
-# (2026-11-03). Cache writes bill at 1.25× input (anthropic_call_cost). ZUVO_ANTHROPIC_PRICE="in,cache,out" replaces
-# the table for ANY model. Status 1 for a model with no price.
+# (2026-11-03). Cache writes bill at 1.25× input (anthropic_call_cost). ZUVO_ANTHROPIC_PRICE="in,cached,out" replaces
+# the table for ANY model. A dated snapshot (claude-…-YYYYMMDD) bills as its family. Status 1 for a model with no price.
 anthropic_price() {
   if [[ -n "${ZUVO_ANTHROPIC_PRICE:-}" ]]; then _credit_price_override ZUVO_ANTHROPIC_PRICE; return; fi
-  case "$1" in
+  case "${1%-20[0-9][0-9][01][0-9][0-3][0-9]}" in
     claude-opus-5-5)                     echo "4 0.20 20" ;;
     claude-opus-5|claude-opus-4-[678])   echo "5 0.50 25" ;;
     claude-sonnet-5-5)                   echo "2 0.10 10" ;;
@@ -1432,7 +1432,7 @@ run_anthropic_api() {
   model="$(lane_model "$_lane")"
   lane_model_ok "$_lane" "$model" || return 1
   anthropic_price "$model" >/dev/null || {
-    lane_no_key "$_lane" "no price for model '$model' — set ZUVO_ANTHROPIC_PRICE=\"in,cache,out\" (USD per 1M tokens) so every call is accounted"
+    lane_no_key "$_lane" "no price for model '$model' — set ZUVO_ANTHROPIC_PRICE=\"in,cached,out\" (USD per 1M tokens) so every call is accounted"
     return 1; }
 
   # Thinking is left to the model (adaptive); effort sets its depth. No temperature: API version 2026-10-21 refuses it.
@@ -1457,7 +1457,11 @@ run_anthropic_api() {
   local served cost gen price
   served="$(printf '%s' "$CR_RESPONSE" | jq -r '.model // empty' 2>/dev/null)"
   anthropic_usage "$CR_RESPONSE"
-  if price="$(anthropic_price "${served:-$model}")" || price="$(anthropic_price "$model")"; then
+  if ! price="$(anthropic_price "${served:-$model}")"; then
+    echo "  WARN: $_lane: no price for the model that answered ('$served') — this call is recorded at $model's rate" >&2
+    price="$(anthropic_price "$model")"
+  fi
+  if [[ -n "$price" ]]; then
     read -r p_in p_cache p_out <<< "$price"
     cost="$(anthropic_call_cost "$CR_RESPONSE" "$p_in" "$p_cache" "$p_out")" \
       || echo "  WARN: $_lane: the answer has no usage block — this call's cost is not recorded" >&2
@@ -1470,6 +1474,9 @@ run_anthropic_api() {
     echo "  WARN: $_lane: the model declined the review (refusal: $(printf '%s' "$CR_RESPONSE" | jq -r '.stop_details.category // "?"' 2>/dev/null))" >&2
     return 1
   fi
+  # A review cut by the token limit still carries the findings written so far: kept, but the WARN says it is partial.
+  [[ "$(printf '%s' "$CR_RESPONSE" | jq -r '.stop_reason // empty' 2>/dev/null)" == max_tokens ]] \
+    && echo "  WARN: $_lane: the review hit max_tokens — the text below is incomplete" >&2
   credit_review_text "$_lane" "$(printf '%s' "$CR_RESPONSE" | jq -r '[.content[]? | select(.type == "text") | .text] | join("")' 2>/dev/null)" || rc=$?
   return $rc
 }

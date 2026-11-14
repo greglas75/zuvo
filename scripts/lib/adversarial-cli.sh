@@ -407,7 +407,7 @@ Environment variables:
                            key until the next UTC day.
   ZUVO_ANTHROPIC_MODEL     anthropic-api model (default: the claude lane's reviewer, the author's opposite);
                            ZUVO_ANTHROPIC_EFFORT=low|medium|high|xhigh|max (default medium);
-                           ZUVO_ANTHROPIC_PRICE="in,cache,out" USD/1M for a model the price table lacks
+                           ZUVO_ANTHROPIC_PRICE="in,cached,out" USD/1M for a model the price table lacks
   ZUVO_ANTHROPIC_DAILY_USD anthropic-api spend cap per host per UTC day (default 100; off = none)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
   --mode blind-audit only (ZUVO_REVIEW_MAX_PROVIDERS, ZUVO_REVIEW_TIMEOUT and ZUVO_RUN_DEADLINE do not apply):
