@@ -17,6 +17,9 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not available"; exit
 [ -f "$TOOL" ] || { bad "scripts/zuvo-home/adversarial-stats does not exist"; printf 'RESULT: PASS=%d FAIL=%d\n' "$npass" "$nfail"; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# The host's own ~/.zuvo (cooldown ledger, run log) must not reach the output: on a machine that has run reviews,
+# provider-health.tsv names other lanes' models and the --project check saw them as a leak.
+export ZUVO_HOME="$TMP/zuvo-home"
 # refuses <label> <rc> <stderr text> <tool args...> — the tool exits exactly <rc> with <stderr text> and no
 # Python traceback. "Non-zero" alone also passes a crash: a traceback exits 1 too.
 refuses() {
