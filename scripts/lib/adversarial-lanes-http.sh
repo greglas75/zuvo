@@ -60,7 +60,8 @@ OR_ATTEMPTS=3
 # never argv, where `-H "Bearer …"` is readable through ps by every process on the host. Owner-only FROM
 # CREATION (umask 077 before the redirect): a chmod after the write leaves a window. A key with a quote, a
 # backslash or a line break would end the config's quoted string and add a directive of its own: refused as
-# no-key (lane_no_key: the configuration's fault, not the lane's), status 1.
+# no-key (lane_no_key: the configuration's fault, not the lane's), status 1. CURL_AUTH_PREFIX replaces the
+# "Authorization: Bearer " prefix for a vendor that takes its key in another header (Anthropic: "x-api-key: ").
 curl_auth_config() {
   local file="$1" lane="$2" key="$3" h
   shift 3
@@ -70,7 +71,7 @@ curl_auth_config() {
       return 1 ;;
   esac
   ( umask 077
-    { printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$key"
+    { printf 'header = "%s%s"\nheader = "Content-Type: application/json"\n' "${CURL_AUTH_PREFIX:-Authorization: Bearer }" "$key"
       for h in "$@"; do printf 'header = "%s"\n' "$h"; done
     } > "$file" )
 }
@@ -1034,26 +1035,269 @@ run_kimi_api() {
   printf '%s\n' "$text"
 }
 
+# ─── credit lanes: the vendor APIs paid from the owner's prepaid credits (openai-api, anthropic-api) ───────────────
+# Both lanes spend a prepaid allowance through plain HTTP with keys of their own, so they share the machinery here:
+# several keys spent one after another, a key whose credits are gone passed over until the next UTC day, a daily cap
+# per host, and every call priced from its own usage block into the run log (columns 19-25) — exact, not estimated.
+# Only the request and the answer differ (run_openai_api, run_anthropic_api).
+#
+# _credit_vendor <vendor> — the vendor's settings into CV_*: the lane, its name in messages, the env key and key file,
+# the stop file and the daily cap. Status 1 for an unknown vendor.
+_credit_vendor() {
+  case "$1" in
+    openai)
+      CV_LANE=openai-api CV_NAME=OpenAI CV_KEY_ENV=ZUVO_OPENAI_API_KEY CV_CAP_ENV=ZUVO_OPENAI_DAILY_USD
+      CV_KEY_FILE="${ZUVO_OPENAI_KEY_FILE:-$HOME/.zuvo/openai.key}"
+      CV_STOP_FILE="${ZUVO_OPENAI_CREDITS_FILE:-}" CV_STOP_NAME=openai-credits-until ;;
+    anthropic)
+      CV_LANE=anthropic-api CV_NAME=Anthropic CV_KEY_ENV=ZUVO_ANTHROPIC_API_KEY CV_CAP_ENV=ZUVO_ANTHROPIC_DAILY_USD
+      CV_KEY_FILE="${ZUVO_ANTHROPIC_KEY_FILE:-$HOME/.zuvo/anthropic.key}"
+      CV_STOP_FILE="${ZUVO_ANTHROPIC_CREDITS_FILE:-}" CV_STOP_NAME=anthropic-credits-until ;;
+    *) return 1 ;;
+  esac
+}
+
+# _credit_daily_cap <vendor> — today's cap in USD (UTC day) on stdout; status 1 when there is none ("off", or the test
+# harness without an explicit cap). Default 100 (owner, 2026-11-10): the credits are an allowance — $500 and $250 on
+# two of the OpenAI accounts — and one runaway day must not spend it.
+_credit_daily_cap() {
+  _credit_vendor "$1" || return 1
+  local cap="${!CV_CAP_ENV-100}"
+  [[ "$cap" == off ]] && return 1
+  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${!CV_CAP_ENV+x}" ]] && return 1
+  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || cap=100
+  printf '%s\n' "$cap"
+}
+
+# credit_spent_today <vendor> — USD this host's lane spent today (UTC): the run log's cost column (24) of today's rows
+# of the lane, plus the calls this run has made and not yet logged. Local state only, no request.
+credit_spent_today() {
+  _credit_vendor "$1" || return 1
+  local today run_calls="${JSON_TMPDIR:-/nonexistent}/orcall_${CV_LANE}.txt"
+  today="$(date -u +%Y-%m-%d)"
+  { [[ -r "${LOG_FILE:-}" ]] && awk -F'\t' -v d="$today" -v l="$CV_LANE" '$14 == l && index($1, d) == 1 && $24 ~ /^[0-9.]+$/ { print $24 }' "$LOG_FILE"
+    [[ -r "$run_calls" ]] && awk -F'\t' '$2 ~ /^[0-9.]+$/ { print $2 }' "$run_calls"
+  } 2>/dev/null | awk '{ s += $1 } END { printf "%.4f\n", s }'
+}
+
+# credit_stop_file <vendor> — where spent balances are kept; status 1 (none) under the test harness unless a test
+# names one, so no case writes the machine's ~/.zuvo.
+credit_stop_file() {
+  _credit_vendor "$1" || return 1
+  if [[ -n "$CV_STOP_FILE" ]]; then printf '%s\n' "$CV_STOP_FILE"
+  elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then return 1
+  else printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/$CV_STOP_NAME"; fi
+}
+
+# _credit_load_keys <vendor> — the lane's keys into CREDIT_KEYS (an array), in order: the env key alone, else every
+# non-blank, non-# line of the key file (mode 600/400, lane_key_load). Each account comes with its own credits; one
+# key per line lets the lane spend them one after another. CREDIT_KEYS_WHY says why there is none.
+_credit_load_keys() {
+  local k
+  CREDIT_KEYS=() CREDIT_KEYS_WHY=""
+  _credit_vendor "$1" || { CREDIT_KEYS_WHY="unknown vendor '$1'"; return 1; }
+  if [[ -n "${!CV_KEY_ENV:-}" ]]; then CREDIT_KEYS=("${!CV_KEY_ENV}"); return 0; fi
+  lane_key_load "$CV_KEY_FILE" || true   # LANE_KEY_WHY says why
+  while IFS= read -r k || [[ -n "$k" ]]; do
+    k="${k//[[:space:]]/}"
+    [[ -n "$k" && "$k" != \#* ]] && CREDIT_KEYS+=("$k")
+  done <<< "$LANE_KEY"
+  LANE_KEY=""
+  (( ${#CREDIT_KEYS[@]} > 0 )) || { CREDIT_KEYS_WHY="${LANE_KEY_WHY:-no key in the key file}"; return 1; }
+}
+
+# _credit_fp <key> — a 16-hex fingerprint of a key (sha256, the key on stdin): which key a stop is for, never the key.
+_credit_fp() {
+  printf '%s' "$1" | { shasum -a 256 2>/dev/null || sha256sum; } | cut -c1-16
+}
+
+# credit_key_spent_until <vendor> <fp> — the epoch until which that key's credits are known spent, while it is ahead;
+# status 1 otherwise. The file holds "<epoch> <fp>" lines.
+credit_key_spent_until() {
+  local f e fp now
+  f="$(credit_stop_file "$1")" || return 1
+  [[ -r "$f" ]] || return 1
+  now=$(date +%s)
+  while read -r e fp _; do
+    # No leading zero: (( )) would read 08 as bad octal.
+    [[ "$fp" == "$2" && "$e" =~ ^[1-9][0-9]{8,11}$ ]] && (( e > now )) && { printf '%s\n' "$e"; return 0; }
+  done < "$f"
+  return 1
+}
+
+# credit_until <vendor> — the epoch until which EVERY key's credits are known spent (the earliest of their stops);
+# status 1 while any key may still spend, or there is no key.
+credit_until() {
+  local i fp e first=""
+  _credit_load_keys "$1" || return 1
+  for (( i = 0; i < ${#CREDIT_KEYS[@]}; i++ )); do
+    fp="$(_credit_fp "${CREDIT_KEYS[$i]}")"
+    e="$(credit_key_spent_until "$1" "$fp")" || return 1
+    [[ -z "$first" || "$e" -lt "$first" ]] && first="$e"
+  done
+  printf '%s\n' "$first"
+}
+
+# credit_record <vendor> <fp> — that key's balance is spent: not used again until the next UTC day. The renewal date
+# of the credits is not in the response, so the lane looks again once a day (one refused request costs nothing).
+# Other keys' unexpired stops are kept; expired ones are dropped. No lock: two runs recording different keys at once
+# can lose one stop, which costs one more refused (free) request with that key and is recorded again then.
+credit_record() {
+  local f now e fp
+  f="$(credit_stop_file "$1")" || return 0
+  now=$(date +%s)
+  mkdir -p "$(dirname "$f")" 2>/dev/null
+  { if [[ -r "$f" ]]; then
+      while read -r e fp _; do
+        [[ "$fp" != "$2" && "$fp" =~ ^[0-9a-f]{16}$ && "$e" =~ ^[1-9][0-9]{8,11}$ ]] && (( e > now )) && printf '%s %s\n' "$e" "$fp"
+      done < "$f"
+    fi
+    printf '%s %s\n' "$(( (now / 86400 + 1) * 86400 ))" "$2"
+  } > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$" 2>/dev/null
+}
+
+# credit_lane_stop <vendor> — why the lane cannot run now (credits spent, today's cap reached); status 1 when nothing
+# stops it.
+credit_lane_stop() {
+  local until cap spent
+  _credit_vendor "$1" || return 1
+  if until="$(credit_until "$1")"; then
+    echo "$CV_NAME credits spent, next look $(_ar_epoch_text "$until")"
+    return 0
+  fi
+  cap="$(_credit_daily_cap "$1")" || return 1
+  spent="$(credit_spent_today "$1")"
+  awk -v u="$spent" -v c="$cap" 'BEGIN { exit !(u >= c) }' || return 1
+  echo "$CV_NAME daily cap \$$spent/\$$cap ($CV_CAP_ENV)"
+}
+openai_lane_stop() { credit_lane_stop openai; }
+anthropic_lane_stop() { credit_lane_stop anthropic; }
+
+# credit_request <vendor> <url> <payload file> <spent-test> [<header>...] — POST the payload with the lane's keys in
+# order, each until its credits are spent (a key already known spent today is passed over unasked). <spent-test> is a
+# function given (http code, body) that says "this key's balance is gone": recorded, next key. A key refused outright
+# (revoked, account closed: 401/403) must not stop the accounts behind it — next key, not recorded (a fixed key is
+# used again on the next run). Rate limits and 5xx are retried. The keys travel in a -K file, never argv; <header>s
+# are added to it. The auth header is CREDIT_AUTH_PREFIX (default "Authorization: Bearer ").
+# Sets CR_RESPONSE, CR_HTTP, CR_STATUS (curl's), CR_ERR (the API's error message). Status 0 when an answer (or a final
+# error) is in hand; 1 when the lane cannot run (no key, every key spent; already reported); 124 out of time.
+credit_request() {
+  local vendor="$1" url="$2" payload_file="$3" spent_test="$4"
+  shift 4
+  _credit_vendor "$vendor" || return 1
+  local _lane="$CV_LANE"
+  _credit_load_keys "$vendor" || { lane_no_key "$_lane" "$CREDIT_KEYS_WHY"; return 1; }
+  local curl_cfg="$JSON_TMPDIR/${_lane//-/_}_curl.cfg" err_file="$JSON_TMPDIR/err_${_lane}.txt"
+  local response http_code status api_err try=0 left deadline ki=-1 fp="" transient
+  deadline=$(( $(date +%s) + PROVIDER_TIMEOUT ))
+  while : ; do
+    if [[ -z "$fp" ]]; then
+      while :; do
+        ki=$(( ki + 1 ))
+        if (( ki >= ${#CREDIT_KEYS[@]} )); then
+          lane_not_run "$_lane" "$CV_NAME credits spent on all ${#CREDIT_KEYS[@]} key(s)"
+          return 1
+        fi
+        fp="$(_credit_fp "${CREDIT_KEYS[$ki]}")"
+        credit_key_spent_until "$vendor" "$fp" >/dev/null || break
+      done
+      CURL_AUTH_PREFIX="${CREDIT_AUTH_PREFIX:-}" curl_auth_config "$curl_cfg" "$_lane" "${CREDIT_KEYS[$ki]}" "$@" || return 1
+      try=0
+    fi
+    try=$(( try + 1 ))
+    left=$(( deadline - $(date +%s) ))
+    if (( left < OR_MIN_ATTEMPT_SECONDS )); then
+      echo "  WARN: $_lane out of time budget after $((try - 1)) attempt(s)" >&2
+      return 124
+    fi
+    status=0
+    # No -f: the {"error":…} body of a 401/429 is the diagnostic. The URL is the caller's fixed vendor URL.
+    response=$(curl -sS --max-time "$left" -w '\n%{http_code}' "$url" \
+      -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
+    http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
+    api_err=""
+    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
+      elif type == "object" then (.message // .code // .type // tostring) else tostring end' 2>/dev/null)
+    if [[ $status -eq 0 ]] && "$spent_test" "$http_code" "$response"; then
+      credit_record "$vendor" "$fp"
+      echo "  NOTE: $_lane key $((ki + 1))/${#CREDIT_KEYS[@]}: credit balance spent (HTTP $http_code: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")) — next key" >&2
+      fp=""
+      continue
+    fi
+    if [[ "$http_code" == 401 || "$http_code" == 403 ]] && (( ki + 1 < ${#CREDIT_KEYS[@]} )); then
+      echo "  NOTE: $_lane key $((ki + 1))/${#CREDIT_KEYS[@]} refused (HTTP $http_code: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")) — next key" >&2
+      fp=""
+      continue
+    fi
+    transient=0
+    case "$http_code" in 429|5??) transient=1 ;; esac
+    case "$status" in 52|56|35|16|18|92) transient=1 ;; esac
+    if (( transient && try < OR_ATTEMPTS )); then
+      echo "  NOTE: $_lane [$(lane_model "$_lane")] transient (HTTP ${http_code:-?}, curl $status) — retry $try/$(( OR_ATTEMPTS - 1 ))" >&2
+      sleep $(( try * 3 ))
+      continue
+    fi
+    break
+  done
+  CR_RESPONSE="$response" CR_HTTP="$http_code" CR_STATUS="$status" CR_ERR="$api_err"
+  return 0
+}
+
+# credit_answer_check <lane> — the common failures of a finished credit_request, reported; status 0 when CR_RESPONSE
+# is a 2xx answer worth reading, else the lane's exit status (124 for curl's timeout).
+credit_answer_check() {
+  local _lane="$1"
+  if [[ $CR_STATUS -ne 0 ]]; then
+    lane_exit_warn "$_lane" "$CR_STATUS" 28 "$JSON_TMPDIR/err_${_lane}.txt"
+    [[ $CR_STATUS -eq 28 ]] && return 124
+    return "$CR_STATUS"
+  fi
+  if [[ -n "$CR_ERR" ]]; then
+    echo "  WARN: $_lane returned error: $(printf '%s' "$CR_ERR" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+    return 1
+  fi
+  if [[ ! "$CR_HTTP" =~ ^2[0-9][0-9]$ ]]; then
+    printf '  WARN: %s HTTP %s: %s\n' "$_lane" "${CR_HTTP:-?}" \
+      "$(printf '%s' "${CR_RESPONSE:0:$LANE_ERR_RESPONSE_QUOTE_CHARS}" | LC_ALL=C tr -c '[:print:]' '?')" >&2
+    return 1
+  fi
+  return 0
+}
+
+# credit_review_text <lane> <text> — the review text to stdout, or a WARN and status 1 when it is empty or an error.
+credit_review_text() {
+  local verdict
+  if verdict="$(lane_error_text openrouter "$2")"; then
+    if [[ "$verdict" == short ]]; then
+      echo "  WARN: $1 returned empty/error content: $(printf '%s' "$CR_RESPONSE" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
+    else
+      echo "  WARN: $1 returned error-prefixed content: $(printf '%s' "$2" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
+    fi
+    return 1
+  fi
+  printf '%s\n' "$2"
+}
+
+# _credit_price_override <VAR> — "<in> <cached> <out>" from an "in,cached,out" override; status 1 when unset or bad.
+# JSON numbers (jq --argjson takes them): no leading zero, so "05" is refused here rather than unpriced later.
+_credit_price_override() {
+  local p="${!1:-}"
+  [[ -n "$p" && "$p" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?,(0|[1-9][0-9]*)(\.[0-9]+)?,(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] || return 1
+  printf '%s\n' "${p//,/ }"
+}
+
 # ─── openai-api: the OpenAI API on the owner's ChatGPT subscriber credits ─────────────────────────────────────────
 # ChatGPT Pro comes with monthly OpenAI API credits. They pay for Chat Completions / Responses calls made with an API
 # key of the linked org, never for Codex through an API key (claiming them turns that off for the org), and they
-# expire each billing cycle — so this lane is plain HTTP, never `codex exec`. Every call is priced from its own usage
-# block at the list price below and written to the run log (columns 19-25), so the credits' spend is exact per call,
-# not estimated. Docs: developers.openai.com/api/docs/guides/chatgpt-api-credits.
+# expire each billing cycle — so this lane is plain HTTP, never `codex exec`.
+# Docs: developers.openai.com/api/docs/guides/chatgpt-api-credits.
 
 # openai_price <model> — "<input> <cached input> <output>" in USD per 1M tokens, the OpenAI list price (standard
 # tier, 2026-11-09). ZUVO_OPENAI_PRICE="in,cached,out" replaces the table for ANY model (a price change, or a model
-# the table does not know). Status 1
-# for a model with no price: the lane then refuses to run — a call that cannot be priced is not exact accounting.
-# A dated snapshot (gpt-6.1-sol-2026-10-01) bills as its family.
+# the table does not know). Status 1 for a model with no price: the lane then refuses to run — a call that cannot be
+# priced is not exact accounting. A dated snapshot (gpt-6.1-sol-2026-10-01) bills as its family.
 openai_price() {
-  local p="${ZUVO_OPENAI_PRICE:-}"
-  if [[ -n "$p" ]]; then
-    # JSON numbers (jq --argjson takes them): no leading zero, so "05" is refused here rather than unpriced later.
-    [[ "$p" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?,(0|[1-9][0-9]*)(\.[0-9]+)?,(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] || return 1
-    printf '%s\n' "${p//,/ }"
-    return 0
-  fi
+  if [[ -n "${ZUVO_OPENAI_PRICE:-}" ]]; then _credit_price_override ZUVO_OPENAI_PRICE; return; fi
   case "$1" in
     gpt-6.1-sol|gpt-6.1-sol-20[0-9][0-9]-*)     echo "2 0.10 10" ;;
     gpt-6.1-terra|gpt-6.1-terra-20[0-9][0-9]-*) echo "1 0.05 5" ;;
@@ -1077,125 +1321,17 @@ openai_call_cost() {
   awk -v u="$usd" 'BEGIN { printf "%.8f\n", u }'
 }
 
-# _openai_daily_cap — today's cap in USD (UTC day) on stdout; status 1 when there is none ("off", or the test harness
-# without an explicit cap). Default 100 (owner, 2026-11-10): the credits are a monthly allowance — $500 and $250 on two
-# of the accounts — and one runaway day must not spend it.
-_openai_daily_cap() {
-  local cap="${ZUVO_OPENAI_DAILY_USD-100}"
-  [[ "$cap" == off ]] && return 1
-  [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == 1 && -z "${ZUVO_OPENAI_DAILY_USD+x}" ]] && return 1
-  [[ "$cap" =~ ^[0-9]+(\.[0-9]+)?$ ]] || cap=100
-  printf '%s\n' "$cap"
-}
-
-# openai_spent_today — USD this host's openai-api lane spent today (UTC): the run log's cost column (24) of today's
-# openai-api rows, plus the calls this run has made and not yet logged. Local state only, no request.
-openai_spent_today() {
-  local today run_calls="${JSON_TMPDIR:-/nonexistent}/orcall_openai-api.txt"
-  today="$(date -u +%Y-%m-%d)"
-  { [[ -r "${LOG_FILE:-}" ]] && awk -F'\t' -v d="$today" '$14 == "openai-api" && index($1, d) == 1 && $24 ~ /^[0-9.]+$/ { print $24 }' "$LOG_FILE"
-    [[ -r "$run_calls" ]] && awk -F'\t' '$2 ~ /^[0-9.]+$/ { print $2 }' "$run_calls"
-  } 2>/dev/null | awk '{ s += $1 } END { printf "%.4f\n", s }'
-}
-
-# openai_credits_file — where a spent credit balance is kept; status 1 (none) under the test harness unless a test
-# names one, so no case writes the machine's ~/.zuvo.
-openai_credits_file() {
-  if [[ -n "${ZUVO_OPENAI_CREDITS_FILE:-}" ]]; then printf '%s\n' "$ZUVO_OPENAI_CREDITS_FILE"
-  elif [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-0}" == "1" ]]; then return 1
-  else printf '%s\n' "${ZUVO_HOME:-$HOME/.zuvo}/openai-credits-until"; fi
-}
-
-# _openai_load_keys — the lane's keys into OPENAI_KEYS (an array), in order: ZUVO_OPENAI_API_KEY alone, else every
-# non-blank line of the key file (mode 600/400, lane_key_load). Several ChatGPT accounts each come with their own
-# credits; one key per line lets the lane spend them one after another. OPENAI_KEYS_WHY says why there is none.
-_openai_load_keys() {
-  local k
-  OPENAI_KEYS=() OPENAI_KEYS_WHY=""
-  if [[ -n "${ZUVO_OPENAI_API_KEY:-}" ]]; then OPENAI_KEYS=("$ZUVO_OPENAI_API_KEY"); return 0; fi
-  lane_key_load "${ZUVO_OPENAI_KEY_FILE:-$HOME/.zuvo/openai.key}" || true   # LANE_KEY_WHY says why
-  while IFS= read -r k || [[ -n "$k" ]]; do
-    k="${k//[[:space:]]/}"
-    [[ -n "$k" && "$k" != \#* ]] && OPENAI_KEYS+=("$k")
-  done <<< "$LANE_KEY"
-  LANE_KEY=""
-  (( ${#OPENAI_KEYS[@]} > 0 )) || { OPENAI_KEYS_WHY="${LANE_KEY_WHY:-no key in the key file}"; return 1; }
-}
-
-# _openai_fp <key> — a 16-hex fingerprint of a key (sha256, the key on stdin): which key a stop is for, never the key.
-_openai_fp() {
-  printf '%s' "$1" | { shasum -a 256 2>/dev/null || sha256sum; } | cut -c1-16
-}
-
-# openai_key_spent_until <fp> — the epoch until which that key's credits are known spent, while it is ahead; status 1
-# otherwise. The file holds "<epoch> <fp>" lines.
-openai_key_spent_until() {
-  local f e fp now
-  f="$(openai_credits_file)" || return 1
-  [[ -r "$f" ]] || return 1
-  now=$(date +%s)
-  while read -r e fp _; do
-    # No leading zero: (( )) would read 08 as bad octal.
-    [[ "$fp" == "$1" && "$e" =~ ^[1-9][0-9]{8,11}$ ]] && (( e > now )) && { printf '%s\n' "$e"; return 0; }
-  done < "$f"
-  return 1
-}
-
-# openai_credits_until — the epoch until which EVERY key's credits are known spent (the earliest of their stops);
-# status 1 while any key may still spend, or there is no key.
-openai_credits_until() {
-  local i fp e first=""
-  _openai_load_keys || return 1
-  for (( i = 0; i < ${#OPENAI_KEYS[@]}; i++ )); do
-    fp="$(_openai_fp "${OPENAI_KEYS[$i]}")"
-    e="$(openai_key_spent_until "$fp")" || return 1
-    [[ -z "$first" || "$e" -lt "$first" ]] && first="$e"
-  done
-  printf '%s\n' "$first"
-}
-
-# _openai_credits_error <body> — the 429 is the credit balance spent (not a rate limit): asking again cannot help.
-_openai_credits_error() {
-  printf '%s' "$1" | jq -e '.error | (.code // "") as $c | (.type // "") as $t
+# _openai_credits_spent <http> <body> — the 429 is the credit balance spent (not a rate limit): asking again cannot help.
+_openai_credits_spent() {
+  [[ "$1" == 429 ]] || return 1
+  printf '%s' "$2" | jq -e '.error | (.code // "") as $c | (.type // "") as $t
     | ([$c, $t] | any(. == "insufficient_quota" or . == "credit_balance_exhausted"))' >/dev/null 2>&1
-}
-
-# openai_credits_record <fp> — that key's balance is spent: not used again until the next UTC day. The renewal date
-# of the credits is not in the response, so the lane looks again once a day (one refused request costs nothing).
-# Other keys' unexpired stops are kept; expired ones are dropped. No lock: two runs recording different keys at once
-# can lose one stop, which costs one more refused (free) request with that key and is recorded again then.
-openai_credits_record() {
-  local f now e fp
-  f="$(openai_credits_file)" || return 0
-  now=$(date +%s)
-  mkdir -p "$(dirname "$f")" 2>/dev/null
-  { if [[ -r "$f" ]]; then
-      while read -r e fp _; do
-        [[ "$fp" != "$1" && "$fp" =~ ^[0-9a-f]{16}$ && "$e" =~ ^[1-9][0-9]{8,11}$ ]] && (( e > now )) && printf '%s %s\n' "$e" "$fp"
-      done < "$f"
-    fi
-    printf '%s %s\n' "$(( (now / 86400 + 1) * 86400 ))" "$1"
-  } > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$" 2>/dev/null
-}
-
-# openai_lane_stop — why the lane cannot run now (credits spent, today's cap reached); status 1 when nothing stops it.
-openai_lane_stop() {
-  local until cap spent
-  if until="$(openai_credits_until)"; then
-    echo "OpenAI credits spent, next look $(_ar_epoch_text "$until")"
-    return 0
-  fi
-  cap="$(_openai_daily_cap)" || return 1
-  spent="$(openai_spent_today)"
-  awk -v u="$spent" -v c="$cap" 'BEGIN { exit !(u >= c) }' || return 1
-  echo "OpenAI daily cap \$$spent/\$$cap (ZUVO_OPENAI_DAILY_USD)"
 }
 
 run_openai_api() {
   local _lane=openai-api why
   if why="$(openai_lane_stop)"; then lane_not_run "$_lane" "$why"; return 1; fi
-
-  _openai_load_keys || { lane_no_key "$_lane" "$OPENAI_KEYS_WHY"; return 1; }
+  _credit_load_keys openai || { lane_no_key "$_lane" "$CREDIT_KEYS_WHY"; return 1; }
 
   local model price p_in p_cache p_out
   model="$(lane_model "$_lane")"
@@ -1214,95 +1350,126 @@ run_openai_api() {
   local payload_file="$JSON_TMPDIR/openai_api_payload.json"
   chat_payload "$payload_file" "$model" "" 0 "{\"reasoning_effort\":\"$effort\"}" \
     || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
-  local curl_cfg="$JSON_TMPDIR/openai_api_curl.cfg"
 
-  # The keys in order, each until its credits are spent; a key already known spent today is passed over unasked.
-  local err_file="$JSON_TMPDIR/err_openai-api.txt" response http_code status api_err try=0 left deadline ki=-1 fp=""
-  deadline=$(( $(date +%s) + PROVIDER_TIMEOUT ))
-  while : ; do
-    if [[ -z "$fp" ]]; then
-      while :; do
-        ki=$(( ki + 1 ))
-        if (( ki >= ${#OPENAI_KEYS[@]} )); then
-          lane_not_run "$_lane" "OpenAI credits spent on all ${#OPENAI_KEYS[@]} key(s)"
-          return 1
-        fi
-        fp="$(_openai_fp "${OPENAI_KEYS[$ki]}")"
-        openai_key_spent_until "$fp" >/dev/null || break
-      done
-      curl_auth_config "$curl_cfg" "$_lane" "${OPENAI_KEYS[$ki]}" || return 1
-      try=0
-    fi
-    try=$(( try + 1 ))
-    left=$(( deadline - $(date +%s) ))
-    if (( left < OR_MIN_ATTEMPT_SECONDS )); then
-      echo "  WARN: $_lane out of time budget after $((try - 1)) attempt(s)" >&2
-      return 124
-    fi
-    status=0
-    # No -f: the {"error":…} body of a 401/429 is the diagnostic. The base URL is fixed: the key goes to OpenAI only.
-    response=$(curl -sS --max-time "$left" -w '\n%{http_code}' "https://api.openai.com/v1/chat/completions" \
-      -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
-    http_code="${response##*$'\n'}"; response="${response%$'\n'*}"
-    api_err=""
-    [[ $status -eq 0 ]] && api_err=$(printf '%s' "$response" | jq -r '.error | if . == null then empty
-      elif type == "object" then (.message // .code // tostring) else tostring end' 2>/dev/null)
-    if [[ "$http_code" == 429 ]] && _openai_credits_error "$response"; then
-      openai_credits_record "$fp"
-      echo "  NOTE: $_lane key $((ki + 1))/${#OPENAI_KEYS[@]}: credit balance spent (HTTP 429: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")) — next key" >&2
-      fp=""
-      continue
-    fi
-    # A key refused outright (revoked, account closed: 401/403) must not stop the accounts behind it. Not recorded:
-    # a fixed key is used again on the next run.
-    if [[ "$http_code" == 401 || "$http_code" == 403 ]] && (( ki + 1 < ${#OPENAI_KEYS[@]} )); then
-      echo "  NOTE: $_lane key $((ki + 1))/${#OPENAI_KEYS[@]} refused (HTTP $http_code: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")) — next key" >&2
-      fp=""
-      continue
-    fi
-    local transient=0
-    case "$http_code" in 429|5??) transient=1 ;; esac
-    case "$status" in 52|56|35|16|18|92) transient=1 ;; esac
-    if (( transient && try < OR_ATTEMPTS )); then
-      echo "  NOTE: $_lane [$model] transient (HTTP ${http_code:-?}, curl $status) — retry $try/$(( OR_ATTEMPTS - 1 ))" >&2
-      sleep $(( try * 3 ))
-      continue
-    fi
-    break
-  done
-  if [[ $status -ne 0 ]]; then
-    lane_exit_warn "$_lane" "$status" 28 "$err_file"
-    [[ $status -eq 28 ]] && return 124
-    return "$status"
-  fi
-  if [[ -n "$api_err" ]]; then
-    echo "  WARN: $_lane returned error: $(printf '%s' "$api_err" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
-    return 1
-  fi
-  if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-    printf '  WARN: %s HTTP %s: %s\n' "$_lane" "${http_code:-?}" \
-      "$(printf '%s' "${response:0:$LANE_ERR_RESPONSE_QUOTE_CHARS}" | LC_ALL=C tr -c '[:print:]' '?')" >&2
-    return 1
-  fi
+  local rc=0
+  # The base URL is fixed: the key goes to OpenAI only.
+  credit_request openai "https://api.openai.com/v1/chat/completions" "$payload_file" _openai_credits_spent || return $?
+  credit_answer_check "$_lane" || return $?
 
   # Accounting before the text check: a 2xx answer is billed whether or not it is a usable review.
   local cost gen
-  lane_usage_from_chat "$response"
-  cost="$(openai_call_cost "$response" "$p_in" "$p_cache" "$p_out")" \
+  lane_usage_from_chat "$CR_RESPONSE"
+  cost="$(openai_call_cost "$CR_RESPONSE" "$p_in" "$p_cache" "$p_out")" \
     || echo "  WARN: $_lane: the answer has no usage block — this call's cost is not recorded" >&2
-  gen="$(printf '%s' "$response" | jq -r '.id // empty' 2>/dev/null)"
+  gen="$(printf '%s' "$CR_RESPONSE" | jq -r '.id // empty' 2>/dev/null)"
   lane_or_call_add openai "${cost:-}" "$gen"
-  echo "  OpenAI API tokens: $(chat_tokens "$response"), \$${cost:-?}" >&2
+  echo "  OpenAI API tokens: $(chat_tokens "$CR_RESPONSE"), \$${cost:-?}" >&2
 
-  local text verdict
-  text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-  if verdict="$(lane_error_text openrouter "$text")"; then
-    if [[ "$verdict" == short ]]; then
-      echo "  WARN: $_lane returned empty/error content: $(printf '%s' "$response" | _ar_quote_line first - "$LANE_ERR_RESPONSE_QUOTE_CHARS")" >&2
-    else
-      echo "  WARN: $_lane returned error-prefixed content: $(printf '%s' "$text" | _ar_quote_line first - "$LANE_ERR_QUOTE_CHARS")" >&2
-    fi
+  credit_review_text "$_lane" "$(printf '%s' "$CR_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null)" || rc=$?
+  return $rc
+}
+
+# ─── anthropic-api: the Claude API on the owner's prepaid Anthropic credits ───────────────────────────────────────
+# A separate allowance from the Claude subscriptions the `claude` lane runs on: plain HTTP to the Messages API with
+# keys of its own, so a review spends the credits instead of a subscription's weekly limit. The model is the one
+# run_claude would pick (claude_reviewer_model: the OPPOSITE of the author — Opus author, Sonnet reviewer), because
+# the same model reviewing its own diff is self-review; ZUVO_ANTHROPIC_MODEL names another.
+
+# anthropic_price <model> — "<input> <cache read> <output>" in USD per 1M tokens, the Anthropic list price
+# (2026-11-03). Cache writes bill at 1.25× input (anthropic_call_cost). ZUVO_ANTHROPIC_PRICE="in,cache,out" replaces
+# the table for ANY model. Status 1 for a model with no price.
+anthropic_price() {
+  if [[ -n "${ZUVO_ANTHROPIC_PRICE:-}" ]]; then _credit_price_override ZUVO_ANTHROPIC_PRICE; return; fi
+  case "$1" in
+    claude-opus-5-5)                     echo "4 0.20 20" ;;
+    claude-opus-5|claude-opus-4-[678])   echo "5 0.50 25" ;;
+    claude-sonnet-5-5)                   echo "2 0.10 10" ;;
+    claude-sonnet-5)                     echo "2 0.20 10" ;;
+    claude-sonnet-4-6)                   echo "3 0.30 15" ;;
+    claude-haiku-5-5)                    echo "0.10 0.01 0.50" ;;
+    claude-fable-5-2)                    echo "8 0.20 40" ;;
+    *) return 1 ;;
+  esac
+}
+
+# anthropic_call_cost <response> <in> <cache read> <out> — the call's cost in USD (8 decimals) from its usage block:
+# input·in + cache_read·cache + cache_creation·1.25·in + output·out, per 1M. Thinking is part of output_tokens.
+# Nothing (status 1) when the usage block is missing.
+anthropic_call_cost() {
+  local usd
+  usd="$(printf '%s' "$1" | jq -re --argjson i "$2" --argjson c "$3" --argjson o "$4" '
+    .usage | select(type == "object" and (.input_tokens | type) == "number" and (.output_tokens | type) == "number")
+    | ((.cache_read_input_tokens // 0) | if type == "number" then . else 0 end) as $read
+    | ((.cache_creation_input_tokens // 0) | if type == "number" then . else 0 end) as $write
+    | (.input_tokens * $i + $read * $c + $write * $i * 1.25 + .output_tokens * $o) / 1000000' 2>/dev/null)" || return 1
+  awk -v u="$usd" 'BEGIN { printf "%.8f\n", u }'
+}
+
+# anthropic_usage <response> — the log's token columns: prompt (all input, cached included), cached, output, thinking.
+anthropic_usage() {
+  local t
+  t="$(printf '%s' "$1" | jq -r '.usage // empty | select(type == "object")
+        | [((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)),
+           .cache_read_input_tokens, .output_tokens, .output_tokens_details.thinking_tokens]
+        | map(if type == "number" then floor | tostring else "-" end) | join(" ")' 2>/dev/null)" || return 0
+  lane_usage_line "$t"
+}
+
+# _anthropic_credits_spent <http> <body> — the balance is gone (billing_error, or the 400 "credit balance is too
+# low"): asking again cannot help, next key.
+_anthropic_credits_spent() {
+  case "$1" in 400|402|403) ;; *) return 1 ;; esac
+  printf '%s' "$2" | jq -e '.error | (.type // "") as $t | (.message // "" | ascii_downcase) as $m
+    | $t == "billing_error" or ($m | test("credit balance is too low"))' >/dev/null 2>&1
+}
+
+run_anthropic_api() {
+  local _lane=anthropic-api why
+  if why="$(anthropic_lane_stop)"; then lane_not_run "$_lane" "$why"; return 1; fi
+  _credit_load_keys anthropic || { lane_no_key "$_lane" "$CREDIT_KEYS_WHY"; return 1; }
+
+  local model p_in p_cache p_out
+  model="$(lane_model "$_lane")"
+  lane_model_ok "$_lane" "$model" || return 1
+  anthropic_price "$model" >/dev/null || {
+    lane_no_key "$_lane" "no price for model '$model' — set ZUVO_ANTHROPIC_PRICE=\"in,cache,out\" (USD per 1M tokens) so every call is accounted"
+    return 1; }
+
+  # Thinking is left to the model (adaptive); effort sets its depth. No temperature: API version 2026-10-21 refuses it.
+  # fallbacks "default": a refused request (a security review can look like the `cyber` category) is re-run on the
+  # fallback model inside the same call, priced at that model's rate below.
+  local effort="${ZUVO_ANTHROPIC_EFFORT:-medium}"
+  case "$effort" in low|medium|high|xhigh|max) ;; *) effort=medium ;; esac
+  record_lane_effort "$_lane" "$effort"
+  local payload_file="$JSON_TMPDIR/anthropic_api_payload.json"
+  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" --arg e "$effort" \
+    '{model:$m, max_tokens:16000, output_config:{effort:$e}, fallbacks:"default", messages:[{role:"user", content:.}]}' \
+    > "$payload_file" || { echo "  WARN: $_lane: the request could not be built (jq failed)" >&2; return 1; }
+
+  local rc=0
+  # The URL is fixed: the key goes to Anthropic only. An API key travels as x-api-key, never as a Bearer token.
+  CREDIT_AUTH_PREFIX="x-api-key: " credit_request anthropic "https://api.anthropic.com/v1/messages" "$payload_file" \
+    _anthropic_credits_spent "anthropic-version: 2026-10-21" "anthropic-beta: server-side-fallback-2026-07-01" || return $?
+  credit_answer_check "$_lane" || return $?
+
+  # Accounting before the text check: a 2xx answer is billed whether or not it is a usable review. Priced at the model
+  # that answered (a fallback bills at its own rate).
+  local served cost gen price
+  served="$(printf '%s' "$CR_RESPONSE" | jq -r '.model // empty' 2>/dev/null)"
+  anthropic_usage "$CR_RESPONSE"
+  if price="$(anthropic_price "${served:-$model}")" || price="$(anthropic_price "$model")"; then
+    read -r p_in p_cache p_out <<< "$price"
+    cost="$(anthropic_call_cost "$CR_RESPONSE" "$p_in" "$p_cache" "$p_out")" \
+      || echo "  WARN: $_lane: the answer has no usage block — this call's cost is not recorded" >&2
+  fi
+  gen="$(printf '%s' "$CR_RESPONSE" | jq -r '.id // empty' 2>/dev/null)"
+  lane_or_call_add anthropic "${cost:-}" "$gen"
+  echo "  Anthropic API tokens: $(printf '%s' "$CR_RESPONSE" | jq -r '"\(.usage.input_tokens // "?") in / \(.usage.output_tokens // "?") out"' 2>/dev/null), \$${cost:-?}${served:+ ($served)}" >&2
+
+  if [[ "$(printf '%s' "$CR_RESPONSE" | jq -r '.stop_reason // empty' 2>/dev/null)" == refusal ]]; then
+    echo "  WARN: $_lane: the model declined the review (refusal: $(printf '%s' "$CR_RESPONSE" | jq -r '.stop_details.category // "?"' 2>/dev/null))" >&2
     return 1
   fi
-  printf '%s\n' "$text"
+  credit_review_text "$_lane" "$(printf '%s' "$CR_RESPONSE" | jq -r '[.content[]? | select(.type == "text") | .text] | join("")' 2>/dev/null)" || rc=$?
+  return $rc
 }

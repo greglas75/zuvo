@@ -242,7 +242,7 @@ echo ZUVO_ADV_ZAI=1 >> ~/.zuvo/review-lanes.conf   # opt-in: the plan's 5-hour/w
 **Opt-ins belong in `~/.zuvo/review-lanes.conf`, not only in a shell profile** (since 2026-10-18). The
 driver reads that file itself, so a cron job, a systemd timer or an agent session started without the
 variables still gets the plan lanes; an `export` reaches only the processes that inherit it. One
-`ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER|OPENAI_API=0|1` per line; a variable set in the environment wins over the file.
+`ZUVO_ADV_QWEN|ZAI|BYTEPLUS|OPENROUTER|OPENAI_API|ANTHROPIC_API=0|1` per line; a variable set in the environment wins over the file.
 
 - Endpoint `https://api.z.ai/api/coding/paas/v4` (`ZUVO_ZAI_BASE_URL`). Any other `z.ai` /
   `bigmodel.cn` path, e.g. the metered `/api/paas/v4`, is refused before a request is sent — the same
@@ -291,6 +291,32 @@ echo ZUVO_ADV_OPENAI_API=1 >> ~/.zuvo/review-lanes.conf
   stops only when every key is spent. A rate-limit 429 or a 5xx is retried.
 - With the flag on, every review's diff goes to OpenAI under the API terms.
 
+**Claude API on prepaid Anthropic credits, lane `anthropic-api` (since 2026-11-14).** Credits bought or granted on
+platform.claude.com pay for Messages API calls made with that org's API key — not for the `claude` lane, which runs on
+the Claude Code subscription. Plain HTTP to `https://api.anthropic.com/v1/messages` (fixed), the key sent as
+`x-api-key`. It shares the openai-api machinery (`credit_request`): key rotation, the fingerprint stop file, the
+daily cap. Setup:
+
+```bash
+( umask 077; pbpaste >> ~/.zuvo/anthropic.key )      # an API key of an org with credits, one per line
+echo ZUVO_ADV_ANTHROPIC_API=1 >> ~/.zuvo/review-lanes.conf
+~/.zuvo/adversarial-review --doctor                    # anthropic-api must answer
+```
+
+- Key: `ZUVO_ANTHROPIC_API_KEY` or `~/.zuvo/anthropic.key` (`ZUVO_ANTHROPIC_KEY_FILE`, mode 600/400). Never the
+  generic `ANTHROPIC_API_KEY`. Several keys, one per line, are used in order as for openai-api.
+- Model: the reviewer opposite to the author (`claude_reviewer_model`: an Opus author is reviewed by Sonnet 5.5,
+  anything else by Opus 5.5), so a Claude session never reviews itself with its own model;
+  `ZUVO_ANTHROPIC_MODEL` overrides. `output_config.effort` medium (`ZUVO_ANTHROPIC_EFFORT`), API version
+  `2026-10-21` (no temperature), `fallbacks: "default"` so a refused request is answered by the fallback model.
+- **Exact accounting** as for openai-api, priced at the model that answered (`.model` of the response — a fallback
+  may differ from the request): input·in + cache-read·cached + cache-write·1.25·in + output·out (thinking included in
+  output). Unknown model: `ZUVO_ANTHROPIC_PRICE="in,cached,out"`. Message id `msg_…` in column 25.
+- Spend stops: `ZUVO_ANTHROPIC_DAILY_USD` (default 100, `off` = none); a spent balance (`billing_error`, or the 400
+  "credit balance is too low") moves to the next key and is kept in `~/.zuvo/anthropic-credits-until` until the next
+  UTC day. A `stop_reason: refusal` answer is a failed lane, never a clean review.
+- With the flag on, every review's diff goes to Anthropic under the API terms.
+
 ```bash
 ~/.zuvo/adversarial-stats                 # last 7 days: LANE, MODEL, PAYS, RUNS, OK%, P50/P90, FIND, CRIT, FAILURES
 ~/.zuvo/adversarial-stats --days 30 --project zuvo-plugin
@@ -307,6 +333,7 @@ prints them; a hand-made table must too. `CRIT` is what a model *reported*, not 
 | OpenRouter (per token) | `openrouter`, `openrouter-alt`, `openrouter-3`, `openrouter-4`, `openrouter-mini`, `openrouter-5` | https://openrouter.ai/activity |
 | Alibaba Model Studio (Token Plan Intl) | `qwen` | https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal |
 | OpenAI API (ChatGPT Pro credits, per token) | `openai-api` | https://platform.openai.com/usage |
+| Anthropic API (prepaid credits, per token) | `anthropic-api` | https://platform.claude.com/usage |
 | OpenAI (ChatGPT plan) | `codex-5.3`, `codex-5.4` | https://chatgpt.com/codex/settings/usage |
 | Anthropic (Claude plan) | `claude` | https://claude.ai/settings/usage |
 | Cursor | `cursor-agent` | https://cursor.com/dashboard?tab=usage |
