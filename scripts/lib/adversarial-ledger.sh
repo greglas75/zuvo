@@ -603,8 +603,21 @@ return 0
 # of three or more backticks or tildes, indented or not, its "json" tag in any case and spaced or not; it
 # closes on a line of the same character, at least as long (CommonMark). An EMPTY json fence hides nothing.
 # Shared by the counter, the findings ledger and the --json document, so none of them can disagree.
+# SDK transports wrap the review in a successful response string. Decode only that
+# envelope; ordinary findings JSON and failed SDK responses keep their original form.
+result_review_text() {
+  local body
+  if body=$(jq -ers 'if length == 1 and (.[0] | type) == "object"
+      and .[0].status == "SUCCESS" and (.[0].response | type) == "string"
+      then .[0].response else empty end' "$1" 2>/dev/null); then
+    printf '%s\n' "$body"
+  else
+    cat "$1"
+  fi
+}
+
 result_json_text() {
-  awk '
+  result_review_text "$1" | awk '
     function fence(s) { sub(/^[[:space:]]+/, "", s); match(s, /^(`+|~+)/); return substr(s, 1, RLENGTH) }
     { raw = raw $0 ORS }
     !inside && /^[[:space:]]*(```+|~~~+)[[:space:]]*([Jj][Ss][Oo][Nn])?[[:space:]]*$/ {
@@ -621,7 +634,7 @@ result_json_text() {
       else if (bare ~ /[^[:space:]]/ && !prose) printf "%s", bare
       else                                      printf "%s", raw
     }
-  ' "$1"
+  '
 }
 
 # findings_log_rows <provider> <model> <result_file> — one findings-ledger row per fingerprinted
@@ -679,7 +692,7 @@ findings_log_rows() {
 # underscore in a path or an ID survives. An ID holding a control character is dropped, as the JSON path drops it.
 findings_text_rows() {
   # ENVIRON, not -v: awk -v processes backslash escapes, so the value written would not be the value passed.
-  FT_D="$(date -u +%Y-%m-%dT%H:%M:%SZ)" FT_R="$RUN_ID" FT_MO="$REVIEW_MODE" FT_P="$1" FT_M="$2" \
+  result_review_text "$3" 2>/dev/null | FT_D="$(date -u +%Y-%m-%dT%H:%M:%SZ)" FT_R="$RUN_ID" FT_MO="$REVIEW_MODE" FT_P="$1" FT_M="$2" \
   FT_PJ="${LEDGER_PROJECT:-}" awk '
     BEGIN { d = ENVIRON["FT_D"]; r = safe(ENVIRON["FT_R"]); mo = safe(ENVIRON["FT_MO"]); p = safe(ENVIRON["FT_P"])
             m = safe(ENVIRON["FT_M"]); pj = safe(ENVIRON["FT_PJ"]) }
@@ -726,7 +739,7 @@ findings_text_rows() {
       for (k = 1; k <= n; k++) { i = order[k]
         printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tnew\t%s\n", d, r, mo, p, m, i, best[i], conf[i], file[i], pj
       }
-    }' "$3" 2>/dev/null
+    }' 2>/dev/null
 }
 
 count_findings() {
@@ -744,7 +757,7 @@ count_findings() {
     else empty end' 2>/dev/null); then
     printf '%s\n' "$counts"
   else
-    awk '
+    result_review_text "$result_file" | awk '
       {
         line=toupper($0)
         gsub(/[*_`]/, "", line)
@@ -781,7 +794,7 @@ count_findings() {
         status=(uncertain || (c+w+i == 0 && !clean)) ? "partial" : "complete"
         print c,w,i,status
       }
-    ' "$result_file"
+    '
   fi
 }
 

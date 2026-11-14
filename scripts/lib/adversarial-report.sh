@@ -316,7 +316,8 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     result_file="$JSON_TMPDIR/result_${p}.txt"
     if lane_ok "$p"; then
       # Check for clean markers — inverted logic avoids false positives from "No CRITICAL issues"
-      if grep -qiE 'NO ISSUES FOUND|"findings":\s*\[\]' "$result_file" 2>/dev/null; then
+      if result_review_text "$result_file" > "$JSON_TMPDIR/clean-answer.txt" &&
+        grep -qiE 'NO ISSUES FOUND|"findings":\s*\[\]' "$JSON_TMPDIR/clean-answer.txt" 2>/dev/null; then
         : # this provider found nothing
       else
         all_clean=false
@@ -374,7 +375,8 @@ _ar_json_add_lane() {
     jq --slurpfile v "$JSON_TMPDIR/json-answer.txt" --arg k "$p" \
       '. + {($k): (if ($v | length) == 1 then $v[0] else $v end)}' "$json_results_file" > "$json_results_file.next" || return 1
   else
-    jq --rawfile v "$result_file" --arg k "$p" '. + {($k): $v}' "$json_results_file" > "$json_results_file.next" || return 1
+    result_review_text "$result_file" > "$JSON_TMPDIR/review-answer.txt" || return 1
+    jq --rawfile v "$JSON_TMPDIR/review-answer.txt" --arg k "$p" '. + {($k): $v}' "$json_results_file" > "$json_results_file.next" || return 1
   fi
   mv -f "$json_results_file.next" "$json_results_file" || return 1
   json_models="$models"

@@ -416,3 +416,36 @@ new_case
 LEDGER_RUN_IDS="$(printf 'env.ts:1:leaked-from-env\n')" review "$PROJ_A" "mock-findings-text" >/dev/null 2>"$FL_TMP/fl26b.err" || true
 assert_contains "$(cat "$FL_TMP/fl26b.err")" "recorded 5 finding ID(s)" "a writable ledger: the 5 IDs of this run"
 case "$(cat "$FL_TMP/fl26b.err")" in *leaked-from-env*) fail "an ID from the caller's environment is not listed" "listed" ;; *) pass "an ID from the caller's environment is not listed" ;; esac
+
+
+start_test "FL.27 SDK response envelopes retain real finding IDs and severity counts"
+new_case
+out=$(review "$PROJ_A" "mock-findings-sdk-envelope" --artifact "$FL_TMP/fl27-proof.txt" 2>"$FL_TMP/fl27.err")
+assert_eq "2" "$(rows_where '$10 == "new"')" "both genuine SDK response findings enter the ledger"
+assert_eq "warning=1" "$(grep '^warning=' "$FL_TMP/fl27-proof.txt")" "artifact warning count reads the decoded review body"
+assert_eq "info=1" "$(grep '^info=' "$FL_TMP/fl27-proof.txt")" "artifact info count reads the decoded review body"
+assert_eq "1" "$(rows_where '$6 == "query_guard.ts:17:runtime-alias-bypass" && $7 == "WARNING"')" "warning identity retains its severity"
+assert_eq "1" "$(rows_where '$6 == "query_guard.ts:25:erased-overload-noise" && $7 == "INFO"')" "info identity retains its severity"
+rc=0; record "$PROJ_A" --record-disposition query_guard.ts:17:runtime-alias-bypass fixed --record-disposition query_guard.ts:25:erased-overload-noise rejected >"$FL_TMP/fl27-record.out" 2>&1 || rc=$?
+assert_eq "0" "$rc" "every displayed SDK response ID accepts a disposition"
+
+start_test "FL.28 JSON output carries decoded SDK review text and structured findings consistently"
+new_case
+out=$(review "$PROJ_A" "mock-findings-sdk-envelope" --json 2>"$FL_TMP/fl28.err")
+assert_eq "true" "$(printf '%s' "$out" | jq '.results["mock-findings-sdk-envelope"] | startswith("SEVERITY: WARNING")')" "JSON text answer uses the same decoded review as the ledger"
+new_case
+out=$(MOCK_SDK_FORMAT=json review "$PROJ_A" "mock-findings-sdk-envelope" --json --artifact "$FL_TMP/fl28j-proof.txt" 2>"$FL_TMP/fl28j.err")
+assert_eq "2" "$(printf '%s' "$out" | jq '.results["mock-findings-sdk-envelope"].findings | length')" "JSON body remains structured after decoding"
+assert_eq "2" "$(rows_where '$10 == "new"')" "JSON body findings enter the ledger"
+assert_eq "warning=1" "$(grep '^warning=' "$FL_TMP/fl28j-proof.txt")" "JSON body counts agree with its stored findings"
+new_case
+out=$(MOCK_SDK_FORMAT=error review "$PROJ_A" "mock-findings-sdk-envelope" --json 2>"$FL_TMP/fl28e.err")
+assert_eq "0" "$(rows_where '$10 == "new"')" "failed envelope does not promote embedded response text to findings"
+
+start_test "FL.29 malformed JSON fences do not truncate decoded SDK review prose"
+new_case
+out=$(MOCK_SDK_FORMAT=invalid-fence review "$PROJ_A" "mock-findings-sdk-envelope" --json 2>"$FL_TMP/fl29.err")
+answer=$(printf '%s' "$out" | jq -r '.results["mock-findings-sdk-envelope"]')
+assert_eq "true" "$(printf '%s' "$answer" | jq -Rs 'startswith("Review lead: runtime alias bypass needs a guard.\nSEVERITY: WARNING")')" "malformed fence retains leading review prose and findings"
+assert_eq "true" "$(printf '%s' "$answer" | jq -Rs 'contains("```json\n{invalid json example}\n```")')" "malformed fence retains the original fenced example"
+assert_eq "true" "$(printf '%s' "$answer" | jq -Rs 'endswith("Review tail: reject the bypass before execution.")')" "malformed fence retains trailing review prose"

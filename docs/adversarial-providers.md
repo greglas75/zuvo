@@ -426,7 +426,13 @@ SAID, not what was true: a lane that emits seven speculative issues outranks one
 bugs. `~/.zuvo/adversarial-findings.log` closes that gap. Every review appends one row per distinct
 finding that carries a fingerprint — the `ID:` line of the text format, the `id` of `--json` (provider,
 model, fingerprint, severity, project = the main checkout's path),
-and the triaging agent appends a verdict per `id` (`adversarial-loop.md` Step 4.9):
+and the triaging agent appends a verdict per `id` (`adversarial-loop.md` Step 4.9).
+Successful SDK envelopes (`status: "SUCCESS"` with a string `response`) are decoded before
+counting and recording findings. Text artifacts retain the original transport response; JSON
+artifacts store the decoded structured result or full decoded text when it is not valid JSON.
+Severity counts and disposition IDs come from the decoded review body. Failed envelopes are
+not decoded as successful reviews. This does not change ordinary text/JSON mode selection or
+the review pass cap:
 
 ```bash
 ~/.zuvo/adversarial-review --record-disposition "<id>" fixed --record-disposition "<id>" rejected

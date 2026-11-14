@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+cat >/dev/null
+jq --arg format "${MOCK_SDK_FORMAT:-text}" '
+  if $format == "error" then .status = "ERROR"
+  elif $format == "json" then .response = ({findings: [
+    {id: "query_guard.ts:17:runtime-alias-bypass", severity: "WARNING", file: "src/query_guard.ts:17"},
+    {id: "query_guard.ts:25:erased-overload-noise", severity: "INFO", file: "src/query_guard.ts:25"}
+  ]} | tojson)
+  elif $format == "invalid-fence" then
+    .response = ("Review lead: runtime alias bypass needs a guard.\n" + .response +
+      "\n```json\n{invalid json example}\n```\nReview tail: reject the bypass before execution.")
+  else . end' <<'REVIEW'
+{"conversation_id": "fixture-sdk-envelope", "status": "SUCCESS", "response": "SEVERITY: WARNING\nCONFIDENCE: high\nFILE: src/query_guard.ts:17\nID: query_guard.ts:17:runtime-alias-bypass\nISSUE: Runtime alias escapes the gate.\n\nSEVERITY: INFO\nCONFIDENCE: medium\nFILE: src/query_guard.ts:25\nID: query_guard.ts:25:erased-overload-noise\nISSUE: Type-only overload is incorrectly counted.\n", "usage": {"total_tokens": 10}}
+REVIEW
