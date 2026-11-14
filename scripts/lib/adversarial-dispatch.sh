@@ -266,6 +266,7 @@ _dispatch_provider_inner() {
                      ZUVO_OPENROUTER_BASE_URL="${ZUVO_ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}" \
                      ZUVO_OPENROUTER_MODEL="$(lane_model zai)" ZUVO_OR_STREAM=1 run_openrouter ;;
     openai-api)    run_openai_api ;;
+    anthropic-api) run_anthropic_api ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI

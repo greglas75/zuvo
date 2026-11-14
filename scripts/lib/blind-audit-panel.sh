@@ -562,8 +562,8 @@ bap_json() (
 # else, or nothing, prints nothing (status 0).
 bap_vendor_excluded() {
   case "${1:-}" in
-    claude)      printf '%s\n' "claude" ;;
-    codex)       printf '%s\n' "codex-5.3 codex-5.4" ;;
+    claude)      printf '%s\n' "claude anthropic-api" ;;
+    codex)       printf '%s\n' "codex-5.3 codex-5.4 openai-api" ;;
     antigravity) printf '%s\n' "agy gemini" ;;
     cursor)      printf '%s\n' "cursor-agent" ;;
     kimi)        printf '%s\n' "kimi kimi-api" ;;

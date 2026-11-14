@@ -1190,10 +1190,12 @@ os.execvp(sys.argv[1], [sys.argv[1], "-c", sys.argv[2]])
 fi
 
 echo "-- bap_vendor_excluded --"
+# A vendor's API lane (anthropic-api, openai-api) is the same model family as its CLI lanes: excluded with them,
+# or a Claude-written change would be "blind"-audited by Claude through the API.
 # The three forward-compatibility vendors also take a `<vendor>-*` LANE spelling (a future detection
 # signal may name the lane, as pf_map_lane's `codex-5.*` does) — but only with the dash: a longer word
 # that merely starts with the vendor's name is not that vendor.
-for _p in "claude=claude" "codex=codex-5.3 codex-5.4" "antigravity=agy gemini" "cursor=cursor-agent" \
+for _p in "claude=claude anthropic-api" "codex=codex-5.3 codex-5.4 openai-api" "antigravity=agy gemini" "cursor=cursor-agent" \
           "kimi=kimi kimi-api" "qwen=qwen" "unknown-host=" "=" \
           "codestral=codestral" "codestral-latest=codestral" \
           "openrouter=openrouter openrouter-alt openrouter-3 openrouter-4 openrouter-mini openrouter-5" \

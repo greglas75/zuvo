@@ -431,6 +431,16 @@ detect_providers() {
     fi
   fi
 
+  # 4b'''. Claude API on the owner's prepaid Anthropic credits — opt-in for the same reason as openai-api. Plain HTTP
+  # (run_anthropic_api): the credits pay for the API, not for a Claude subscription the `claude` lane runs on.
+  if [[ "${ZUVO_ADV_ANTHROPIC_API:-0}" == "1" ]]; then
+    if [[ -n "${ZUVO_ANTHROPIC_API_KEY:-}" || -f "${ZUVO_ANTHROPIC_KEY_FILE:-$HOME/.zuvo/anthropic.key}" ]]; then
+      providers="${providers:+$providers }anthropic-api"
+    else
+      echo "  NOTE: ZUVO_ADV_ANTHROPIC_API=1 but no key (env ZUVO_ANTHROPIC_API_KEY or ~/.zuvo/anthropic.key) — lane skipped" >&2
+    fi
+  fi
+
   # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet). Most
   #    reliable client on the box, but the lowest-yield reviewer and the usual wall-clock setter.
   client_available claude && providers="${providers:+$providers }claude"
@@ -509,7 +519,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|openrouter-mini|openrouter-5|byteplus|byteplus-alt|byteplus-3|zai|openai-api|muse|qwen) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt|openrouter-3|openrouter-4|openrouter-mini|openrouter-5|byteplus|byteplus-alt|byteplus-3|zai|openai-api|anthropic-api|muse|qwen) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -518,7 +528,7 @@ if [[ -n "$PROVIDER" ]]; then
     mock-*) ;;
     *)
       echo "ERROR: unknown provider '$PROVIDER'." >&2
-      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude, muse, qwen, zai, openai-api" >&2
+      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude, muse, qwen, zai, openai-api, anthropic-api" >&2
       exit 2 ;;
   esac
   PROVIDERS="$PROVIDER"
@@ -649,6 +659,7 @@ lane_model() {
     byteplus-3)   echo "${ZUVO_MODEL_BYTEPLUS_3:-dola-seed-2.0-code}" ;;
     zai)          echo "${ZUVO_ZAI_MODEL:-${ZUVO_MODEL_ZAI:-glm-5.3-flash}}" ;;
     openai-api)   echo "${ZUVO_OPENAI_MODEL:-${ZUVO_MODEL_OPENAI_API:-gpt-6.1-sol}}" ;;
+    anthropic-api) if [[ -n "${ZUVO_ANTHROPIC_MODEL:-}" ]]; then echo "$ZUVO_ANTHROPIC_MODEL"; else claude_reviewer_model; fi ;;
     muse)        echo "${ZUVO_MUSE_MODEL:-${ZUVO_MODEL_MUSE:-muse-spark-1.3}}" ;;
     qwen)         echo "${ZUVO_QWEN_MODEL:-${ZUVO_MODEL_QWEN:-qwen3.8-flash}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
@@ -1038,6 +1049,8 @@ _ar_lane_stop() {   # <lane> — prints why the lane cannot run now; status 1 wh
   case "$lane" in
     openai-api)
       openai_lane_stop ;;
+    anthropic-api)
+      anthropic_lane_stop ;;
     muse)
       until="$(_muse_quota_until)" || return 1
       echo "muse quota until $(_ar_epoch_text "$until")" ;;

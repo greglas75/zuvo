@@ -62,6 +62,7 @@ BILLING = [
     ("openrouter", "OpenRouter (per token)", "https://openrouter.ai/activity"),
     ("qwen", "Alibaba Model Studio (Token Plan Intl)", "https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan/personal"),
     ("openai-api", "OpenAI API (ChatGPT Pro credits, per token)", "https://platform.openai.com/usage"),
+    ("anthropic-api", "Anthropic API (prepaid credits, per token)", "https://platform.claude.com/usage"),
     ("codex", "OpenAI (ChatGPT plan)", "https://chatgpt.com/codex/settings/usage"),
     ("claude", "Anthropic (Claude plan)", "https://claude.ai/settings/usage"),
     ("cursor", "Cursor", "https://cursor.com/dashboard?tab=usage"),
