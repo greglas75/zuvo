@@ -184,11 +184,22 @@ ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_AL
 # Medium is NOT proven better than High — it is not worse, and it never timed out while High
 # lost the same diff to the 500s ceiling three times out of three. Low is ruled out: it finds
 # half as much and 44% of what it reports is false.
-ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}"
-# Same value as the default. High is not deeper in what the set gains (see the sweep above) and
-# is the level that times out, so pointing the DEEP lane at it would buy non-answers exactly
-# where a caller asked for more depth. 3.1 Pro was ruled out for the same reason (65% non-answer).
-ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.8 Flash (Medium)}"
+#
+# Gemini 4 Hydrogen (Medium) since 2026-11-15 (owner's decision) — all four configs run the SAME day on the
+# same 20 diffs, same Opus 5 judge, driver with the agy 1.5.9 envelope fix (v1.6.123), every config in its
+# own review session (before PR #144 the pass cap refused later labels), 20/20 answered, 0 timeouts:
+#                         unique over others(215)  precision  REAL/FP  "no issues"  avg/diff  ~API $/review
+#   Hydrogen Low                   8                  96%      23/1       9/20        14s       0.054
+#   Hydrogen Medium               20                  89%      56/7       3/20        36s       0.097
+#   Hydrogen High                 24                  92%      74/6       4/20        83s       0.177
+#   3.8 Flash Medium (was)         8                  55%      45/37      0/20        19s       0.037
+# Medium and High beat 3.8 Flash by 12-16 (outside the ~±10 noise) at +34-37 precision points; High over Medium
+# is +4, inside the noise, for 2.3x the time and 1.8x the tokens. Low says "no issues" on 9/20. $ = tokens x the
+# OpenRouter list price — agy runs on the Antigravity subscription, so it is quota spent, not a bill.
+ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 4 Hydrogen (Medium)}"
+# Same value as the default. High is not deeper in what the set gains (+4 over Medium, inside the noise) and costs
+# 2.3x the time, so pointing the DEEP lane at it buys latency, not coverage.
+ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 4 Hydrogen (Medium)}"
 # FALLBACK, used only when the primary model above is out of quota. Antigravity meters each
 # model separately — verified 2026-09-22, Gemini exhausted for the week while the others
 # answered in 15-25s — so a dead model here is not a dead lane, and before this existed the

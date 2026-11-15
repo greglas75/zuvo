@@ -46,14 +46,14 @@ assert_eq "rc=0|[]" "$(printf '%s' "$out" | tr '\n' '|')" "record returns 0, pro
 assert_eq "" "$(find "$LETMP" -name 'effort-claude' 2>/dev/null)" "…and no effort-claude file was written anywhere (cwd included)"
 
 start_test "le.4 agy: the level an agy model name ends with"
-assert_eq "Medium" "$(eff 'effort_in_model_name "Gemini 3.8 Flash (Medium)"')" "the lane default's level: Medium"
+assert_eq "Medium" "$(eff 'effort_in_model_name "Gemini 4 Hydrogen (Medium)"')" "the lane default's level: Medium"
 assert_eq "High" "$(eff 'effort_in_model_name "Gemini 3.8 Flash (High)"')" "(High): High"
 assert_eq "Low" "$(eff 'effort_in_model_name "Claude Sonnet 5.5 (Low)"')" "(Low): Low"
 assert_eq "" "$(eff 'effort_in_model_name "Mock Fallback (Test)"')" "a suffix that is no level: nothing"
 assert_eq "" "$(eff 'effort_in_model_name "Gemini (High) Flash"')" "the level must END the name: (High) mid-name is nothing"
 assert_eq "rc=0" "$(eff 'effort_in_model_name "no level"; echo "rc=$?"')" "no level is not an error (status 0 under set -e)"
 rm -f "$LETMP/run"/effort-*
-assert_eq "medium" "$(eff 'record_lane_effort agy "$(effort_in_model_name "Gemini 3.8 Flash (Medium)")"; provider_effort agy')" \
+assert_eq "medium" "$(eff 'record_lane_effort agy "$(effort_in_model_name "Gemini 4 Hydrogen (Medium)")"; provider_effort agy')" \
   "recorded the way run_agy does, then read like any lane: medium (lowercased)"
 rm -f "$LETMP/run/effort-agy"
 assert_eq "" "$(eff 'ZUVO_AGY_MODEL="Gemini 3.8 Flash (High)"; provider_effort agy')" \

@@ -647,7 +647,7 @@ lane_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_53:-gpt-6.1-terra}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 4 Hydrogen (Medium)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3-flashx}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}" ;;
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}" ;;
