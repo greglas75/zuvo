@@ -95,7 +95,11 @@ PY
   if [ -n "$last" ] && [ "$last" != "none" ] && [ -s "$S/$LAB-$iid.out" ]; then continue; fi
   rm -f "$S/$LAB-$iid.art"       # a re-run must not read the previous attempt's outcome
   t0=$(date +%s)
-  env "$@" ZUVO_ADVERSARIAL_LOG_FILE="$S/adv-$LAB.log" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT="$TIMEOUT" \
+  # Each call is its own review session (the caller's ZUVO_ADV_SESSION=… in "$@" still wins). Without one the driver
+  # takes the agent's session (CLAUDE_CODE_SESSION_ID) and its PASS_CAP (3 passes over the same files per session)
+  # counts every label of a benchmark together: on 2026-11-15 the 3rd and 4th labels on the same corpus were refused
+  # in 0-1 s on 18 and 14 of 20 diffs ("PASS CAP … in this session"), recorded as `none`, i.e. as the model's misses.
+  env ZUVO_ADV_SESSION="bench-$LAB-$iid-$t0-$$" "$@" ZUVO_ADVERSARIAL_LOG_FILE="$S/adv-$LAB.log" ZUVO_PROVIDER_BENCH=0 ZUVO_REVIEW_TIMEOUT="$TIMEOUT" \
     bash "$ADV" --provider "$PROV" --mode code --artifact "$S/$LAB-$iid.art" \
     < "$diff" > "$S/$LAB-$iid.out" 2>"$S/$LAB-$iid.err"
   t1=$(date +%s)

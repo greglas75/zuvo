@@ -372,7 +372,7 @@ cat > "$T/frozen.sh" <<'DRV'
 art=""; prov=""
 while [ $# -gt 0 ]; do case "$1" in --help) exit 0 ;; --artifact) art="$2"; shift 2 ;; --provider) prov="$2"; shift 2 ;; *) shift ;; esac; done
 cat > /dev/null
-echo "SEVERITY: WARNING model=${ZUVO_CODEX_EFFORT_PRIMARY:-unset}"
+echo "SEVERITY: WARNING model=${ZUVO_CODEX_EFFORT_PRIMARY:-unset} session=${ZUVO_ADV_SESSION:-unset}"
 printf 'provider_outcomes=other:fail,%s:ok\ntotal_findings=3\n' "$prov" > "$art"
 DRV
 chmod +x "$T/frozen.sh"
@@ -380,6 +380,9 @@ bash "$B/run-lane.sh" lab2 codex-5.3 ZUVO_CODEX_EFFORT_PRIMARY=none > "$T/r2.log
 R="$BENCH_HOME/subs/results-lab2.tsv"
 grep -q "^lab2	ok	$P1	ok	3	" "$R" || fail "status must be THIS provider's outcome, not the first one: $(cat "$R")"
 assert_contains "$BENCH_HOME/subs/lab2-$P1.out" "model=none"
+# Bug caught: every label of a benchmark ran in the agent's own review session, so the driver's PASS_CAP refused
+# the 3rd label on the same corpus diffs and the refusals were scored as the model's missed reviews.
+assert_contains "$BENCH_HOME/subs/lab2-$P1.out" "session=bench-lab2-$P1-"
 assert_contains "$T/r2.log" "LANE_DONE lab2"
 bash "$B/run-lane.sh" lab2 codex-5.3 > /dev/null 2>&1
 assert_equals 3 "$(wc -l < "$R" | tr -d ' ')" "a resumed run must skip packets that already have output"
