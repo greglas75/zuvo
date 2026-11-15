@@ -461,7 +461,7 @@ filled.
    - **WARNING**: fix if localized (< 10 lines). Otherwise record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source <skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `backlog-protocol.md` "Persisting a finding").
    - "Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, record it with `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source drive-by:<skill> --file "$F" --line <n> --anchor "$A" --title "$T"` (`--anchor` is required on a BUG, SEC or DATA file record; `drive-by-findings.md`). The adversarial review found a real problem: don't dismiss it just because it existed before your changes.
 3. **Process item.** Record it as a process item: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source <skill> --target subject:<skill>-<gate> --title "$T"`, with `T` the gate's fixed title, the same words on every run (`backlog-protocol.md` "Filing from a skill"). It is kept in the findings ledger, not ticketed; name its F-id in the report, with this run's reason, which never goes in the title. A deferred decision uses `subject:<skill>-decision-<slug>`, the question as the title and both options in `--evidence "$E"`. **The decision slug:** `<slug>` names the decision's subject in 3 to 6 words joined by hyphens, ASCII `[a-z0-9-]`; it is chosen once and written where the skill records the decision (its report entry, or the line it prints before the call), so a resumed run or a sub-agent reuses it from there and never re-derives it, and two different decisions get different slugs.
-4. **Closing, not removing.** Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is closed, never removed: tick it and append its resolution marker (`[FIXED <sha7>]`) as `backlog-protocol.md` "How to Persist Findings" step 3 says; the archive helper moves it ("Archiving is done by the helper, never by hand"). For an audit's tier score: a Tier A score does not prove any one defect is gone: close only an entry whose cited code this run re-read and found fixed.
+4. **Closing, not removing.** Do not call `backlog-add` for a finding this run fixed. An open backlog entry the run resolved is closed, never removed, **only once the fix reaches the repository's default/`develop` branch (merged PR or trunk commit)**: tick it (`- [x]`) and append its resolution marker (`[FIXED <sha7>]` or `[FIXED <develop sha7> — PR #N merged <YYYY-MM-DD>]`) as `backlog-protocol.md` "How to Persist Findings" step 3 says; the archive helper moves it ("Archiving is done by the helper, never by hand"). While a PR is still open on a feature branch, keep the entry open (`- [ ]` / `OPEN`) and record only the `IN-PR` stamp (`[IN-PR #<pr> <branch> @ <sha7>, <YYYY-MM-DD>]` for checkbox items, ` — IN-PR #<pr> @<sha7>` for heading items, `IN-PR #<pr>` in table `Status`) — never tick `- [x]`, never write `- [~]`, never use closure words (`FIXED`, `DONE`, `RESOLVED`, `CLOSED`, `MERGED`, `STALE`), and do not run `backlog-archive.py archive` for it before merge. For an audit's tier score: a Tier A score does not prove any one defect is gone: close only an entry whose cited code this run re-read and found fixed.
 
 ## Backlog Table Format
 
@@ -572,16 +572,21 @@ For each finding that should be tracked:
    report, not only in the backlog.
 
 3. **Handle resolved items — ARCHIVE, never remove.** Move the entry out of `$BACKLOG` and append
-   it verbatim to `$ARCHIVE` under a dated section:
+   it verbatim to `$ARCHIVE` under a dated section **only once the fix is merged into the default/`develop` branch** (or committed directly on a trunk-only workflow):
 
    ```bash
    ~/.zuvo/backlog-archive.py archive --repo "$R" --dry-run   # always first
    ~/.zuvo/backlog-archive.py archive --repo "$R"
    ```
 
-   By hand: tick the box (`- [x]`), append the resolution marker (`[FIXED <sha7>]`,
-   `WONTFIX — <reason>`) to the existing text, cut the line, and append it UNCHANGED under
+   By hand (only after merge): tick the box (`- [x]`), append the resolution marker (`[FIXED <sha7>]` or `[FIXED <develop sha7> — PR #<pr> merged <YYYY-MM-DD>]`, or `WONTFIX — <reason>`) to the existing text, cut the line, and append it UNCHANGED under
    `## Archived from backlog.md on <YYYY-MM-DD> (N completed items moved out)`.
+
+   **While a PR is open (`IN-PR`), keep the entry `OPEN`:**
+   - **Checkbox (`- [ ]`):** keep `- [ ]` untouched and append `[IN-PR #<pr> <branch> @ <sha7>, <YYYY-MM-DD>]` to the existing line.
+   - **Heading (`## B-<id>`):** keep `OPEN` and append ` — IN-PR #<pr> @<sha7>` (for example `## B-20261115-FOO — OPEN (P2) — IN-PR #2201 @abc1234`).
+   - **Table row (`| B-<id> |`):** set `Status` to `IN-PR #<pr>`.
+   - **Forbidden before merge:** do NOT tick `- [x]`, do NOT invent `- [~]`, do NOT append closure words (`FIXED`, `DONE`, `RESOLVED`, `CLOSED`, `MERGED`, `STALE`), and do NOT archive or move the item to `$ARCHIVE`. Keeping `IN-PR` entries `OPEN` without closure words ensures `zuvo_backlog_parse.py`, `backlog-archive.py`, and grooming pre-passes continue seeing them as open and preserve their `B-id` until merge. Once the PR merges into the default/`develop` branch, replace/clear the `IN-PR` stamp only by ticking `- [x]` and appending `[FIXED <develop sha7> — PR #<pr> merged <YYYY-MM-DD>]` so `backlog-archive.py archive` moves it cleanly.
 
    **Removing the entry is forbidden.** The rule this replaces had you drop the row outright and
    relied on git history to keep the record. That is false exactly where the cost is highest: in at

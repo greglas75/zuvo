@@ -1429,7 +1429,7 @@ A finding in a file this task edits (a file in the task's Files list or its diff
 
 Follow-up work the run will not do (SCOPE-FREEZE new work, a scope concern) and a deferred decision (a post-cap product call, a rule mismatch, a design disagreement) are process items: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source execute --target subject:execute-decision-<slug> --title "$T" --evidence "$E"` (**Process item**; `T` is the question or the work, `E` holds both options or positions and the reason; `<slug>` is the decision slug (`backlog-protocol.md` "Filing from a skill", **The decision slug**), printed FIRST, as `[slug: <slug>]` in the item's report line (the `[POST-CAP: DEFERRED]` line for a post-cap decision, the task's report entry otherwise), then the call is made; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id under "Recorded Findings" in the Final Summary: the findings ledger that keeps it is not where a human triages yet.
 
-A finding this run fixed gets no call (**Closing, not removing**).
+A finding this run fixed gets no call (**Closing, not removing**); when fixing an existing open `B-<id>` on an unmerged PR branch, keep it `- [ ]` (`OPEN`) with an `IN-PR` stamp (never `- [x]`, `- [~]`, closure words, or archiving) until merged (`backlog-protocol.md` "Filing from a skill", **Closing, not removing**).
 
 ### Closing commit for backlog-add's writes (Phase Final, after the aggregate review)
 

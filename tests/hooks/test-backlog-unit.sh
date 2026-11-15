@@ -5,4 +5,4 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 python3 -m unittest -v tests/hooks/test_backlog_payload.py tests/hooks/test_backlog_collector.py \
-  tests/hooks/test_backlog_views.py
+  tests/hooks/test_backlog_views.py tests/hooks/test_backlog_in_pr.py
