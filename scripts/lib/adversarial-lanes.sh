@@ -373,10 +373,14 @@ _ar_lane_budget() {
 # _AGY_BODY_FILE and the call's tokens to the lane.
 # Thinking counts as output, once: added only when total_tokens shows output_tokens left it out (Gemini's way).
 _agy_unpack() {
-  # The envelope carries all three of status, response and error (agy prints error: null on success and
-  # response: "" on failure); anything else (a reply that is itself JSON with one of those keys, an agy that ignored
-  # the flag) is the body as it came.
-  if jq -e 'type == "object" and has("status") and has("response") and has("error")' "$1" >/dev/null 2>&1; then
+  # The envelope carries status and response, plus error (agy <= 1.5.x printed error: null on success and
+  # response: "" on failure) or conversation_id (agy 1.5.9 prints {"conversation_id","status":"SUCCESS",
+  # "response","duration_seconds","num_turns","usage"} — no error key). Requiring "error" read every 1.5.9
+  # envelope as the body: the review arrived as one escaped JSON line, no SEVERITY: line started a line, and
+  # every agy review counted 0 findings from 2026-10-24 (~9,000 Mac reviews). Anything else (a reply that is
+  # itself JSON with some of these keys, an agy that ignored the flag) is the body as it came.
+  if jq -e 'type == "object" and has("status") and has("response") and (has("error") or has("conversation_id"))' \
+      "$1" >/dev/null 2>&1; then
     # An object carrying an error, or no string .response, is no review: the body stays empty and the attempt
     # fails (its .error still reaches the classification through the raw file in _agy_attempt).
     jq -j 'if (.error // null) == null and (.response | type == "string") then .response else "" end' "$1" \

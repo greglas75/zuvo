@@ -79,6 +79,8 @@ case "${MOCK_AGY_MODE:-ok}" in
     sleep 30 ;;
   json-ok)
     printf '{"status":"success","response":"SEVERITY: CRITICAL - mock json finding from %s","error":null,"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}\n' "$model" ;;
+  json-ok-159)
+    printf '{"conversation_id":"c-1","status":"SUCCESS","response":"SEVERITY: CRITICAL\\nFILE: a.ts:1\\nISSUE: mock 1.5.9 finding from %s\\n","duration_seconds":7.3,"num_turns":1,"usage":{"input_tokens":10,"output_tokens":5,"thinking_tokens":2,"cache_read_tokens":0,"total_tokens":17}}\n' "$model" ;;
   json-error)
     printf '{"status":"error","response":null,"error":"MOCK-UNSEEN-ERROR something new broke"}\n' ;;
   json-bare)
@@ -152,6 +154,16 @@ reset_calls
 out=$(FB='' run_adv json-error)
 if [[ "$out" == *"MOCK-UNSEEN-ERROR"* ]]; then fail "an error object is not consumed as a review" "$out"
 else pass "an error object is not consumed as a review"; fi
+
+# Bug caught: agy 1.5.9's envelope has no "error" key, so it was passed on whole as the review — one escaped
+# line where no SEVERITY: starts a line, and every agy review counted 0 findings (2026-10-24 .. 2026-11-15).
+start_test "agy.2c2 agy 1.5.9's envelope (conversation_id, no error key) is unpacked"
+reset_calls
+out=$(run_adv json-ok-159)
+if printf '%s\n' "$out" | grep -q '^SEVERITY: CRITICAL'; then pass "a SEVERITY: line starts a line of the review"
+else fail "a SEVERITY: line starts a line of the review" "$out"; fi
+if [[ "$out" == *'"conversation_id"'* ]]; then fail "the 1.5.9 envelope is not passed on as the review" "$out"
+else pass "the 1.5.9 envelope is not passed on as the review"; fi
 
 # Bug caught: a reply that is itself JSON with a "status"/"error" key taken for agy's envelope and emptied.
 start_test "agy.2d a JSON reply that is not agy's three-key envelope is the review as it came"
