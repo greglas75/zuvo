@@ -1,0 +1,27 @@
+[
+  {
+    "name": "ascii",
+    "text": "plain"
+  },
+  {
+    "name": "polish",
+    "text": "Zażółć gęślą jaźń"
+  },
+  {
+    "name": "cjk",
+    "text": "調査質問"
+  },
+  {
+    "name": "emoji",
+    "text": "📊🧪"
+  },
+  {
+    "name": "combining",
+    "text": "éą"
+  },
+  {
+    "name": "non-ascii-path",
+    "text": "żółć/調査.ts",
+    "filename": "żółć/調査.ts"
+  }
+]

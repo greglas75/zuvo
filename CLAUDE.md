@@ -230,7 +230,7 @@ scripts/lib/model-subprocess.sh — THE shared reviewer runner (zms_*): Codex ho
                                   sourcing); install.sh and every build ship scripts/lib/ beside each
                                   installed driver. Missing library = codex/claude lanes `no-runner`,
                                   router fail-closed sentinel — never a silent fallback.
-scripts/lib/adversarial-*.sh    — the adversarial driver's twelve modules (cli, ledger, input, prompt,
+scripts/lib/adversarial-*.sh    — the adversarial driver's thirteen modules (cli, ledger, input, packing, prompt,
                                   providers, lanes, lanes-http, dispatch, run, blind-audit, agreement, report).
                                   scripts/adversarial-review.sh keeps the bootstrap and Main, the phases
                                   in the order they run. The driver loads them all-or-nothing from ONE
@@ -262,6 +262,8 @@ memory/findings/                — the findings ledger beside the REAL backlog:
                                   one per day, branch and host (<date>_<branch-slug>_<host>.jsonl),
                                   folded on read. Every finding at conf ≥ 26 is kept here; not production
                                   files for the pipeline-entry gate.
+scripts/lib/adversarial-packing.sh — dispatch and provider-free `--chunk-plan` share the current
+                                  partitioner; versioned JSON contract: docs/adversarial-packing-contract.md.
 tests/lib/                      — shared test helpers: dist-build.sh (per-run build cache; `--fresh`
                                   forces a real build), hermetic-tools.sh (links real tools onto a
                                   narrowed PATH), installer-sources.sh (the installer's text),
