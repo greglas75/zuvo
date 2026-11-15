@@ -110,6 +110,7 @@ check_kind --record-disposition VALUE   # two values: `shift 3`
 # ways: a flag added to or removed from the parser, or here, fails — update this list only with the parser.
 EXPECTED_FLAGS='--append-artifact OPT 1
 --artifact VALUE 1
+--chunk-plan BOOL 0
 --context VALUE 1
 --diff VALUE 1
 --doctor BOOL 0

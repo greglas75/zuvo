@@ -35,6 +35,7 @@ ARTIFACT_PATH=""
 TAMPER_NOTE=""   # set by _tamper_verify when the tree changed under the reviewers
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
+CHUNK_PLAN=false      # provider-free versioned packing plan
 DOCTOR=false         # --doctor: live auth probe of every detected provider, then exit
 LIST_PROVIDERS=false     # --list-providers: print detected clients, one per line, and exit
 EXCLUDE_PROVIDER=""  # --exclude: space-separated SET of providers to skip. Repeatable; the
@@ -96,6 +97,7 @@ while [[ $# -gt 0 ]]; do
       EXCLUDE_LAST="$2"; shift 2 ;;
     --mode)      _need_value any 'a mode name' "${@:1:2}"; REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
+    --chunk-plan) CHUNK_PLAN=true; shift ;;
     --context)   _need_value text 'a value' "${@:1:2}"; CONTEXT_HINT="$2"; shift 2 ;;
     # An empty ref is no ref: git would diff the working tree, or exit 129 outside a repository.
     --diff)      _need_value set 'a git ref' "${@:1:2}"; DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
@@ -224,6 +226,7 @@ Diagnostics:
 Output:
   --json           Machine-readable JSON (for agent-in-the-loop)
   --context "..."  Add context hint (e.g. "NestJS auth middleware")
+  --chunk-plan     Print the provider-free versioned packing plan (JSON)
   --dry-run        Print the prompt that would be sent, then exit (debug)
 
 Input:

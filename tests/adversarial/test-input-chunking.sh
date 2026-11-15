@@ -13,6 +13,7 @@ ADV="$ROOT/scripts/adversarial-review.sh"
 MOCKS="$HERE/mocks"
 
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
+export ZUVO_REVIEW_TEST_PROVIDERS=mock-success
 export PATH="$MOCKS:$PATH"
 export ZUVO_HOME="$ADV_TEST_HOME/zuvo-home"
 mkdir -p "$ZUVO_HOME"

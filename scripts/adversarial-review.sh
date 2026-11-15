@@ -278,13 +278,13 @@ client_available() {
 # that fails to load, or a set that lacks a function Main or the lane router calls (a partial or older
 # copy). tests/hooks/test-adversarial-driver-modules.sh pins this contract and keeps AR_REQUIRED_FNS
 # equal to what Main and the router actually call.
-AR_MODULES="adversarial-cli.sh adversarial-ledger.sh adversarial-input.sh adversarial-prompt.sh
+AR_MODULES="adversarial-cli.sh adversarial-ledger.sh adversarial-input.sh adversarial-packing.sh adversarial-prompt.sh
   adversarial-providers.sh adversarial-lanes.sh adversarial-lanes-http.sh adversarial-dispatch.sh
   adversarial-run.sh adversarial-blind-audit.sh adversarial-agreement.sh adversarial-report.sh"
 AR_REQUIRED_FNS="ar_init_options ar_init_failure_cache ar_parse_args ar_reconcile_append_artifact
   ar_init_findings_ledger ar_cmd_record_disposition ar_cmd_effectiveness ar_resolve_provider_env
   ar_validate_mode ar_ba_setup ar_check_plan_budget ar_guard_file_list ar_collect_input
-  ar_set_input_cap ar_set_chunk_boundary ar_check_material ar_check_pass_cap ar_omit_oversized_content
+  ar_set_input_cap ar_set_chunk_boundary ar_check_material ar_emit_chunk_plan ar_check_pass_cap ar_omit_oversized_content
   ar_chunk_input ar_truncate_input
   _tamper_capture ar_detect_language ar_select_focus ar_set_output_instruction
   ar_compose_review_prompt ar_exclude_host_lanes ar_list_providers_if_asked
@@ -347,6 +347,7 @@ unset _ar_self_bytes
 . "$AR_LIB_DIR/adversarial-cli.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-cli.sh did not load"
 . "$AR_LIB_DIR/adversarial-ledger.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-ledger.sh did not load"
 . "$AR_LIB_DIR/adversarial-input.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-input.sh did not load"
+. "$AR_LIB_DIR/adversarial-packing.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-packing.sh did not load"
 . "$AR_LIB_DIR/adversarial-prompt.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-prompt.sh did not load"
 . "$AR_LIB_DIR/adversarial-providers.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-providers.sh did not load"
 . "$AR_LIB_DIR/adversarial-lanes.sh" || _ar_module_error "$AR_LIB_DIR/adversarial-lanes.sh did not load"
@@ -368,8 +369,9 @@ unset _ar_d _ar_m _ar_miss _ar_lacking _ar_skipped _ar_f _ar_stamp_wait
 # Several end the run themselves (exit) — --help, the ledger subcommands, --list-providers, --doctor,
 # --dry-run, chunked input, a refused or empty input, no provider, blind audit, no review.
 ar_init_options                   # cli
-ar_init_failure_cache             # providers
 ar_parse_args "$@"                # cli
+ar_emit_chunk_plan                # packing (exits only for --chunk-plan)
+ar_init_failure_cache             # providers
 ar_reconcile_append_artifact      # cli
 ar_init_findings_ledger           # ledger
 ar_cmd_record_disposition         # ledger
