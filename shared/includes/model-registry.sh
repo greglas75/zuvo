@@ -159,6 +159,8 @@ ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_AL
 # A reviewer that does not answer has precision 0, whatever it scores when it does.
 # Display name, exactly as `agy models` prints it: a wrong string fails silently.
 #
+# The blocks below are this lane's history, oldest first; the LAST block is the current default.
+#
 # 3.8 Flash (High) since 2026-09-05, on measurement: the same 20 review diffs through both,
 # every finding judged REAL/FALSE_POSITIVE by an independent Opus judge against the diff,
 # with a shared defect vocabulary so neither model scores twice for one defect.
@@ -182,8 +184,8 @@ ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_AL
 #   High                21               71%       82    167s        2
 # The same High config measured +32 on 09-05 and +21 today: run-to-run noise is ~±10, so
 # Medium is NOT proven better than High — it is not worse, and it never timed out while High
-# lost the same diff to the 500s ceiling three times out of three. Low is ruled out: it finds
-# half as much and 44% of what it reports is false.
+# lost the same diff to the 500s ceiling three times out of three. 3.8 Flash Low was ruled out: it
+# found half as much and 44% of what it reported was false (Hydrogen Low is a different model, below).
 #
 # Gemini 4 Hydrogen (Medium) since 2026-11-15 (owner's decision) — all four configs run the SAME day on the
 # same 20 diffs, same Opus 5 judge, driver with the agy 1.5.9 envelope fix (v1.6.123), every config in its
@@ -193,8 +195,10 @@ ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_AL
 #   Hydrogen Medium               20                  89%      56/7       3/20        36s       0.097
 #   Hydrogen High                 24                  92%      74/6       4/20        83s       0.177
 #   3.8 Flash Medium (was)         8                  55%      45/37      0/20        19s       0.037
-# Medium and High beat 3.8 Flash by 12-16 (outside the ~±10 noise) at +34-37 precision points; High over Medium
-# is +4, inside the noise, for 2.3x the time and 1.8x the tokens. Low says "no issues" on 9/20. $ = tokens x the
+# The decision rests on PRECISION first: +34-37 points over 3.8 Flash, a gap no noise explains. The marginal
+# gap (+12-16) alone is not conclusive — 3.8 Flash Medium itself measured +25 on 09-23 and +8 today, a swing
+# beyond the ~±10 noise — so read it as "at least as much unique coverage", one run (r1) per config. High over
+# Medium is +4, inside the noise, for 2.3x the time and 1.8x the tokens. Low says "no issues" on 9/20. $ = tokens x the
 # OpenRouter list price — agy runs on the Antigravity subscription, so it is quota spent, not a bill.
 ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 4 Hydrogen (Medium)}"
 # Same value as the default. High is not deeper in what the set gains (+4 over Medium, inside the noise) and costs
