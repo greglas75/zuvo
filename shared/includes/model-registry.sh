@@ -195,10 +195,11 @@ ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-$ZUVO_MODEL_CODEX_AL
 #   Hydrogen Medium               20                  89%      56/7       3/20        36s       0.097
 #   Hydrogen High                 24                  92%      74/6       4/20        83s       0.177
 #   3.8 Flash Medium (was)         8                  55%      45/37      0/20        19s       0.037
-# The decision rests on PRECISION first: +34-37 points over 3.8 Flash, a gap no noise explains. The marginal
-# gap (+12-16) alone is not conclusive — 3.8 Flash Medium itself measured +25 on 09-23 and +8 today, a swing
-# beyond the ~±10 noise — so read it as "at least as much unique coverage", one run (r1) per config. High over
-# Medium is +4, inside the noise, for 2.3x the time and 1.8x the tokens. Low says "no issues" on 9/20. $ = tokens x the
+# Observations from one run (r1) per config, not a proven repeatable gain: Hydrogen Medium/High were 34-37
+# precision points above 3.8 Flash and +12-16 in marginal coverage. The marginal gap is not separable from
+# run-to-run variation — 3.8 Flash Medium itself went from +25 (09-23 sweep above) to +8 today. Medium over High
+# is a cost call: High was +4 and +3 precision points, inside the noise, for 2.3x the time and 1.8x the tokens.
+# Hydrogen Low said "no issues" on 9/20 diffs. $ = tokens x the
 # OpenRouter list price — agy runs on the Antigravity subscription, so it is quota spent, not a bill.
 ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 4 Hydrogen (Medium)}"
 # Same value as the default. High is not deeper in what the set gains (+4 over Medium, inside the noise) and costs
