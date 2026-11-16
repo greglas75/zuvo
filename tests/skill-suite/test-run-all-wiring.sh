@@ -134,6 +134,34 @@ else
   bad "(b2) spaced dir wrong summary: [$(printf '%s\n' "$SP_OUT" | grep -i 'RESULT:' || echo none)]"
 fi
 
+# ── (b3) Large timing output must not SIGPIPE before the aggregate verdict ────
+# Bug: sort | head under pipefail exits 141 once the timing list exceeds the pipe buffer.
+# Long fixture paths produce that list cheaply, without executing the real repository suite.
+long_segment="$(printf '%0200d' 0)"
+LARGE_FIX="$FIX/$long_segment/$long_segment/$long_segment/$long_segment"
+mkdir -p "$LARGE_FIX"
+i=1
+while [ "$i" -le 120 ]; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$LARGE_FIX/$(printf '%03d' "$i").sh"
+  i=$((i + 1))
+done
+LARGE_OUT="$(ZUVO_RUNALL_SUITES_DIR="$LARGE_FIX" bash "$RUNNER" 2>&1)"
+LARGE_CODE=$?
+[ "$LARGE_CODE" -eq 0 ] && pass "(b3) large timing list exits 0, not SIGPIPE" \
+  || bad "(b3) large timing list exit $LARGE_CODE (want 0)"
+if printf '%s\n' "$LARGE_OUT" | grep -q 'RESULT: PASS=120 FAIL=0 SKIP=0'; then
+  pass "(b3) aggregate verdict survives a timing list larger than the pipe buffer"
+else
+  bad "(b3) aggregate verdict lost after large timing list"
+fi
+slow_rows="$(printf '%s\n' "$LARGE_OUT" | awk '
+  /^=== slowest children/ { timing = 1; next }
+  timing && /^  total:/ { timing = 0 }
+  timing && /^  +[0-9]+s  / { n++ }
+  END { print n + 0 }')"
+[ "$slow_rows" -eq 10 ] && pass "(b3) slowest table still reports exactly ten children" \
+  || bad "(b3) slowest table reports $slow_rows children (want 10)"
+
 # ── (c) SCOPES ────────────────────────────────────────────────────────────────
 if printf '%s\n' "$LIST_FAST" | grep -q 'tests/adversarial/run.sh'; then
   bad "(c) fast scope must NOT list tests/adversarial/run.sh"

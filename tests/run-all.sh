@@ -297,7 +297,8 @@ done < <(build_child_list)
 RUN_ELAPSED=$(( $(date +%s) - RUN_START ))
 
 echo "=== slowest children (wall clock) ==="
-printf '%s' "$TIMINGS" | sort -rn | head -10 | while IFS='	' read -r secs n; do
+# Consume the entire sorted stream: head can SIGPIPE sort under pipefail and hide the verdict.
+printf '%s' "$TIMINGS" | sort -rn | awk 'NR <= 10' | while IFS='	' read -r secs n; do
   [ -n "${n:-}" ] || continue
   printf '  %5ss  %s\n' "$secs" "$n"
 done
