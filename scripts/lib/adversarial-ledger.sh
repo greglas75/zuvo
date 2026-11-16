@@ -602,9 +602,10 @@ return 0
 # blocks (a code sample fenced inside a prose review is not the review); else the whole file. A fence is a line
 # of three or more backticks or tildes, indented or not, its "json" tag in any case and spaced or not; it
 # closes on a line of the same character, at least as long (CommonMark). An EMPTY json fence hides nothing.
-# Shared by the counter, the findings ledger and the --json document, so none of them can disagree.
+# Shared by the counter, the findings ledger and the --json document. The optional text argument
+# requires JSON to occupy the whole response: a fence inside prose may be an example, not findings.
 result_json_text() {
-  awk '
+  awk -v format="${2:-}" '
     function fence(s) { sub(/^[[:space:]]+/, "", s); match(s, /^(`+|~+)/); return substr(s, 1, RLENGTH) }
     { raw = raw $0 ORS }
     !inside && /^[[:space:]]*(```+|~~~+)[[:space:]]*([Jj][Ss][Oo][Nn])?[[:space:]]*$/ {
@@ -617,7 +618,8 @@ result_json_text() {
     inside           { bare = bare $0 ORS; next }
     /[^[:space:]]/   { prose = 1 }
     END {
-      if (json ~ /[^[:space:]]/)               printf "%s", json
+      if (format == "text" && prose)          printf "%s", raw
+      else if (json ~ /[^[:space:]]/)          printf "%s", json
       else if (bare ~ /[^[:space:]]/ && !prose) printf "%s", bare
       else                                      printf "%s", raw
     }
@@ -647,7 +649,9 @@ findings_log_rows() {
   # -s over the whole text: a chunked review concatenates one JSON object per chunk.
   # group_by(.id): the same finding repeated across chunks is one finding, at its HIGHEST
   # severity — keeping whichever copy sorted first would under-report a CRITICAL.
-  [[ "$OUTPUT_FORMAT" != "json" ]] || rows=$(result_json_text "$rf" | jq -rs --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  # Read the response format, not just the requested format: providers may answer JSON
+  # to a text prompt. Only a whole JSON response qualifies there, never an example in prose.
+  rows=$(result_json_text "$rf" "$OUTPUT_FORMAT" | jq -rs --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg r "$RUN_ID" --arg mo "$REVIEW_MODE" --arg p "$provider" --arg m "$model" \
       --arg pj "$LEDGER_PROJECT" '
     def rank: {"CRITICAL": 3, "WARNING": 2, "INFO": 1}[(.severity // "") | tostring | ascii_upcase] // 0;

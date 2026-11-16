@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-findings-ledger.sh — the per-finding ledger (~/.zuvo/adversarial-findings.log):
-# --json reviews emit one row per fingerprinted finding, --record-disposition appends verdicts
+# JSON or text reviews emit one row per fingerprinted finding, --record-disposition appends verdicts
 # (a verdict judges the raises before it, keyed on project + fingerprint), --effectiveness joins
 # the two per lane, and no failure of the ledger ever fails a review.
 #
@@ -75,13 +75,59 @@ review "$PROJ_A" "mock-findings-c" --json >/dev/null 2>&1 || true
 assert_eq "2" "$(rows_where '$4 == "mock-findings-c" && $10 == "new"')" "two distinct ids across both objects"
 assert_eq "CRITICAL" "$(awk -F'\t' '$6 == "api.ts:5:missing-rate-limit" { print $7 }' "$LEDGER")" "INFO in chunk 1, CRITICAL in chunk 2 → CRITICAL"
 
-start_test "FL.3 a text-mode review whose lanes answer JSON, not the text format, records nothing"
-# Text mode reads the text format's SEVERITY/ID blocks only (FL.20); JSON belongs to --json runs.
+start_test "FL.3 a text-mode review records the three JSON IDs previously lost from a cached security panel"
+# B75743e00: openrouter-alt returned this whole JSON response to a text prompt; all three IDs
+# were printed but absent from the ledger. Replay its record fields, never the live provider.
 new_case
-rc=0; review "$PROJ_A" "mock-findings-a mock-findings-b" >/dev/null 2>&1 || rc=$?
-assert_eq "0" "$rc" "text review ran"
-assert_eq "0" "$(rows_where '$10 == "new"')" "no finding rows: the lanes answered JSON, which has no SEVERITY: lines"
-assert_eq "no" "$([[ -e "$LEDGER" ]] && echo yes || echo no)" "no ledger file at all — not even a header"
+mkdir -p "$FL_TMP/bin"
+cat > "$FL_TMP/bin/mock-cached-response" <<'SH'
+#!/usr/bin/env bash
+cat >/dev/null
+cat "$FL_RESPONSE"
+SH
+chmod +x "$FL_TMP/bin/mock-cached-response"
+export PATH="$FL_TMP/bin:$PATH"
+export FL_RESPONSE="$FL_TMP/cached-response"
+cat > "$FL_TMP/cached-json" <<'JSON'
+{"findings":[
+ {"id":"share-link-public-access.service.ts:260:audit-error-detail-leak","severity":"INFO","confidence":"low","file":"share-link-public-access.service.ts:260"},
+ {"id":"share-link-public-access.service.ts:157:password-hash-comparison-timing","severity":"INFO","confidence":"low","file":"share-link-public-access.service.ts:157"},
+ {"id":"share-link-public-access.service.ts:190:settlement-error-swallowed-detail","severity":"INFO","confidence":"low","file":"share-link-public-access.service.ts:190"}
+]}
+JSON
+cp "$FL_TMP/cached-json" "$FL_RESPONSE"
+rc=0; review "$PROJ_A" "mock-cached-response" --mode security >/dev/null 2>&1 || rc=$?
+assert_eq "0" "$rc" "cached response replay ran without calling a real provider"
+assert_eq "3" "$(rows_where '$10 == "new"')" "all three original JSON findings recorded"
+assert_eq "share-link-public-access.service.ts:157:password-hash-comparison-timing|share-link-public-access.service.ts:190:settlement-error-swallowed-detail|share-link-public-access.service.ts:260:audit-error-detail-leak" \
+  "$(awk -F'\t' '$10 == "new" { printf "%s%s", (n++ ? "|" : ""), $6 }' "$LEDGER" 2>/dev/null)" "exact original IDs retained"
+assert_eq "3" "$(rows_where '$2 ~ /^[0-9]+-[0-9]+$/ && $3 == "security" && $4 == "mock-cached-response" && $5 == "unknown" && $7 == "INFO" && $8 == "low" && $9 == substr($6, 1, index($6, ":") + 3)')" \
+  "run, mode, source lane/model and finding fields retained"
+assert_eq "$PA" "$(awk -F'\t' '$10 == "new" { print $11 }' "$LEDGER" 2>/dev/null | sort -u)" "original project isolation retained"
+
+start_test "FL.3b a wholly fenced JSON response is recorded in text mode"
+new_case
+{ printf '```json\n'; cat "$FL_TMP/cached-json"; printf '```\n'; } > "$FL_RESPONSE"
+review "$PROJ_A" "mock-cached-response" >/dev/null 2>&1 || true
+assert_eq "3" "$(rows_where '$10 == "new"')" "the full response is JSON in a Markdown envelope"
+
+start_test "FL.3c chunked JSON in text mode deduplicates IDs at the highest severity"
+new_case
+review "$PROJ_A" "mock-findings-c" >/dev/null 2>&1 || true
+assert_eq "2" "$(rows_where '$10 == "new"')" "two distinct IDs across both objects"
+assert_eq "CRITICAL" "$(awk -F'\t' '$6 == "api.ts:5:missing-rate-limit" { print $7 }' "$LEDGER" 2>/dev/null)" "highest severity survives format fallback"
+
+start_test "FL.3d a JSON example in a prose review cannot replace its real text IDs"
+new_case
+{ printf 'Example payload, not a finding from this review:\n```json\n'; cat "$FL_TMP/cached-json"; printf '```\n'; \
+  "$MOCKS/mock-findings-text" </dev/null; } > "$FL_RESPONSE"
+review "$PROJ_A" "mock-cached-response" >/dev/null 2>&1 || true
+assert_eq "5" "$(rows_where '$10 == "new"')" "all real text IDs retained, no example IDs imported"
+assert_eq "0" "$(rows_where '$6 ~ /^share-link-public-access/')" "embedded JSON examples are not a provider response"
+new_case
+{ printf 'Example payload only; this review raises no issues:\n```json\n'; cat "$FL_TMP/cached-json"; printf '```\n'; } > "$FL_RESPONSE"
+review "$PROJ_A" "mock-cached-response" >/dev/null 2>&1 || true
+assert_eq "no" "$([[ -e "$LEDGER" ]] && echo yes || echo no)" "prose containing an example alone creates no findings"
 
 start_test "FL.4 --record-disposition: batch append, latest verdict wins, run id sanitized"
 new_case; seed_review
