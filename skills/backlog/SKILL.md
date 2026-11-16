@@ -322,9 +322,7 @@ on nothing — empty, or stripped to nothing as resolution markers; nothing was 
 name the file and the defect, or pass the B-id). Checking only `backlog.md` is not a check: an entry that
 exists solely in `backlog-done.md` reads as ABSENT.
 
-- `fix B-<id>`: verify exists (error if not), tick the box and **append** `[FIXED <sha7>]` to the
-  existing text — never write over the problem description, because the description is what the
-  content key is computed from.
+- `fix B-<id>`: verify exists (error if not). If the fix is already merged on the default/`develop` branch (or committed directly on a trunk-only workflow), tick the box (`- [x]`) and **append** `[FIXED <sha7>]` (or `[FIXED <develop sha7> — PR #<pr> merged <YYYY-MM-DD>]`) to the existing text — never write over the problem description, because the description is what the content key is computed from. If the fix sits on an open, unmerged PR branch, keep `- [ ]` (`OPEN`) and append `[IN-PR #<pr> <branch> @ <sha7>, <YYYY-MM-DD>]` (heading dialect: keep `OPEN` and append ` — IN-PR #<pr> @<sha7>`; table dialect: `IN-PR #<pr>`) — never `- [x]`, never `- [~]`, never closure words (`FIXED`, `DONE`, `RESOLVED`, `CLOSED`, `MERGED`, `STALE`), and do not archive until merged (`backlog-protocol.md` "How to Persist Findings" step 3).
 - `wontfix B-<id> [reason]`: verify exists, tick the box and append `WONTFIX — <reason>`.
 - `archive [--dry-run]`: move every ticked, marker-carrying entry into `backlog-done.md` via
   `~/.zuvo/backlog-archive.py archive --repo "$R"`. Entries holding a live `[ ]` sub-item are
