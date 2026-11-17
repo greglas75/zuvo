@@ -53,7 +53,8 @@ else
   # A shorter list here is not a smaller version of the same check — it is a documented way for
   # an agent to be read as human by unsetting three variables.
   _cb_agent=0
-  for _v in ZUVO_AGENT CLAUDECODE CLAUDE_PLUGIN_ROOT CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION \
+  [ "${ZUVO_AGENT:-0}" = "1" ] && _cb_agent=1   # as the library: only ZUVO_AGENT=1 marks an agent
+  for _v in CLAUDECODE CLAUDE_PLUGIN_ROOT CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION \
             CODEX_WORKSPACE CODEX_SANDBOX CODEX_HOME CODEX_THREAD_ID CODEX_SESSION_ID \
             CURSOR_AGENT CURSOR_TRACE_ID GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY \
             ANTIGRAVITY_SESSION_ID ANTIGRAVITY_AGENT ZUVO_AI_RUN; do
