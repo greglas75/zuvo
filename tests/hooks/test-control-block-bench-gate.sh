@@ -5,7 +5,10 @@
 # which is why the red case is asserted first.
 set -uo pipefail
 
-HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/hooks/control-block-bench-gate.sh"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HOOK="$ROOT/hooks/control-block-bench-gate.sh"
+# shellcheck source=/dev/null
+. "$ROOT/tests/lib/human-env.sh"   # HUMAN=(env -u …): every agent marker, derived from the detector
 PASS=0; FAIL=0
 ok()   { printf '  PASS: %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL+1)); }
@@ -93,11 +96,19 @@ sed -i.bak 's/contract + source + runner command/contract + source + runner + X/
   skills/write-tests/SKILL.md && rm -f skills/write-tests/SKILL.md.bak
 git commit -qam "human control edit"
 rc=$(printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "$REMOTE_SHA" \
-      | env -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION \
-            -u CODEX_WORKSPACE -u CODEX_SANDBOX -u CODEX_HOME -u CURSOR_AGENT -u CURSOR_TRACE_ID \
-            -u GEMINI_CLI -u ANTIGRAVITY -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID \
-            -u ZUVO_AI_RUN -u ZUVO_AGENT bash "$HOOK" >/dev/null 2>&1; echo $?)
+      | "${HUMAN[@]}" bash "$HOOK" >/dev/null 2>&1; echo $?)
 [ "$rc" = "0" ] && ok "exempts human pushes" || bad "blocked a human push (rc=$rc)"
+
+# 5b. the Antigravity CLI marks its commands only with ANTIGRAVITY_AGENT=1; read as human, an agy
+#     lane agent skipped this gate (PR #9842, 2026-11-17). Checked with the hook's library beside it
+#     and with the hook copied alone, which takes its own fallback list.
+mkdir -p "$WORK/solo"; cp "$HOOK" "$WORK/solo/control-block-bench-gate.sh"
+for h in "$HOOK" "$WORK/solo/control-block-bench-gate.sh"; do
+  rc=$(printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "$REMOTE_SHA" \
+        | "${HUMAN[@]}" ANTIGRAVITY_AGENT=1 bash "$h" >/dev/null 2>&1; echo $?)
+  [ "$rc" = "1" ] && ok "ANTIGRAVITY_AGENT alone is an agent ($h)" \
+                  || bad "ANTIGRAVITY_AGENT alone read as human (rc=$rc, $h)"
+done
 
 # 6. explicit override -> PASS, and is logged
 rc=$(printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "$REMOTE_SHA" \

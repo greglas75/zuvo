@@ -5,6 +5,8 @@
 set -u
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=/dev/null
+. "$ROOT/tests/lib/human-env.sh"   # HUMAN=(env -u …): every agent marker, derived from the detector
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 REFLINE='refs/heads/main 1111111111111111111111111111111111111111 refs/heads/main 2222222222222222222222222222222222222222'
@@ -123,10 +125,7 @@ mkdir -p zuvo/contracts
 printf '{"stage":"PHASE-3","scope_fence":["app.ts"],"prove":{"blind_audit":"skipped","adversarial":"clean","findings_disposition":"none"}}' > zuvo/contracts/refactor-a.json
 echo y > app.ts; git add app.ts
 # Clear EVERY var _is_agent_env() inspects — a partial unset is an agent, not a human.
-rc=$(env -u ZUVO_AGENT -u ZUVO_AI_RUN -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT \
-         -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION -u CODEX_SANDBOX -u CODEX_WORKSPACE \
-         -u CODEX_HOME -u CURSOR_TRACE_ID -u CURSOR_AGENT -u GEMINI_CLI -u ANTIGRAVITY \
-         -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID "$HD/pre-commit" >/dev/null 2>&1; echo $?)
+rc=$("${HUMAN[@]}" "$HD/pre-commit" >/dev/null 2>&1; echo $?)
 [ "$rc" -eq 0 ] && ok "p4 human exempt" || bad "p4 (rc=$rc)"
 
 # (5) gate absent -> fail-open exit 0

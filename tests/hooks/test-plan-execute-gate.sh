@@ -171,12 +171,12 @@ ap docs/specs/p-plan.md in-progress
 [ "$(ZUVO_AI_RUN=1 ZUVO_ALLOW_ADHOC=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -eq 0 ] && ok "ZUVO_ALLOW_ADHOC escape (uncorroborated in-progress)" || bad "allow-adhoc in-progress"
 
 echo "=== widened agent detection: EVERY harness var alone must count as an AI run ==="
-# All 15, not a subset. An audit mutation that broke 5 of the untested branches passed the whole
+# All 18, not a subset. An audit mutation that broke 5 of the untested branches passed the whole
 # suite: `HUMAN` unsets them collectively, and every agent case sets ZUVO_AI_RUN, so a single
 # dead branch was invisible. A dead branch means that harness silently bypasses the gate.
 for v in ZUVO_AGENT ZUVO_AI_RUN CLAUDECODE CLAUDE_PLUGIN_ROOT CLAUDE_CODE_ENTRYPOINT \
-         CLAUDE_CODE_SESSION CODEX_SANDBOX CODEX_WORKSPACE CODEX_HOME CURSOR_TRACE_ID \
-         CURSOR_AGENT GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY ANTIGRAVITY_SESSION_ID; do
+         CLAUDE_CODE_SESSION CODEX_SANDBOX CODEX_WORKSPACE CODEX_HOME CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_TRACE_ID \
+         CURSOR_AGENT GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY ANTIGRAVITY_SESSION_ID ANTIGRAVITY_AGENT; do
   newrepo; install_hook; planfiles "app.ts"; ap docs/specs/p-plan.md pending
   r=$("${HUMAN[@]}" "$v=1" bash -c "$(declare -f trycommit); trycommit app.ts")
   [ "$r" -ne 0 ] && ok "$v alone => AI run (gate armed)" || bad "$v alone read as human (silent bypass)"

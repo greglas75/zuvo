@@ -53,8 +53,8 @@ if [ "$_he_count" -lt 10 ]; then
   # fixture replaced, rather than shipping a HUMAN=(env) that unsets nothing.
   HUMAN=(env -u ZUVO_AGENT -u ZUVO_AI_RUN -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT \
          -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION -u CODEX_SANDBOX -u CODEX_WORKSPACE \
-         -u CODEX_HOME -u CURSOR_TRACE_ID -u CURSOR_AGENT -u GEMINI_CLI -u ANTIGRAVITY \
-         -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID)
+         -u CODEX_HOME -u CODEX_THREAD_ID -u CODEX_SESSION_ID -u CURSOR_TRACE_ID -u CURSOR_AGENT -u GEMINI_CLI -u ANTIGRAVITY \
+         -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID -u ANTIGRAVITY_AGENT)
   echo "  ! human-env: derived only $_he_count vars — using the literal fallback set" >&2
 fi
 unset _he_v _he_count _he_root

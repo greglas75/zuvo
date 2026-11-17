@@ -43,14 +43,21 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 # which is where an unmeasured behavioural change actually slips through.
 if command -v pg_is_agent_env >/dev/null 2>&1; then
   pg_is_agent_env || exit 0
+elif [ -r "$_self_dir/lib/agent-env.sh" ] && . "$_self_dir/lib/agent-env.sh" 2>/dev/null \
+     && command -v zuvo_is_agent_env >/dev/null 2>&1; then
+  # The shared detector, the one pg_is_agent_env wraps: a second copy of its list here drifted
+  # (CODEX_THREAD_ID and CODEX_SESSION_ID were missing), and a missing marker reads an agent as human.
+  zuvo_is_agent_env || exit 0
 else
-  # Mirror pipeline-gate-lib.sh::pg_is_agent_env exactly. A shorter list here is not a
-  # smaller version of the same check — it is a documented way for an agent to be read
-  # as human by unsetting three variables.
+  # No library beside the hook at all: mirror hooks/lib/agent-env.sh::zuvo_is_agent_env exactly.
+  # A shorter list here is not a smaller version of the same check — it is a documented way for
+  # an agent to be read as human by unsetting three variables.
   _cb_agent=0
-  for _v in ZUVO_AGENT CLAUDECODE CLAUDE_PLUGIN_ROOT CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION \
-            CODEX_WORKSPACE CODEX_SANDBOX CODEX_HOME CURSOR_AGENT CURSOR_TRACE_ID \
-            GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY ANTIGRAVITY_SESSION_ID ZUVO_AI_RUN; do
+  [ "${ZUVO_AGENT:-0}" = "1" ] && _cb_agent=1   # as the library: only ZUVO_AGENT=1 marks an agent
+  for _v in CLAUDECODE CLAUDE_PLUGIN_ROOT CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION \
+            CODEX_WORKSPACE CODEX_SANDBOX CODEX_HOME CODEX_THREAD_ID CODEX_SESSION_ID \
+            CURSOR_AGENT CURSOR_TRACE_ID GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY \
+            ANTIGRAVITY_SESSION_ID ANTIGRAVITY_AGENT ZUVO_AI_RUN; do
     [ -n "${!_v:-}" ] && { _cb_agent=1; break; }
   done
   [ "$_cb_agent" = "1" ] || exit 0
