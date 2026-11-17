@@ -95,7 +95,7 @@ git commit -qam "human control edit"
 rc=$(printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" "$REMOTE_SHA" \
       | env -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION \
             -u CODEX_WORKSPACE -u CODEX_SANDBOX -u CODEX_HOME -u CURSOR_AGENT -u CURSOR_TRACE_ID \
-            -u GEMINI_CLI -u ANTIGRAVITY -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID \
+            -u GEMINI_CLI -u ANTIGRAVITY -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID -u ANTIGRAVITY_AGENT \
             -u ZUVO_AI_RUN -u ZUVO_AGENT bash "$HOOK" >/dev/null 2>&1; echo $?)
 [ "$rc" = "0" ] && ok "exempts human pushes" || bad "blocked a human push (rc=$rc)"
 

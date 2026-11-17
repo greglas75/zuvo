@@ -171,8 +171,14 @@ MUTATIONS = [
      ['test-refactor-agent-env-markers.sh']),
     (ENV,
      '  [ -n "${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}'
-     '${ANTIGRAVITY_SESSION_ID:-}" ] && return 0',
-     '  [ -n "${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}" ] && return 0',
+     '${ANTIGRAVITY_SESSION_ID:-}${ANTIGRAVITY_AGENT:-}" ] && return 0',
+     '  [ -n "${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}${ANTIGRAVITY_AGENT:-}" ] && return 0',
+     'SECURITY',
+     ['test-refactor-agent-env-markers.sh']),
+    (ENV,
+     '  [ -n "${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}'
+     '${ANTIGRAVITY_SESSION_ID:-}${ANTIGRAVITY_AGENT:-}" ] && return 0',
+     '  [ -n "${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}${ANTIGRAVITY_SESSION_ID:-}" ] && return 0',
      'SECURITY',
      ['test-refactor-agent-env-markers.sh']),
     (ENV, '  return 1\n}', '  return 0\n}', 'SECURITY', ['test-refactor-agent-env-markers.sh']),
