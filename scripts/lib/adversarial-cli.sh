@@ -304,7 +304,7 @@ Environment variables:
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
                            for individuals — IneligibleTierError).
-                           Display name from 'agy models' (default: "Gemini 3.8 Flash (Medium)").
+                           Display name from 'agy models' (default: "Gemini 4 Hydrogen (Medium)").
                            3.1 Pro is NOT a deeper alternative here: measured 7/20 answered
                            vs 20/20 for Flash, at 3.5x the latency. See model-registry.sh.
   ZUVO_AGY_FALLBACK_MODEL  Model this lane switches to when the primary is out of quota — Antigravity

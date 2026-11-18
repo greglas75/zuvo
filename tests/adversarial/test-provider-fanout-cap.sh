@@ -101,8 +101,8 @@ assert_eq "5" "$attempted" "zero does not disable provider dispatch"
 assert_contains "$(cat "$HERE/.tmp/cap0a.err")" "ZUVO_REVIEW_MAX_PROVIDERS=0 is below its minimum of 1" "zero is reported as invalid"
 
 # ─── Case 1d: pinned providers bypass the draw ───────────────────────────────
-# agy (Gemini 3.8 Flash) is pinned by default because it is the highest measured MARGINAL
-# contributor: 32 defects no other provider finds. A coin flip on the biggest unique
+# agy (Gemini 4 Hydrogen) is pinned by default because it is among the largest measured MARGINAL
+# contributors: +20 defects no other provider finds (2026-11-15). A coin flip on a big unique
 # contributor loses coverage nothing else can recover. The rest of the slots stay random,
 # so this must NOT collapse back into "rank order always wins" — CAP.1c still has to pass.
 

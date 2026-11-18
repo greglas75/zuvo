@@ -647,7 +647,7 @@ lane_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-6-luna}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_53:-gpt-6.1-terra}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (Medium)}}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 4 Hydrogen (Medium)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3-flashx}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-xiaomi/mimo-v2.6-flash}" ;;
     openrouter-3) echo "${ZUVO_MODEL_OPENROUTER_3:-inclusionai/ling-3.1-flash}" ;;
@@ -1150,9 +1150,11 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
     _ar_idx=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | nl -ba -w1 -s'	')
     #
     # PINNED providers bypass the draw and always take a slot when they are present.
-    # agy (Gemini 3.8 Flash) is pinned because it is the highest measured MARGINAL
-    # contributor in the set: 32 defects that no other provider finds, against 17 for the
-    # model it replaced (20 diffs, Opus-judged, shared defect vocabulary, 2026-09-05).
+    # agy is pinned because it is among the largest measured MARGINAL contributors in the set.
+    # Pinned 2026-09-05 on Gemini 3.8 Flash (32 defects no other provider found, against 17 for
+    # the model it replaced). Since 2026-11-15 it runs Gemini 4 Hydrogen (Medium): +20 over the
+    # others' 215 at 89% precision, where 3.8 Flash re-measured the same day gave +8 at 55%
+    # (20 diffs, Opus-judged, shared defect vocabulary — see model-registry.sh).
     # Leaving the biggest unique contributor to a coin flip loses coverage that nothing
     # else in the set can recover. Pinning is deliberately NOT "rank 1 always wins": it is
     # a per-provider decision backed by a marginal-coverage number, and the rest of the
