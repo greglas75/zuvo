@@ -334,23 +334,35 @@ WORK_FILES = <files being touched>
 
    A failure here is a normal, fixable finding: fix it, re-run the check, and continue. A formatter
    difference is a formatter run, not a judgement call — **but only in a file the base already kept
-   formatted** (format ratchet). For each file the format check names, look at it on the merge-base
-   (`git show "$(git merge-base HEAD <base>)":<path>` piped through the project's formatter in
-   check mode, e.g. `biome format --stdin-file-path=<path>` / `prettier --check --stdin-filepath <path>`
-   compared with the input): a file new on the branch, or one formatted on the base, gets the
-   formatter run — through the project's own format script when it defines one (`npm run format`,
-   `format:fix`), so that the project, not ship, decides what "formatted" means; a direct formatter
-   call only where it defines none. A file that was ALREADY unformatted on the base is pre-existing
-   drift: do NOT reformat the whole file, even when this PR changes a few lines in it (formatting
-   only the changed line ranges is fine where the formatter supports ranges) — a whole-file reformat buries the real change in a diff several times its size and
-   makes every parallel PR on that file conflict (rdesigner 2026-11-19: 60 % of develop unformatted,
-   one 2779-line file rewritten to 5300+ lines in four PRs at once). Leave it as it is, record it as
-   `format: pre-existing drift (<N> files: <paths>)`, and continue; if the project's own CI check
-   fails on such a file, report that as a base-branch problem, never fix it inside this PR. A
-   project whose format check is already a ratchet reports only files this rule formats anyway.
+   formatted (format ratchet)**:
 
-   A failing check is NOT grounds to skip it — a project whose formatter cannot be satisfied locally will fail the same way in CI, just slower and
-   after a push. Apply the same `TEST_RAN` discipline as step 2: a checker that exits 0 having
+   - **Classify** each file the format check names against `MB=$(git merge-base HEAD <base>)`.
+     Map renames first (`git diff --name-status -M "$MB"`): a renamed or moved file is judged by
+     its old path, never as new. A path absent on `$MB` after that is NEW. Otherwise
+     `git show "$MB:<old path>"` goes through the formatter in check mode on stdin (`biome format
+     --stdin-file-path=<path>` and compare stdout with the input; `prettier --check
+     --stdin-filepath <path>` and read the exit code): unchanged → FORMATTED-ON-BASE, changed →
+     DRIFT. If the branch changes the formatter's version or config, the base cannot be judged
+     with the branch's formatter: format nothing, record `format: ratchet n/a (formatter changed)`
+     and say so in the PR.
+   - **Format** NEW and FORMATTED-ON-BASE files only, on exactly those paths. Use the project's own
+     format script when it is itself a ratchet (rdesigner's `npm run format` since #12709) or takes
+     paths, so the project, not ship, defines "formatted on the base". Never run an unscoped
+     repo-wide script (`prettier --write .`, `biome format --write .`): it reflows every DRIFT file
+     too. Check the script body first; if it is repo-wide, call the formatter on the paths instead.
+   - **DRIFT** files are never reformatted whole, even when this PR edits lines in them. A
+     whole-file reformat buries the change in a diff several times its size and makes every
+     parallel PR on that file conflict (rdesigner 2026-11-19: 60 % of develop unformatted; one
+     2779-line file grew to 5300+ lines in four PRs at once). Formatting only the PR's own changed
+     line ranges is fine where the formatter supports ranges; otherwise leave the file as it is.
+   - **Verdict**: re-run the check. It passes when every file still failing is on the DRIFT list.
+     Any other failing file is this PR's to fix. Record `format: pass (N files), pre-existing
+     drift (M files: <paths>)`. A non-ratchet CI format check that will fail on DRIFT files is a
+     base-branch problem: name it in the PR description and the artifact, never fix it inside
+     this PR. A project whose own check is already a ratchet never names DRIFT files.
+
+   A failing check is NOT grounds to skip it — a project whose formatter cannot be satisfied
+   locally will fail the same way in CI, just slower and after a push. Apply the same `TEST_RAN` discipline as step 2: a checker that exits 0 having
    inspected zero files has proved nothing. Record each as
    `format: pass (1217 files)` / `typecheck: pass` in the artifact, and `n/a` where the project
    defines no such script — never silently omit one that ran.
