@@ -338,8 +338,11 @@ WORK_FILES = <files being touched>
    (`git show "$(git merge-base HEAD <base>)":<path>` piped through the project's formatter in
    check mode, e.g. `biome format --stdin-file-path=<path>` / `prettier --check --stdin-filepath <path>`
    compared with the input): a file new on the branch, or one formatted on the base, gets the
-   formatter run. A file that was ALREADY unformatted on the base is pre-existing drift: do NOT
-   reformat it — a whole-file reformat buries the real change in a diff several times its size and
+   formatter run — through the project's own format script when it defines one (`npm run format`,
+   `format:fix`), so that the project, not ship, decides what "formatted" means; a direct formatter
+   call only where it defines none. A file that was ALREADY unformatted on the base is pre-existing
+   drift: do NOT reformat the whole file, even when this PR changes a few lines in it (formatting
+   only the changed line ranges is fine where the formatter supports ranges) — a whole-file reformat buries the real change in a diff several times its size and
    makes every parallel PR on that file conflict (rdesigner 2026-11-19: 60 % of develop unformatted,
    one 2779-line file rewritten to 5300+ lines in four PRs at once). Leave it as it is, record it as
    `format: pre-existing drift (<N> files: <paths>)`, and continue; if the project's own CI check
