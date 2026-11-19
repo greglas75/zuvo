@@ -332,9 +332,21 @@ WORK_FILES = <files being touched>
    it — `npm run lint:ci` — measured **under 1 second across 1217 files**. Ship ran only `npm test`,
    so it pushed a diff it already had everything needed to reject.
 
-   A failure here is a normal, fixable finding: fix it (a formatter difference is a formatter run,
-   not a judgement call), re-run the check, and continue. It is NOT grounds to skip the check — a
-   project whose formatter cannot be satisfied locally will fail the same way in CI, just slower and
+   A failure here is a normal, fixable finding: fix it, re-run the check, and continue. A formatter
+   difference is a formatter run, not a judgement call — **but only in a file the base already kept
+   formatted** (format ratchet). For each file the format check names, look at it on the merge-base
+   (`git show "$(git merge-base HEAD <base>)":<path>` piped through the project's formatter in
+   check mode, e.g. `biome format --stdin-file-path=<path>` / `prettier --check --stdin-filepath <path>`
+   compared with the input): a file new on the branch, or one formatted on the base, gets the
+   formatter run. A file that was ALREADY unformatted on the base is pre-existing drift: do NOT
+   reformat it — a whole-file reformat buries the real change in a diff several times its size and
+   makes every parallel PR on that file conflict (rdesigner 2026-11-19: 60 % of develop unformatted,
+   one 2779-line file rewritten to 5300+ lines in four PRs at once). Leave it as it is, record it as
+   `format: pre-existing drift (<N> files: <paths>)`, and continue; if the project's own CI check
+   fails on such a file, report that as a base-branch problem, never fix it inside this PR. A
+   project whose format check is already a ratchet reports only files this rule formats anyway.
+
+   A failing check is NOT grounds to skip it — a project whose formatter cannot be satisfied locally will fail the same way in CI, just slower and
    after a push. Apply the same `TEST_RAN` discipline as step 2: a checker that exits 0 having
    inspected zero files has proved nothing. Record each as
    `format: pass (1217 files)` / `typecheck: pass` in the artifact, and `n/a` where the project
