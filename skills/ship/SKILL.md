@@ -336,27 +336,33 @@ WORK_FILES = <files being touched>
    difference is a formatter run, not a judgement call — **but only in a file the base already kept
    formatted (format ratchet)**:
 
-   - **Classify** each file the format check names against `MB=$(git merge-base HEAD <base>)`.
-     Map renames first (`git diff --name-status -M "$MB"`): a renamed or moved file is judged by
-     its old path, never as new. A path absent on `$MB` after that is NEW. Otherwise
-     `git show "$MB:<old path>"` goes through the formatter in check mode on stdin (`biome format
-     --stdin-file-path=<path>` and compare stdout with the input; `prettier --check
-     --stdin-filepath <path>` and read the exit code): unchanged → FORMATTED-ON-BASE, changed →
-     DRIFT. If the branch changes the formatter's version or config, the base cannot be judged
-     with the branch's formatter: format nothing, record `format: ratchet n/a (formatter changed)`
-     and say so in the PR.
-   - **Format** NEW and FORMATTED-ON-BASE files only, on exactly those paths. Use the project's own
-     format script when it is itself a ratchet (rdesigner's `npm run format` since #12709) or takes
-     paths, so the project, not ship, defines "formatted on the base". Never run an unscoped
-     repo-wide script (`prettier --write .`, `biome format --write .`): it reflows every DRIFT file
-     too. Check the script body first; if it is repo-wide, call the formatter on the paths instead.
+   - **Classify** only the files this PR adds or changes (`git diff --name-status -M "$MB"`, where
+     `MB=$(git merge-base HEAD <base>)`; an empty `MB` — shallow clone, base not fetched — is a
+     STOP: fetch or deepen the base, never classify against the index). A renamed or moved file is
+     judged by its old path, never as new; an added file beside a deleted one that git did not
+     pair is judged as DRIFT when in doubt. A path absent on `$MB` after that is NEW. Otherwise
+     run `git show "$MB:<old path>"` through the formatter on stdin and compare its stdout with the
+     input (`biome format --stdin-file-path=<old path>`, `prettier --stdin-filepath <old path>`):
+     identical → FORMATTED-ON-BASE, different → DRIFT; a formatter that exits non-zero (parse or
+     config error) has judged nothing — treat that file as DRIFT. If the branch changes the
+     formatter's version or config, existing files cannot be judged with the branch's formatter:
+     format NEW files only, leave every existing file, record `format: ratchet n/a (formatter
+     changed)` and say so in the PR.
+   - **Format** NEW and FORMATTED-ON-BASE files only. Use the project's own format script when it
+     is itself a ratchet (rdesigner's `npm run format` since #12709) or formats ONLY the paths it is
+     given, so the project, not ship, defines "formatted on the base". A script with its own
+     directory or glob arguments (`prettier --write .`, `"src/**/*.ts"`, `biome format --write
+     .`) is repo-wide: call the formatter on the paths instead. Read the script body to decide.
+     Whatever ran, stage only the classified paths; changes it made to any other file are not
+     this PR's and are restored.
    - **DRIFT** files are never reformatted whole, even when this PR edits lines in them. A
      whole-file reformat buries the change in a diff several times its size and makes every
      parallel PR on that file conflict (rdesigner 2026-11-19: 60 % of develop unformatted; one
      2779-line file grew to 5300+ lines in four PRs at once). Formatting only the PR's own changed
      line ranges is fine where the formatter supports ranges; otherwise leave the file as it is.
-   - **Verdict**: re-run the check. It passes when every file still failing is on the DRIFT list.
-     Any other failing file is this PR's to fix. Record `format: pass (N files), pre-existing
+   - **Verdict**: re-run the check. It passes when every file still failing is on the DRIFT list
+     AND fails only on formatting differences. A parse, config or runtime error is never drift —
+     it is this PR's to fix, as is any other failing file. Record `format: pass (N files), pre-existing
      drift (M files: <paths>)`. A non-ratchet CI format check that will fail on DRIFT files is a
      base-branch problem: name it in the PR description and the artifact, never fix it inside
      this PR. A project whose own check is already a ratchet never names DRIFT files.
