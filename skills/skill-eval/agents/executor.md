@@ -151,8 +151,8 @@ a review — **whose CONTENT is the substance being measured, the `[tool_result]
 `Write` MUST echo the substantive gradeable content, not a meta-description of it.** The
 grader credits only what the transcript SHOWS and reads NO files: it never opens the
 report you wrote. So for an audit, log the actual findings WITH their `file:line`
-citations and the assigned tier —
-`[tool_result] wrote zuvo/audits/…md — discount.test.ts:6-8 vi.mock of unit under test → Q13 FAIL; discount.test.ts:15 bare toBeTruthy → AP14; discount.ts:12-13 RangeError branch untested → Q7 FAIL; Tier D` —
+citations and the assigned tier (this line shows the format only; cite the lines you actually read) —
+`[tool_result] wrote zuvo/audits/…md — cart.test.ts:9-11 vi.mock of unit under test → Q13 FAIL; cart.test.ts:21 bare toBeTruthy → Q4 FAIL; cart.ts:30-32 empty-cart branch untested → Q11 FAIL; Tier C` —
 NOT a summary like `wrote report: per-file Q1-Q25 score, gates FAIL, Tier D`. A
 describe-don't-quote tool_result makes real, correct, file:line-cited work look ABSENT
 and fails content/citation assertions the skill actually satisfied (the exact 2026-07-12
