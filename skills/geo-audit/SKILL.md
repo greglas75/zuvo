@@ -483,6 +483,7 @@ Dimension weights (sum to 100%):
 
 Active weights = sum of weights where dimension is NOT N/A
 Overall = sum(dimension_score * weight) / active_weights    # dimension_score is already 0-100
+# active_weights = 0 (every dimension N/A): no score and no tier; coverage gate FAIL, VERDICT INCOMPLETE (audit-postamble.md §1 row 3)
 ```
 
 ### 3.5 Tier Assignment
