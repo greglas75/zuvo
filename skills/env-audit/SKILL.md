@@ -68,6 +68,7 @@ CORE FILES LOADED:
   2. ../../shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
   3. ../../shared/includes/run-logger.md        -- [READ | MISSING -> STOP]
   4. ../../shared/includes/retrospective.md        -- [READ | MISSING -> STOP]
+  5. ../../shared/includes/audit-postamble.md      -- [READ | MISSING -> STOP]
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -119,7 +120,7 @@ When including env var values in the report:
 
 Forbidden: `scan_secrets: skipped`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
 
-POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every ENV finding needs `path/to/file.ext:LINE` (verify-audit gate).
+POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Every ENV finding needs `path/to/file.ext:LINE` (verify-audit gate).
 
 ```
 Mandatory-tools-acknowledgment: I will run scan_secrets + search_text + search_patterns + find_references + audit_scan for this env audit. Every ENV finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
@@ -309,7 +310,7 @@ ENV7 = [0-7]    Default Values
 ENV8 = [0-5]    Documentation
 ```
 
-**Score = sum / 80 x 100**
+**Score = sum of the in-scope dimension scores / sum of their maxima x 100** — `full`: / 80; `--secrets-only` (ENV4): / 15; `--parity` (ENV5): / 10. The denominator never includes a dimension that was not run.
 
 **Critical gates — any ONE of these findings triggers FAIL, whatever the numeric score:**
 
@@ -430,7 +431,13 @@ Stack: [Node.js / Python / Vite / Next.js]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -448,26 +455,17 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
 
-Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
+
+Append via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>	env-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 
 ---
 

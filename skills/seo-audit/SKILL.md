@@ -68,6 +68,7 @@ Read these files before any work begins:
 7. `../../shared/includes/seo-check-registry.md` -- Canonical check slugs and enforcement layers (agents MUST use)
 8. `../../shared/includes/run-logger.md` -- Run logging contract
 9. `../../shared/includes/retrospective.md` -- Retrospective protocol
+10. `../../shared/includes/audit-postamble.md` -- Verdict rule and closing order
 
 Print the checklist:
 
@@ -82,6 +83,7 @@ CORE FILES LOADED:
   7. seo-check-registry.md  -- [READ | MISSING -> STOP]
   8. run-logger.md           -- [READ | MISSING -> STOP]
   9. retrospective.md           -- [READ | MISSING -> STOP]
+ 10. audit-postamble.md         -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -106,7 +108,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Forbidden: `nextjs_metadata_audit: skipped` (when Next), `codesift: unavailable` (when deferred), `retrospective: skipped` — REJECTED.
 
-POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every SEO finding needs `path/to/file.ext:LINE` (verify-audit gate).
+POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Every SEO finding needs `path/to/file.ext:LINE` (verify-audit gate).
 
 ```
 Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_patterns + scan_secrets + audit_scan + nextjs_metadata_audit (when Next.js) + framework tools for this SEO audit. Every finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
@@ -517,7 +519,7 @@ Dimension weights:
   D8: 10%  D9: 15%  D10: 10% D11: 5%  D12: 3%  D13: 2%
 
 Active weights = sum of weights where dimension is NOT N/A
-Overall = sum(dimension_score * weight) / active_weights * 100
+Overall = sum(dimension_score * weight) / active_weights    # dimension_score is already 0-100
 ```
 
 ### 4.4 Sub-Scores
@@ -786,7 +788,14 @@ Overall: [N]/100 -- Tier [A/B/C/D] | Result: [PASS/FAIL/PROVISIONAL]
 SEO: [N]/100 | GEO: [N]/100 | Tech: [N]/100
 Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA]
 Findings: [N critical] / [N total]
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -804,21 +813,14 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
+
+Append via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>	seo-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).

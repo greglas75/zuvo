@@ -96,6 +96,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/run-logger.md      -- [READ | MISSING -> STOP]
   4. ../../shared/includes/retrospective.md      -- [READ | MISSING -> STOP]
   5. ../../shared/includes/backlog-protocol.md -- [READ | MISSING -> degraded]
+  6. ../../shared/includes/audit-postamble.md  -- [READ | MISSING -> STOP]
 ```
 
 Stage 2 deferred to save upfront context.
@@ -119,7 +120,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Forbidden: same as above (skipped/N/A/codesift unavailable when deferred — REJECTED).
 
-POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every A-dim finding needs `path/to/file.ext:LINE` (verify-audit gate).
+POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Every A-dim finding needs `path/to/file.ext:LINE` (verify-audit gate).
 
 ```
 Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_symbols + search_patterns + audit_scan + React tools (when React) for this a11y audit. Every A-dim finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
@@ -469,13 +470,14 @@ Read deferred files:
   3. ../../shared/includes/run-logger.md      -- [READ | MISSING -> STOP]
   4. ../../shared/includes/retrospective.md      -- [READ | MISSING -> STOP]
   5. ../../shared/includes/backlog-protocol.md -- [READ | MISSING -> degraded]
+  6. ../../shared/includes/audit-postamble.md  -- [READ | MISSING -> STOP]
 ```
 
 ### 5.2 Scoring
 
 **Per-dimension scoring:** Each dimension has a max weight. Score = sum of check scores within dimension.
 
-**Overall score:** `(total earned / total possible) * 100` — A10 excluded from score (legal risk section only, max = 76 from A1-A9).
+**Overall score:** `(total earned / total possible) * 100`, where *possible* is the sum of the maxima of the dimensions in scope: `full` = 76 (A1-A9; A10 is the legal risk section and is never scored), `--quick` = 22 (A2 12 + A4 10).
 
 **Critical gates (explicit pass thresholds):**
 - A2 (Keyboard Navigation) < 6/12 --> automatic FAIL regardless of overall score
@@ -488,15 +490,8 @@ Read deferred files:
 | B | >= 70% and < 85% | All critical gates pass |
 | FAIL | < 70% | OR any critical gate fails |
 
-VERDICT mapping for run log — **A → PASS, B → WARN, FAIL → FAIL**; a failing critical gate forces
-FAIL at any score.
-
-Two things this table used to get wrong. The bands were written `70-84` / `>= 85`, so a real 84.4%
-matched neither. And the verdict line said "PASS (A or B), WARN (B with critical gate borderline)",
-which both contradicted the field-resolution section below (there, 70-84% maps to WARN, not PASS)
-and invented a state the table forbids — B already requires every critical gate to pass, so
-"B with a borderline gate" cannot occur, and "borderline" is defined nowhere. A critical gate is
-PASS or FAIL; there is no third position.
+VERDICT: `../../shared/includes/audit-postamble.md` §1 rows 1 and 3 first (a failing A2/A4 gate → FAIL at any score; validity gate FAIL →
+INCOMPLETE); otherwise the grade decides: **A → PASS, B → WARN, FAIL → FAIL**.
 
 ### 5.3 Report Output
 
@@ -532,8 +527,8 @@ SCORE: [N]% -- Grade [A/B/C/FAIL]
 | A7 | Responsive & Zoom | [N] | 6 | 1.4.4, 1.4.10 |
 | A8 | Motion & Animation | [N] | 5 | 2.2.2, 2.3.1, 2.3.3 |
 | A9 | Reading & Content | [N] | 5 | 2.4.2, 3.1.1, 3.2.3 |
-| A10 | Legal Compliance | [N] | 4 | (aggregate) |
-| | **Total** | **[N]** | **80** | |
+| A10 | Legal Compliance | not scored | - | (aggregate; legal risk section) |
+| | **Total** | **[N]** | **76** (`--quick`: 22) | |
 
 ## Findings (sorted by legal risk, then user impact)
 
@@ -629,7 +624,13 @@ Run: <ISO-8601-Z>	a11y-audit	<project>	<score>%	-	<VERDICT>	-	<N>-dimensions	<NO
 -----
 ```
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -647,25 +648,20 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+
+### Run line — closing order `../../shared/includes/audit-postamble.md` §2
+
+Append the Run line (template in the block above) via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
 **Field resolution:**
 - `CQ_SCORE`: `<score>%` (overall percentage)
 - `Q_SCORE`: `-` (not applicable)
-- `VERDICT`: `PASS` (>= 85%), `WARN` (>= 70% and < 85%), `FAIL` (< 70%, or any critical gate fails)
+- `VERDICT`: as stated under the grade table, via `../../shared/includes/audit-postamble.md` §1
 - `TASKS`: `-`
 - `DURATION`: `<N>-dimensions` (number of dimensions scored, typically 10)
 - `NOTES`: `WCAG2.2-[AA|AAA] [N]-findings [legal-status]` (max 80 chars)

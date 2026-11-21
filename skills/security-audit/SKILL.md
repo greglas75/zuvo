@@ -62,28 +62,7 @@ Comprehensive security assessment across 15 dimensions (S1-S15) covering OWASP T
 | `--static` | Static analysis only -- skip Phase 8 even if `--live-url` present |
 | `--quick` | Quick mode: secrets + auth coverage + critical gates only |
 | `--persist-backlog` | Emit backlog entries for CRITICAL/HIGH findings |
-| `--strict-v2` | Count the new v2 vulnerability classes toward the HIGH/CRITICAL gate total. Default: warning-only grace (see below) |
-
-### v2 class grace (CI-safety) — shared by security-audit AND pentest
-
-The **14** v2 vulnerability `finding_type`s — `xxe`, `prototype_pollution`, `redos`,
-`graphql_introspection`, `graphql_depth_unbounded`, `ldap_injection`, `insecure_deserialization`,
-`mass_assignment`, `ssji`, `jwt_weak`, `xss_dom`, `header_injection`, `token_compare_bypass`,
-`weak_credential_storage` (the GraphQL pair is TWO distinct classes) — ship
-**warning-only through the grace window: the minor that introduces them up to but excluding the next
-minor** (introduced in the `1.4.x` line; they graduate to full gate weight in `1.5.0`). During the
-window they are reported in the findings list AND persisted to backlog (`--persist-backlog`
-unaffected; with it on, a v2 finding is recorded through `backlog-add` when it is CRITICAL or HIGH, like any other finding: see "Backlog Persistence" under Phase 10), but do NOT count toward the HIGH/CRITICAL gate total / pentest score caps that a CI
-"zero-HIGH" policy keys on — so updating the plugin never breaks an existing pipeline.
-
-- `--strict-v2` opts in to full gate weight immediately — each skill applies it to its own gate
-  mechanism (security-audit: HIGH/CRITICAL totals; pentest: score caps + critical-gate totals).
-  In `1.5.0` full weight becomes the default and the flag is a no-op (kept for back-compat).
-- `--quick` still reports v2 findings if its dimensions surface them; grace only changes gate
-  weighting, never whether a finding is shown.
-- When any v2-class finding is present without `--strict-v2`, both skills print the identical line:
-  `v2-grace: warning-only (N v2 findings reported, excluded from gate; --strict-v2 to enforce)`
-  where N counts v2-class findings.
+| `--strict-v2` | No-op, accepted for back-compat: the 14 v2 vulnerability classes (see `pentest`) count at full gate weight since 1.5.0 |
 
 | Mode | Scope | Phases | Live Probes |
 |------|-------|--------|-------------|
@@ -121,6 +100,7 @@ fall back to built-in patterns per Phase 3):**
    9. ../../shared/includes/backlog-protocol.md -- READ/MISSING
   10. ../../shared/includes/run-logger.md       -- READ/MISSING
   11. ../../shared/includes/retrospective.md    -- READ/MISSING
+  12. ../../shared/includes/audit-postamble.md  -- READ/MISSING
 ```
 
 Stage 2 deferred to save ~300 lines of upfront context.
@@ -146,7 +126,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch, path resolution, 
 
 ### Forbidden escape hatches: `scan_secrets: skipped`, `search_patterns: not_run`, `trace_route: N/A` (when backend exists), `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED with required value instead.
 
-### Required POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` called and exit 0. Wrapper gates retro-presence AND verify-audit (every HIGH/CRITICAL/MEDIUM finding needs `path/to/file.ext:LINE` citation resolving in current tree). Stop without `append-runlog` → audit INVALID, VERDICT = INCOMPLETE.
+### Required POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Wrapper gates retro-presence AND verify-audit (every HIGH/CRITICAL/MEDIUM finding needs `path/to/file.ext:LINE` citation resolving in current tree). Stop without `append-runlog` → audit INVALID, VERDICT = INCOMPLETE.
 
 ### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
 
@@ -394,7 +374,7 @@ go deep on a few high-signal entry points and call it done." Do exactly one of:
 1. **Complete breadth inline.** Re-run the remaining dimensions yourself sequentially (reduce
    parallelism, add backoff/retries) until every entry point in `entry_points_in_scope` has been
    examined for every in-scope dimension. Slower is fine; partial is not.
-2. **Declare it incomplete.** Set `VERDICT = INCOMPLETE`, label the run **DEGRADED**, and list every
+2. **Declare it incomplete.** VERDICT per `../../shared/includes/audit-postamble.md` §1 row 3 (`INCOMPLETE`), label the run **DEGRADED**, and list every
    unexamined entry point. Do not emit a passing or partial grade.
 
 A coverage shortfall caused by infrastructure failure is still a coverage shortfall. "The dispatch
@@ -861,7 +841,7 @@ Fix any issues in-place before proceeding.
 
 When active, every CRITICAL and HIGH finding goes through `backlog-add`, one call per finding (`backlog-protocol.md` "Filing from a skill"; the bars and the dedupe are the protocol's, so compute no fingerprint and restate nothing).
 
-A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source security-audit --file "$F" --line <n> --anchor "$A" --severity <level> --title "$T"`. `<level>` is `critical` or `high`. SEC takes `--anchor "$A"`, copied from the line that shows the defect or, for something absent (no auth check, no header), from the line of the code that lacks it ("The location rule"); there is no line-1 filing for SEC. A hardcoded-secret finding (S7) anchors on the key or variable name on that line (`API_KEY=`), never on the value, and a secret or user data is never copied into `"$T"`, `"$E"`, `"$A"` or `"$U"`, which has no query string (`backlog-protocol.md` "Filing from a skill", "The location rule", the secrets sentence). A v2-class finding follows the same rule (the grace window changes gate weighting, not what is recorded). A Phase 8 finding on a live host with no repository file causing it takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`: `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source security-audit --target "$U" --evidence "$E" --severity <level> --title "$T"`. Assign "$R" and "$T" before each call, "$F" and "$A" only for a file finding, "$U" and "$E" only for a target finding, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source security-audit --file "$F" --line <n> --anchor "$A" --severity <level> --title "$T"`. `<level>` is `critical` or `high`. SEC takes `--anchor "$A"`, copied from the line that shows the defect or, for something absent (no auth check, no header), from the line of the code that lacks it ("The location rule"); there is no line-1 filing for SEC. A hardcoded-secret finding (S7) anchors on the key or variable name on that line (`API_KEY=`), never on the value, and a secret or user data is never copied into `"$T"`, `"$E"`, `"$A"` or `"$U"`, which has no query string (`backlog-protocol.md` "Filing from a skill", "The location rule", the secrets sentence). A Phase 8 finding on a live host with no repository file causing it takes `--target "$U" --evidence "$E"` in place of `--file`, `--line` and `--anchor`: `~/.zuvo/backlog-add --repo "$R" --class SEC --conf <N> --source security-audit --target "$U" --evidence "$E" --severity <level> --title "$T"`. Assign "$R" and "$T" before each call, "$F" and "$A" only for a file finding, "$U" and "$E" only for a target finding, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
 
 **Resolved entries** (**Closing, not removing**): a finding this run fixed gets no call (this audit is read-only, so it fixes none). An open entry from an earlier audit that this run re-read and found fixed is closed, never removed: in one edit tick its box (`- [x]`) and append its resolution marker (`[FIXED <sha7>]`), as `backlog-protocol.md` "How to Persist Findings" step 3 says. That tick is the one hand edit the protocol sanctions (no helper ticks), and it is not a `wrote=` path: this audit does not stage it and names each ticked entry in its report. Moving a closed entry to the archive is the helper's job (`~/.zuvo/backlog-archive.py archive`, which `append-runlog` runs at the end of the run), never done by hand.
 
@@ -899,7 +879,13 @@ COMPLETION GATE CHECK
 
 ## SECURITY AUDIT COMPLETE
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -938,7 +924,7 @@ VALIDITY GATE
 
 **Coverage-gate parity (IC-2 / IC-5 — mirrors pentest `5814c2d`).** The audit cannot emit a passing
 grade over an **un-enumerated attack surface**: if `surface_gate = FAIL` (under 90% of entry points
-enumerated, or any uncovered entry point lacks a reason code), VERDICT overrides to `INCOMPLETE`.
+enumerated, or any uncovered entry point lacks a reason code), VERDICT is `INCOMPLETE` (§1 row 3).
 **Tool/profile gaps do NOT fail the surface gate** — a missing checkov/gitleaks/IaC scanner or an
 unprofiled stack lowers IC-5 `class_coverage` (advisory, surfaced in the report) only, so a fresh
 environment without optional tools still produces a valid audit. The denominator of IC-2 is entry
@@ -956,29 +942,20 @@ Three clarifications (per adversarial review):
   per entry point is governed by the per-dimension methodology (Phases 3–7); `entry_points_enumerated`
   counts an entry point as audited only when its dimensions actually ran on it, not on a glance.
 
-If `gate_status = FAIL` OR `surface_gate = FAIL` (NOT `N/A`) → VERDICT overrides to `INCOMPLETE`, append
+If `gate_status = FAIL` OR `surface_gate = FAIL` (NOT `N/A`) → `../../shared/includes/audit-postamble.md` §1 row 3 (`INCOMPLETE`; a `FAIL` from a tripped critical gate or an AT RISK/CRITICAL grade stays `FAIL`). Append
 `[VALIDITY GATE FAIL]` / `[COVERAGE GATE FAIL]` to NOTES, record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"):
 `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source security-audit --target subject:security-audit-incomplete --title "$T"`, with `T` the fixed title
 `security-audit run INCOMPLETE: validity or coverage gate failed`, the same words on every run and no date (this run's reason goes in the report, never in the title). Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`. Print Validity Gate AFTER retro append + `~/.zuvo/append-runlog` so postamble fields can be `yes(verified)`.
 
-Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
+
+A tripped critical gate (Scoring: S1=0, S4<3, S5<3, S7=0, S15<3) is §1 row 1. Otherwise the posture grade decides: HEALTHY -> PASS, NEEDS ATTENTION -> WARN, AT RISK or CRITICAL -> FAIL. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>\tsecurity-audit\t<project>\t-\t-\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
-VERDICT mapping: HEALTHY -> PASS, NEEDS ATTENTION -> WARN, AT RISK or CRITICAL -> FAIL.
 
 ---
 

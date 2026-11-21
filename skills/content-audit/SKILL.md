@@ -43,6 +43,7 @@ Read these files before any work begins:
 8. `../../shared/includes/run-logger.md` -- Run logging contract
 9. `../../shared/includes/retrospective.md` -- Retrospective protocol
 10. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules
+11. `../../shared/includes/audit-postamble.md` -- Verdict rule and closing order
 
 Print the checklist:
 
@@ -58,6 +59,7 @@ CORE FILES LOADED:
   8. run-logger.md              -- [READ | MISSING -> STOP]
   9. retrospective.md           -- [READ | MISSING -> STOP]
  10. verification-protocol.md   -- [READ | MISSING -> STOP]
+ 11. audit-postamble.md         -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -109,7 +111,7 @@ This audit is read-only against source files.
 | `search_text` | Always | **NO** — encoding artifacts, mojibake patterns |
 | `search_patterns` | Always | **NO** — broken markdown, orphan backslash |
 
-Forbidden: skipped/N/A — REJECTED. POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every CC finding needs `path/to/file.ext:LINE` (verify-audit gate).
+Forbidden: skipped/N/A — REJECTED. POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Every CC finding needs `path/to/file.ext:LINE` (verify-audit gate).
 
 ```
 Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_patterns for this content audit. Every CC finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
@@ -350,41 +352,6 @@ NEXT STEPS:
   3. Address MANUAL findings listed above
 ```
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
-
-```
-VALIDITY GATE
-  required_tool_calls:
-    get_file_tree: [<N> | NOT_CALLED]
-    search_text: [<N> | NOT_CALLED]
-    search_patterns: [<N> | NOT_CALLED]
-  postamble:
-    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
-    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
-    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
-  gate_status: [PASS | FAIL]
-```
-
-If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
-
-```bash
-printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
-```
-
-```
-Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-```
-
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run:`
-prefix) to the log file path resolved per `run-logger.md`.
-
 ### 3.2 JSON report
 
 Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
@@ -483,6 +450,48 @@ A **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --
 An open entry is closed, never removed (**Closing, not removing**), when this run re-read its cited code and found it fixed. Close each open entry with the same file (or target) and the same title check ID whose cited code this run re-read and found fixed (for a file entry, its line and anchor); leave every other entry with that file and check ID open. A target (live-page) entry is closed only by a later live audit that re-reads the page, never by a source-file patch alone. A legacy entry written in the old `{file}|{dimension}|{check}` fingerprint format is matched by that fingerprint's file and check segments.
 
 Recording findings through `backlog-add` commits and stages nothing. This audit lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
+
+---
+
+## Phase 6: Close
+
+Order per `../../shared/includes/audit-postamble.md` §2: the reports (Phase 3) and the adversarial pass (Phase 4) are done, so retro,
+Validity Gate, Run line follow. VERDICT per §1: the critical gates are the four blocking checks
+(`mojibake-detected`, `php-tag`, `fm-yaml-malformed`, `img-404-live`), and a `FAIL` on any of them is
+`FAIL`. A `PROVISIONAL` result is noted in NOTES and does not by itself change the VERDICT.
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
+
+```
+VALIDITY GATE
+  required_tool_calls:
+    get_file_tree: [<N> | NOT_CALLED]
+    search_text: [<N> | NOT_CALLED]
+    search_patterns: [<N> | NOT_CALLED]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL]
+```
+
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+
+### Run line
+
+Append via the retro-gated wrapper, never `>> runs.log`:
+
+```bash
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 ---
 

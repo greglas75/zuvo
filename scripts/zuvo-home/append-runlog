@@ -438,12 +438,13 @@ if [ "$HAVE_RETRO" -eq 0 ]; then
   echo "  The audit is incomplete without a retrospective." >&2
   echo "  Order of operations:" >&2
   echo "    1. Write the audit report (zuvo/audits/<skill>-<date>.md)." >&2
-  echo "    2. Print Validity Gate block." >&2
-  echo "    3. Load shared/includes/retrospective.md if not loaded." >&2
-  echo "    4. Fill the 9 retrospective fields." >&2
-  echo "    5. Append RETRO: line to ~/.zuvo/retros.log." >&2
-  echo "    6. Append long-form entry to ~/.zuvo/retros.md." >&2
+  echo "    2. Load shared/includes/retrospective.md if not loaded." >&2
+  echo "    3. Fill the 9 retrospective fields." >&2
+  echo "    4. Append RETRO: line to ~/.zuvo/retros.log." >&2
+  echo "    5. Append long-form entry to ~/.zuvo/retros.md." >&2
+  echo "    6. Print the Validity Gate block (it checks steps 1-5)." >&2
   echo "    7. THEN call this script (~/.zuvo/append-runlog) for runs.log." >&2
+  echo "    (shared/includes/audit-postamble.md section 2)" >&2
   echo "" >&2
   echo "  Override (use only with cause): ZUVO_SKIP_RETRO_GATE=1" >&2
   exit 2

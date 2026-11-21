@@ -242,6 +242,6 @@ insecure deserialization, mass-assignment, SSJI, JWT-weak, DOM-XSS), Java/Spring
 Kotlin/Ktor stack profiles, GraphQL/serverless source models, real scanners
 (gitleaks history, SCA via osv-scanner, IaC via checkov/tfsec/trivy/dockle),
 cross-skill finding reconciliation, coverage-gate parity (IC-2 surface / IC-5 class),
-and a `--strict-v2` flag (warning-only grace through 1.4.x, full weight 1.5.0).
+and a `--strict-v2` flag (no-op since 1.5.0: v2 classes always count at full weight).
 Proven by tests/security-corpus/ (14 fixtures, scorer + smoke benchmark).
 Spec/plan: docs/specs/2026-06-10-security-detection-coverage-{spec,plan}.md.

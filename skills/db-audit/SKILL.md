@@ -85,6 +85,7 @@ CORE FILES LOADED:
 ```
 DEFERRED FILES (read only when needed):
   - ../../shared/includes/retrospective.md  -- read right before Phase 6 (saves ~3K tokens during audit)
+  - ../../shared/includes/audit-postamble.md -- read right before Phase 6 (verdict rule + closing order)
 ```
 
 Note: `cq-patterns.md` is NOT loaded — this is a read-only audit, not a code quality review. Loading it wastes ~7K tokens per turn.
@@ -146,23 +147,9 @@ For each held trigger, resolve the tool in this order — abort ONLY at the last
    - Do NOT proceed with grep fallback. The audit is incomplete by definition.
    - Exit with status `INCOMPLETE` and record the `blocker` **Process item** (`../../shared/includes/backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source db-audit --target subject:db-audit-blocker --title "$T"`, with `T` the fixed title `db-audit INCOMPLETE: a required tool is not reachable`, the same words on every run, no date and no tool name; the tool and the project go in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in `backlog-protocol.md` "Filing from a skill" says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed; name its F-id in the report.
 
-### Required POSTAMBLE — retrospective append (NOT optional)
+### Required POSTAMBLE — closing order `../../shared/includes/audit-postamble.md` §2
 
-After the audit report is written and the Run line is appended, **the audit is NOT complete until** the retrospective protocol has appended an entry to BOTH `~/.zuvo/retros.log` AND `~/.zuvo/retros.md`. Reaching the Run line is **not** the end of the skill — it is the midpoint between findings-output and process-feedback.
-
-This is the failure mode the 2026-04-09 → 2026-05-04 db-audit history shows: 11 db-audit runs, 0 retrospective entries written. Every prior run reached the Run line, declared "task done", and skipped retrospective.md entirely. The skipped retros lost ~11 sessions of skill feedback that would otherwise have caught the very issues this MANDATORY section now enforces.
-
-**Hard requirement, in this order, before considering db-audit complete:**
-
-1. Write `zuvo/audits/db-audit-<date>.md`.
-2. Print Validity Gate block.
-3. Print Run line + append to runs.log.
-4. **Load `../../shared/includes/retrospective.md` if not already loaded.**
-5. **Fill all 9 retrospective fields per protocol.**
-6. **Execute the bash append commands** that write `RETRO:` line to `~/.zuvo/retros.log` and the long-form entry to `~/.zuvo/retros.md`.
-7. **Print confirmation:** `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)`.
-
-If you reach step 3 and stop — the audit is INVALID regardless of finding count. The Validity Gate's `gate_status` flips to `FAIL — retrospective not appended` and the verdict is overridden to `INCOMPLETE`.
+Not complete until the retrospective has appended an entry to BOTH `~/.zuvo/retros.log` AND `~/.zuvo/retros.md` (load `../../shared/includes/retrospective.md`, fill all 9 fields, run its bash appends, print `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)`). Reaching the Run line is not the end of the skill; 11 early db-audit runs wrote the run line and skipped the retro. Order: report → retro → Validity Gate → Run line (§2). Stopping after the report without the retro makes the Validity Gate `FAIL — retrospective not appended` (§1 row 3).
 
 ### Forbidden escape hatches
 
@@ -177,7 +164,7 @@ The following telemetry values are **forbidden** when the trigger condition hold
 | `scan_secrets: DEFERRED` | EVER | `scan_secrets: <count>` |
 | `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
 | `retrospective: skipped` | EVER | `retrospective: appended (retros.log=N entries, retros.md=N bytes added)` — see Required POSTAMBLE above |
-| Stopping after Run line without retrospective | EVER | Not allowed — the Validity Gate catches this and overrides to INCOMPLETE |
+| Stopping after the report without the retrospective | EVER | Not allowed — the Validity Gate catches this (§1 row 3) |
 
 ### Audit completion verification (run BEFORE writing PASS/WARN/FAIL status)
 
@@ -186,7 +173,7 @@ At the end of the audit, before emitting the status block:
 1. Re-check each trigger condition.
 2. For each held trigger, verify the corresponding tool was actually called in this session (the LLM must self-report honestly — there is no automated post-execution gate yet, so use the run log as ground truth).
 3. If ANY required tool is missing for a held trigger:
-   - Override the verdict to `INCOMPLETE` regardless of finding count.
+   - VERDICT per `../../shared/includes/audit-postamble.md` §1 row 3.
    - Print: `[VALIDITY GATE FAIL] <tool> required by <trigger>, not called. Audit cannot be trusted.`
    - Record the `incomplete` **Process item** (`../../shared/includes/backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source db-audit --target subject:db-audit-incomplete --title "$T"`, with `T` the fixed title `db-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; the missing tool goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in `backlog-protocol.md` "Filing from a skill" says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it once per run, here, before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line. The final Validity Gate files it only if this step did not (a `postamble` field that fails after the report is saved), and otherwise cites this call's F-id; that block carries the F-id on a line `incomplete-item: <F-id>` and, for a late call, its paths on a line `Backlog writes (gate): <path>, … | none`.
 
@@ -1091,7 +1078,15 @@ ORM: [detected] | Engine: [detected]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
 
-### Validity Gate (REQUIRED — print BEFORE Run line)
+### Retrospective (REQUIRED)
+
+**Load now (deferred):** Read `../../shared/includes/retrospective.md` if not already loaded.
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -1123,30 +1118,19 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which tools or postamble missing>]
 ```
 
-**The Validity Gate must be printed AFTER step 6 of the Required POSTAMBLE (after retros append), not before.** Printing it before retro append guarantees `retros_*_appended: NOT_APPENDED`.
+If `gate_status = FAIL`: VERDICT per `../../shared/includes/audit-postamble.md` §1 row 3, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** unless step 3 of "Audit completion verification" above already did (it gives the command and the fixed title; one item per run), and print its F-id in this block on a line `incomplete-item: <F-id>` (with `Backlog writes (gate):` for a late call, as step 3 says).
 
-If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** unless step 3 of "Audit completion verification" above already did (it gives the command and the fixed title; one item per run), and print its F-id in this block on a line `incomplete-item: <F-id>` (with `Backlog writes (gate):` for a late call, as step 3 says).
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1
 
-Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
-
-### Retrospective (REQUIRED)
-
-**Load now (deferred):** Read `../../shared/includes/retrospective.md` if not already loaded.
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-**Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run. Order: retro bash executed → wrapper invoked → completion claimed.
+**Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run.
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
-Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
+Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
+Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
 ---
 

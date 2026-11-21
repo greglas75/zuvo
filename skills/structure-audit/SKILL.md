@@ -75,6 +75,7 @@ and report its actual independence or an unmet requirement.
 3. `../../rules/file-limits.md` -- Size limits for SA7 file categorization
 4. `../../shared/includes/run-logger.md` -- Run logging contract
 5. `../../shared/includes/retrospective.md` -- Retrospective protocol
+6. `../../shared/includes/audit-postamble.md` -- Verdict rule and closing order
 
 Print the checklist:
 
@@ -85,6 +86,7 @@ CORE FILES LOADED:
   3. file-limits.md      -- [READ | MISSING -> use defaults: 300L service, 200L component]
   4. run-logger.md       -- [READ | MISSING -> STOP]
   5. retrospective.md    -- [READ | MISSING -> STOP]
+  6. audit-postamble.md  -- [READ | MISSING -> STOP]
 ```
 
 If file 1, 2, 4, or 5 is missing, STOP. File 3 has a documented fallback.
@@ -140,17 +142,9 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 | `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
 | `retrospective: skipped` | EVER | `retrospective: appended (retros.log + retros.md)` |
 
-### Required POSTAMBLE — retrospective + verify-audit gates
+### Required POSTAMBLE — closing order `../../shared/includes/audit-postamble.md` §2
 
-After the audit report is written and the Validity Gate block is printed, the audit is **NOT complete** until:
-
-1. `zuvo/audits/structure-audit-<date>.md` is on disk — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
-2. `~/.zuvo/append-runlog` is called with the Run line — this triggers BOTH gates:
-   - **retro-gate**: requires a matching `RETRO:` entry in `~/.zuvo/retros.log` for `skill=structure-audit project=<this>`. If missing → exit 2, runs.log NOT appended. Load `retrospective.md`, fill 9 fields, run the bash append commands, then re-run `append-runlog`.
-   - **audit-content gate**: runs `~/.zuvo/verify-audit` on the report. Every finding section must contain at least one `path/to/file.ext:LINE` citation that resolves in the current tree. Findings without citations get rejected. If rejected → fix the report (add file:line per finding), re-run `append-runlog`.
-3. Print `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)` and confirm exit 0 from `append-runlog`.
-
-If you reach the Run line and stop without calling `append-runlog`: the audit is INVALID regardless of finding count. The Validity Gate's `gate_status` flips to `FAIL — postamble incomplete` and the verdict overrides to `INCOMPLETE`.
+Not complete until `zuvo/audits/structure-audit-<date>.md` is on disk (at the **project root**: `../../shared/includes/report-output-location.md`), the retro is appended and `~/.zuvo/append-runlog` exits 0. The wrapper gates BOTH retro presence (a `RETRO:` entry for `skill=structure-audit project=<this>`; missing → exit 2, runs.log NOT appended: load `retrospective.md`, fill 9 fields, run the bash appends) and `~/.zuvo/verify-audit` on the report (every finding section needs a `path/to/file.ext:LINE` that resolves in the current tree; rejected → add the citations, re-run). Stopping before the wrapper makes the Validity Gate `FAIL — postamble incomplete` (§1 row 3).
 
 ### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
 
@@ -495,9 +489,9 @@ In LIMITED/NO-CODE mode, gates are N/A.
 ### 4.3 Total Score
 
 ```
-raw_score = sum of all scored dimensions
-available_max = 100 - sum of N/A dimension weights
-normalized_score = (raw_score / available_max) * 100
+earned = sum of the 0-3 scores of the applicable dimensions
+available = 3 * (number of applicable dimensions)      # N/A dimensions leave the denominator
+normalized_score = (earned / available) * 100
 ```
 
 ### 4.4 Grade Assignment
@@ -623,7 +617,11 @@ Mode: [FULL/LIMITED/NO-CODE] | Stack: [detected]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append)
+### Retrospective (REQUIRED — load + fill BEFORE the Validity Gate and the Run line)
+
+Load `../../shared/includes/retrospective.md` if not already loaded. Follow the retrospective protocol: gate check → 9 structured questions → TSV emit → markdown append to `~/.zuvo/retros.md` AND `~/.zuvo/retros.log`.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -651,28 +649,16 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source structure-audit --target subject:structure-audit-incomplete --title "$T"`, with `T` the fixed title `structure-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
+If `gate_status = FAIL`: VERDICT per `../../shared/includes/audit-postamble.md` §1 row 3, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source structure-audit --target subject:structure-audit-incomplete --title "$T"`, with `T` the fixed title `structure-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
 
-The Validity Gate must be printed **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`). Printing it before guarantees `NOT_APPENDED`.
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1 (critical gates: SA6/SA7/SA8 in 4.2)
 
-Run: <ISO-8601-Z>	structure-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
-
-### Retrospective (REQUIRED — load + fill BEFORE the Run line append)
-
-Load `../../shared/includes/retrospective.md` if not already loaded. Follow the retrospective protocol: gate check → 9 structured questions → TSV emit → markdown append to `~/.zuvo/retros.md` AND `~/.zuvo/retros.log`.
-
-Then append the Run line via the retro-gated wrapper:
+Append via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
-The wrapper:
-- Verifies the matching `RETRO:` entry in `retros.log` (skill+project). Missing → exit 2, runs.log NOT appended.
-- Runs `~/.zuvo/verify-audit` on the audit report. Findings without `file:line` citations → exit 2, audit REJECTED.
-- On both pass: appends to `runs.log` and prints confirmation.
+Run: <ISO-8601-Z>	structure-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
-If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause (add retro, add file:line citations, etc.) and re-run.
-
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical), INCOMPLETE (Validity Gate FAIL).
+If the wrapper exits non-zero (retro missing, or findings without `file:line` citations): do NOT append to runs.log by hand; fix the cause and re-run it.
