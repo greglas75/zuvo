@@ -584,8 +584,7 @@ After the audit report is generated, run cross-model validation to catch Q-score
 
 ```bash
 REPORT="zuvo/audits/test-quality-audit-$(date +%F).md"   # the report this run wrote (Phase 3)
-[ -f "$REPORT" ] && ~/.zuvo/adversarial-review --mode tests --files "$REPORT" \
-  || echo "adversarial: report not found — write it first"
+[ -f "$REPORT" ] && ~/.zuvo/adversarial-review --mode tests --files "$REPORT" || echo "adversarial: report not found — write it first"
 ```
 
 **Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
