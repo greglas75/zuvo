@@ -69,7 +69,7 @@ Count N/A scores. If more than 50% of in-scope Q gates are N/A:
 2. Justify each N/A individually
 3. Until every exclusion is supported by the required evidence or a gate-specific unavailable-measurement exception, mark the audit INCOMPLETE. Once resolved, score normally; a high count alone does not reject a small unit. This Q review trigger is separate from the CQ independent-review threshold.
 
-N/A is valid when the precondition is verified inactive (e.g., Q5 with no mocks). Synchronous code still requires Q11 branch coverage, and Q13 still requires importing the actual production unit. Unknown applicability is 0/unproven, never N/A. An unavailable measurement may be N/A only when its canonical gate explicitly permits it (Q21); it is not a passing measurement. A zero denominator is INCOMPLETE, never PASS.
+N/A is valid when the precondition is verified inactive (e.g., Q5 with no mocks). Synchronous code with behaviour still requires Q11 branch coverage (code a test-audit classifies NO-TEST-NEEDED — presentational, wiring, constants — is outside Q7/Q11), and Q13 still requires importing the actual production unit. Unknown applicability is 0/unproven, never N/A. An unavailable measurement may be N/A only when its canonical gate explicitly permits it (Q21); it is not a passing measurement. A zero denominator is INCOMPLETE, never PASS.
 
 ## Output Format
 

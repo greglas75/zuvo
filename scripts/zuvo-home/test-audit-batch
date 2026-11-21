@@ -59,7 +59,7 @@ TAB_CLIENT_TIMEOUT=480
 # written ONCE: it is model-run's --require and what the DONE gate looks for per file (tab_gate).
 TAB_VERDICT_RE='^Tier: ([ABCD]|INCOMPLETE)( |$)|^Red flags: .*-> AUTO TIER-D'
 TAB_REQUIRE="$TAB_VERDICT_RE"
-TAB_REJECT='Tier: \[A/B/C/D\]|Red flags: \[AP13/AP14/AP16\]'
+TAB_REJECT='Tier: \[A/B/C/D\]|Red flags: \[AUTO TIER-D AP ids\]'
 
 # tab_build_prompt <include> <out> — the include's fenced body, written to <out> with the verification
 # context set to the read-only value and the file-list placeholder line removed. Status 0 when <out> is a

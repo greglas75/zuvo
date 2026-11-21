@@ -323,7 +323,7 @@ expect_rc() { if [ "$RC" -eq "$2" ]; then ok "$1: exit $2"; else bad "$1: exit $
 printf 'Audit the files listed below.\n' > "$T/p.md"
 READ=(--access read --read-root "$R")
 REQ='^Tier: [ABCD]( |$)|^Red flags: .*-> AUTO TIER-D'
-REJ='Tier: \[A/B/C/D\]|Red flags: \[AP13/AP14/AP16\]'
+REJ='Tier: \[A/B/C/D\]|Red flags: \[AUTO TIER-D AP ids\]'
 RR=(--require "$REQ" --reject "$REJ")
 
 # ── A. Claude host → Codex (G1, K2) ──────────────────────────────────────────
@@ -414,7 +414,7 @@ fi
 
 # ── E. --require / --reject (the test-audit anti-echo pair), --out, answer bytes ─
 echo "-- E. --require / --reject; --out only on success, by rename, mode kept, never a non-regular file"
-if grep -qF 'Tier: [A/B/C/D]' "$BATCH_PROMPT" && grep -qF 'Red flags: [AP13/AP14/AP16] -> AUTO TIER-D' "$BATCH_PROMPT"; then
+if grep -qF 'Tier: [A/B/C/D]' "$BATCH_PROMPT" && grep -qF 'Red flags: [AUTO TIER-D AP ids] -> AUTO TIER-D' "$BATCH_PROMPT"; then
   ok "E: premise — the real batch prompt holds both template lines"
   _d="$(od_new e1)"; seed_file codex "$BATCH_PROMPT"   # a client that echoes the batch prompt back
   mr "E1 echo" CLAUDECODE=1 -- --route --mode audit "${READ[@]}" --prompt-file "$BATCH_PROMPT" "${RR[@]}" --out "$_d/e1.md"
@@ -422,12 +422,12 @@ if grep -qF 'Tier: [A/B/C/D]' "$BATCH_PROMPT" && grep -qF 'Red flags: [AP13/AP14
   expect_eq "E1: status=invalid" "invalid" "$(st status)"
   dir_empty "E1" "$_d"
   expect_eq "E1: nothing on stdout (0 bytes)" 0 "$(wc -c < "$T/o" | tr -d ' ')"
-  _d="$(od_new e2)"; seed codex 'Red flags: [AP13/AP14/AP16] -> AUTO TIER-D'
+  _d="$(od_new e2)"; seed codex 'Red flags: [AUTO TIER-D AP ids] -> AUTO TIER-D'
   mr "E2 template" CLAUDECODE=1 -- --route "${READ[@]}" --prompt-file "$BATCH_PROMPT" "${RR[@]}" --out "$_d/e2.md"
   expect_rc "E2 an echo of the AUTO TIER-D template only" 3
   expect_eq "E2: status=invalid" "invalid" "$(st status)"
   dir_empty "E2" "$_d"
-  printf '### tests/a.test.ts\nRed flags: AP13 -> AUTO TIER-D\n### tests/b.test.ts\nRed flags: AP14, AP16 -> AUTO TIER-D\n' > "$T/e4.want"
+  printf '### tests/a.test.ts\nRed flags: AP13 -> AUTO TIER-D\n### tests/b.test.ts\nRed flags: AP16, AP31 -> AUTO TIER-D\n' > "$T/e4.want"
   _d="$(od_new e4)"; seed_file codex "$T/e4.want"
   mr "E4 all AUTO TIER-D" CLAUDECODE=1 -- --route --mode audit "${READ[@]}" --prompt-file "$BATCH_PROMPT" "${RR[@]}" --out "$_d/e4.md"
   expect_rc "E4 a legitimate batch of ONLY AUTO TIER-D short-format entries, on the real batch prompt" 0
@@ -609,7 +609,7 @@ seed codex 'I cannot help with that.'
 mr "H4" CLAUDECODE=1 SPY_STDERR="Please run /login" -- --route "${READ[@]}" --prompt-file "$T/p.md" "${RR[@]}"
 expect_rc "H4 exit 0, an answer that misses --require, the auth error on stderr" 3
 expect_eq "H4: status=auth, not invalid" "auth" "$(st status)"
-seed codex 'Red flags: [AP13/AP14/AP16] -> AUTO TIER-D'
+seed codex 'Red flags: [AUTO TIER-D AP ids] -> AUTO TIER-D'
 mr "H5" CLAUDECODE=1 SPY_STDERR="Please run /login" -- --route "${READ[@]}" --prompt-file "$T/p.md" "${RR[@]}"
 expect_rc "H5 exit 0, an answer that hits --reject, the auth error on stderr (R6)" 3
 expect_eq "H5: status=auth, not invalid" "auth" "$(st status)"
