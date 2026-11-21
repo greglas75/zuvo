@@ -166,6 +166,7 @@ Print: `[CLASSIFIED] Domain: {data|async|security|general}`
 |---------|------|-------|----------|---------|
 | `../../rules/cq-checklist.md` | Full | Full | Full | Full |
 | `../../shared/includes/env-compat.md` | Full | Full | Full | Full |
+| `../../shared/includes/audit-postamble.md` | Full | Full | Full | Full |
 | `../../rules/cq-patterns.md` | CQ6,7,9,16,17 focus | CQ15,17 focus | CQ4,5 focus | Full |
 | `../../rules/security.md` | **SKIP** | **SKIP** | Full | **SKIP** |
 | `../../rules/file-limits.md` | **SKIP** | **SKIP** | **SKIP** | Full |
@@ -219,17 +220,9 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 | `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
 | `retrospective: skipped` | EVER | `retrospective: appended (retros.log + retros.md)` |
 
-### Required POSTAMBLE — retrospective + verify-audit gates
+### Required POSTAMBLE — closing order `../../shared/includes/audit-postamble.md` §2
 
-After the audit report is written, the audit is **NOT complete** until:
-
-1. `zuvo/audits/code-quality-audit-<date>.md` (or `zuvo/audits/code-audit-<date>.md`) is on disk — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
-2. `~/.zuvo/append-runlog` is called with the Run line — this triggers BOTH:
-   - **retro-gate**: requires a matching `RETRO:` entry in `~/.zuvo/retros.log` for `skill=code-audit project=<this>`. If missing → exit 2, runs.log NOT appended.
-   - **audit-content gate**: runs `~/.zuvo/verify-audit` on the report. Every Tier D/C finding (and every Tier B critical-gate-near-miss) must contain at least one `path/to/file.ext:LINE` citation that resolves in the current tree. Findings without citations get rejected. If rejected → fix the report (add file:line per finding), re-run `append-runlog`.
-3. Print `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)` and confirm exit 0 from `append-runlog`.
-
-If you reach the Run line and stop without calling `append-runlog`: the audit is INVALID regardless of finding count. The Validity Gate's `gate_status` flips to `FAIL — postamble incomplete` and the verdict overrides to `INCOMPLETE`.
+Not complete until the report is on disk (`zuvo/audits/code-quality-audit-<date>.md` or `code-audit-<date>.md`, at the **project root**: `../../shared/includes/report-output-location.md`), the retro is appended and `~/.zuvo/append-runlog` exits 0. The wrapper gates BOTH retro presence (a `RETRO:` entry for `skill=code-audit project=<this>`; missing → exit 2, runs.log NOT appended) and `~/.zuvo/verify-audit` on the report (every Tier D/C finding and every Tier B critical-gate-near-miss needs a `path/to/file.ext:LINE` that resolves in the current tree; rejected → add the citations, re-run). Stopping before the wrapper leaves no Run line: say the run is not logged, never report the audit as complete (`audit-postamble.md` §2).
 
 ### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
 
@@ -693,7 +686,11 @@ COMPLETION GATE CHECK
 
 ## CODE AUDIT COMPLETE
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED — load + fill BEFORE the Validity Gate and the Run line)
+
+Load `../../shared/includes/retrospective.md` if not already loaded. Follow the retrospective protocol: gate check → 9 structured questions → TSV emit → markdown append to `~/.zuvo/retros.md` AND `~/.zuvo/retros.log`.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -717,37 +714,25 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source code-audit --target subject:code-audit-incomplete --title "$T"`, with `T` the fixed title `code-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
+If `gate_status = FAIL`: VERDICT per `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`; rewrite it in the saved report header if it changed), append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source code-audit --target subject:code-audit-incomplete --title "$T"`, with `T` the fixed title `code-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
 
-The Validity Gate must be printed **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`). Printing it before guarantees `NOT_APPENDED`.
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1
 
-Run: <ISO-8601-Z>\tcode-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
-
-### Retrospective (REQUIRED — load + fill BEFORE the Run line append)
-
-Load `../../shared/includes/retrospective.md` if not already loaded. Follow the retrospective protocol: gate check → 9 structured questions → TSV emit → markdown append to `~/.zuvo/retros.md` AND `~/.zuvo/retros.log`.
-
-Then append the Run line via the retro-gated wrapper:
+Here a critical gate trips when an active critical CQ gate scores 0 on any file in scope; §1 row 3 also covers a required validation or applicability review left unfinished. Remediation tiers never override these rules. Append via the retro-gated wrapper:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
-The wrapper:
-- Verifies the matching `RETRO:` entry in `retros.log` (skill+project). Missing → exit 2, runs.log NOT appended.
-- Runs `~/.zuvo/verify-audit` on the audit report. Findings without `path/to/file.ext:LINE` citations → exit 2, audit REJECTED.
-- On both pass: appends to `runs.log` and prints confirmation.
+Run: <ISO-8601-Z>\tcode-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 
-If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause (add retro, add file:line citations to findings, etc.) and re-run.
-
-VERDICT: INCOMPLETE when required validation/applicability review is unfinished; otherwise FAIL for any active critical gate = 0 or 4+ critical findings, WARN for 1-3 other critical findings, PASS for 0 critical findings with all active critical gates = 1. Remediation tiers never override these failure rules.
+If the wrapper exits non-zero (retro missing, or findings without `path/to/file.ext:LINE` citations): do NOT append to runs.log by hand; fix the cause and re-run it.
 
 ## Phase 5: Backlog Persistence
 
 Every finding the tier list below selects goes through `backlog-add`, one call per finding (`../../shared/includes/backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here).
 
-**How:** a **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source code-audit --file "$F" --line <n> [--anchor "$A"] --severity <level> --title "$T"`. `<level>` is `critical`, `high` or `medium` as the tier list below says. `<N>` is your confidence that the finding is real. `<C>` is `CQ` for a failed CQ gate and for every CAP failure except CAP6, `SEC` for a CQ4, CQ5 or CAP6 failure, and `BUG` only when the finding names the input and the wrong output; BUG and SEC take `--anchor "$A"`, copied from the line that shows the defect or, for something absent (CQ4: no auth check), from the line of the code that lacks it ("The location rule"). A gate failure with no line of its own (a file-wide CQ violation) is a whole-file finding: `--line 1`, a "Whole file: ..." title, no `--anchor`. Assign "$R", "$F" and "$T" before each call, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
+**How:** a **Generic write** per finding: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source code-audit --file "$F" --line <n> [--anchor "$A"] --severity <level> --title "$T"`. `<level>` is `critical`, `high` or `medium` as the tier list below says. `<N>` is your confidence that the finding is real. `<C>` is `SEC` for a failed CQ4, CQ5 or CQ30-CQ34 gate and for a CAP5, CAP6, CAP7, CAP8, CAP25 or CAP26 failure (the security gates, per `gate-registry.md`), `CQ` for every other failed CQ gate or CAP failure, and `BUG` only when the finding names the input and the wrong output; BUG and SEC take `--anchor "$A"`, copied from the line that shows the defect or, for something absent (CQ4: no auth check), from the line of the code that lacks it ("The location rule"). A gate failure with no line of its own (a file-wide CQ violation) is a whole-file finding: `--line 1`, a "Whole file: ..." title, no `--anchor` — except a SEC or BUG finding, which always takes `--anchor` and is filed at the line that shows the defect or, for something absent (CQ32: no lockfile), at the manifest line that declares the dependencies, never at line 1. Assign "$R", "$F" and "$T" before each call, "$A" only when you pass `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints and `Recorded: N (backlog: a, ledger: b)` ("The report line" in `backlog-protocol.md`), plus each `NOT PERSISTED (<reason>)` by name; on a non-zero exit act on the protocol's exit table, and never append by hand.
 
 This audit does not commit: it stages nothing. It lists the `wrote=` paths backlog-add printed as `Backlog writes: <path>, ...` (`Backlog writes: none` when there are none), in its report for the user when it runs standalone, and in its report for the calling skill's closing commit to carry when another skill runs it (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 

@@ -98,7 +98,7 @@
 #     Phase 1 never says "Claude Code" (the Kimi/Antigravity builds rewrite it);
 #   - the `Batch auditor:` line in Phase 1 AND in Phase 2's report template;
 #   - the prompt's OUTPUT LINE FORMAT rule, and line-by-line anti-echo;
-#   - Phase 3b is byte-identical to the pre-plan commit e6c2bedd (X8).
+#   - Phase 3b reviews the saved report path (the pinned `adversarial-review --mode tests` line).
 # The literal matcher and fence-aware extraction carry their own self-checks.
 #
 # bash 3.2-compatible (macOS default /bin/bash) AND bash 5 (Homebrew):
@@ -1775,12 +1775,11 @@ else
   bad "anti-echo: ${n_req:-0} prompt line(s) match --require, only ${n_both:-0} of them match --reject (need >= 1 and all)"
 fi
 
-echo "== part 2: Phase 3b is byte-identical to the pre-plan commit (X8) =="
+echo "== part 2: Phase 3b reviews the real saved report, not a literal [date] path =="
 
-P3B_LINE='~/.zuvo/adversarial-review --mode tests --files "zuvo/audits/test-quality-audit-[date].md"'
-X8_BASE=e6c2bedda3e576c2b7fbe6715df8d74ab3cbbf3a   # the commit before Plan C Task 8 touched skills/test-audit/SKILL.md
-p3b_of() {  # every line (continuations joined) whose first non-blank text is the call — printed RAW, byte for byte (T7)
-  join_cont | awk '{ t = $0; sub(/^[ \t]+/, "", t) } index(t, "~/.zuvo/adversarial-review --mode tests") == 1 { print }'
+P3B_LINE='if [ -f "$REPORT" ]; then ~/.zuvo/adversarial-review --mode tests --files "$REPORT"; else echo "adversarial: report not found — write it first" >&2; fi'
+p3b_of() {  # every line (continuations joined) that contains the call — printed RAW, byte for byte
+  join_cont | awk 'index($0, "~/.zuvo/adversarial-review --mode tests") > 0 { print }'
 }
 p3b_now=$(p3b_of < "$SKILL")
 n_now=$(printf '%s' "$p3b_now" | awk 'END { print NR }')
@@ -1789,23 +1788,14 @@ if [ "$n_now" -eq 1 ] && [ "$p3b_now" = "$P3B_LINE" ]; then
 else
   bad "Phase 3b: exactly one adversarial-review --mode tests line, the pinned literal — $n_now found: ${p3b_now:-<none>}"
 fi
-if ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-  bad "Phase 3b vs $X8_BASE: no git repository at $ROOT — cannot prove X8 (not skipped)"
-elif ! git -C "$ROOT" cat-file -e "$X8_BASE:skills/test-audit/SKILL.md" 2>/dev/null; then
-  bad "Phase 3b vs $X8_BASE: that object is not in this clone (shallow?) — cannot prove X8 (not skipped)"
+must "Phase 3b assigns REPORT from the real date, never the [date] placeholder" grep -qF '/audits/test-quality-audit-$(date +%F).md"' "$SKILL"
+p3b_section=$(sed -n '/^## Phase 3b/,/^## Phase 4/p' "$SKILL")
+if [ -z "$p3b_section" ]; then
+  bad "Phase 3b: section not found (heading renamed?), so the [date] placeholder check cannot run"
+elif [ -n "$(printf '%s\n' "$p3b_section" | grep -F 'adversarial-review' | grep -F 'test-quality-audit-[date]')" ]; then
+  bad "Phase 3b: an adversarial-review line still points at the literal [date] placeholder"
 else
-  gs_rc=0; base_skill=$(git -C "$ROOT" show "$X8_BASE:skills/test-audit/SKILL.md" 2>&1) || gs_rc=$?
-  if [ "$gs_rc" -ne 0 ]; then
-    bad "Phase 3b vs $X8_BASE: git show failed (rc=$gs_rc): $base_skill"
-  else
-    p3b_base=$(printf '%s\n' "$base_skill" | p3b_of)
-    n_base=$(printf '%s' "$p3b_base" | awk 'END { print NR }')
-    if [ "$n_base" -eq 1 ] && [ "$p3b_now" = "$p3b_base" ]; then
-      pass "Phase 3b adversarial-review line is byte-identical to $X8_BASE's, which has exactly one (X8)"
-    else
-      bad "Phase 3b adversarial-review line is byte-identical to $X8_BASE's (X8) — base has $n_base: ${p3b_base:-<none>}"
-    fi
-  fi
+  pass "Phase 3b: no adversarial-review line points at the [date] placeholder"
 fi
 
 # ── The setup call's exit-3 list in SKILL.md names EVERY reason the setup can STOP for: each tab_stop of

@@ -114,6 +114,7 @@ CORE FILES LOADED:
    7. ../../shared/includes/test-quality-gate.md -- READ/MISSING (carries the dispatch-authorization rule)
    8. ../../shared/includes/test-metrics.md -- READ/MISSING (frozen quality/cost/speed formulas — cite TIER_DIST/ECHO_COUNT, never restate)
    9. ../../shared/includes/test-audit-batch-prompt.md -- READ/MISSING (the Phase 1 batch agent prompt template)
+  10. ../../shared/includes/audit-postamble.md -- READ/MISSING (verdict rule + closing order)
 ```
 
 
@@ -139,7 +140,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Forbidden: `find_dead_code: skipped`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
 
-POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every Q-fail/AP finding needs `path/to/file.ext:LINE` (verify-audit gate).
+POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Every Q-fail/AP finding needs `path/to/file.ext:LINE` (verify-audit gate).
 
 ```
 Mandatory-tools-acknowledgment: I will run find_dead_code + find_clones + find_references + search_patterns + audit_scan + scan_secrets + stack-specific tools for this test audit. Every finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
@@ -509,7 +510,7 @@ Read all batch files from `zuvo/audits/.test-audit-batch/`:
 2. Parse summary tables for tier counts
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
-5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and keep the overall audit INCOMPLETE until their evaluation is resolved
+5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and report them as INCOMPLETE files. A file with nothing applicable to score changes the run VERDICT only when nothing at all is scoreable (the coverage gate, `../../shared/includes/audit-postamble.md` §1 row 3). A file of a batch with no batch file is unevaluated, not unscorable: retry that batch, and if it is still missing the coverage gate FAILs (row 3: `INCOMPLETE`), unless a tripped critical gate already gives `FAIL`
 
 Build the summary report:
 
@@ -579,10 +580,11 @@ rm -rf zuvo/audits/.test-audit-batch
 
 ## Phase 3b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
 
-After the audit report is generated, run cross-model validation to catch Q-score inflation and coverage theater. Runs on ALL audits (not just --deep).
+After the audit report is generated, run cross-model validation to catch Q-score inflation and coverage theater. Runs on ALL audits (not just --deep). Point `--files` at the report you just wrote — never the literal placeholder (it matches nothing and burns a pass).
 
 ```bash
-~/.zuvo/adversarial-review --mode tests --files "zuvo/audits/test-quality-audit-[date].md"
+REPORT="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}/audits/test-quality-audit-$(date +%F).md"   # the report this run wrote (Phase 3), at the project root
+if [ -f "$REPORT" ]; then ~/.zuvo/adversarial-review --mode tests --files "$REPORT"; else echo "adversarial: report not found — write it first" >&2; fi
 ```
 
 **Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
@@ -695,7 +697,13 @@ COMPLETION GATE CHECK
 
 ## TEST AUDIT COMPLETE
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -715,26 +723,19 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report header and JSON.
 
-Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
+
+A file with Q7, Q11, Q13, Q15 or Q17 = 0 trips that critical gate (§1 row 1), and `<N-critical>` counts those failures. A per-file `Tier: INCOMPLETE` is not a run verdict.
+
+Append via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>\ttest-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 
 ---
 

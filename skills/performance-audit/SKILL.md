@@ -80,7 +80,8 @@ CORE FILES LOADED:
   3. ../../rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
   4. ../../shared/includes/run-logger.md        -- [READ | MISSING -> STOP]
   5. ../../shared/includes/retrospective.md        -- [READ | MISSING -> STOP]
-  6. ../../shared/includes/backlog-protocol.md  -- [READ | MISSING -> STOP]   (Filing findings through backlog-add)
+  6. ../../shared/includes/audit-postamble.md      -- [READ | MISSING -> STOP]
+  7. ../../shared/includes/backlog-protocol.md  -- [READ | MISSING -> STOP]   (Filing findings through backlog-add)
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -132,7 +133,7 @@ source files, configs, build output, or runtime environments. Tooling probes
 
 ### Forbidden escape hatches: `analyze_complexity: skipped`, `analyze_hotspots: N/A`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
 
-### Required POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every HIGH/MEDIUM finding needs `path/to/file.ext:LINE` (verify-audit gate).
+### Required POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Every HIGH/MEDIUM finding needs `path/to/file.ext:LINE` (verify-audit gate).
 
 ### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
 
@@ -659,7 +660,13 @@ Profile: [A/B/C/D/E] | Audit tier: [FULL/STANDARD/PARTIAL/MINIMAL]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -680,26 +687,17 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report header and JSON.
 
-Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
+
+Append via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>	performance-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 
 ---
 

@@ -106,6 +106,7 @@ If any Stage 1 file is missing, STOP.
   6. ../../shared/includes/run-logger.md             -- [READ | MISSING]   (Run: line + append-runlog)
   7. ../../shared/includes/retrospective.md          -- [READ | MISSING]   (RETRO: marker + retros.log/.md append)
   8. ../../shared/includes/report-output-location.md -- [READ | MISSING]   (canonical $ZUVO_DIR — output MUST go to zuvo/audits/)
+  9. ../../shared/includes/audit-postamble.md        -- [READ | MISSING]   (verdict rule + closing order)
 ```
 
 ## Environment Compatibility
@@ -672,9 +673,16 @@ resumed run (always written LAST).
 
 ---
 
-## Completion gates (in order: retro → runlog → Run block)
+## Completion gates (order: `../../shared/includes/audit-postamble.md` §2 — retro → Validity Gate → Run line)
 
-### VALIDITY GATE (REQUIRED — print BEFORE the Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`: gate check → structured
+questions → `RETRO:` TSV emit → `retros.log` + `retros.md` append. If the gate
+check skips: print `RETRO: skipped (trivial session)` and proceed. The retro is
+not done until both files are written.
+
+### VALIDITY GATE (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -689,24 +697,17 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report.
 
-### Retrospective (REQUIRED)
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1
 
-Follow the retrospective protocol from `retrospective.md`: gate check → structured
-questions → `RETRO:` TSV emit → `retros.log` + `retros.md` append. If the gate
-check skips: print `RETRO: skipped (trivial session)` and proceed. The retro is
-not done until both files are written.
-
-### Run line — append via the retro-gated wrapper (NOT direct `>> runs.log`)
+Append via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>	infra-audit	<project>	<N-critical>	<N-total>	<VERDICT>	<N-hosts>	<dimensions-mode>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
-VERDICT: PASS (0 critical findings across the fleet), WARN (1-3 critical), FAIL (4+ critical).
 
 ---
 
@@ -717,7 +718,7 @@ INFRA-AUDIT COMPLETE
 Fleet: <N hosts> audited (<N OK> / <N DEGRADED> / <N UNREACHABLE> / <N FAILED>)
 Findings: <N critical> / <N high> / <N total>  | Vantage: <proxy|direct|none|failed>
 Run dir: zuvo/audits/infra-audit-<RUN_TS>/  (fleet-summary written last)
-Result: PASS | WARN | FAIL
+Result: PASS | WARN | FAIL | INCOMPLETE
 ```
 
 If fixable findings were detected, suggest the v2 follow-up:

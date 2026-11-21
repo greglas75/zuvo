@@ -27,6 +27,7 @@ Read these files:
 CORE FILES LOADED:
   1. ../../shared/includes/run-logger.md       -- READ
   2. ../../shared/includes/retrospective.md    -- READ
+  3. ../../shared/includes/audit-postamble.md  -- READ
 ```
 
 ## Phase 0: Collect Data
@@ -324,11 +325,13 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 ## Output
 
+VERDICT per `../../shared/includes/audit-postamble.md` §1: this skill has no critical gate, and each `[CRITICAL]` issue counts as a critical finding; the score label `CRITICAL` (0-49) in the report header is a health label, not a finding, so a header `CRITICAL` with no `[CRITICAL]` issue is still a PASS VERDICT (closing order §2: retro first, then the wrapper).
+
 ```
 Run: <ISO-8601-Z>	context-audit	<project>	-	-	<VERDICT>	-	<mode>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
 
-**Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run. Order: retro bash executed → wrapper invoked → completion claimed.
+**Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run.
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog

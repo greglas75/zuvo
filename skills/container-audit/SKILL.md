@@ -51,7 +51,8 @@ CORE FILES LOADED:
   4. ../../shared/includes/severity-vocabulary.md      -- [READ | MISSING -> STOP]
   5. ../../shared/includes/run-logger.md               -- [READ | MISSING -> STOP]
   6. ../../shared/includes/retrospective.md            -- [READ | MISSING -> STOP]
-  7. ../../shared/includes/backlog-protocol.md         -- [READ | MISSING -> STOP]   (Filing findings through backlog-add)
+  7. ../../shared/includes/audit-postamble.md          -- [READ | MISSING -> STOP]
+  8. ../../shared/includes/backlog-protocol.md         -- [READ | MISSING -> STOP]   (Filing findings through backlog-add)
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -124,12 +125,9 @@ gate (record `scan_secrets: grep-fallback(<N> hits)`, `codesift: unavailable`). 
 check silently NOT DONE: `scan_secrets: skipped`, `codesift: unavailable` used as an excuse to run
 NO secret scan at all, or `retrospective: skipped`.
 
-VERDICT vs logging: the audit VERDICT (PASS/WARN/FAIL/INCOMPLETE) is independent of the postamble
-log-append. "`append-runlog` exit 0" below means the log wrapper returned 0 (append succeeded) — a
-FAIL audit still appends its run line and returns 0 from the wrapper; the VERDICT is FAIL, not the
-exit code. A `--scan` abort (GATE 3) exits BEFORE the postamble and does not write a run line.
-
-POSTAMBLE (on a completed audit): report on disk → retro appended → `~/.zuvo/append-runlog` returns 0.
+A `--scan` abort (GATE 3) exits BEFORE the postamble and writes no run line. On a completed audit,
+POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2 (a FAIL audit still appends its
+run line and the wrapper returns 0).
 Every finding needs `path/to/file:LINE` (verify-audit gate).
 
 ```
@@ -457,7 +455,12 @@ Artifacts: [N Dockerfiles] / [N compose] | CVE scanner: [trivy | grype | none]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
 
-### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`. Gate check → structured questions →
+TSV emit → markdown append. If gate check skips: print "RETRO: skipped (trivial session)".
+
+### Validity Gate (REQUIRED — print after the retrospective, before the Run line)
 
 ```
 VALIDITY GATE
@@ -478,9 +481,11 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report header and JSON.
 
-Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
+
+Append via the retro-gated wrapper, never `>> runs.log`:
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
@@ -488,23 +493,11 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 
 Run: <ISO-8601-Z>	container-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`. Gate check → structured questions →
-TSV emit → markdown append. If gate check skips: print "RETRO: skipped (trivial session)".
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log
-file path resolved per `run-logger.md`.
-
-VERDICT: **FAIL** if any critical GATE trips OR ≥4 critical findings; **WARN** if 1-3 critical
-findings and no gate tripped; **PASS** if 0 critical findings. (A tripped critical gate always wins
-over the finding-count band — one tripped K2 is FAIL, not WARN.)
-
 A gate "trips" per the **Gate / Fires on** table above — on the FINDING, not on `Kn=0`. Do not
 restate the trip condition here as `K1=0 OR K2=0 OR K3=0`: that is the score-based reading the
 table exists to replace, and it makes the gates nearly unreachable (K2 spreads six checks over 18
 points, so a root-running privileged container still scores well above 0 and would pass the very
-gate meant to fail it). One table, one place — this line points at it.
+gate meant to fail it). One table, one place — the Run-line heading above points at it.
 
 ---
 

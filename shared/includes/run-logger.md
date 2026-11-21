@@ -57,7 +57,7 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH
 | 3 | PROJECT | Git root directory basename (see Field Resolution) | `tgm-survey-platform` |
 | 4 | CQ_SCORE | `N/<applicable>`, `N-critical` (audits), or `-`. Denominator is the APPLICABLE count for that run (40 minus out-of-scope minus N/A) — never a fixed number | `34/37` |
 | 5 | Q_SCORE | `N/<applicable>`, `N-total` (audits), or `-`. The denominator is the APPLICABLE count for that run (gate set minus N/A minus out-of-scope), never a hardcoded total — it changes as the registry grows. | `16/19` |
-| 6 | VERDICT | `PASS`, `WARN`, `FAIL`, `BLOCKED`, or `ABORTED` only | `PASS` |
+| 6 | VERDICT | `PASS`, `WARN`, `FAIL`, `INCOMPLETE`, `BLOCKED`, or `ABORTED` only. `INCOMPLETE` = an audit whose Validity/coverage gate failed — it cannot certify PASS/WARN (audits: `audit-postamble.md` §1) | `PASS` |
 | 7 | TASKS | Number of tasks completed, or `-` | `4` |
 | 8 | DURATION | `N-phase`, `N-tasks`, `tier-N`, or skill-specific label | `standard` |
 | 9 | NOTES | One-line summary, max 80 chars, no tabs | `added user export CSV` |
@@ -188,13 +188,14 @@ If the hook file doesn't exist (e.g., Codex/Cursor without hooks), fall back to 
 
 ## VERDICT Vocabulary
 
-Only these 5 values are valid. Skills with non-standard internal vocabularies must map to these:
+Only these 6 values are valid. Skills with non-standard internal vocabularies must map to these:
 
 | Standard | Meaning |
 |----------|---------|
 | `PASS` | Skill completed successfully |
 | `WARN` | Completed with non-critical issues |
 | `FAIL` | Critical issues found or skill failed |
+| `INCOMPLETE` | An audit whose Validity/coverage gate failed: it cannot certify PASS or WARN (`audit-postamble.md` §1 row 3) |
 | `BLOCKED` | Could not proceed due to hard blocker |
 | `ABORTED` | User cancelled or skill rejected |
 
