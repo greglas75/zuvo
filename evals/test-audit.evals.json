@@ -107,7 +107,7 @@
       ],
       "assertions": [
         "The audit records the domestic free-shipping branch (orderTotalCents >= 10000 returns 0) as an untested behaviour or TEST-GAP citing path:line in shipping.ts.",
-        "The audit states the defect a test for that branch would catch, such as an off-by-one threshold or the free rule applying to a non-domestic destination, rather than only saying the branch lacks a test.",
+        "The audit records the defect a test for that branch would catch, such as an off-by-one threshold or the free rule applying to a non-domestic destination, rather than only saying the branch lacks a test.",
         "The audit records no tautological-mock, input-echo or weak-assertion finding against shipping.test.ts and writes its report to zuvo/audits/ without editing any file."
       ],
       "fixtures": [

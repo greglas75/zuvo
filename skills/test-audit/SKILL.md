@@ -737,4 +737,4 @@ Run: <ISO-8601-Z>\ttest-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\
   a failed batch falls back to an in-harness Agent labelled `in-family-fallback (degraded)` (Phase 1b)
 - Cursor and Antigravity process in-harness batches sequentially; Kimi dispatches its sub-agents (Phase 1c)
 - Run the project's test suite first to confirm baseline passes. Auto-detect runner from config files.
-- Duration, 50 files: in-harness (1c) QUICK ~2 min, DEEP ~10 min; `model-run` route (1a) 10 batches = 5 groups at `P=2`, ~4-6 min typical, ceiling 5 × (560 + 25) s ≈ 49 min (a group lasts at most `BOUND` + `GRACE`).
+- Duration, 50 files: in-harness (1c) QUICK ~2 min, DEEP ~10 min; `model-run` route (1a) 10 batches = 5 groups at `P=2`, ~4-6 min typical, ceiling 5 groups × (560 + 25) s = 2925 s ≈ 49 min (a group lasts at most `BOUND` + `GRACE`).
