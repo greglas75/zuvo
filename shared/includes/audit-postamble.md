@@ -26,6 +26,10 @@ listed the retro / run-line / validity-gate steps in contradicting orders.
 - The report header, the JSON `verdict` field and the Run line carry the SAME value. Compute it
   once, after the Validity Gate, and copy it; never recompute it in a second place.
 
+A skill may be STRICTER than rows 4-5 (pentest: any confirmed CRITICAL finding is `FAIL`; a11y and
+security grade bands under rows 1 and 3), never looser: no skill turns a row 1-3 outcome into
+`WARN` or `PASS`.
+
 A skill states only WHICH gates are critical and what trips each one (its gate table). It does not
 restate rows 1-5. A line like `VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+
 critical)` is the bug this file replaces — it omits row 1.
