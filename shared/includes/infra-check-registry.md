@@ -7,6 +7,9 @@
 > **Column order is NORMATIVE** — parsed by Phase 3 aggregation and analyst agents.
 > Do NOT reorder or rename columns.
 
+**Templates are operator instructions (the skill never runs them) and must not lock the operator out:** keep the current session open and
+verify a NEW login before closing it; in ufw the first matching rule wins, so check `ufw status numbered` for an earlier deny; allow the SSH port before any default-deny; in nftables match interfaces with `iifname`, never `iif`. After an sshd change confirm the effective value with `sshd -T` (an `sshd_config.d` drop-in can override).
+
 ## Lynis Default Severity Mapping (DD-7)
 
 Lynis test IDs NOT explicitly listed in this registry map by default:
@@ -24,11 +27,11 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS1-sshd-permitrootlogin | IS1 | CRITICAL | SSH-7408 | Set `PermitRootLogin no` in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` | CIS 5.2.8 |
-| IS1-sshd-passwordauthentication | IS1 | HIGH | SSH-7408 | Set `PasswordAuthentication no` in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` | CIS 5.2.9 |
+| IS1-sshd-permitrootlogin | IS1 | CRITICAL | SSH-7408 | First confirm a key-based sudo user can log in; set `PermitRootLogin no` in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` and test a NEW login | CIS 5.2.8 |
+| IS1-sshd-passwordauthentication | IS1 | HIGH | SSH-7408 | First confirm key login works from a second session; set `PasswordAuthentication no` in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` and test a NEW login | CIS 5.2.9 |
 | IS1-sshd-maxauthtries | IS1 | MEDIUM | SSH-7408 | Set `MaxAuthTries 4` (or lower) in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` | CIS 5.2.7 |
 | IS1-sshd-x11forwarding | IS1 | MEDIUM | SSH-7408 | Set `X11Forwarding no` in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` | CIS 5.2.6 |
-| IS1-sshd-protocol-algos | IS1 | HIGH | - | Remove weak KEX/ciphers/MACs from sshd_config; run `ssh-audit localhost` to verify; reload: `systemctl reload sshd` | CIS 5.2.16 |
+| IS1-sshd-protocol-algos | IS1 | HIGH | - | Remove weak KEX/ciphers/MACs from sshd_config; `sshd -t && systemctl reload sshd`; verify with `ssh-audit localhost` and a NEW login | CIS 5.2.16 |
 | IS1-lynis-hardening | IS1 | MEDIUM | - | Review lynis Hardening index; run lynis audit system for detail | - |
 
 ## IS2 — Accounts & Auth
@@ -45,8 +48,8 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS3-unexpected-listener | IS3 | HIGH | - | Identify with `ss -tulpn`; stop unexpected service: `systemctl stop <service> && systemctl disable <service>` | CIS 2.2 |
-| IS3-db-bound-public | IS3 | CRITICAL | - | Bind database listener to 127.0.0.1 or a private IP; e.g. PostgreSQL: set `listen_addresses = '127.0.0.1'` in postgresql.conf, reload | CIS 2.2 |
-| IS3-firewall-diff-mismatch | IS3 | HIGH | - | Reconcile internal (`ss -tulpn`) vs external scan results; add DROP/REJECT rules for unexpected open ports: `ufw deny <port>` | - |
+| IS3-db-bound-public | IS3 | CRITICAL | - | Bind database listener to 127.0.0.1 or a private IP; e.g. PostgreSQL: set `listen_addresses = '127.0.0.1'` in postgresql.conf, then restart (a reload does not apply it) after checking no remote app or replica needs it | CIS 2.2 |
+| IS3-firewall-diff-mismatch | IS3 | HIGH | - | Reconcile internal (`ss -tulpn`) vs external scan results; block unexpected ports with `ufw deny <port>` after deleting or narrowing any earlier allow in `ufw status numbered` (first match wins; never the SSH port; Docker-published ports bypass ufw, so unpublish them or bind to 127.0.0.1 in compose) | - |
 
 ## IS4 — TLS & Certificates
 
@@ -61,16 +64,16 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS5-ufw-disabled | IS5 | HIGH | FIRE-4508 | Enable firewall: `ufw enable`; verify status: `ufw status verbose` | CIS 3.4.1 |
-| IS5-default-allow-incoming | IS5 | CRITICAL | - | Set default deny incoming: `ufw default deny incoming && ufw allow <required-ports> && ufw enable` | CIS 3.4.2 |
-| IS5-ip-forwarding-on | IS5 | MEDIUM | - | Disable IP forwarding unless required: `sysctl -w net.ipv4.ip_forward=0`; persist in /etc/sysctl.d/99-hardening.conf | CIS 3.1.1 |
+| IS5-ufw-disabled | IS5 | HIGH | FIRE-4508 | Allow SSH first (`ufw allow <ssh-port>/tcp`, plus other required ports), then `ufw default deny incoming`, then `ufw enable` with console access or a second session open, then test a NEW login (restrict SSH to the management source when known); verify `ufw status verbose`; not if nftables/iptables manages it | CIS 3.4.1 |
+| IS5-default-allow-incoming | IS5 | CRITICAL | - | Allow SSH and required ports FIRST: `ufw allow <ssh-port>/tcp && ufw allow <required-ports>`, then `ufw default deny incoming && ufw enable` with a second session open, then test a NEW login | CIS 3.4.2 |
+| IS5-ip-forwarding-on | IS5 | MEDIUM | - | Disable IP forwarding unless required (Docker and Tailscale subnet routers need it): `sysctl -w net.ipv4.ip_forward=0`; persist in /etc/sysctl.d/99-hardening.conf | CIS 3.1.1 |
 | IS5-syncookies-off | IS5 | HIGH | - | Enable SYN cookies: `sysctl -w net.ipv4.tcp_syncookies=1`; persist in /etc/sysctl.d/99-hardening.conf | CIS 3.2.8 |
 
 ## IS6 — Patch Posture
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates: `apt-get update && apt-get upgrade -y`; check pending: `U=$(mktemp) ; apt list --upgradable 2>/dev/null > "$U" ; grep security "$U" ; rm -f "$U"` | CIS 1.8.1 |
+| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates in a maintenance window: `apt-get update`, then upgrade only the packages listed as security below (`apt-get install --only-upgrade <pkg>`); check pending: `U=$(mktemp) ; apt list --upgradable 2>/dev/null > "$U" ; grep security "$U" ; rm -f "$U"` | CIS 1.8.1 |
 | IS6-kernel-reboot-required | IS6 | MEDIUM | - | Reboot to apply new kernel: schedule maintenance window and `reboot`; verify after: `uname -r` | - |
 | IS6-eol-distro | IS6 | CRITICAL | - | Upgrade to a supported OS release; see Ubuntu upgrade: `do-release-upgrade` (test in staging first) | - |
 | IS6-unattended-upgrades-off | IS6 | MEDIUM | - | Enable unattended security updates: `apt-get install -y unattended-upgrades && dpkg-reconfigure unattended-upgrades` | CIS 1.8.2 |
@@ -107,8 +110,8 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS10-redis-no-auth | IS10 | CRITICAL | - | Set `requirepass <strong-password>` in /etc/redis/redis.conf; restart: `systemctl restart redis` | - |
 | IS10-redis-bound-public | IS10 | CRITICAL | - | Bind Redis to localhost: set `bind 127.0.0.1` in /etc/redis/redis.conf; restart: `systemctl restart redis` | - |
-| IS10-pg-trust-auth | IS10 | CRITICAL | - | Replace `trust` with `scram-sha-256` or `md5` in /etc/postgresql/*/main/pg_hba.conf; reload: `systemctl reload postgresql` | CIS DB 1.3.1 |
-| IS10-pg-listen-all | IS10 | HIGH | - | Restrict PostgreSQL listener: set `listen_addresses = '127.0.0.1'` in postgresql.conf; reload postgresql | - |
+| IS10-pg-trust-auth | IS10 | CRITICAL | - | Set `password_encryption = scram-sha-256` and reload, then re-set each affected login role's password (clients must support SCRAM), then replace `trust` with `scram-sha-256` in /etc/postgresql/*/main/pg_hba.conf; reload: `systemctl reload postgresql` | CIS DB 1.3.1 |
+| IS10-pg-listen-all | IS10 | HIGH | - | Restrict PostgreSQL listener: set `listen_addresses = '127.0.0.1'` in postgresql.conf, then restart postgresql (a reload does not apply it) after checking no remote app or replica needs it | - |
 | IS10-mysql-anonymous-user | IS10 | HIGH | - | Remove anonymous MySQL users: `DELETE FROM mysql.user WHERE User=''; FLUSH PRIVILEGES;` | CIS DB 3.1 |
 
 ## IS11 — Filesystem & Kernel Hardening
@@ -118,12 +121,12 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 | IS11-suid-unexpected | IS11 | HIGH | - | Remove unexpected SUID bit: `chmod u-s <path>`; audit with `find / -xdev -perm -4000 -type f 2>/dev/null` | CIS 6.1.11 |
 | IS11-world-writable-dir | IS11 | MEDIUM | - | Remove world-writable on non-sticky dirs: `chmod o-w <path>`; audit (sticky /tmp excluded) with `find / -xdev -type d -perm -0002 ! -perm -1000 2>/dev/null` | CIS 6.1.10 |
 | IS11-tmp-noexec-missing | IS11 | LOW | - | Mount /tmp with noexec: add `noexec` to /tmp entry in /etc/fstab (or systemd override for tmp.mount), then `mount -o remount,noexec /tmp` | CIS 1.1.3 |
-| IS11-apparmor-disabled | IS11 | MEDIUM | - | Enable AppArmor: `systemctl enable apparmor --now`; enforce profiles: `aa-enforce /etc/apparmor.d/*` | CIS 1.6.1 |
+| IS11-apparmor-disabled | IS11 | MEDIUM | - | Enable AppArmor: `aa-complain` the non-baseline profiles, then `systemctl enable apparmor --now`; check `aa-status`, then enforce profiles one at a time (`aa-enforce <profile>`) and watch the service | CIS 1.6.1 |
 
 ## IS12 — Secrets Hygiene on Host
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS12-world-readable-env | IS12 | CRITICAL | - | Restrict .env file permissions: `chmod 600 /path/to/.env && chown <app-user>:<app-user> /path/to/.env` | - |
-| IS12-secrets-in-history | IS12 | HIGH | - | Clear shell history: `history -c && > ~/.bash_history`; configure `HISTCONTROL=ignorespace` and set `HISTSIZE=0` for service accounts | - |
+| IS12-secrets-in-history | IS12 | HIGH | - | Rotate the exposed secret FIRST, then purge the history file (clearing it alone hides the leak); configure `HISTCONTROL=ignorespace` and `HISTSIZE=0` for service accounts | - |
 | IS12-key-in-homedir-world-readable | IS12 | HIGH | - | Restrict key file permissions: `chmod 600 ~/.ssh/id_* && chmod 700 ~/.ssh`; audit with `find ~ -name '*.pem' -o -name '*.key' -perm /044 2>/dev/null` | - |

@@ -42,8 +42,9 @@ codesift_tools:
 
 Parse flags first. `--host` and a `hosts.yaml` path are mutually-complete: exactly
 one target source must resolve. `--quick` and `--dimensions` are mutually
-exclusive (error if both). `--resume <run-dir>` overrides target resolution from
-the run's own `state.json`.
+exclusive (error if both). `--resume <run-dir>` takes hosts, dimensions and flags from the
+run's own `state.json`; a flag you repeat must equal the original, else it is refused
+(Resume Semantics, "Scope match"). Omitted flags are inherited, never reset to defaults.
 
 Variable mapping for flags that the collector invocation threads through:
 
@@ -172,37 +173,27 @@ mkdir -p "$RUN_DIR/bundle" "$RUN_DIR/raw" "$RUN_DIR/findings"
 ```
 
 On `--resume <run-dir>`, set `RUN_DIR` to the supplied dir instead and DO NOT
-re-timestamp (resume appends to its own dir only).
+re-timestamp (resume appends to its own dir only). Adoption, explicit or implicit, is
+provisional until the scope match in Resume Semantics passes.
 
-**Implicit resume after an interrupted run (StopFailure / watchdog auto-resume).**
-The collector is invoked from an orchestrator turn that can die on an API
-error / rate-limit; the StopFailure watchdog then re-invokes `zuvo:infra-audit`
-**fresh, with the same args** — without `--resume`. A naive fresh run would mint
-a NEW timestamped `RUN_DIR` and re-collect every host from zero, discarding the
-bundles the interrupted run already wrote (observed 2026-06-12: 7 auto-resumes).
-So BEFORE minting a new `RUN_DIR`, detect an in-progress run and adopt it:
+**Implicit resume after an interrupted run (StopFailure / watchdog auto-resume).** The watchdog
+re-invokes the skill with the same args and no `--resume`; a fresh run would mint a new `RUN_DIR` and
+re-collect every host. So BEFORE minting one, adopt a recent in-progress run:
 
 ```bash
-# Implicit-resume detection: the most-recent infra-audit run whose state.json
-# still has a host NOT in a terminal status (reported|unreachable|failed) is an
-# unfinished run — adopt its dir instead of creating a new one. A fresh first
-# run (no such dir) falls through to the new-RUN_DIR mint above.
-# NOTE: iterate via a glob (NOT `$(ls)`) — a `for x in $(ls)` word-splits on
-# whitespace/glob chars in dir names. The glob yields one safe word per match;
-# pick the newest by mtime without parsing `ls`.
+# Adopt the newest infra-audit run whose state.json has a host NOT in a terminal status
+# (reported|unreachable|failed); no such dir falls through to the new-RUN_DIR mint above.
+# Iterate via a glob, never `$(ls)` (word-splitting).
 if [ -z "${RESUME_DIR:-}" ]; then   # only when --resume was NOT passed explicitly
   _now="$(date +%s)"; _fresh_window=1800   # 30 min — the crash-recovery window
   _newest=""; _newest_mt=0
   for _d in "$ZUVO_DIR"/audits/infra-audit-*/; do
     [ -d "$_d" ] && [ -f "${_d}state.json" ] || continue
     _mt="$(stat -c %Y "${_d}state.json" 2>/dev/null || stat -f %m "${_d}state.json" 2>/dev/null || echo 0)"
-    # FRESHNESS BOUND: only auto-adopt a run whose state.json changed within the
-    # last 30 min — a genuine StopFailure/watchdog resume fires minutes after the
-    # kill. An OLDER unfinished run is NOT silently adopted (that would return
-    # stale results, or trust a poisoned/abandoned dir); the user gets a fresh run
-    # and can resume the old one explicitly with `--resume <dir>`.
+    # FRESHNESS BOUND: only a run changed within 30 min (a watchdog resume fires minutes after
+    # the kill); an older one needs an explicit `--resume <dir>`.
     [ $((_now - _mt)) -le "$_fresh_window" ] || continue
-    if jq -e '[.hosts[]?|select(.status|IN("reported","unreachable","failed")|not)]|length>0' \
+    if jq -e '.scope and ([.hosts[]?|select(.status|IN("reported","unreachable","failed")|not)]|length>0)' \
          "${_d}state.json" >/dev/null 2>&1; then
       [ "$_mt" -gt "$_newest_mt" ] && { _newest_mt="$_mt"; _newest="${_d%/}"; }
     fi
@@ -214,31 +205,20 @@ if [ -z "${RESUME_DIR:-}" ]; then   # only when --resume was NOT passed explicit
 fi
 ```
 
-On adoption, a per-host skip additionally **validates the bundle at the gate**
-before trusting `collection_complete: true`: the bundle must be valid JSON whose
-`.host` matches the inventory entry and whose `bundle_sha256` (recomputed) is
-self-consistent. A bundle that fails validation re-collects from scratch — the
-`collection_complete` flag is a convenience signal, not a security boundary
-(everything under `zuvo/` is local user state; a local attacker who can write it
-already has the access the audit would report).
+On adoption, a per-host skip first **validates the bundle**: valid JSON, `.host` matches the
+inventory entry, recomputed `bundle_sha256` self-consistent; a failing bundle re-collects from scratch
+(`collection_complete` is a convenience signal, not a security boundary).
 
-Then in Phase 0.6 / Phase 1, **per-host idempotency:** skip any host whose
-`state.json` status is already `reported` (its report is immutable) or whose
-`bundle/<host>.json` has `collection_complete == true` (an unambiguous flag the
-collector sets ONLY on its final, fully-scanned write — NEVER infer "done" from
-a non-empty `checks[]`; an early/partial checkpoint has `collection_complete:
-false` and an empty/partial `checks[]` is NOT a clean result). A host whose
-bundle is absent or `collection_complete: false` re-collects from scratch (a
-partial bundle is never trusted — the resume table). This makes every auto-resume
-idempotent: finished hosts are not re-audited, the unfinished one continues.
-Write/update `state.json` after EACH host transitions (`collecting → analyzed →
-reported`) so the next auto-resume sees accurate progress.
+Per-host idempotency (Phase 0.6 / Phase 1): skip a host whose `state.json` status is `reported`
+(immutable) or whose bundle has `collection_complete == true` and an `ok`/`finding` check — set by the collector ONLY on its final,
+fully-scanned write; never infer "done" from a non-empty `checks[]`. An absent or partial bundle
+re-collects from scratch. Update `state.json` after EACH host transition (`collecting → analyzed →
+reported`).
 
 ### Phase 0.2 — Secrets-hygiene preflight (DD-10)
 
-Before writing ANY file under `zuvo/`, confirm `zuvo/` is gitignored. If missing,
-append the single line `zuvo/` with a warning. This gate runs BEFORE any SSH
-connection — a git secrets leak must be prevented before collection begins.
+Before writing ANY file under `zuvo/` (and before any SSH connection), confirm `zuvo/` is
+gitignored; if missing, append the single line `zuvo/` with a warning.
 
 ```bash
 GITIGNORE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.gitignore"
@@ -290,9 +270,9 @@ Parse the inventory into a host list (`name`, `address`, `ssh_user`, `ssh_port`,
 `ssh_key`, `jump_host`, `roles`, `external_fqdn`). Then:
 
 1. Resolve each `address` → IP and reverse PTR.
-2. **Duplicate-IP dedup (E11):** if two entries resolve to the **same IP**, MERGE
-   them into one target and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
-3. `name` must be unique (error on collision).
+2. **Duplicate-endpoint dedup (E11):** if two entries resolve to the **same IP and ssh port**, MERGE
+   them into one target when `ssh_user`, `ssh_key`, `jump_host` and external target also match (else reject as conflicting routes) and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
+3. `name` must match `[A-Za-z0-9][A-Za-z0-9._-]*` and be unique ignoring case (it names `raw/<name>/` and `bundle/<name>.json`; `.`, `..` and `WEB`/`web` clashes would share files).
 4. No password fields exist in the schema; password auth must be pre-configured
    in `~/.ssh/config`/agent. The skill never prompts for or stores SSH passwords
    (ssh-probe-protocol §4).
@@ -301,7 +281,9 @@ Parse the inventory into a host list (`name`, `address`, `ssh_user`, `ssh_port`,
 
 This gate **precedes any SSH connection**. Display the resolved target list as a
 host→IP→PTR table and require explicit confirmation. Follow
-`ssh-probe-protocol.md` §1 exactly.
+`ssh-probe-protocol.md` §1 exactly. The table also carries one row per other contacted
+endpoint — `jump_host`, the `--scan-via` host, the `--proxy` host:port, each external scan
+target — with its role; one not shown and confirmed is never contacted.
 
 ```
 AUTHORIZATION GATE — these LIVE hosts will be audited over SSH:
@@ -309,6 +291,8 @@ AUTHORIZATION GATE — these LIVE hosts will be audited over SSH:
   name     resolved-ip      PTR (reverse DNS)        ssh
   web01    203.0.113.10     web01.example.com.       deploy@203.0.113.10:22
   db01     203.0.113.20     db01.example.com.        deploy@203.0.113.20:22
+  scan-via 198.51.100.7     bastion.example.com.     external leg runs FROM here
+  external 203.0.113.10     example.com.             IS4/IS8 scan target
 
 Confirm you OWN and are AUTHORIZED to audit every host above. Connect? [y/N]
 ```
@@ -320,6 +304,7 @@ Confirm you OWN and are AUTHORIZED to audit every host above. Connect? [y/N]
 | Non-interactive run | Authorization ONLY via `--confirm-targets <sha256>` matching the sha256 of the resolved target list (canonical serialization per ssh-probe-protocol §1). |
 | `--confirm-targets` absent OR hash mismatch (non-interactive) | **ABORT immediately** — re-resolve, recompute the canonical hash, and abort on any mismatch (DNS-TOCTOU recompute-and-abort). Target authorization is NEVER `[AUTO-DECISION]`. |
 
+On a fresh run write `scope` to `state.json` once after confirmation; a resume only compares it (Resume Semantics).
 `--dry-run` prints the canonical target list AND its sha256 so the user can copy
 the hash into a subsequent `--confirm-targets <sha256>` invocation. `[AUTO-DECISION]`
 applies ONLY to low-risk defaults (E13 skip-external when no proxy), never to
@@ -374,8 +359,7 @@ NEVER fed to the LLM.
 
 ### Collector invocation contract
 
-Resolve the collector path with a glob fallback (Claude Code distributes it via
-`install.sh`'s `cp scripts/*.sh`; the install-root path differs per platform):
+Resolve the collector path (the install root differs per platform):
 
 ```bash
 COLLECTOR="$(command -v infra-collect.sh 2>/dev/null \
@@ -384,7 +368,7 @@ COLLECTOR="$(command -v infra-collect.sh 2>/dev/null \
 [ -n "$COLLECTOR" ] || { echo "ERROR: infra-collect.sh not found (install.sh not run?)"; exit 1; }
 ```
 
-Invoke per host, passing `ssh_key` / `known_hosts` / `proxy` resolved from
+Invoke per host (first `rm -rf "$RUN_DIR/raw/$name"`: stale files must not satisfy the CVE gate), passing `ssh_key` / `known_hosts` / `proxy` resolved from
 `hosts.yaml` (DD-2 schema). The collector applies the IC-8 SSH invariants itself.
 
 ```bash
@@ -403,7 +387,7 @@ Invoke per host, passing `ssh_key` / `known_hosts` / `proxy` resolved from
   ${external_fqdn:+--external-target "$external_fqdn"} \   # IC-4: public surface scanned externally (else bare addr)
   --run-id "$RUN_ID" \
   --out "$RUN_DIR/bundle/$name.json" \
-  --raw-dir "$RUN_DIR/raw"
+  --raw-dir "$RUN_DIR/raw/$name"
 ```
 
 The collector emits the IC-3 bundle: `host`, `collected_at`, `privilege_mode`,
@@ -480,23 +464,15 @@ sequentially yourself, reading `agents/<name>.md`, preserving the identical
 
 ### Degraded-dispatch fallback (env-compat)
 
-**Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch
-returns a rate-limit / overloaded / quota error **twice in a row** for the same
-host's analysis stage, print `[MODE SWITCH] dispatch rate-limited ×2 → single-agent`,
-record reason `same-model-fallback`/`rate-limited`, and execute that host's four
-analyst roles **inline** (single-agent) per the checkpoint protocol. Do NOT spin
-retrying a rate-limited dispatch — fall back and keep moving (`no-pause-protocol`).
+**Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch returns a
+rate-limit / overloaded / quota error **twice in a row** for a host's analysis stage, print
+`[MODE SWITCH] dispatch rate-limited ×2 → single-agent`, record reason
+`same-model-fallback`/`rate-limited`, and run that host's four analyst roles **inline**
+(single-agent). Never spin retrying (`no-pause-protocol`).
 
-**Already in a storm → go inline immediately (don't prolong it).** If THIS run
-has already been auto-resumed by the StopFailure watchdog (i.e. you entered via a
-watchdog `RESUME`, or you've seen ≥1 API-error/rate-limit auto-resume this run),
-do NOT attempt the parallel 4-agent dispatch at all for the remaining hosts —
-print `[MODE SWITCH] mid-storm → single-agent inline (skip dispatch)` and run the
-analysts inline from the first host. Dispatching N×4 sub-agents into an active
-rate-limit storm just extends it; inline analysis over the already-written
-bundles is deterministic (severity is registry-driven — DD-7) and completes
-without burning more dispatch quota. This is the observed-2026-06-12 recovery
-path: 7 auto-resumes, recovered by inline analysis over the checkpointed bundles.
+**Already in a storm → go inline immediately.** In a run already auto-resumed by the StopFailure
+watchdog, skip parallel dispatch: print `[MODE SWITCH] mid-storm → single-agent inline (skip dispatch)`
+and run the analysts inline over the checkpointed bundles (severity is registry-driven, DD-7).
 
 ### bundle_sha256 stale-findings guard (IC-3)
 
@@ -529,12 +505,13 @@ UNGROUNDED-FINDING dropped: <check_id> (host <name>) — not in bundle.checks[]
 ### Phase 3.2 — IC-6 CVE grep gate
 
 For every candidate finding, every `CVE-\d{4}-\d+` string it carries MUST appear
-**verbatim** in that host's `raw/` tool output (trivy/grype/debsecan/apt). Grep
-the raw dir; a CVE with no raw evidence is stripped and logged:
+**verbatim** in THAT host's `raw/<name>/` tool output (trivy/grype/debsecan/apt) — never
+another host's, never general knowledge. Patch-posture (IS6) claims likewise cite that host's own
+package evidence. Grep the host's raw dir; a CVE with no raw evidence is stripped and logged:
 
 ```bash
 for cve in $(printf '%s\n' "$finding_cves" | grep -oE 'CVE-[0-9]{4}-[0-9]+' | sort -u); do
-  if ! grep -rqF "$cve" "$RUN_DIR/raw/"; then
+  if ! grep -rqwF "$cve" "$RUN_DIR/raw/$name/"; then
     echo "CVE-EVIDENCE-MISSING dropped: $cve (host $name) — not in raw/ tool output"
     # strip $cve from the finding; LLM version→CVE mapping is forbidden (IC-6/DD-6)
   fi
@@ -561,18 +538,14 @@ proof. Verdict per `external.vantage`:
 | `none` | `rules-only` (rules read but not externally verified) |
 | `failed` | `rules-only`, IS4/IS8 `DEGRADED (proxy-failed)` |
 
-The collector's `external` block is:
-`external: { vantage, proxy_used, open_ports, tls, nuclei_findings, notes }`.
-`notes` is an array of degradation/abort messages (tool-absent skips, the DD-4
-zero-open-ports nuclei abort, proxy/refused notes) — the network-analyst surfaces
-them so reduced external coverage is visible in the IS3/IS4/IS8 verdict, never
-silently masked by an empty `open_ports`/`tls`/`nuclei_findings`.
+The collector's `external` block is `{ vantage, proxy_used, open_ports, tls, nuclei_findings, notes }`;
+`notes` (tool-absent skips, DD-4 nuclei abort, proxy/refused) is surfaced by the network-analyst so
+reduced external coverage shows in the IS3/IS4/IS8 verdict, never masked by an empty list.
 
 ### Phase 3.5 — Per-host report → fleet-summary written LAST
 
 Write each per-host report (`<host>.md` + `<host>.json`) FIRST, then assemble
-`fleet-summary.md` **LAST** (a crash mid-run leaves no fleet-summary — its absence
-signals an incomplete run; per-host reports are immutable once written).
+`fleet-summary.md` **LAST** (its absence signals an incomplete run; per-host reports are immutable).
 
 ```bash
 # fleet-summary is written AFTER every per-host report exists (written LAST).
@@ -616,7 +589,7 @@ host gets `coverage_mode: FULL`.
 | host | status | grade | critical | high | vantage | coverage_mode |
 |------|--------|-------|----------|------|---------|---------------|
 | web01 | OK | B | 0 | 2 | proxy | FULL |
-| db01  | UNREACHABLE | - | - | - | - | - |     # unreachable hosts still listed (AC1)
+| db01  | UNREACHABLE | - | - | - | - | - |     # unassessed hosts stay listed (AC1), never scored or counted clean
 ```
 
 ### Phase 3.6 — Backlog Persistence
@@ -646,8 +619,16 @@ outcome vocabulary (`OK|DEGRADED|UNREACHABLE|FAILED|SKIPPED`, IC-2).
 | `unreachable` | retry from `pending` (the cause may have been fixed) |
 | `failed` | retry from `pending` (the cause may have been fixed) |
 
-`fleet-summary.md` is regenerated from per-host reports at the end of every
+`fleet-summary.md` is regenerated from per-host reports and `state.json` (unassessed hosts included) at the end of every
 resumed run (always written LAST).
+
+**Scope match.** `state.json` `scope` is an object of fields: `targets` (sha256 of the canonical
+target list, endpoints included, ssh-probe-protocol §1), `dimensions`, `quick`, `no_install`,
+`deep_scan`, `skip_external`, `external_mode`, `proxy`, `scan_via`. Resolve the arguments (omitted
+ones from the stored `scope`; targets are re-resolved through Phase 0.4-0.5, so the gate and the DNS
+recompute apply; `proxy` is stored as host:port, credentials stripped), then compare field by field BEFORE any write or probe: continue ONLY
+when all equal; else print `RESUME-REFUSED: <field> differs` and stop (implicit adoption: mint a
+new `RUN_DIR`). A run dir with no `scope` is not resumable.
 
 ---
 
@@ -665,7 +646,7 @@ resumed run (always written LAST).
 | E8 | fail2ban / IDS | External leg via `scan_via` (ban hits the scan host's IP, not the operator's) or proxy; `--external direct` → `-T2 --max-rate 50` + abort threshold |
 | E9 | Secrets in collected configs | IC-5 redaction at collector + DD-10 gitignore preflight |
 | E10 | Alpine / containers as targets | `/etc/alpine-release` detection → skip lynis, use `apk` checks; containers via `docker exec` |
-| E11 | Duplicate inventory IPs | merge + `[WARN] duplicate IP`, audit once |
+| E11 | Duplicate inventory IP+port | merge + `[WARN] duplicate IP`, audit once |
 | E12 | lynis < 3.0 | version probe → manual fallback + `DEGRADED (lynis vX < 3.0)` |
 | E13 | No external vantage configured | **Dual-vantage is the default** when a vantage resolves (`scan_via` / `proxy`): the skill runs internal AND external automatically. With NONE configured: ask once → `--scan-via <ssh-host>` (recommended, macOS-safe), `--external direct` (polite proxyless), or `--skip-external`; non-interactive → skip-external `[AUTO-DECISION]` (targets are NEVER auto-decided). On macOS a bare `--proxy` is steered to `--scan-via` (proxychains cannot inject under SIP). |
 | E14 | pgdsat (IS10) | runs ON host as `postgres` via SSH; requires BOTH install consent AND query consent; decline either → `DEGRADED (pgdsat declined)` |
@@ -687,6 +668,7 @@ not done until both files are written.
 ```
 VALIDITY GATE
   collector_runs: [<N hosts> | NOT_RUN]
+  hosts_assessed: [<N>/<total>]
   authorization_gate: [confirmed-interactive | confirm-targets-sha-matched | DECLINED-ABORT]
   grounding_gate: [UNGROUNDED-FINDING dropped=<N>]
   cve_gate: [CVE-EVIDENCE-MISSING dropped=<N>]
@@ -697,7 +679,12 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report.
+`hosts_assessed` counts hosts that reached `reported` with a bundle that has `collection_complete: true` and at least one `ok`/`finding` check (a bundle of transport `error`s is `UNREACHABLE`). Every other host
+(`UNREACHABLE`, `FAILED`, `SKIPPED`, partial bundle) is unassessed: never scored or counted clean,
+and it sets `gate_status = FAIL`, as does zero assessed hosts. This audit has no critical-gate
+table, so `../../shared/includes/audit-postamble.md` §1 rows 2-5 apply. `gate_status = FAIL` → §1
+(a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]`
+and `hosts_assessed=<N>/<total>` to NOTES and, if the VERDICT changed, rewrite it in the report.
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1
 
@@ -721,10 +708,4 @@ Run dir: zuvo/audits/infra-audit-<RUN_TS>/  (fleet-summary written last)
 Result: PASS | WARN | FAIL | INCOMPLETE
 ```
 
-If fixable findings were detected, suggest the v2 follow-up:
-
-```
-Suggested next step (v2): zuvo:infra-fix is not yet available — remediation is
-manual. Each per-host report lists the registry remediation + CIS reference and
-(for consented installs) the exact uninstall command.
-```
+If fixable findings were detected, say remediation is manual (`zuvo:infra-fix` does not exist): each per-host report lists the registry remediation + CIS reference and, for consented installs, the exact uninstall command.

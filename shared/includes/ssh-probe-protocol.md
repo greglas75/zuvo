@@ -16,6 +16,11 @@ explicit confirmation before opening any SSH connection.
 | Non-interactive run | ONLY via `--confirm-targets <sha256>` matching the sha256 of the resolved target list printed by a prior `--dry-run` |
 | `--confirm-targets` absent or hash mismatch | ABORT immediately — target authorization is never auto-approved |
 
+**Every contacted endpoint is a target, not only the audited hosts.** The table also lists each
+`jump_host`, the `--scan-via` host, the `--proxy` host:port and every external scan target
+(`external_fqdn`, else the bare address), each with its role, resolved IP and port. An endpoint
+not in the confirmed set is never contacted: a changed or added one needs a new confirmation.
+
 `[AUTO-DECISION]` semantics **never** apply to target authorization. `[AUTO-DECISION]`
 applies only to low-risk defaults (e.g. E13's skip-external when no proxy is configured).
 Connecting to a target host requires explicit human confirmation every time.
@@ -30,7 +35,9 @@ this exact, deterministic serialization:
   (lowercase hex, `::` compression, no zone-id). Dual-stack hosts hash the address family
   the audit will actually connect over (prefer IPv4 when both resolve), so the same host
   cannot hash differently across resolvers/tooling.
-- Lines sorted by `name` under `LC_ALL=C` (byte-order, locale-stable).
+- Each non-host endpoint adds one line `@<role>:<name><TAB>resolved-ip<TAB>port` (role `jump`,
+  `scan-via`, `proxy` or `external`; for `external` the port is the scanned set: `top`, `all` with `--deep-scan`, or the listed ports); a run with none hashes exactly as before.
+- Lines deduplicated and sorted as whole lines under `LC_ALL=C` (byte-order, locale-stable); a listed external port set is numerically sorted and comma-joined.
 - Exactly one trailing newline at the end of the list (no trailing blank lines).
 - The sha256 is taken over those bytes verbatim.
 - **DNS TOCTOU is closed by recompute-and-abort:** the run re-resolves every name at
@@ -40,10 +47,8 @@ this exact, deterministic serialization:
   (not the name) **with `-o HostKeyAlias=<name>`**, so `known_hosts` verification still
   matches the entry recorded under the hostname (and the §2 first-contact bootstrap via
   `ssh-keyscan -H <host>` stays consistent with runtime verification).
-- **Dynamic/load-balanced DNS aborts by design** (accepted trade-off): audited servers are
-  stable hosts; a name that resolves differently between confirm and run is exactly what
-  must stop the audit. Fleets behind round-robin DNS should pin `address` to a literal IP
-  in the inventory — then no DNS is involved at all.
+- **Round-robin DNS aborts by design:** a name that resolves differently between confirm and
+  run is exactly what must stop the audit. Pin `address` to a literal IP in the inventory.
 
 `--dry-run` prints this canonical list **and** its sha256 so the user can copy the hash
 directly into a subsequent non-interactive `--confirm-targets <sha256>` invocation. A
@@ -92,10 +97,6 @@ mkdir -m 700 /tmp/zuvo-<run-id> || { echo 'run dir exists — refusing'; exit 1;
 #       > /tmp/zuvo-<run-id>/<check>.out 2>&1; echo \$? > /tmp/zuvo-<run-id>/<check>.rc' \
 #      < /dev/null > /dev/null 2>&1 &"
 #
-# NOTE: <cmd> placeholders are STATIC, predefined battery commands only — never
-# interpolate host-derived or user-supplied strings into the encoded command.
-# Dynamic values (paths, ports) go through validated variables in the collector,
-# not into this template, regardless of encoding.
 #
 # … retrieval polls (bounded) for /tmp/zuvo-<run-id>/<check>.rc; the .rc file's
 #   appearance marks completion and its contents are the command's exit code
@@ -107,9 +108,8 @@ mkdir -m 700 /tmp/zuvo-<run-id> || { echo 'run dir exists — refusing'; exit 1;
   - The outer `< /dev/null > /dev/null 2>&1` is mandatory — an unredirected stream on the
     backgrounded command holds the SSH session open indefinitely.
   - `<cmd>` placeholders are **static, predefined battery commands only** — never interpolate
-    host-derived or user-supplied strings into the quoted command (quote-injection hazard).
-    Dynamic values (paths, ports) go through validated variables in the collector, not into
-    this template.
+    host-derived or user-supplied strings (quote-injection hazard); dynamic values (paths, ports)
+    go through validated collector variables, regardless of encoding.
 
 Long checks run concurrently under nohup; per-check timeouts do not stack linearly
 (per IC-9's per-host 30-min wall clock guarantee).
@@ -198,17 +198,7 @@ timing and aborts the external leg after 3 consecutive connection-refused or ban
 (DD-4). Without a proxy and without `--external direct`, external vantage = `none` and
 the IS3 firewall verdict is `rules-only`.
 
-### Consent-gated tool installation (DD-3)
+### Installs and secrets hygiene
 
-Missing tools on a target host are offered for installation with a **per-host consent gate**:
-
-- Consent given → install logged in the report with its uninstall command (`apt remove <tool>`).
-- Consent declined OR `--no-install` passed → affected dimension runs manual fallbacks and
-  is labeled `DEGRADED`.
-- `--no-install` disables the gate entirely (hard read-only mode).
-
-### Secrets hygiene preflight (DD-10)
-
-Before writing any file under `zuvo/`, Phase 0 checks that `zuvo/` appears in `.gitignore`.
-If missing, the line is appended automatically with a warning. This gate runs before any
-SSH connection — a secrets leak via git must be prevented before collection begins.
+Consent-gated tool installation (DD-3) and the `zuvo/` gitignore preflight (DD-10) are defined in
+`skills/infra-audit/SKILL.md` Phase 0.6 step 7 and Phase 0.2; `--no-install` disables installs entirely.
