@@ -210,7 +210,7 @@ inventory entry, recomputed `bundle_sha256` self-consistent; a failing bundle re
 (`collection_complete` is a convenience signal, not a security boundary).
 
 Per-host idempotency (Phase 0.6 / Phase 1): skip a host whose `state.json` status is `reported`
-(immutable) or whose bundle has `collection_complete == true` — set by the collector ONLY on its final,
+(immutable) or whose bundle has `collection_complete == true` and an `ok`/`finding` check — set by the collector ONLY on its final,
 fully-scanned write; never infer "done" from a non-empty `checks[]`. An absent or partial bundle
 re-collects from scratch. Update `state.json` after EACH host transition (`collecting → analyzed →
 reported`).
@@ -271,7 +271,7 @@ Parse the inventory into a host list (`name`, `address`, `ssh_user`, `ssh_port`,
 
 1. Resolve each `address` → IP and reverse PTR.
 2. **Duplicate-endpoint dedup (E11):** if two entries resolve to the **same IP and ssh port**, MERGE
-   them into one target when `ssh_user`, `jump_host` and external target also match (else reject as conflicting routes) and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
+   them into one target when `ssh_user`, `ssh_key`, `jump_host` and external target also match (else reject as conflicting routes) and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
 3. `name` must match `[A-Za-z0-9][A-Za-z0-9._-]*` and be unique ignoring case (it names `raw/<name>/` and `bundle/<name>.json`; `.`, `..` and `WEB`/`web` clashes would share files).
 4. No password fields exist in the schema; password auth must be pre-configured
    in `~/.ssh/config`/agent. The skill never prompts for or stores SSH passwords
@@ -625,7 +625,8 @@ resumed run (always written LAST).
 **Scope match.** `state.json` `scope` is an object of fields: `targets` (sha256 of the canonical
 target list, endpoints included, ssh-probe-protocol §1), `dimensions`, `quick`, `no_install`,
 `deep_scan`, `skip_external`, `external_mode`, `proxy`, `scan_via`. Resolve the arguments (omitted
-ones from the stored `scope`), then compare field by field BEFORE any write or probe: continue ONLY
+ones from the stored `scope`; targets are re-resolved through Phase 0.4-0.5, so the gate and the DNS
+recompute apply; `proxy` is stored as host:port, credentials stripped), then compare field by field BEFORE any write or probe: continue ONLY
 when all equal; else print `RESUME-REFUSED: <field> differs` and stop (implicit adoption: mint a
 new `RUN_DIR`). A run dir with no `scope` is not resumable.
 

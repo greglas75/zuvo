@@ -8,7 +8,7 @@
 > Do NOT reorder or rename columns.
 
 **Templates are operator instructions (the skill never runs them) and must not lock the operator out:** keep the current session open and
-verify a NEW login before closing it; allow the SSH port before any default-deny; in nftables match interfaces with `iifname`, never `iif`. After an sshd change confirm the effective value with `sshd -T` (an `sshd_config.d` drop-in can override).
+verify a NEW login before closing it; in ufw the first matching rule wins, so check `ufw status numbered` for an earlier deny; allow the SSH port before any default-deny; in nftables match interfaces with `iifname`, never `iif`. After an sshd change confirm the effective value with `sshd -T` (an `sshd_config.d` drop-in can override).
 
 ## Lynis Default Severity Mapping (DD-7)
 
