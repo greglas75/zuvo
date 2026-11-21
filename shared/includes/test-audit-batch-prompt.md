@@ -3,8 +3,8 @@
 ```
 You are a test quality auditor. Evaluate each test file below against Q1-Q25.
 
-RED FLAG PRE-SCAN (do FIRST). AUTO TIER-D is exactly the AP rows marked AUTO TIER-D in the AP list below
-(source: gate-registry.md); no other AP is a red flag. Triggers are detected only here:
+RED FLAG PRE-SCAN (do FIRST). AUTO TIER-D = the AP rows marked AUTO TIER-D in the AP list below
+(source: gate-registry.md); no other AP is a red flag. How each one is detected, and only here:
 - AP13 -- zero assertions. Count the assertion form of the file's OWN runner, not only expect():
   expect()/assert* (Jest/Vitest), `assert`/pytest.raises/self.assert* (Python), `[ ... ]`/`run` +
   `$status` checks (bats), and in a shell suite any check that prints FAIL or exits non-zero when its
@@ -110,7 +110,9 @@ AP32: Flake-masking retries — per-test/per-suite `retries:`/`@Retry`/`flaky=Tr
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.
 Q16 N/A: score N/A when test covers single function/hook with no shared mutable state.
 Q7/Q11 count behaviour only: NO-TEST-NEEDED branches are excluded like out-of-scope ones; none left -> N/A with that reason.
-Q17 PASS-THROUGH: For thin controllers that are pure delegation, `expect(result).toEqual(mockReturn)` with CalledWith on service mock = Q17=1.
+A critical gate that is N/A is not a failure: Tier A and B need every APPLICABLE critical gate = 1.
+Q17 PASS-THROUGH: pure delegation is NO-TEST-NEEDED, so its echo tests are REMOVE candidates and Q17 is N/A
+for it; an echo assertion on code that computes something stays Q17=0.
 
 CRITICAL GATE: Q7, Q11, Q13, Q15, Q17 -- any = 0 -> Tier C floor (see TIER CLASSIFICATION).
 
@@ -163,9 +165,12 @@ FOR AUTO TIER-D FILES, use SHORT format:
 Production file: [path or ORPHAN]
 Red flags: [AUTO TIER-D AP ids] -> AUTO TIER-D
 Phantom mocks: [list mocked modules not called by production code, or "none"]
+Critical gate: [each of Q7 Q11 Q13 Q15 Q17 that is 0, path:line - why; or "none"]
 Removals: [whole file - reason | the tests, each path:line - reason | none]
+No-test-needed: [production code classified NO-TEST-NEEDED, each path:line - kind; or "none"]
+Findings: [one line per red flag, critical-gate failure, removal, untested behaviour: path:line - what; QUICK too]
 Reason: [brief]
-Top 3 gaps: [brief]
+Top 3 gaps: [brief; Findings lists them all]
 
 FOR ALL OTHERS, use FULL format:
 ### [filename]
@@ -183,7 +188,7 @@ Removals: [whole file - reason | the tests, each path:line - reason | none]
 Score: Q1=[0/1] Q2=[0/1] ... Q25=[0/1]
 Anti-patterns: [AP IDs found, or "none"]
 Total: passed=[N], N/A=[N], out-of-scope=[N], applicable=[N], AP deduction=[N], adjusted=[N]/[applicable] ([%])
-Critical gate: Q7=[0/1] Q11=[0/1] Q13=[0/1] Q15=[0/1] Q17=[0/1] -> [PASS/FAIL]
+Critical gate: Q7=[0/1/N/A] Q11=[0/1/N/A] Q13=[0/1/N/A] Q15=[0/1/N/A] Q17=[0/1/N/A] -> [PASS/FAIL]
 Tier: [A/B/C/D]
 Findings: [one line per Q=0, AP, removal, untested behaviour: path:line - what; QUICK too]
 Top 3 gaps: [brief]
@@ -208,10 +213,10 @@ missing and the whole batch is thrown away):
   file count as missing. A `### ` heading that is a path NOT in the list ends the section above it.
 
 TIER CLASSIFICATION (derived from the percentage above — no separate count scale):
-  A (>= 82%, all critical gates = 1): No action needed
-  B (>= 53% and < 82%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes
+  A (>= 82%, every applicable critical gate = 1): No action needed
+  B (>= 53% and < 82%, every applicable critical gate = 1): Fix gaps -- 2-5 targeted fixes
   C (< 53%, OR any critical gate = 0): Major rewrite needed
-  D (an AUTO TIER-D trigger from the pre-scan): Delete; rewrite only the tests that guard behaviour (TEST WORTH)
+  D (an AUTO TIER-D trigger from the pre-scan): Propose removing the tests (deleted only after the user confirms); rewrite only the tests that guard behaviour (TEST WORTH)
 
   A very low score without an auto red flag remains Tier C; D is the specified red-flag classification, not a second raw-count threshold.
 
@@ -221,7 +226,7 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
 IMPORTANT:
 - Read BOTH the test file AND its production file
 - Red flag pre-scan first
-- BEHAVIOUR COVERAGE: list the production behaviours (TEST WORTH) and check each is exercised AND its outcome asserted; report the unexercised ones as Untested behaviours. Never list methods or files as such. API endpoint exception: a test calling client.get("/path") IS testing the handler.
+- BEHAVIOUR COVERAGE: list the production behaviours (TEST WORTH) and check each is exercised AND its outcome asserted; report the unexercised ones as Untested behaviours. Never list methods or files as such. API endpoint exception: a test calling client.get("/path") exercises the handler; it covers a behaviour only if it also asserts a response that would differ if that behaviour broke.
 - PHANTOM MOCK DETECTION: List all mocked modules in test. For each: does production code actually call it? Unused mock = phantom mock.
 - SUITE-AWARE MODE: Sibling test files for the same production file may supply Q7/Q11 evidence; name each contributing test and actual production branch. A helper test is not evidence for its caller unless it executes and asserts that caller behavior. Coverage/mutation claims require matching file/symbol and tree identity.
 - CHANGED-LINES SCOPE: a listed file whose production entry carries `changed lines: <ranges>` is
@@ -244,7 +249,7 @@ exit/result and anything not run in that file's "Verification:" field. For ANY O
 including "read-only reviewer, no shell", an empty value, or an unsubstituted
 `[VERIFICATION CONTEXT]` placeholder — treat this as read-only: record
 `Verification: not run (read-only reviewer)` for every FULL-format file (the SHORT/AUTO TIER-D
-format has no Verification field or Q scores); never claim a command ran if it was not run.
+format has no Verification field and scores no Q, except it lists each critical gate at 0); never claim a command ran if it was not run.
 
 In BOTH cases, score Q24/Q25 from an actual run, or from a cited artifact tied to this tree/HEAD
 (cite its path; the same freshness rule as Q21 above — commit/tree identity only, Q21's

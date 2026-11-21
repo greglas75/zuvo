@@ -61,7 +61,7 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
    second iteration carries no cross-model check. Never tick the gate on a 5.
 5. **After the cap:** any file still below A → do NOT loop further and do NOT claim PASS. Print
    `[GATE: test-quality] WARN worst=<tier> below-A=<file list> report=<path>` and record each
-   file once: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source <skill> --file "$F" --line 1 --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**; `<skill>` is the calling skill; `T` starts "Whole file: …" and names the file's tier, and `E` holds the tier and the failing Q-gates; assign `"$R"`, `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). A file's tier has no line of its own, so it cites line 1, the whole-file convention, and passes no `--anchor`. Name its F-id in the report. A failing Q-gate the report pins to a line is a line-level gap: step 2 records it. Never silently accept; never
+   file once: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source <skill> --file "$F" --line 1 --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**; `<skill>` is the calling skill; `C` is `TEST-GAP` when the file is below A for a named untested behaviour and `CQ` otherwise (a REMOVE-only suite is not a missing test); `T` starts "Whole file: …" and names the file's tier, and `E` holds the tier and the failing Q-gates; assign `"$R"`, `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). A file's tier has no line of its own, so it cites line 1, the whole-file convention, and passes no `--anchor`. Name its F-id in the report. A failing Q-gate the report pins to a line is a line-level gap: step 2 records it. Never silently accept; never
    relabel WARN as PASS.
 
 ## Ordering + safety rules
@@ -70,8 +70,7 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
   proofs (execute). Improving a characterization test BEFORE the move would destroy the
   green-on-old lock the refactor's safety rests on.
 - **Strengthening only.** A "fix" that deletes or weakens an assertion to reach tier A is the
-  anti-pattern this gate exists to stop. The audit's REMOVE proposals (render-only, mock-echo, tautological
-  tests) are not applied here and its Untested Behaviours are the only new tests this gate may write: list
+  anti-pattern this gate exists to stop. The audit's REMOVE proposals (every category) are not applied here and its Untested Behaviours are the only new tests this gate may write: list
   both in the gate's report for the user. If an assertion fails after strengthening, that is a
   surfaced PRODUCTION finding → route it to the calling skill's remediation path (refactor Phase
   3.5 / execute implementer re-dispatch), not a test edit.

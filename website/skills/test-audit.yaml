@@ -12,7 +12,7 @@ seo:
   target_queries:
     - "test quality audit q1-q17 checklist"
     - "detect phantom mocks unit tests"
-    - "find untested public methods typescript"
+    - "find untested behaviours typescript"
     - "tautological mock anti-pattern tests"
     - "batch test file review tiered output"
   canonical: /en/skills/test-audit
@@ -26,16 +26,16 @@ stats:
     detail: "AP1-AP32"
   - label: "Critical Gates"
     value: "5"
-    detail: "Q7, Q11, Q13, Q15, Q17 — any fail caps tier at B"
+    detail: "Q7, Q11, Q13, Q15, Q17 — any fail puts the file at Tier C or lower"
   - label: "Output Tiers"
     value: "4"
-    detail: "A (no action) through D (delete and rewrite)"
+    detail: "A (no action) through D (propose removal, rewrite what guards behaviour)"
   - label: "PASS threshold"
     value: "82%"
     detail: "of applicable gates must pass for Tier A"
 
 problem: |
-  Test suites degrade silently. Files accumulate tautological mocks that test nothing, copy-pasted fixtures with no assertions, and branches that are never exercised — all while the test count climbs and coverage percentages look healthy. When something breaks, these tests give no signal. `zuvo:test-audit` pairs each test file with its production source, checks every public method for coverage, and assigns a tier so you know exactly which tests are worth keeping and which need a rewrite.
+  Test suites degrade silently. Files accumulate tautological mocks that test nothing, copy-pasted fixtures with no assertions, and branches that are never exercised — all while the test count climbs and coverage percentages look healthy. When something breaks, these tests give no signal. `zuvo:test-audit` pairs each test file with its production source, checks which behaviours no test would catch a defect in, and assigns a tier so you know exactly which tests are worth keeping and which need a rewrite.
 
 how_it_works:
   - step: "Discovery and pairing"
@@ -43,7 +43,7 @@ how_it_works:
   - step: "Red-flag pre-scan"
     description: "Before the full checklist, each batch agent scans for instant Tier-D triggers: zero assertions in the file's own runner's terms (AP13: expect()/assert, pytest, bats status checks, or a shell check that fails the run), fixture:assertion ratio >20:1 (AP16), and a committed focus marker (AP31)."
   - step: "Production code analysis"
-    description: "The agent reads the production file to extract the public API surface, branch map, error handling points, and complexity class (THIN/STANDARD/COMPLEX). This sets the expected test count and edge case scope."
+    description: "The agent reads the production file to extract the public API surface, branch map, error handling points, and complexity class (THIN/STANDARD/COMPLEX). It sizes the audit and scopes the edge cases; no test count is expected."
   - step: "Q1-Q25 evaluation"
     description: "Every applicable gate is scored binary (1/0). Phantom mock detection runs in parallel: each mocked module is checked against what the production code actually calls."
   - step: "Aggregate and coverage registry"
@@ -66,7 +66,7 @@ examples:
   - title: "Audit all tests in quick mode"
     type: invocation
     command: "zuvo:test-audit all --quick"
-    result: "Scans every test file, pairs each with its source, and returns tier distribution plus top failing gates in ~2 minutes for 50 files. No per-gate evidence."
+    result: "Scans every test file, pairs each with its source, and returns tier distribution plus top failing gates in ~2 minutes for 50 files. Binary Q verdicts without prose, each finding still cited by path:line."
   - title: "Deep audit on a single test file"
     type: invocation
     command: "zuvo:test-audit src/services/order.test.ts"
@@ -131,7 +131,7 @@ arguments:
   - flag: "--deep"
     description: "Collect evidence and fix recommendations for every file"
   - flag: "--quick"
-    description: "Binary pass/fail only, skip evidence; auto-enabled for >50 files"
+    description: "Binary Q verdicts, no prose or fixes; every finding still cites path:line; auto-enabled for >50 files"
   - flag: "--include-e2e"
     description: "Include E2E test files in scope (excluded by default)"
   - flag: "--details"
@@ -180,7 +180,7 @@ checks:
           name: "Fixture:assertion ratio greater than 20:1 — AUTO TIER-D"
           critical: true
         - id: "AP31"
-          name: "Committed focus marker (it.only / fit) — AUTO TIER-D"
+          name: "Committed focus marker (it.only / describe.only / fit / fdescribe) — AUTO TIER-D"
           critical: true
         - id: "AP10"
           name: "Tautological mock — calls mock, verifies mock called, no production output check"
@@ -217,10 +217,10 @@ benchmarks:
     type: speed
     verifiable: true
     source: "SKILL.md Execution Notes: 'DEEP ~10 min for 50 files'"
-  - claim: "Files with zero assertions, fixture:assertion ratio >20:1, or a committed focus marker are auto-classified Tier D without running the full Q1-Q25 checklist."
+  - claim: "Files with zero assertions, fixture:assertion ratio >20:1, or a committed focus marker are auto-classified Tier D; only the critical gates are still reported."
     type: accuracy
     verifiable: true
-    source: "shared/includes/test-audit-batch-prompt.md RED FLAG PRE-SCAN: 'Tests with zero assertions (AP13) -> AUTO TIER-D' — counted in the file's own runner's terms"
+    source: "shared/includes/test-audit-batch-prompt.md RED FLAG PRE-SCAN: 'AP13 -- zero assertions. Count the assertion form of the file's OWN runner' — AUTO TIER-D"
 
 comparison_table:
   columns: ["Capability", "Coverage Tool (Istanbul/nyc)", "Manual Review", "zuvo:test-audit"]

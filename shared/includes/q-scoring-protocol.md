@@ -49,8 +49,8 @@ trace callees up to the actual runtime validator before claiming an internal-onl
 ## Scoring Thresholds
 
 ```
->= 82% of applicable, all critical gates = 1   →  PASS
->= 53% and < 82% of applicable, all critical gates = 1  →  FIX (improve weak gates)
+>= 82% of applicable, every applicable critical gate = 1   →  PASS
+>= 53% and < 82% of applicable, every applicable critical gate = 1  →  FIX (improve weak gates)
 < 53% OR any critical gate = 0                →  REWRITE
 
 applicable = 25 - count(N/A) - count(out-of-scope)

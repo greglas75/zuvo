@@ -90,7 +90,10 @@ capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical worke
 | `[path]` | Directory | Standard | `--commit=ask` | Scoped |
 | `[file]` | Single file | Deep | `--commit=ask` | Full evidence |
 | `[file file2 …]` | Listed files only | Deep | `--commit=ask` | File-list scope (Test Quality Gate callers pass `--read-only --commit=off`) |
+| `--deep` | Any scope | Full evidence + fixes | Per flag | Thorough |
 | `--quick` | Any scope | Binary verdicts + `path:line` per finding | `--commit=off` | Fast triage |
+| `--include-e2e` | + E2E files | Standard | Per flag | Expanded scope |
+| `--details` | Any scope | + per-file reports | Per flag | Save individual files |
 
 ## Mandatory File Loading
 
@@ -520,7 +523,7 @@ Evidence map: [per production file/symbol → test branch citations → matching
 | A (>=82% of applicable) | [N] | [%] | No action |
 | B (>= 53% and < 82% of applicable) | [N] | [%] | Fix gaps |
 | C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite |
-| D (AUTO TIER-D trigger) | [N] | [%] | Delete; rewrite only tests that guard behaviour |
+| D (AUTO TIER-D trigger) | [N] | [%] | Propose removal (user confirms); rewrite only tests that guard behaviour |
 | INCOMPLETE (no tier) | [N] | [%] | Finish missing evaluation |
 | ORPHAN | [N] | [%] | Verify or delete |
 
@@ -611,7 +614,7 @@ For each audited test file, find its production file row in coverage.md:
 | D (auto Tier-D red flag) | PARTIAL | Effectively untested |
 | INCOMPLETE (no tier) | Leave existing row unchanged | Evaluation unavailable; never register as COVERED |
 
-Only downgrade coverage status, never upgrade. A NO-TEST-NEEDED production file is never downgraded for lacking tests. If production file is not yet in coverage.md, add it.
+Only downgrade coverage status, never upgrade. A production file that is wholly NO-TEST-NEEDED is not mapped by tier: leave an existing row unchanged and do not add a missing one. For a mixed file, map by the tier of its test-worthy behaviours. Any other production file not yet in coverage.md is added.
 
 Output: `COVERAGE UPDATE: [N] rows updated ([N] downgraded, [N] confirmed, [N] new)`
 
@@ -621,7 +624,7 @@ Every finding this audit records goes through `backlog-add`, one call per findin
 
 **What to record:**
 - **Tier C/D files:** call `backlog-add` for every finding (the protocol's bars decide where each lands), a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested behaviour; the title names the defect a test would catch), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding; a REMOVE proposal is a `CQ` "Remove: …"), and `BUG` only when it names the input and the wrong output (a BUG needs `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
-- **Critical gate failures** (Q7/Q11/Q13/Q15/Q17=0: a Tier C file): one call per gate, the gate named in the title. Tier B files file nothing.
+- **Critical gate failures** (Q7/Q11/Q13/Q15/Q17=0, a Tier C floor; an AUTO TIER-D file stays D): one call per gate whatever the final tier, the gate named in the title. A Tier B file has none, so it files nothing.
 - **AUTO TIER-D triggers** (the batch prompt's pre-scan): always submitted, the same call with `--severity high`.
 
 Assign `"$R"`, `"$F"` and `"$T"` before each call, `"$A"` only when you pass `--anchor`, and `"$M"` only when you pass `--missing-assertion`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
@@ -645,7 +648,7 @@ If any step is incomplete, go back and finish it before continuing.
 
 After presenting the report, the user may request fixes:
 
-1. **Fix** -- rewrite test files following the quality rules, only as the report names: strengthen tests that guard behaviour; add a test only for a listed Untested Behaviour; never for NO-TEST-NEEDED code or to lift a score. REMOVE items are shown as one list and deleted only after the user confirms it (no `--commit` value deletes a test)
+1. **Fix** -- rewrite test files following the quality rules, only as the report names: strengthen tests that guard behaviour; add a test only for a listed Untested Behaviour; never for NO-TEST-NEEDED code or to lift a score. Business logic found inside a view is a prerequisite, not a test to add: list its extraction (this workflow edits no production code) and keep any existing test of it, the regression test going on the extracted unit later. REMOVE items are shown as one list and deleted only after the user confirms it (no `--commit` value deletes a test)
 2. **Test** -- run the test suite to confirm all tests pass
 3. **Verify** -- for each fixed file:
    - Only test files modified (no production code changes)
@@ -664,7 +667,7 @@ The closing commit is the last action of whichever comes last. With no fix workf
 
 | Finding | Action | Command |
 |---------|--------|---------|
-| Tier D file (AUTO TIER-D trigger) or Tier C file (critical Q gate = 0, or < 53%) | Rewrite the tests that guard behaviour; REMOVE the rest | `zuvo:write-tests [path]` |
+| Tier D file (AUTO TIER-D trigger) or Tier C file (critical Q gate = 0, or < 53%) | Rewrite the tests that guard behaviour; the REMOVE list goes to the user, deleted only on confirmation (Phase 7) | `zuvo:write-tests [path]` |
 | Same AP across 10+ files | Batch fix | `zuvo:fix-tests --pattern [AP-ID]` |
 | Q7=0 (a contract negative case untested) | Add that negative-case test | `zuvo:write-tests [path]` |
 | Untested behaviour (named defect) | Write that test only | `zuvo:write-tests [path]` |
