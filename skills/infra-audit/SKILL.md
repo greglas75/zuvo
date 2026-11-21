@@ -682,9 +682,9 @@ VALIDITY GATE
 `hosts_assessed` counts hosts that reached `reported` with a bundle that has `collection_complete: true` and at least one `ok`/`finding` check (a bundle of transport `error`s is `UNREACHABLE`). Every other host
 (`UNREACHABLE`, `FAILED`, `SKIPPED`, partial bundle) is unassessed: never scored or counted clean,
 and it sets `gate_status = FAIL`, as does zero assessed hosts. This audit has no critical-gate
-table, so `../../shared/includes/audit-postamble.md` §1 rows 2-5 apply and a failed gate is row 3
-(`INCOMPLETE`; 4+ critical findings stay `FAIL`). On FAIL append `[VALIDITY GATE FAIL]` and
-`hosts_assessed=<N>/<total>` to NOTES and fix the VERDICT in the report.
+table, so `../../shared/includes/audit-postamble.md` §1 rows 2-5 apply. `gate_status = FAIL` → §1
+(a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]`
+and `hosts_assessed=<N>/<total>` to NOTES and, if the VERDICT changed, rewrite it in the report.
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1
 

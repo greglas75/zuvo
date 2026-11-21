@@ -481,7 +481,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report header and JSON.
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
 
@@ -497,7 +497,7 @@ A gate "trips" per the **Gate / Fires on** table above — on the FINDING, not o
 restate the trip condition here as `K1=0 OR K2=0 OR K3=0`: that is the score-based reading the
 table exists to replace, and it makes the gates nearly unreachable (K2 spreads six checks over 18
 points, so a root-running privileged container still scores well above 0 and would pass the very
-gate meant to fail it). One table, one place — this line points at it.
+gate meant to fail it). One table, one place — the Run-line heading above points at it.
 
 ---
 

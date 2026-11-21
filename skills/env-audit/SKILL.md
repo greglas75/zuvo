@@ -353,6 +353,7 @@ Save to: `zuvo/audits/env-audit-[YYYY-MM-DD].md` — at the **project root** (`z
 | Config sources | [.env, .env.example, config.ts, ...] |
 | Vars defined | [N] |
 | Vars used in code | [N] |
+| VERDICT | [PASS / WARN / FAIL / INCOMPLETE per `../../shared/includes/audit-postamble.md` §1; the Run line carries the same value] |
 
 ## Executive Summary
 
@@ -378,7 +379,7 @@ Save to: `zuvo/audits/env-audit-[YYYY-MM-DD].md` — at the **project root** (`z
 | ENV6 | Type Safety | [N] | 8 | |
 | ENV7 | Default Values | [N] | 7 | |
 | ENV8 | Documentation | [N] | 5 | |
-| **Total** | | **[N]** | **80** | |
+| **Total** | | **[N]** | **[in-scope maximum: 80; `--secrets-only` 15, `--parity` 10]** | |
 
 ## Variable Coverage Matrix
 
@@ -455,7 +456,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report header and JSON.
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
 

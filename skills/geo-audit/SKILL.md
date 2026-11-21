@@ -483,6 +483,7 @@ Dimension weights (sum to 100%):
 
 Active weights = sum of weights where dimension is NOT N/A
 Overall = sum(dimension_score * weight) / active_weights    # dimension_score is already 0-100
+# active_weights = 0 (every dimension N/A): no score and no tier; coverage gate FAIL, VERDICT INCOMPLETE (audit-postamble.md §1 row 3)
 ```
 
 ### 3.5 Tier Assignment
@@ -799,9 +800,11 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and carry the final VERDICT in the Run line (the report's `Result` / `result` is the gate result; the only rewrite is the `PASS` -> `PROVISIONAL` rule in the Run-line section below).
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
+
+The report header, JSON `result` and `GEO-AUDIT-RESULT` marker carry the gate result (`PASS`/`FAIL`/`PROVISIONAL`) for CI parsing. The VERDICT (adds `WARN` and `INCOMPLETE`) is the Run line's: `FAIL` when a critical gate fails, else §1 rows 2-5. `PROVISIONAL` does not change the VERDICT by itself; note it in NOTES. When `gate_status = FAIL`, a `PASS` gate result is set to `PROVISIONAL` in the report, JSON and marker (incomplete assurance, so CI never sees an invalid audit as green); a `FAIL` stays.
 
 Append via the retro-gated wrapper, never `>> runs.log`:
 

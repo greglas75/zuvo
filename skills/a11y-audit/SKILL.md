@@ -490,8 +490,7 @@ Read deferred files:
 | B | >= 70% and < 85% | All critical gates pass |
 | FAIL | < 70% | OR any critical gate fails |
 
-VERDICT: `../../shared/includes/audit-postamble.md` §1 rows 1 and 3 first (a failing A2/A4 gate → FAIL at any score; validity gate FAIL →
-INCOMPLETE); otherwise the grade decides: **A → PASS, B → WARN, FAIL → FAIL**.
+VERDICT: `../../shared/includes/audit-postamble.md` §1 first: a failing A2/A4 gate (row 1) or ≥4 critical findings (row 2) → FAIL at any score; a grade of FAIL (< 70%) is also FAIL, and outranks row 3 (INCOMPLETE never upgrades a FAIL); validity gate FAIL (row 3) → INCOMPLETE. Otherwise the grade decides, capped by row 4: **A → PASS, B → WARN**, and 1-3 critical findings make an A a WARN (a skill is never looser than row 4).
 
 ### 5.3 Report Output
 
@@ -620,9 +619,10 @@ Critical gates: A2=[PASS/FAIL] A4=[PASS/FAIL]
 Findings: [N] CRITICAL, [N] HIGH, [N] MEDIUM
 Fixes generated: [N] (if --fix)
 Legal: [status summary]
-Run: <ISO-8601-Z>	a11y-audit	<project>	<score>%	-	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
+
+The Run line is appended after the Validity Gate (below) with the final VERDICT, not printed here.
 
 ### Retrospective (REQUIRED)
 
@@ -648,7 +648,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report header and JSON.
 
 ### Run line — closing order `../../shared/includes/audit-postamble.md` §2
 
@@ -663,7 +663,7 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 - `Q_SCORE`: `-` (not applicable)
 - `VERDICT`: as stated under the grade table, via `../../shared/includes/audit-postamble.md` §1
 - `TASKS`: `-`
-- `DURATION`: `<N>-dimensions` (number of dimensions scored, typically 10)
+- `DURATION`: `<N>-dimensions` (number of dimensions scored: 9, `--quick` 2)
 - `NOTES`: `WCAG2.2-[AA|AAA] [N]-findings [legal-status]` (max 80 chars)
 
 ---
