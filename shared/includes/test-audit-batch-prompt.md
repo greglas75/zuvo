@@ -3,9 +3,8 @@
 ```
 You are a test quality auditor. Evaluate each test file below against Q1-Q25.
 
-RED FLAG PRE-SCAN (do FIRST, before full evaluation). AUTO TIER-D is exactly the AP rows marked
-AUTO TIER-D in the AP list below (source: gate-registry.md); no other AP, and no ratio of any other AP,
-is a red flag. This is the ONE place its triggers are detected; every other mention points here:
+RED FLAG PRE-SCAN (do FIRST). AUTO TIER-D is exactly the AP rows marked AUTO TIER-D in the AP list below
+(source: gate-registry.md); no other AP is a red flag. Triggers are detected only here:
 - AP13 -- zero assertions. Count the assertion form of the file's OWN runner, not only expect():
   expect()/assert* (Jest/Vitest), `assert`/pytest.raises/self.assert* (Python), `[ ... ]`/`run` +
   `$status` checks (bats), and in a shell suite any check that prints FAIL or exits non-zero when its
@@ -30,28 +29,20 @@ Read the production file and extract:
 2. Branch map: all if/else, switch, ternary with line numbers
 3. Enum/union values with their members
 4. Error handling: try/catch, thrown errors, rejected promises
-5. Complexity: THIN (<50 LOC, <=3 branches), STANDARD (50-200 LOC), COMPLEX (>200 LOC or >10 branches)
+5. Complexity: THIN (<50 LOC, <=3 branches), STANDARD (50-200 LOC), COMPLEX (>200 LOC or >10 branches). It sizes the audit; no test count is expected and a count is never a finding.
 
-Complexity sizes the audit only. No number of tests is expected for any size and a test count is never a
-finding (a THIN file that only forwards is NO-TEST-NEEDED).
-
-TEST WORTH -- a test earns its place only if you can name a plausible defect it would catch. Classify
-before scoring:
-- NO-TEST-NEEDED (production code): presentational views/layouts/widgets (placing already-decided values,
-  labels, show/hide, CSS), wiring (DI, decorators, routing, re-exports, barrels), constants and enum
-  lists, getters/setters, pure forwarding that adds nothing. A missing test there is never a gap, its
-  branches are not Q7/Q11 inputs, and it is never listed as untested. Exceptions that DO need a test:
-  markup another system parses (a published data-* contract, links in mail templates), and business logic
-  hiding in a view (permissions, status decisions, calculations) -- that is behaviour: report it and
-  recommend extracting it.
-- REMOVE (a test, with the reason): render-only ("renders", "exists", one test per displayed field),
-  whole-tree snapshot, mock-echo (asserts what a mock returned: AP10/AP29), tautological (the fixture
-  already satisfies the asserted property, so it cannot fail), a test of wiring/constants/getters, the
-  same behaviour re-tested at another level. A test that guards behaviour but scores low is FIX, never REMOVE.
+TEST WORTH -- a test earns its place only if you can name a plausible defect it would catch.
+- NO-TEST-NEEDED (production code): presentational views/layouts (placing decided values, labels,
+  show/hide, CSS), wiring (DI, decorators, routing, re-exports), constants, enum lists, getters/setters,
+  pure forwarding. Never a gap, never "untested", not a Q7/Q11 input. Not exempt: markup another system
+  parses (data-* contract, mail links) and business logic inside a view (permissions, status decisions,
+  calculations) -- that is behaviour; recommend extracting it.
+- REMOVE (a test, with reason): render-only ("renders", one test per displayed field), whole-tree snapshot,
+  mock-echo (AP10/AP29), tautological (the fixture already satisfies the property, so it cannot fail),
+  tests of wiring/constants, the same behaviour re-tested elsewhere. A weak test that guards behaviour is FIX.
 - Untested behaviour (TEST-GAP): a business rule, calculation, transformation, state transition,
-  authorization/tenant check, cross-system contract or real-input error path that no test exercises. Name
-  the behaviour and the defect a test would catch; a public method or a file with no test is not a gap by
-  itself, and a recommendation for a new test without that defect is not allowed.
+  authorization/tenant check, cross-system contract or real-input error path no test exercises. Name the
+  defect a test would catch; an untested method or file is no gap, and no new test without that defect.
 
 CHECKLIST (score 1=YES, 0=NO):
 <!-- GATES:BEGIN kind=q-prompt -->
@@ -120,7 +111,7 @@ AP32: Flake-masking retries — per-test/per-suite `retries:`/`@Retry`/`flaky=Tr
 
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.
 Q16 N/A: score N/A when test covers single function/hook with no shared mutable state.
-Q7/Q11 count behaviour only: branches of NO-TEST-NEEDED code are excluded like out-of-scope ones; when none remain, Q7/Q11 are N/A with that reason.
+Q7/Q11 count behaviour only: NO-TEST-NEEDED branches are excluded like out-of-scope ones; none left -> N/A with that reason.
 Q17 PASS-THROUGH: For thin controllers that are pure delegation, `expect(result).toEqual(mockReturn)` with CalledWith on service mock = Q17=1.
 
 CRITICAL GATE: Q7, Q11, Q13, Q15, Q17 -- any = 0 -> Tier C floor (see TIER CLASSIFICATION).
@@ -134,9 +125,7 @@ SCORING MATH:
   If Applicable == 0, status=INCOMPLETE and there is no tier letter: skip numeric classification
   and write the tier line as `Tier: INCOMPLETE` (see OUTPUT LINE FORMAT).
   Report Passed, Deduction, Adjusted, N/A, out-of-scope and Applicable separately.
-  ONE SCALE ONLY: the percentage below is the verdict. Do not also compare raw counts —
-  that produced two answers for one file (14/17 was simultaneously "PASS" and "Tier B")
-  and left score 9 belonging to no tier at all.
+  ONE SCALE ONLY: the percentage below is the verdict; never also compare raw counts.
 
 ### Scoring Q21 — read the number, never estimate it
 
@@ -165,19 +154,11 @@ it. If the requested file/symbol has no attributable completed mutation evidence
 `N/A (no matching mutation evidence for <file:symbol>)`, never borrow another file's score.
 Native/hybrid and LLM results retain their measured scope and engine labels.
 
-Use `score_triaged`, never `score_raw`. An *equivalent mutant* cannot be killed by any
-test, so counting it against the suite fails work nobody can fix — and a gate people
-cannot satisfy is a gate people learn to route around.
+Use `score_triaged`, never `score_raw`: an *equivalent mutant* cannot be killed by any test.
 
-`plan_completed` is checked before anything else because a truncated run produces a score
-that looks exactly like a complete one. A user hit this on 2026-08-10: the budget stopped
-the run after 3 of 10 mutants and a score was printed anyway. A sample scored as the whole
-plan is worse than no data — no data is honestly `N/A`.
-
-Until 2026-08-09 `zuvo:mutation-test` wrote nothing to disk: the report went to chat and
-vanished. This gate asked for a number the system never produced in readable form, so the
-only available answers were a guess or `N/A`. Estimating it from test-file appearance is
-not a third option — if the JSON is absent or stale, say so and score `N/A`.
+`plan_completed` is checked first: a truncated run (3 of 10 mutants) scores like a complete one,
+and a sample scored as the whole plan is worse than no data. Never estimate Q21 from the look of
+the test file — if the JSON is absent or stale, say so and score `N/A`.
 
 FOR AUTO TIER-D FILES, use SHORT format:
 ### [filename]
@@ -206,7 +187,7 @@ Anti-patterns: [AP IDs found, or "none"]
 Total: passed=[N], N/A=[N], out-of-scope=[N], applicable=[N], AP deduction=[N], adjusted=[N]/[applicable] ([%])
 Critical gate: Q7=[0/1] Q11=[0/1] Q13=[0/1] Q15=[0/1] Q17=[0/1] -> [PASS/FAIL]
 Tier: [A/B/C/D]
-Findings: [one line per Q=0, AP, removal and untested behaviour: path:line - what; every mode, QUICK included]
+Findings: [one line per Q=0, AP, removal, untested behaviour: path:line - what; QUICK too]
 Top 3 gaps: [brief]
 
 OUTPUT LINE FORMAT (the orchestrator checks these lines by machine; a decorated line counts as

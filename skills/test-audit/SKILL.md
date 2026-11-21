@@ -65,7 +65,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 | `[file]` | Audit a single test file with full evidence (forces deep mode) |
 | `[file file2 …]` | Audit exactly the listed test files (space-separated, forces deep mode) — the form the Test Quality Gate (`../../shared/includes/test-quality-gate.md`, called from build/refactor/execute/write-tests/write-e2e) uses to scope to touched files |
 | `--deep` | Collect evidence and fix recommendations for every file |
-| `--quick` | Binary Q verdicts, no prose or fix recommendations; every Q=0, AP, removal and untested behaviour still cites `path:line` |
+| `--quick` | Binary Q verdicts, no prose or fixes; every finding still cites `path:line` |
 | `--include-e2e` | Include E2E test files in scope |
 | `--details` | Save per-file reports to `zuvo/audits/test-audit-details/` |
 | `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`) |
@@ -90,10 +90,7 @@ capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical worke
 | `[path]` | Directory | Standard | `--commit=ask` | Scoped |
 | `[file]` | Single file | Deep | `--commit=ask` | Full evidence |
 | `[file file2 …]` | Listed files only | Deep | `--commit=ask` | File-list scope (Test Quality Gate callers pass `--read-only --commit=off`) |
-| `--deep` | Any scope | Full evidence + fixes | Per flag | Thorough |
 | `--quick` | Any scope | Binary verdicts + `path:line` per finding | `--commit=off` | Fast triage |
-| `--include-e2e` | + E2E files | Standard | Per flag | Expanded scope |
-| `--details` | Any scope | + per-file reports | Per flag | Save individual files |
 
 ## Mandatory File Loading
 
@@ -154,8 +151,6 @@ Mandatory-tools-acknowledgment: I will run find_dead_code + find_clones + find_r
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift for file discovery and production code analysis when available. If unavailable, fall back to standard tools.
-
 ### CodeSift Optimizations
 
 | Task | CodeSift | Fallback |
@@ -165,11 +160,10 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Batch-read test cases | `get_symbols(repo, symbol_ids=[...])` | Multiple `Read` calls |
 | Find production file for test | `search_symbols(repo, query, kind="function")` | Path-based heuristic |
 | Verify test imports | `find_references(repo, symbol_name)` | `Grep` for imports |
-| Pre-scan for weak assertions | `search_text(repo, "toBeTruthy\|toBeDefined", file_pattern="*.test.*")` | `Grep` |
 
 ### Degraded Mode (CodeSift unavailable)
 
-All steps fall back to `find`/`Read`/`Grep`/`Glob`. File discovery is slower and production file pairing relies on path conventions rather than symbol resolution.
+All steps fall back to `find`/`Read`/`Grep`/`Glob`. Production file pairing then relies on path conventions.
 
 ---
 
@@ -212,15 +206,7 @@ When CodeSift is available, use `search_symbols` or `find_references` for more r
 
 Before splitting into batches, group test files by production file. If multiple test files target the same production code (`foo.test.ts` + `foo.errors.test.ts`), they MUST go into the same batch so suite-aware Q7/Q11 scoring works correctly.
 
-### 0.4 Golden File Calibration (recommended for first audit)
-
-If this is the first audit of a project or agent scores seem inconsistent:
-1. Pick 2-3 test files with known quality (one good, one bad, one mid)
-2. Run a single calibration agent on those files
-3. Compare scores to expectations. If drift >2 points, adjust prompt wording
-4. Proceed with full evaluation
-
-### 0.5 Batch Output Directory
+### 0.4 Batch Output Directory
 
 ```bash
 mkdir -p zuvo/audits/.test-audit-batch
@@ -548,15 +534,15 @@ Evidence map: [per production file/symbol → test branch citations → matching
 | File | Red Flag | Details |
 |------|----------|---------|
 
-## Untested Behaviours (each names the defect a test would catch; never a bare method or file)
+## Untested Behaviours
 
 | File | Behaviour (path:line) | Defect a test would catch |
 |------|----------------------|---------------------------|
 
-## Removal Proposals (REMOVE: proposed, never auto-deleted)
+## Removal Proposals (REMOVE, never auto-deleted)
 
-| File | Test (path:line) | Reason (render-only / mock-echo / snapshot / tautological / wiring) |
-|------|------------------|----------------------------------------------------------------------|
+| File | Test (path:line) | Reason |
+|------|------------------|--------|
 
 ## Top Failed Questions (across all files)
 
@@ -625,7 +611,7 @@ For each audited test file, find its production file row in coverage.md:
 | D (auto Tier-D red flag) | PARTIAL | Effectively untested |
 | INCOMPLETE (no tier) | Leave existing row unchanged | Evaluation unavailable; never register as COVERED |
 
-Only downgrade coverage status, never upgrade. A production file the audit classified NO-TEST-NEEDED (presentational, wiring, constants) is never downgraded for lacking tests: leave its row. If production file is not yet in coverage.md, add it.
+Only downgrade coverage status, never upgrade. A NO-TEST-NEEDED production file is never downgraded for lacking tests. If production file is not yet in coverage.md, add it.
 
 Output: `COVERAGE UPDATE: [N] rows updated ([N] downgraded, [N] confirmed, [N] new)`
 
@@ -634,8 +620,8 @@ Output: `COVERAGE UPDATE: [N] rows updated ([N] downgraded, [N] confirmed, [N] n
 Every finding this audit records goes through `backlog-add`, one call per finding (`backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here). Under `--read-only` this phase does not run: the calling skill records the findings (`test-quality-gate.md`).
 
 **What to record:**
-- **Tier C/D files:** call `backlog-add` for every finding (the protocol's bars decide where each lands), a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested behaviour: the title names the defect a test would catch; never a bare untested method or file, and nothing for NO-TEST-NEEDED code), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding; a REMOVE proposal is a `CQ` titled "Remove: …"), and `BUG` only when it names the input and the wrong output (a BUG needs `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
-- **Critical gate failures** (Q7/Q11/Q13/Q15/Q17=0 — always a Tier C file, covered above): one call per gate, the gate named in the title. A Tier B file has none and files nothing.
+- **Tier C/D files:** call `backlog-add` for every finding (the protocol's bars decide where each lands), a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested behaviour; the title names the defect a test would catch), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding; a REMOVE proposal is a `CQ` "Remove: …"), and `BUG` only when it names the input and the wrong output (a BUG needs `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
+- **Critical gate failures** (Q7/Q11/Q13/Q15/Q17=0: a Tier C file): one call per gate, the gate named in the title. Tier B files file nothing.
 - **AUTO TIER-D triggers** (the batch prompt's pre-scan): always submitted, the same call with `--severity high`.
 
 Assign `"$R"`, `"$F"` and `"$T"` before each call, `"$A"` only when you pass `--anchor`, and `"$M"` only when you pass `--missing-assertion`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
@@ -659,7 +645,7 @@ If any step is incomplete, go back and finish it before continuing.
 
 After presenting the report, the user may request fixes:
 
-1. **Fix** -- rewrite test files following the quality rules. Fix only what the report names: strengthen tests that guard behaviour, add a test only for a listed Untested Behaviour (the defect it names), and never create tests for NO-TEST-NEEDED code or to lift a count. REMOVE items are shown as one list and deleted only after the user confirms it; no `--commit` value deletes a test on its own
+1. **Fix** -- rewrite test files following the quality rules, only as the report names: strengthen tests that guard behaviour; add a test only for a listed Untested Behaviour; never for NO-TEST-NEEDED code or to lift a score. REMOVE items are shown as one list and deleted only after the user confirms it (no `--commit` value deletes a test)
 2. **Test** -- run the test suite to confirm all tests pass
 3. **Verify** -- for each fixed file:
    - Only test files modified (no production code changes)
@@ -751,7 +737,4 @@ Run: <ISO-8601-Z>\ttest-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\
   a failed batch falls back to an in-harness Agent labelled `in-family-fallback (degraded)` (Phase 1b)
 - Cursor and Antigravity process in-harness batches sequentially; Kimi dispatches its sub-agents (Phase 1c)
 - Run the project's test suite first to confirm baseline passes. Auto-detect runner from config files.
-- Estimated durations, 50 files: in-harness (1c) QUICK ~2 min, DEEP ~10 min. On the `model-run` route
-  (1a) 50 files are 10 batches = 5 groups at the default `P=2`; one measured batch took 40-72 s, so
-  ~4-6 min typical, and the ceiling is 5 groups × (560 + 25) s = 2925 s ≈ 49 min: a group call lasts at
-  most its `BOUND` plus the `GRACE` before the KILL, not one 480 s client budget
+- Duration, 50 files: in-harness (1c) QUICK ~2 min, DEEP ~10 min; `model-run` route (1a) 10 batches = 5 groups at `P=2`, ~4-6 min typical, ceiling 5 × (560 + 25) s ≈ 49 min (a group lasts at most `BOUND` + `GRACE`).
