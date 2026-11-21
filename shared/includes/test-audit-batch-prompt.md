@@ -36,7 +36,7 @@ TEST WORTH -- a test earns its place only if you can name a plausible defect it 
   parses (data-* contract, mail links) and business logic inside a view (permissions, status decisions,
   calculations) -- that is behaviour; recommend extracting it.
 - REMOVE (a test, with reason): render-only ("renders", one test per displayed field), whole-tree snapshot,
-  mock-echo (AP10/AP29), tautological (the fixture already satisfies the property, so it cannot fail),
+  mock-echo (AP10/AP29) of forwarding code or of nothing real, tautological (the fixture already satisfies the property, so it cannot fail),
   tests of wiring/constants, the same behaviour re-tested elsewhere. A weak test that guards behaviour is FIX,
   and so is a mock-echo test of code that computes something: strengthen it to assert the computed output.
 - Untested behaviour (TEST-GAP): a business rule, calculation, transformation, state transition,
@@ -189,7 +189,7 @@ Removals: [whole file - reason | the tests, each path:line - reason | none]
 Score: Q1=[0/1] Q2=[0/1] ... Q25=[0/1]
 Anti-patterns: [AP IDs found, or "none"]
 Total: passed=[N], N/A=[N], out-of-scope=[N], applicable=[N], AP deduction=[N], adjusted=[N]/[applicable] ([%])
-Critical gate: Q7=[0/1/N/A] Q11=[0/1/N/A] Q13=[0/1/N/A] Q15=[0/1/N/A] Q17=[0/1/N/A] -> [PASS/FAIL]
+Critical gate: Q7=[0/1/N/A] Q11=[0/1/N/A] Q13=[0/1] Q15=[0/1] Q17=[0/1/N/A] -> [PASS/FAIL]
 Tier: [A/B/C/D]
 Findings: [one line per Q=0, AP, removal, untested behaviour: path:line - what; QUICK too]
 Top 3 gaps: [brief]
@@ -220,7 +220,7 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   D (an AUTO TIER-D trigger from the pre-scan): Propose removing the tests (deleted only after the user confirms); rewrite only the tests that guard behaviour (TEST WORTH). AP31 alone: drop the focus marker and re-run
 
   A file whose every test is a REMOVE candidate guards no behaviour: Tier C at best, whatever its percentage
-  (its action is the removal proposal, not a rewrite).
+  (its action is the removal proposal, not a rewrite; an AUTO TIER-D trigger on it still makes it D).
 
   A very low score without an auto red flag remains Tier C; D is the specified red-flag classification, not a second raw-count threshold.
 
@@ -253,7 +253,7 @@ exit/result and anything not run in that file's "Verification:" field. For ANY O
 including "read-only reviewer, no shell", an empty value, or an unsubstituted
 `[VERIFICATION CONTEXT]` placeholder — treat this as read-only: record
 `Verification: not run (read-only reviewer)` for every FULL-format file (the SHORT/AUTO TIER-D
-format has no Verification field and scores no Q; it only lists the critical gates found at 0); never claim a command ran if it was not run.
+format has no Verification field and scores no Q; it lists the critical gates found at 0, or none); never claim a command ran if it was not run.
 
 In BOTH cases, score Q24/Q25 from an actual run, or from a cited artifact tied to this tree/HEAD
 (cite its path; the same freshness rule as Q21 above — commit/tree identity only, Q21's

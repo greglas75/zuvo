@@ -522,7 +522,7 @@ Evidence map: [per production file/symbol → test branch citations → matching
 |------|-------|---|--------|
 | A (>=82% of applicable) | [N] | [%] | No action |
 | B (>= 53% and < 82% of applicable) | [N] | [%] | Fix gaps |
-| C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite |
+| C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite (a file whose every test is REMOVE: removal proposal) |
 | D (AUTO TIER-D trigger) | [N] | [%] | Propose removal (user confirms); rewrite only tests that guard behaviour |
 | INCOMPLETE (no tier) | [N] | [%] | Finish missing evaluation |
 | ORPHAN | [N] | [%] | Verify; propose removal (user confirms) |
@@ -653,7 +653,7 @@ If any step is incomplete, go back and finish it before continuing.
 
 After presenting the report, the user may request fixes:
 
-1. **Fix** -- rewrite test files following the quality rules, only as the report names: strengthen tests that guard behaviour; add a test only for a listed Untested Behaviour; never for NO-TEST-NEEDED code or to lift a score. Business logic found inside a view is a prerequisite, not a test to add: list its extraction (this workflow edits no production code) and keep any existing test of it, the regression test going on the extracted unit later. REMOVE items are shown as one list and deleted only after the user confirms it (no `--commit` value deletes a test); a file left with no test by that deletion is removed with it
+1. **Fix** -- rewrite test files following the quality rules, only as the report names: strengthen tests that guard behaviour; add a test only for a listed Untested Behaviour; never for NO-TEST-NEEDED code or to lift a score. Business logic found inside a view is a prerequisite, not a test to add: list its extraction (this workflow edits no production code) and keep any existing test of it, the regression test going on the extracted unit later. REMOVE items are shown as one list and deleted only after the user confirms it (no `--commit` value deletes a test); a test file left empty by that deletion is deleted in the same confirmed removal
 2. **Test** -- run the test suite to confirm all tests pass
 3. **Verify** -- for each fixed file:
    - Only test files modified (no production code changes)

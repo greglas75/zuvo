@@ -76,7 +76,7 @@ N/A is valid when the precondition is verified inactive (e.g., Q5 with no mocks)
 ```
 Q SCORE: [passed]/[applicable] → [PASS | FIX | REWRITE]
   (applicable = 25 - count(N/A) - count(out-of-scope) — never a fixed denominator)
-Critical gates: Q7=[0|1|N/A] Q11=[0|1|N/A] Q13=[0|1|N/A] Q15=[0|1|N/A] Q17=[0|1|N/A]
+Critical gates: Q7=[0|1|N/A] Q11=[0|1|N/A] Q13=[0|1] Q15=[0|1] Q17=[0|1|N/A]
 
 Q1=[score]  [evidence or N/A justification]
 Q2=[score]  [evidence]
