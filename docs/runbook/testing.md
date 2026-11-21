@@ -75,6 +75,12 @@ bash scripts/validate-skills.sh && python3 scripts/gen-gate-copies.py \
   && python3 scripts/audit-registry-integrity.py --strict && bash tests/run-all.sh
 ```
 
+**On the test farm:** run the default fast suite with `rt --git=full bash tests/run-all.sh`.
+The X8 check in `test-test-audit-subprocess-dispatch.sh` compares the shipped Phase 3b command
+with historical commit `e6c2bedda3e576c2b7fbe6715df8d74ab3cbbf3a`; it requires Git metadata and that
+object. A normal farm snapshot has no `.git` and fails this check. `--git=full` supplies the history;
+it does not enable the `ZUVO_TEST_SCOPE=full` provider/Docker scope.
+
 **Container-starting tests need patience, not a timeout.** `tests/infra-suite/*` brings up Docker
 fixtures on fixed loopback ports. Run them in the background and WAIT; a timeout kills the script
 and orphans the containers, and the next run then fails on a port conflict that looks like a flake.
