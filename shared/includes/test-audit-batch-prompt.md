@@ -14,11 +14,11 @@ RED FLAG PRE-SCAN (do FIRST). AUTO TIER-D = the AP rows marked AUTO TIER-D in th
 - AP31 -- a committed focus marker (`.only`, `fit`, `fdescribe`, ...).
 
 QUICK HEURISTICS:
-- 0 CalledWith in entire file -> likely score <=4
-- 10+ DI providers in test setup -> likely score <=5
+- 0 CalledWith in a file that declares mocks -> likely Q3=0
+- 10+ DI providers in test setup -> likely Q9=0 and Q19=0
 
 POSITIVE INDICATORS:
-- Factory with named overrides -> likely >=8
+- Factory with named overrides -> likely Q9=1 and Q10=1
 - it.each with table-driven data -> Q8+Q9+Q11 likely pass
 
 PRODUCTION CODE ANALYSIS (do BEFORE scoring):
@@ -37,10 +37,11 @@ TEST WORTH -- a test earns its place only if you can name a plausible defect it 
   calculations) -- that is behaviour; recommend extracting it.
 - REMOVE (a test, with reason): render-only ("renders", one test per displayed field), whole-tree snapshot,
   mock-echo (AP10/AP29), tautological (the fixture already satisfies the property, so it cannot fail),
-  tests of wiring/constants, the same behaviour re-tested elsewhere. A weak test that guards behaviour is FIX.
+  tests of wiring/constants, the same behaviour re-tested elsewhere. A weak test that guards behaviour is FIX,
+  and so is a mock-echo test of code that computes something: strengthen it to assert the computed output.
 - Untested behaviour (TEST-GAP): a business rule, calculation, transformation, state transition,
-  authorization/tenant check, cross-system contract or real-input error path no test exercises. Name the
-  defect a test would catch; an untested method or file is no gap, and no new test without that defect.
+  authorization/tenant check, cross-system contract or real-input error path whose outcome no test asserts
+  (a REMOVE test earns no credit). Name the defect a test would catch; an untested method or file is no gap, and no new test without that defect.
 
 CHECKLIST (score 1=YES, 0=NO):
 <!-- GATES:BEGIN kind=q-prompt -->
@@ -182,7 +183,7 @@ Verification: [command, cwd, run ID/artifact, exit/result summary, skips/unrun c
 Complexity: [THIN/STANDARD/COMPLEX] ([LOC] LOC, [N] branches)
 Red flags: ["none"]
 Phantom mocks: [list or "none"]
-Untested behaviours: [each production behaviour no test exercises: path:line - the defect a test would catch; or "none"]
+Untested behaviours: [each production behaviour whose outcome no test asserts: path:line - the defect a test would catch; or "none"]
 No-test-needed: [production code classified NO-TEST-NEEDED, each path:line - kind; or "none"]
 Removals: [whole file - reason | the tests, each path:line - reason | none]
 Score: Q1=[0/1] Q2=[0/1] ... Q25=[0/1]
@@ -216,7 +217,7 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   A (>= 82%, every applicable critical gate = 1): No action needed
   B (>= 53% and < 82%, every applicable critical gate = 1): Fix gaps -- 2-5 targeted fixes
   C (< 53%, OR any critical gate = 0): Major rewrite needed
-  D (an AUTO TIER-D trigger from the pre-scan): Propose removing the tests (deleted only after the user confirms); rewrite only the tests that guard behaviour (TEST WORTH)
+  D (an AUTO TIER-D trigger from the pre-scan): Propose removing the tests (deleted only after the user confirms); rewrite only the tests that guard behaviour (TEST WORTH). AP31 alone: drop the focus marker and re-run
 
   A file whose every test is a REMOVE candidate guards no behaviour: Tier C at best, whatever its percentage
   (its action is the removal proposal, not a rewrite).
@@ -229,7 +230,7 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
 IMPORTANT:
 - Read BOTH the test file AND its production file
 - Red flag pre-scan first
-- BEHAVIOUR COVERAGE: list the production behaviours (TEST WORTH) and check each is exercised AND its outcome asserted; report the unexercised ones as Untested behaviours. Never list methods or files as such. API endpoint exception: a test calling client.get("/path") exercises the handler; it covers a behaviour only if it also asserts a response that would differ if that behaviour broke.
+- BEHAVIOUR COVERAGE: list the production behaviours (TEST WORTH) and check each is exercised AND its outcome asserted; report the ones whose outcome no test asserts as Untested behaviours. Never list methods or files as such. API endpoint exception: a test calling client.get("/path") exercises the handler; it covers a behaviour only if it also asserts a response that would differ if that behaviour broke.
 - PHANTOM MOCK DETECTION: List all mocked modules in test. For each: does production code actually call it? Unused mock = phantom mock.
 - SUITE-AWARE MODE: Sibling test files for the same production file may supply Q7/Q11 evidence; name each contributing test and actual production branch. A helper test is not evidence for its caller unless it executes and asserts that caller behavior. Coverage/mutation claims require matching file/symbol and tree identity.
 - CHANGED-LINES SCOPE: a listed file whose production entry carries `changed lines: <ranges>` is
