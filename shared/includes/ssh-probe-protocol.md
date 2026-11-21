@@ -36,7 +36,7 @@ this exact, deterministic serialization:
   the audit will actually connect over (prefer IPv4 when both resolve), so the same host
   cannot hash differently across resolvers/tooling.
 - Each non-host endpoint adds one line `@<role>:<name><TAB>resolved-ip<TAB>port` (role `jump`,
-  `scan-via`, `proxy` or `external`); a run with none hashes exactly as before.
+  `scan-via`, `proxy` or `external`; for `external` the port is the scanned set: `top`, `all` with `--deep-scan`, or the listed ports); a run with none hashes exactly as before.
 - Lines sorted by `name` under `LC_ALL=C` (byte-order, locale-stable).
 - Exactly one trailing newline at the end of the list (no trailing blank lines).
 - The sha256 is taken over those bytes verbatim.

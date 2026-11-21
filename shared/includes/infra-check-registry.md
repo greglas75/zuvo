@@ -7,8 +7,8 @@
 > **Column order is NORMATIVE** — parsed by Phase 3 aggregation and analyst agents.
 > Do NOT reorder or rename columns.
 
-**Templates are run on live hosts and must not lock the operator out:** keep the current session open and
-verify a NEW login before closing it; allow the SSH port before any default-deny.
+**Templates are operator instructions (the skill never runs them) and must not lock the operator out:** keep the current session open and
+verify a NEW login before closing it; allow the SSH port before any default-deny; in nftables match interfaces with `iifname`, never `iif`.
 
 ## Lynis Default Severity Mapping (DD-7)
 
@@ -64,7 +64,7 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS5-ufw-disabled | IS5 | HIGH | FIRE-4508 | Allow SSH first (`ufw allow <ssh-port>/tcp`, plus other required ports), then `ufw default deny incoming && ufw default allow outgoing`, then `ufw enable` with a second session open; verify `ufw status verbose`; not if nftables/iptables manages it | CIS 3.4.1 |
+| IS5-ufw-disabled | IS5 | HIGH | FIRE-4508 | Allow SSH first (`ufw allow <ssh-port>/tcp`, plus other required ports), then `ufw default deny incoming`, then `ufw enable` with console access or a second session open (restrict SSH to the management source when known); verify `ufw status verbose`; not if nftables/iptables manages it | CIS 3.4.1 |
 | IS5-default-allow-incoming | IS5 | CRITICAL | - | Allow SSH and required ports FIRST: `ufw allow <ssh-port>/tcp && ufw allow <required-ports>`, then `ufw default deny incoming && ufw enable` with a second session open | CIS 3.4.2 |
 | IS5-ip-forwarding-on | IS5 | MEDIUM | - | Disable IP forwarding unless required (Docker and Tailscale subnet routers need it): `sysctl -w net.ipv4.ip_forward=0`; persist in /etc/sysctl.d/99-hardening.conf | CIS 3.1.1 |
 | IS5-syncookies-off | IS5 | HIGH | - | Enable SYN cookies: `sysctl -w net.ipv4.tcp_syncookies=1`; persist in /etc/sysctl.d/99-hardening.conf | CIS 3.2.8 |
@@ -110,7 +110,7 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS10-redis-no-auth | IS10 | CRITICAL | - | Set `requirepass <strong-password>` in /etc/redis/redis.conf; restart: `systemctl restart redis` | - |
 | IS10-redis-bound-public | IS10 | CRITICAL | - | Bind Redis to localhost: set `bind 127.0.0.1` in /etc/redis/redis.conf; restart: `systemctl restart redis` | - |
-| IS10-pg-trust-auth | IS10 | CRITICAL | - | Set `password_encryption = scram-sha-256` and re-set each role's password first, then replace `trust` with `scram-sha-256` in /etc/postgresql/*/main/pg_hba.conf; reload: `systemctl reload postgresql` | CIS DB 1.3.1 |
+| IS10-pg-trust-auth | IS10 | CRITICAL | - | Set `password_encryption = scram-sha-256` and re-set each affected login role's password (clients must support SCRAM) first, then replace `trust` with `scram-sha-256` in /etc/postgresql/*/main/pg_hba.conf; reload: `systemctl reload postgresql` | CIS DB 1.3.1 |
 | IS10-pg-listen-all | IS10 | HIGH | - | Restrict PostgreSQL listener: set `listen_addresses = '127.0.0.1'` in postgresql.conf, then restart postgresql (a reload does not apply it) after checking no remote app or replica needs it | - |
 | IS10-mysql-anonymous-user | IS10 | HIGH | - | Remove anonymous MySQL users: `DELETE FROM mysql.user WHERE User=''; FLUSH PRIVILEGES;` | CIS DB 3.1 |
 

@@ -271,8 +271,8 @@ Parse the inventory into a host list (`name`, `address`, `ssh_user`, `ssh_port`,
 
 1. Resolve each `address` → IP and reverse PTR.
 2. **Duplicate-endpoint dedup (E11):** if two entries resolve to the **same IP and ssh port**, MERGE
-   them into one target and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
-3. `name` must be unique and match `[A-Za-z0-9._-]+` (it names `raw/<name>/` and `bundle/<name>.json`).
+   them into one target when `jump_host` and external target also match (else reject as conflicting routes) and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
+3. `name` must match `[A-Za-z0-9][A-Za-z0-9._-]*` and be unique ignoring case (it names `raw/<name>/` and `bundle/<name>.json`; `.`, `..` and `WEB`/`web` clashes would share files).
 4. No password fields exist in the schema; password auth must be pre-configured
    in `~/.ssh/config`/agent. The skill never prompts for or stores SSH passwords
    (ssh-probe-protocol §4).
@@ -304,7 +304,7 @@ Confirm you OWN and are AUTHORIZED to audit every host above. Connect? [y/N]
 | Non-interactive run | Authorization ONLY via `--confirm-targets <sha256>` matching the sha256 of the resolved target list (canonical serialization per ssh-probe-protocol §1). |
 | `--confirm-targets` absent OR hash mismatch (non-interactive) | **ABORT immediately** — re-resolve, recompute the canonical hash, and abort on any mismatch (DNS-TOCTOU recompute-and-abort). Target authorization is NEVER `[AUTO-DECISION]`. |
 
-After confirmation write `scope` to `state.json` (Resume Semantics).
+On a fresh run write `scope` to `state.json` once after confirmation; a resume only compares it (Resume Semantics).
 `--dry-run` prints the canonical target list AND its sha256 so the user can copy
 the hash into a subsequent `--confirm-targets <sha256>` invocation. `[AUTO-DECISION]`
 applies ONLY to low-risk defaults (E13 skip-external when no proxy), never to
@@ -511,7 +511,7 @@ package evidence. Grep the host's raw dir; a CVE with no raw evidence is strippe
 
 ```bash
 for cve in $(printf '%s\n' "$finding_cves" | grep -oE 'CVE-[0-9]{4}-[0-9]+' | sort -u); do
-  if ! grep -rqF "$cve" "$RUN_DIR/raw/$name/"; then
+  if ! grep -rqwF "$cve" "$RUN_DIR/raw/$name/"; then
     echo "CVE-EVIDENCE-MISSING dropped: $cve (host $name) — not in raw/ tool output"
     # strip $cve from the finding; LLM version→CVE mapping is forbidden (IC-6/DD-6)
   fi
@@ -623,7 +623,7 @@ outcome vocabulary (`OK|DEGRADED|UNREACHABLE|FAILED|SKIPPED`, IC-2).
 resumed run (always written LAST).
 
 **Scope match.** `state.json` `scope` = sha256 of the canonical target list (endpoints included,
-ssh-probe-protocol §1), the dimension set, and `no_install`, `deep_scan`, `skip_external`,
+ssh-probe-protocol §1), the dimension set, and `quick`, `no_install`, `deep_scan`, `skip_external`,
 `external_mode`, `proxy`, `scan_via`. A resume continues ONLY when the scope recomputed from the
 current arguments equals it; else print `RESUME-REFUSED: <field> differs` and stop (implicit
 adoption: mint a new `RUN_DIR`). A run dir with no `scope` is not resumable.
@@ -677,7 +677,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-`hosts_assessed` counts hosts whose bundle has `collection_complete: true`. Every other host
+`hosts_assessed` counts hosts whose bundle has `collection_complete: true` and at least one `ok`/`finding` check (a bundle of transport `error`s is `UNREACHABLE`). Every other host
 (`UNREACHABLE`, `FAILED`, `SKIPPED`, partial bundle) is unassessed: never scored or counted clean,
 and it sets `gate_status = FAIL`, as does zero assessed hosts. This audit has no critical-gate
 table, so `../../shared/includes/audit-postamble.md` §1 rows 2-5 apply and a failed gate is row 3
