@@ -16,11 +16,9 @@ RED FLAG PRE-SCAN (do FIRST). AUTO TIER-D is exactly the AP rows marked AUTO TIE
 QUICK HEURISTICS:
 - 0 CalledWith in entire file -> likely score <=4
 - 10+ DI providers in test setup -> likely score <=5
-- Tests calling __privateMethod() directly -> likely score <=5
 
 POSITIVE INDICATORS:
 - Factory with named overrides -> likely >=8
-- Regression anchor in test name -> mature suite
 - it.each with table-driven data -> Q8+Q9+Q11 likely pass
 
 PRODUCTION CODE ANALYSIS (do BEFORE scoring):
