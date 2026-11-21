@@ -1777,9 +1777,9 @@ fi
 
 echo "== part 2: Phase 3b reviews the real saved report, not a literal [date] path =="
 
-P3B_LINE='[ -f "$REPORT" ] && ~/.zuvo/adversarial-review --mode tests --files "$REPORT" || echo "adversarial: report not found — write it first"'
+P3B_LINE='if [ -f "$REPORT" ]; then ~/.zuvo/adversarial-review --mode tests --files "$REPORT"; else echo "adversarial: report not found — write it first" >&2; fi'
 p3b_of() {  # every line (continuations joined) whose first non-blank text is the call — printed RAW, byte for byte
-  join_cont | awk '{ t = $0; sub(/^[ \t]+/, "", t) } index(t, "[ -f \"$REPORT\" ] && ~/.zuvo/adversarial-review --mode tests") == 1 { print }'
+  join_cont | awk '{ t = $0; sub(/^[ \t]+/, "", t) } index(t, "~/.zuvo/adversarial-review --mode tests") > 0 { print }'
 }
 p3b_now=$(p3b_of < "$SKILL")
 n_now=$(printf '%s' "$p3b_now" | awk 'END { print NR }')
@@ -1788,7 +1788,12 @@ if [ "$n_now" -eq 1 ] && [ "$p3b_now" = "$P3B_LINE" ]; then
 else
   bad "Phase 3b: exactly one adversarial-review --mode tests line, the pinned literal — $n_now found: ${p3b_now:-<none>}"
 fi
-must "Phase 3b assigns REPORT from the real date, never the [date] placeholder" grep -qF 'REPORT="zuvo/audits/test-quality-audit-$(date +%F).md"' "$SKILL"
+must "Phase 3b assigns REPORT from the real date, never the [date] placeholder" grep -qF '/audits/test-quality-audit-$(date +%F).md"' "$SKILL"
+if grep -qF 'test-quality-audit-[date]' <(sed -n '/^## Phase 3b/,/^## Phase 4/p' "$SKILL" | grep -F 'adversarial-review'); then
+  bad "Phase 3b: an adversarial-review line still points at the literal [date] placeholder"
+else
+  pass "Phase 3b: no adversarial-review line points at the [date] placeholder"
+fi
 
 # ── The setup call's exit-3 list in SKILL.md names EVERY reason the setup can STOP for: each tab_stop of
 # tab_take_lock and cmd_setup is paired with the phrase the list uses for it, and a tab_stop with no pair

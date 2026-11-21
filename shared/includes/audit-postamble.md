@@ -11,9 +11,9 @@ listed the retro / run-line / validity-gate steps in contradicting orders.
 
 | # | Condition | VERDICT |
 |---|-----------|---------|
-| 1 | Any **critical gate tripped** (the skill's gate table: fires on the FINDING, never on a dimension score of 0) | `FAIL` |
+| 1 | Any **critical gate tripped** (the skill's gate table: a gate fires on the trigger the table names, a finding or the table's own score threshold, never on a dimension that merely scored 0 for lack of evidence) | `FAIL` |
 | 2 | **≥4 critical findings** | `FAIL` |
-| 3 | Validity Gate `gate_status = FAIL`, or a skill-defined coverage gate FAIL (pentest 2.4, security-audit DEGRADED, db-audit unreachable tool, zero applicable checks) | `INCOMPLETE` |
+| 3 | Validity Gate `gate_status = FAIL`, or a skill-defined coverage gate FAIL (pentest 2.4, security-audit `surface_gate = FAIL`, db-audit unreachable tool, zero applicable checks) | `INCOMPLETE` |
 | 4 | 1-3 critical findings | `WARN` |
 | 5 | 0 critical findings | `PASS` |
 
@@ -26,9 +26,11 @@ listed the retro / run-line / validity-gate steps in contradicting orders.
 - The report header, the JSON `verdict` field and the Run line carry the SAME value. Compute it
   once, after the Validity Gate, and copy it; never recompute it in a second place.
 
-A skill may be STRICTER than rows 4-5 (pentest: any confirmed CRITICAL finding is `FAIL`; a11y and
-security grade bands under rows 1 and 3), never looser: no skill turns a row 1-3 outcome into
-`WARN` or `PASS`.
+A skill may be STRICTER than rows 3-5, never looser: it may return `FAIL` where a row says `INCOMPLETE`,
+`WARN` or `PASS`, and it may never return `WARN` or `PASS` where rows 1-3 say `FAIL` or `INCOMPLETE`.
+Pentest: any confirmed CRITICAL finding is `FAIL` (its row 2 threshold is 1, and it wins over row 3).
+a11y and security-audit: rows 1-3 first, then the grade band decides rows 4-5; security-audit's
+AT RISK / CRITICAL grade is `FAIL` even over row 3.
 
 A skill states only WHICH gates are critical and what trips each one (its gate table). It does not
 restate rows 1-5. A line like `VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+
@@ -44,9 +46,12 @@ critical)` is the bug this file replaces — it omits row 1.
    confirms or adds go into the report, and step 1 is recomputed.
 4. **Retrospective** — `retrospective.md`: `RETRO:` line to `~/.zuvo/retros.log`, long form to
    `~/.zuvo/retros.md`. `append-runlog` refuses a run line without it (`RETRO_REQUIRED`, exit 2).
-5. **Validity Gate block** — printed, with `gate_status`. Its `postamble` fields check steps 2-4
-   (they have happened by now). If it FAILs, apply §1 row 3 and rewrite the VERDICT in the report
-   header and JSON in place, so all three carriers agree.
+5. **Validity Gate block** — run `~/.zuvo/verify-audit <saved report>` first (it is the check
+   behind `verify_audit_pass`; `append-runlog` repeats it, so the result must already be known),
+   then print the block with `gate_status`. Its `postamble` fields check steps 2-4 (they have
+   happened by now); `verify_audit_pass` carries the verify-audit result. If it FAILs, re-evaluate §1
+   (rows 1-2 keep `FAIL`; otherwise row 3 gives `INCOMPLETE`), append `[VALIDITY GATE FAIL]` to NOTES, and
+   rewrite a changed VERDICT in the report header and JSON in place, so all three carriers agree.
 6. **Run line** — `printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog` (never `>> runs.log`), with
    the final VERDICT.
 
@@ -56,4 +61,6 @@ wrapper's message — never report the audit as complete. An audit re-entered af
 resumes at the first missing step.
 
 A pre-scan abort (consent declined, nothing to audit) exits before step 2 and writes no run line;
-that is `ABORTED`/`BLOCKED` reported to the user, not a logged audit.
+that is `ABORTED`/`BLOCKED` reported to the user, not a logged audit. An abort that §1 row 3 names
+(db-audit: a required tool is unreachable) is different: it is a finished audit with a blocker, so it
+writes the report and closes through §2 with an `INCOMPLETE` Run line.

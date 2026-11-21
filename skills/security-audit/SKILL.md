@@ -62,7 +62,7 @@ Comprehensive security assessment across 15 dimensions (S1-S15) covering OWASP T
 | `--static` | Static analysis only -- skip Phase 8 even if `--live-url` present |
 | `--quick` | Quick mode: secrets + auth coverage + critical gates only |
 | `--persist-backlog` | Emit backlog entries for CRITICAL/HIGH findings |
-| `--strict-v2` | No-op, accepted for back-compat: the 14 v2 vulnerability classes (see `pentest`) count at full gate weight since 1.5.0 |
+| `--strict-v2` | No-op, accepted for back-compat: the 14 v2 vulnerability classes count at full gate weight since 1.5.0 |
 
 | Mode | Scope | Phases | Live Probes |
 |------|-------|--------|-------------|
@@ -126,7 +126,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch, path resolution, 
 
 ### Forbidden escape hatches: `scan_secrets: skipped`, `search_patterns: not_run`, `trace_route: N/A` (when backend exists), `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED with required value instead.
 
-### Required POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Wrapper gates retro-presence AND verify-audit (every HIGH/CRITICAL/MEDIUM finding needs `path/to/file.ext:LINE` citation resolving in current tree). Stop without `append-runlog` → audit INVALID, VERDICT = INCOMPLETE.
+### Required POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Wrapper gates retro-presence AND verify-audit (every HIGH/CRITICAL/MEDIUM finding needs `path/to/file.ext:LINE` citation resolving in current tree). Stop without `append-runlog` → the run is not logged: report it as not logged, never as complete (`audit-postamble.md` §2).
 
 ### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
 
@@ -924,7 +924,7 @@ VALIDITY GATE
 
 **Coverage-gate parity (IC-2 / IC-5 — mirrors pentest `5814c2d`).** The audit cannot emit a passing
 grade over an **un-enumerated attack surface**: if `surface_gate = FAIL` (under 90% of entry points
-enumerated, or any uncovered entry point lacks a reason code), VERDICT is `INCOMPLETE` (§1 row 3).
+enumerated, or any uncovered entry point lacks a reason code), VERDICT is `INCOMPLETE` (§1 row 3; a `FAIL` from a tripped critical gate or an AT RISK/CRITICAL grade stays `FAIL`).
 **Tool/profile gaps do NOT fail the surface gate** — a missing checkov/gitleaks/IaC scanner or an
 unprofiled stack lowers IC-5 `class_coverage` (advisory, surfaced in the report) only, so a fresh
 environment without optional tools still produces a valid audit. The denominator of IC-2 is entry
@@ -945,11 +945,11 @@ Three clarifications (per adversarial review):
 If `gate_status = FAIL` OR `surface_gate = FAIL` (NOT `N/A`) → `../../shared/includes/audit-postamble.md` §1 row 3 (`INCOMPLETE`; a `FAIL` from a tripped critical gate or an AT RISK/CRITICAL grade stays `FAIL`). Append
 `[VALIDITY GATE FAIL]` / `[COVERAGE GATE FAIL]` to NOTES, record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"):
 `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source security-audit --target subject:security-audit-incomplete --title "$T"`, with `T` the fixed title
-`security-audit run INCOMPLETE: validity or coverage gate failed`, the same words on every run and no date (this run's reason goes in the report, never in the title). Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`. Print Validity Gate AFTER retro append + `~/.zuvo/append-runlog` so postamble fields can be `yes(verified)`.
+`security-audit run INCOMPLETE: validity or coverage gate failed`, the same words on every run and no date (this run's reason goes in the report, never in the title). Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`. Print the Validity Gate per `../../shared/includes/audit-postamble.md` §2 step 5: after the report is saved and the retro appended, before the Run line, with `verify_audit_pass` from `~/.zuvo/verify-audit` on the saved report.
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
 
-A tripped critical gate (Scoring: S1=0, S4<3, S5<3, S7=0, S15<3) is §1 row 1. Otherwise the posture grade decides: HEALTHY -> PASS, NEEDS ATTENTION -> WARN, AT RISK or CRITICAL -> FAIL. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+A tripped critical gate (Scoring: S1=0, S4<3, S5<3, S7=0, S15<3) is §1 row 1; ≥4 critical findings is row 2; AT RISK or CRITICAL grade is `FAIL`; a validity or coverage gate failure is row 3 (`INCOMPLETE`). Otherwise the posture grade decides: HEALTHY -> PASS, NEEDS ATTENTION -> WARN. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
