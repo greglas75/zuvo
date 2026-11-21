@@ -78,6 +78,7 @@ CORE FILES LOADED:
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
   2. ../../shared/includes/env-compat.md           -- [READ | MISSING -> STOP]
   3. ../../shared/includes/run-logger.md           -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/audit-postamble.md      -- [READ | MISSING -> STOP]   (verdict rule; the tool-unreachable abort below and the Validity Gate cite it)
 ```
 
 **Deferred (lazy load):**
@@ -85,7 +86,6 @@ CORE FILES LOADED:
 ```
 DEFERRED FILES (read only when needed):
   - ../../shared/includes/retrospective.md  -- read right before Phase 6 (saves ~3K tokens during audit)
-  - ../../shared/includes/audit-postamble.md -- read right before Phase 6 (verdict rule + closing order)
 ```
 
 Note: `cq-patterns.md` is NOT loaded — this is a read-only audit, not a code quality review. Loading it wastes ~7K tokens per turn.
@@ -145,7 +145,7 @@ For each held trigger, resolve the tool in this order — abort ONLY at the last
    On genuine failure:
    - Print `[ABORT] Required tool '<name>' not reachable after reveal attempt. db-audit cannot produce a valid report without it.`
    - Do NOT proceed with grep fallback. The audit is incomplete by definition.
-   - Exit with status `INCOMPLETE` and record the `blocker` **Process item** (`../../shared/includes/backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source db-audit --target subject:db-audit-blocker --title "$T"`, with `T` the fixed title `db-audit INCOMPLETE: a required tool is not reachable`, the same words on every run, no date and no tool name; the tool and the project go in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in `backlog-protocol.md` "Filing from a skill" says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed; name its F-id in the report.
+   - VERDICT `INCOMPLETE` (`../../shared/includes/audit-postamble.md` §1 row 3). First record the `blocker` **Process item** (`../../shared/includes/backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source db-audit --target subject:db-audit-blocker --title "$T"`, with `T` the fixed title `db-audit INCOMPLETE: a required tool is not reachable`, the same words on every run, no date and no tool name; the tool and the project go in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in `backlog-protocol.md` "Filing from a skill" says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed; name its F-id in the report. Then write the report stating the blocker and close per §2 (retro, Run line).
 
 ### Required POSTAMBLE — closing order `../../shared/includes/audit-postamble.md` §2
 
@@ -1118,7 +1118,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which tools or postamble missing>]
 ```
 
-If `gate_status = FAIL`: VERDICT per `../../shared/includes/audit-postamble.md` §1 row 3, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** unless step 3 of "Audit completion verification" above already did (it gives the command and the fixed title; one item per run), and print its F-id in this block on a line `incomplete-item: <F-id>` (with `Backlog writes (gate):` for a late call, as step 3 says).
+If `gate_status = FAIL`: VERDICT per `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`; rewrite it in the saved report header if it changed), append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** unless step 3 of "Audit completion verification" above already did (it gives the command and the fixed title; one item per run), and print its F-id in this block on a line `incomplete-item: <F-id>` (with `Backlog writes (gate):` for a late call, as step 3 says).
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1
 

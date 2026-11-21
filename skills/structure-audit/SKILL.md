@@ -89,7 +89,7 @@ CORE FILES LOADED:
   6. audit-postamble.md  -- [READ | MISSING -> STOP]
 ```
 
-If file 1, 2, 4, or 5 is missing, STOP. File 3 has a documented fallback.
+If file 1, 2, 4, 5 or 6 is missing, STOP. File 3 has a documented fallback.
 
 ## Environment Compatibility
 
@@ -144,7 +144,7 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 
 ### Required POSTAMBLE — closing order `../../shared/includes/audit-postamble.md` §2
 
-Not complete until `zuvo/audits/structure-audit-<date>.md` is on disk (at the **project root**: `../../shared/includes/report-output-location.md`), the retro is appended and `~/.zuvo/append-runlog` exits 0. The wrapper gates BOTH retro presence (a `RETRO:` entry for `skill=structure-audit project=<this>`; missing → exit 2, runs.log NOT appended: load `retrospective.md`, fill 9 fields, run the bash appends) and `~/.zuvo/verify-audit` on the report (every finding section needs a `path/to/file.ext:LINE` that resolves in the current tree; rejected → add the citations, re-run). Stopping before the wrapper makes the Validity Gate `FAIL — postamble incomplete` (§1 row 3).
+Not complete until `zuvo/audits/structure-audit-<date>.md` is on disk (at the **project root**: `../../shared/includes/report-output-location.md`), the retro is appended and `~/.zuvo/append-runlog` exits 0. The wrapper gates BOTH retro presence (a `RETRO:` entry for `skill=structure-audit project=<this>`; missing → exit 2, runs.log NOT appended: load `retrospective.md`, fill 9 fields, run the bash appends) and `~/.zuvo/verify-audit` on the report (every finding section needs a `path/to/file.ext:LINE` that resolves in the current tree; rejected → add the citations, re-run). Stopping before the wrapper leaves no Run line: say the run is not logged, never report the audit as complete (`audit-postamble.md` §2).
 
 ### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
 
@@ -491,7 +491,7 @@ In LIMITED/NO-CODE mode, gates are N/A.
 ```
 earned = sum of the 0-3 scores of the applicable dimensions
 available = 3 * (number of applicable dimensions)      # N/A dimensions leave the denominator
-normalized_score = (earned / available) * 100
+normalized_score = (earned / available) * 100      # available = 0 (every dimension N/A): no score, no grade — VERDICT INCOMPLETE (audit-postamble.md §1 row 3)
 ```
 
 ### 4.4 Grade Assignment
@@ -499,8 +499,8 @@ normalized_score = (earned / available) * 100
 | Range | Grade |
 |-------|-------|
 | >= 85 | A |
-| 70-84 | B |
-| 50-69 | C |
+| >= 70 and < 85 | B |
+| >= 50 and < 70 | C |
 | < 50 | D |
 | Any gate = 0 | FAIL |
 
@@ -649,7 +649,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL`: VERDICT per `../../shared/includes/audit-postamble.md` §1 row 3, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source structure-audit --target subject:structure-audit-incomplete --title "$T"`, with `T` the fixed title `structure-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
+If `gate_status = FAIL`: VERDICT per `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`; rewrite it in the saved report header if it changed), append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the `incomplete` **Process item** (`backlog-protocol.md` "Filing from a skill"): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source structure-audit --target subject:structure-audit-incomplete --title "$T"`, with `T` the fixed title `structure-audit run INCOMPLETE: validity gate failed`, the same words on every run and no date; this run's reason goes in the report, never in the title. Assign "$R" and "$T" before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and backlog-add refuses a missing required field (`REFUSED missing-field:<f>`). It is kept in the findings ledger, not ticketed. File it before the report's `Backlog writes:` line is printed, so its `wrote=` paths are on that line: decide `gate_status` from every field the report can already fill (all but `postamble`) before the report is written, and file the item then. Only a `postamble` field that fails after the report is saved files it at this gate (a repeat bumps the same record); the Validity Gate block then carries its F-id on a line `incomplete-item: <F-id>` and its paths on a line `Backlog writes (gate): <path>, … | none`.
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1 (critical gates: SA6/SA7/SA8 in 4.2)
 

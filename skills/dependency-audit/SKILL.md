@@ -592,7 +592,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL — <which gates missing>]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 row 3; append `[VALIDITY GATE FAIL]` to NOTES and fix the VERDICT in the report header and JSON.
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and, if the VERDICT changed, rewrite it in the report header and JSON.
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
 

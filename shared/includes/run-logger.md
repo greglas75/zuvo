@@ -188,13 +188,14 @@ If the hook file doesn't exist (e.g., Codex/Cursor without hooks), fall back to 
 
 ## VERDICT Vocabulary
 
-Only these 5 values are valid. Skills with non-standard internal vocabularies must map to these:
+Only these 6 values are valid. Skills with non-standard internal vocabularies must map to these:
 
 | Standard | Meaning |
 |----------|---------|
 | `PASS` | Skill completed successfully |
 | `WARN` | Completed with non-critical issues |
 | `FAIL` | Critical issues found or skill failed |
+| `INCOMPLETE` | An audit whose Validity/coverage gate failed: it cannot certify PASS or WARN (`audit-postamble.md` §1 row 3) |
 | `BLOCKED` | Could not proceed due to hard blocker |
 | `ABORTED` | User cancelled or skill rejected |
 
