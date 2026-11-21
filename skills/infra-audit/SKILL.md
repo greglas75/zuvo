@@ -368,7 +368,7 @@ COLLECTOR="$(command -v infra-collect.sh 2>/dev/null \
 [ -n "$COLLECTOR" ] || { echo "ERROR: infra-collect.sh not found (install.sh not run?)"; exit 1; }
 ```
 
-Invoke per host, passing `ssh_key` / `known_hosts` / `proxy` resolved from
+Invoke per host (first `rm -rf "$RUN_DIR/raw/$name"`: stale files must not satisfy the CVE gate), passing `ssh_key` / `known_hosts` / `proxy` resolved from
 `hosts.yaml` (DD-2 schema). The collector applies the IC-8 SSH invariants itself.
 
 ```bash
@@ -619,7 +619,7 @@ outcome vocabulary (`OK|DEGRADED|UNREACHABLE|FAILED|SKIPPED`, IC-2).
 | `unreachable` | retry from `pending` (the cause may have been fixed) |
 | `failed` | retry from `pending` (the cause may have been fixed) |
 
-`fleet-summary.md` is regenerated from per-host reports at the end of every
+`fleet-summary.md` is regenerated from per-host reports and `state.json` (unassessed hosts included) at the end of every
 resumed run (always written LAST).
 
 **Scope match.** `state.json` `scope` is an object of fields: `targets` (sha256 of the canonical
@@ -678,7 +678,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-`hosts_assessed` counts hosts whose bundle has `collection_complete: true` and at least one `ok`/`finding` check (a bundle of transport `error`s is `UNREACHABLE`). Every other host
+`hosts_assessed` counts hosts that reached `reported` with a bundle that has `collection_complete: true` and at least one `ok`/`finding` check (a bundle of transport `error`s is `UNREACHABLE`). Every other host
 (`UNREACHABLE`, `FAILED`, `SKIPPED`, partial bundle) is unassessed: never scored or counted clean,
 and it sets `gate_status = FAIL`, as does zero assessed hosts. This audit has no critical-gate
 table, so `../../shared/includes/audit-postamble.md` §1 rows 2-5 apply and a failed gate is row 3

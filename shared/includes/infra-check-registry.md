@@ -64,8 +64,8 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS5-ufw-disabled | IS5 | HIGH | FIRE-4508 | Allow SSH first (`ufw allow <ssh-port>/tcp`, plus other required ports), then `ufw default deny incoming`, then `ufw enable` with console access or a second session open (restrict SSH to the management source when known); verify `ufw status verbose`; not if nftables/iptables manages it | CIS 3.4.1 |
-| IS5-default-allow-incoming | IS5 | CRITICAL | - | Allow SSH and required ports FIRST: `ufw allow <ssh-port>/tcp && ufw allow <required-ports>`, then `ufw default deny incoming && ufw enable` with a second session open | CIS 3.4.2 |
+| IS5-ufw-disabled | IS5 | HIGH | FIRE-4508 | Allow SSH first (`ufw allow <ssh-port>/tcp`, plus other required ports), then `ufw default deny incoming`, then `ufw enable` with console access or a second session open, then test a NEW login (restrict SSH to the management source when known); verify `ufw status verbose`; not if nftables/iptables manages it | CIS 3.4.1 |
+| IS5-default-allow-incoming | IS5 | CRITICAL | - | Allow SSH and required ports FIRST: `ufw allow <ssh-port>/tcp && ufw allow <required-ports>`, then `ufw default deny incoming && ufw enable` with a second session open, then test a NEW login | CIS 3.4.2 |
 | IS5-ip-forwarding-on | IS5 | MEDIUM | - | Disable IP forwarding unless required (Docker and Tailscale subnet routers need it): `sysctl -w net.ipv4.ip_forward=0`; persist in /etc/sysctl.d/99-hardening.conf | CIS 3.1.1 |
 | IS5-syncookies-off | IS5 | HIGH | - | Enable SYN cookies: `sysctl -w net.ipv4.tcp_syncookies=1`; persist in /etc/sysctl.d/99-hardening.conf | CIS 3.2.8 |
 
@@ -121,7 +121,7 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 | IS11-suid-unexpected | IS11 | HIGH | - | Remove unexpected SUID bit: `chmod u-s <path>`; audit with `find / -xdev -perm -4000 -type f 2>/dev/null` | CIS 6.1.11 |
 | IS11-world-writable-dir | IS11 | MEDIUM | - | Remove world-writable on non-sticky dirs: `chmod o-w <path>`; audit (sticky /tmp excluded) with `find / -xdev -type d -perm -0002 ! -perm -1000 2>/dev/null` | CIS 6.1.10 |
 | IS11-tmp-noexec-missing | IS11 | LOW | - | Mount /tmp with noexec: add `noexec` to /tmp entry in /etc/fstab (or systemd override for tmp.mount), then `mount -o remount,noexec /tmp` | CIS 1.1.3 |
-| IS11-apparmor-disabled | IS11 | MEDIUM | - | Enable AppArmor: `systemctl enable apparmor --now`; check `aa-status`, then enforce profiles one at a time (`aa-enforce <profile>`) and watch the service | CIS 1.6.1 |
+| IS11-apparmor-disabled | IS11 | MEDIUM | - | Enable AppArmor: `aa-complain` the non-baseline profiles, then `systemctl enable apparmor --now`; check `aa-status`, then enforce profiles one at a time (`aa-enforce <profile>`) and watch the service | CIS 1.6.1 |
 
 ## IS12 — Secrets Hygiene on Host
 
