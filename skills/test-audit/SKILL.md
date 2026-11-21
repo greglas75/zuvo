@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: "Batch audit of test files against Q1-Q25 quality gates and AP1-AP32 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
+description: "Batch audit of test files against Q1-Q25 quality gates and AP1-AP32 anti-patterns. Flags orphan tests, phantom mocks, tests worth removing (render-only, mock-echo, snapshot, tautological) and untested behaviours that name the defect a test would catch. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
 category: Code/Test audits
 codesift_tools:
   always:
@@ -12,11 +12,11 @@ codesift_tools:
     - get_file_tree            # discover *.test.* / *.spec.* / __tests__/
     - get_file_outline
     - search_text
-    - search_symbols           # untested public methods (production-side)
+    - search_symbols           # production behaviours (to check which are tested)
     - get_symbol
     - get_symbols
-    - find_references          # orphan-test + untested-public-method detection (no AP id — this is the
-                               #   pre-scan's ORPHAN/untested-methods signal, not an anti-pattern)
+    - find_references          # orphan-test detection and test-to-behaviour pairing (no AP id — the
+                               #   pre-scan's ORPHAN signal, not an anti-pattern)
     - find_dead_code           # AP17 unused test data declared but never referenced
     - find_clones              # AP18 duplicate test names / copy-pasted test bodies
     - search_patterns
@@ -65,7 +65,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 | `[file]` | Audit a single test file with full evidence (forces deep mode) |
 | `[file file2 …]` | Audit exactly the listed test files (space-separated, forces deep mode) — the form the Test Quality Gate (`../../shared/includes/test-quality-gate.md`, called from build/refactor/execute/write-tests/write-e2e) uses to scope to touched files |
 | `--deep` | Collect evidence and fix recommendations for every file |
-| `--quick` | Binary pass/fail only, skip evidence |
+| `--quick` | Binary Q verdicts, no prose or fix recommendations; every Q=0, AP, removal and untested behaviour still cites `path:line` |
 | `--include-e2e` | Include E2E test files in scope |
 | `--details` | Save per-file reports to `zuvo/audits/test-audit-details/` |
 | `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`) |
@@ -91,7 +91,7 @@ capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical worke
 | `[file]` | Single file | Deep | `--commit=ask` | Full evidence |
 | `[file file2 …]` | Listed files only | Deep | `--commit=ask` | File-list scope (Test Quality Gate callers pass `--read-only --commit=off`) |
 | `--deep` | Any scope | Full evidence + fixes | Per flag | Thorough |
-| `--quick` | Any scope | Binary only | `--commit=off` | Fast triage |
+| `--quick` | Any scope | Binary verdicts + `path:line` per finding | `--commit=off` | Fast triage |
 | `--include-e2e` | + E2E files | Standard | Per flag | Expanded scope |
 | `--details` | Any scope | + per-file reports | Per flag | Save individual files |
 
@@ -132,7 +132,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 |------|---------|---------------|
 | `find_dead_code` | Always | **NO** — AP17 unused test data |
 | `find_clones` | Always | **NO** — AP18 duplicate test names / copy-pasted bodies |
-| `find_references` | Always | **NO** — orphan tests + untested public methods (no AP id) |
+| `find_references` | Always | **NO** — orphan tests + test-to-behaviour pairing (no AP id) |
 | `search_patterns` | Always | **NO** — Q-checklist anti-patterns |
 | `audit_scan` | Always | **NO** — compound check |
 | `scan_secrets` | Always | **NO** — hardcoded credentials in fixtures (security, not an AP) |
@@ -534,7 +534,7 @@ Evidence map: [per production file/symbol → test branch citations → matching
 | A (>=82% of applicable) | [N] | [%] | No action |
 | B (>= 53% and < 82% of applicable) | [N] | [%] | Fix gaps |
 | C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite |
-| D (auto Tier-D red flag) | [N] | [%] | Delete + rewrite |
+| D (AUTO TIER-D trigger) | [N] | [%] | Delete; rewrite only tests that guard behaviour |
 | INCOMPLETE (no tier) | [N] | [%] | Finish missing evaluation |
 | ORPHAN | [N] | [%] | Verify or delete |
 
@@ -548,10 +548,15 @@ Evidence map: [per production file/symbol → test branch citations → matching
 | File | Red Flag | Details |
 |------|----------|---------|
 
-## Untested Public Methods
+## Untested Behaviours (each names the defect a test would catch; never a bare method or file)
 
-| File | Untested Methods | Impact |
-|------|-----------------|--------|
+| File | Behaviour (path:line) | Defect a test would catch |
+|------|----------------------|---------------------------|
+
+## Removal Proposals (REMOVE: proposed, never auto-deleted)
+
+| File | Test (path:line) | Reason (render-only / mock-echo / snapshot / tautological / wiring) |
+|------|------------------|----------------------------------------------------------------------|
 
 ## Top Failed Questions (across all files)
 
@@ -620,7 +625,7 @@ For each audited test file, find its production file row in coverage.md:
 | D (auto Tier-D red flag) | PARTIAL | Effectively untested |
 | INCOMPLETE (no tier) | Leave existing row unchanged | Evaluation unavailable; never register as COVERED |
 
-Only downgrade coverage status, never upgrade. If production file is not yet in coverage.md, add it.
+Only downgrade coverage status, never upgrade. A production file the audit classified NO-TEST-NEEDED (presentational, wiring, constants) is never downgraded for lacking tests: leave its row. If production file is not yet in coverage.md, add it.
 
 Output: `COVERAGE UPDATE: [N] rows updated ([N] downgraded, [N] confirmed, [N] new)`
 
@@ -629,9 +634,9 @@ Output: `COVERAGE UPDATE: [N] rows updated ([N] downgraded, [N] confirmed, [N] n
 Every finding this audit records goes through `backlog-add`, one call per finding (`backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here). Under `--read-only` this phase does not run: the calling skill records the findings (`test-quality-gate.md`).
 
 **What to record:**
-- **Tier C/D files:** call `backlog-add` for every finding (the protocol's bars decide where each lands), a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested public method, a missing error-path test), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding), and `BUG` only when it names the input and the wrong output (a BUG needs `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
-- **Tier B critical gate failures** (Q7/Q11/Q13/Q15/Q17=0): one call per gate, the gate named in the title.
-- **Auto Tier-D red flags** (AP13/AP14/AP16): always submitted, the same call with `--severity high`.
+- **Tier C/D files:** call `backlog-add` for every finding (the protocol's bars decide where each lands), a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested behaviour: the title names the defect a test would catch; never a bare untested method or file, and nothing for NO-TEST-NEEDED code), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding; a REMOVE proposal is a `CQ` titled "Remove: …"), and `BUG` only when it names the input and the wrong output (a BUG needs `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
+- **Critical gate failures** (Q7/Q11/Q13/Q15/Q17=0 — always a Tier C file, covered above): one call per gate, the gate named in the title. A Tier B file has none and files nothing.
+- **AUTO TIER-D triggers** (the batch prompt's pre-scan): always submitted, the same call with `--severity high`.
 
 Assign `"$R"`, `"$F"` and `"$T"` before each call, `"$A"` only when you pass `--anchor`, and `"$M"` only when you pass `--missing-assertion`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 
@@ -654,14 +659,14 @@ If any step is incomplete, go back and finish it before continuing.
 
 After presenting the report, the user may request fixes:
 
-1. **Fix** -- rewrite test files following the quality rules
+1. **Fix** -- rewrite test files following the quality rules. Fix only what the report names: strengthen tests that guard behaviour, add a test only for a listed Untested Behaviour (the defect it names), and never create tests for NO-TEST-NEEDED code or to lift a count. REMOVE items are shown as one list and deleted only after the user confirms it; no `--commit` value deletes a test on its own
 2. **Test** -- run the test suite to confirm all tests pass
 3. **Verify** -- for each fixed file:
    - Only test files modified (no production code changes)
    - Full test suite green
    - All modified test files <= 400 lines
    - Q1-Q25 self-eval on each fixed file
-   - Tier improvement confirmed (D->C+, C->B+, B->A)
+   - Tier improvement confirmed (D->C+, C->B+, B->A); a confirmed REMOVE needs no tier
 4. **Commit** -- behavior per `--commit` flag (ask/auto/off). After the code commit, each B-id Phase 5 printed for a finding the fix resolved is closed with that commit's `<sha7>`, as `backlog-protocol.md` "Filing from a skill", **Closing, not removing**, says (an F-id is a ledger record with no entry to close). With no code commit (a declined `ask`, `--commit=off`) there is no `<sha7>`: the entry stays open and the summary names it as fixed and not yet committed
 5. **Re-audit** -- optionally re-run on fixed files to verify improvement
 
@@ -673,10 +678,10 @@ The closing commit is the last action of whichever comes last. With no fix workf
 
 | Finding | Action | Command |
 |---------|--------|---------|
-| Tier D files (any AUTO TIER-D red flag, or a critical Q gate = 0) | Rewrite tests | `zuvo:write-tests [path]` |
+| Tier D file (AUTO TIER-D trigger) or Tier C file (critical Q gate = 0, or < 53%) | Rewrite the tests that guard behaviour; REMOVE the rest | `zuvo:write-tests [path]` |
 | Same AP across 10+ files | Batch fix | `zuvo:fix-tests --pattern [AP-ID]` |
-| Tier B-C with Q7=0 | Add error tests | `zuvo:write-tests [path]` |
-| Coverage gaps (methods untested) | Write missing tests | `zuvo:write-tests [path]` |
+| Q7=0 (a contract negative case untested) | Add that negative-case test | `zuvo:write-tests [path]` |
+| Untested behaviour (named defect) | Write that test only | `zuvo:write-tests [path]` |
 | Test infra issues (runner config) | Optimize runner | `zuvo:tests-performance` |
 
 ## Completion Gate Check
@@ -687,7 +692,7 @@ Before printing the final output block, verify every item. Unfinished items = pi
 COMPLETION GATE CHECK
 [ ] Red flag pre-scan ran on every batch
 [ ] Phantom mock detection ran: unused mocks listed
-[ ] Untested public methods listed per file
+[ ] Untested behaviours (with the defect), Removals and No-test-needed listed per file
 [ ] Adversarial review ran on audit report
 [ ] Coverage registry updated: memory/coverage.md rows written
 [ ] Findings recorded through backlog-add (Phase 5), each B- or F-id reported or named under NOT PERSISTED (<reason>), or N/A under --read-only; the closing commit made, or none: nothing to stage, or not committed with the paths listed, or the `Backlog writes:` line printed (run by another skill)

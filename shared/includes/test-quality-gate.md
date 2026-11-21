@@ -70,7 +70,9 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
   proofs (execute). Improving a characterization test BEFORE the move would destroy the
   green-on-old lock the refactor's safety rests on.
 - **Strengthening only.** A "fix" that deletes or weakens an assertion to reach tier A is the
-  anti-pattern this gate exists to stop. If an assertion fails after strengthening, that is a
+  anti-pattern this gate exists to stop. The audit's REMOVE proposals (render-only, mock-echo, tautological
+  tests) are not applied here and its Untested Behaviours are the only new tests this gate may write: list
+  both in the gate's report for the user. If an assertion fails after strengthening, that is a
   surfaced PRODUCTION finding → route it to the calling skill's remediation path (refactor Phase
   3.5 / execute implementer re-dispatch), not a test edit.
 - **This gate edits test files only.** Production files are out of its reach by construction.

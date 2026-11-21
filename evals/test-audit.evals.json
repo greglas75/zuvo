@@ -17,11 +17,11 @@
       "fixtures": [
         {
           "path": "src/lib/discount.ts",
-          "content": "// src/lib/discount.ts\nexport interface Cart {\n  subtotal: number;\n}\n\n/**\n * Apply a percentage discount code to a cart subtotal.\n * Throws RangeError for an unknown code — the branch tests must exercise.\n */\nexport function applyDiscount(cart: Cart, code: string): number {\n  const table: Record<string, number> = { SAVE10: 0.1, SAVE25: 0.25 };\n  if (!(code in table)) {\n    throw new RangeError(`unknown discount code: ${code}`);\n  }\n  const pct = table[code];\n  return Math.round(cart.subtotal * (1 - pct) * 100) / 100;\n}\n"
+          "content": "// src/lib/discount.ts\nexport interface Cart {\n  subtotal: number;\n}\n\n/** Apply a percentage discount code to a cart subtotal. Throws RangeError for an unknown code. */\nexport function applyDiscount(cart: Cart, code: string): number {\n  const table: Record<string, number> = { SAVE10: 0.1, SAVE25: 0.25 };\n  if (!(code in table)) {\n    throw new RangeError(`unknown discount code: ${code}`);\n  }\n  const pct = table[code];\n  return Math.round(cart.subtotal * (1 - pct) * 100) / 100;\n}\n"
         },
         {
           "path": "src/lib/discount.test.ts",
-          "content": "// src/lib/discount.test.ts\nimport { describe, it, expect, vi } from \"vitest\";\n\n// AP10 + Q13 fail: the module UNDER TEST is mocked, so the real applyDiscount()\n// never runs — every assertion below verifies the mock, not production code.\nvi.mock(\"./discount\", () => ({\n  applyDiscount: vi.fn(() => 90),\n}));\nimport { applyDiscount } from \"./discount\";\n\ndescribe(\"applyDiscount\", () => {\n  it(\"works\", () => {\n    const result = applyDiscount({ subtotal: 100 }, \"SAVE10\");\n    // AP14 + Q4/Q15 fail: sole assertion is toBeTruthy on the mock's return.\n    expect(result).toBeTruthy();\n  });\n\n  it(\"returns a number\", () => {\n    const input = 90;\n    (applyDiscount as any).mockReturnValueOnce(input);\n    const result = applyDiscount({ subtotal: 100 }, \"SAVE25\");\n    // Q17 fail: asserts the value we just fed the mock — input echo, not computed.\n    expect(result).toBe(input);\n  });\n});\n"
+          "content": "// src/lib/discount.test.ts\nimport { describe, it, expect, vi } from \"vitest\";\n\nvi.mock(\"./discount\", () => ({\n  applyDiscount: vi.fn(() => 90),\n}));\nimport { applyDiscount } from \"./discount\";\n\ndescribe(\"applyDiscount\", () => {\n  it(\"works\", () => {\n    const result = applyDiscount({ subtotal: 100 }, \"SAVE10\");\n    expect(result).toBeTruthy();\n  });\n\n  it(\"returns a number\", () => {\n    const input = 90;\n    (applyDiscount as any).mockReturnValueOnce(input);\n    const result = applyDiscount({ subtotal: 100 }, \"SAVE25\");\n    expect(result).toBe(input);\n  });\n});\n"
         }
       ]
     },
@@ -46,6 +46,102 @@
         {
           "path": "src/lib/slugify.test.ts",
           "content": "// src/lib/slugify.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { slugify } from \"./slugify\";\n\ndescribe(\"slugify\", () => {\n  it(\"lowercases and hyphenates a multi-word title\", () => {\n    expect(slugify(\"Hello World\")).toBe(\"hello-world\");\n  });\n\n  it(\"strips punctuation and collapses repeated separators\", () => {\n    expect(slugify(\"Rock & Roll!!!\")).toBe(\"rock-roll\");\n  });\n\n  it(\"trims leading and trailing separators produced by edge punctuation\", () => {\n    expect(slugify(\"  ...Draft... \")).toBe(\"draft\");\n  });\n\n  it(\"preserves digits\", () => {\n    expect(slugify(\"Top 10 Songs\")).toBe(\"top-10-songs\");\n  });\n\n  it(\"throws RangeError with a descriptive message on blank input\", () => {\n    expect(() => slugify(\"   \")).toThrow(RangeError);\n    expect(() => slugify(\"\")).toThrow(\"input must be non-empty\");\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Audit src/components/StatusBadge.test.tsx and tell me which of its tests are worth keeping and what, if anything, is missing.",
+      "expected_output": "The audit treats StatusBadge as a presentational component (it only places two props on screen). Both tests only check that a passed-in label appears, so they are proposed for REMOVAL (REMOVE, render-only) with that reason and path:line. StatusBadge is classified NO-TEST-NEEDED, so the absence of further tests is NOT reported as a gap or untested behaviour, and no new test is recommended. The report is saved under zuvo/audits/ and no test file is deleted or edited by the audit; the deletion is only proposed.",
+      "files": [
+        "src/components/StatusBadge.test.tsx",
+        "src/components/StatusBadge.tsx"
+      ],
+      "assertions": [
+        "The audit records both tests in StatusBadge.test.tsx as REMOVE proposals with the reason render-only (they only show a passed-in label), citing path:line.",
+        "The audit records StatusBadge.tsx as NO-TEST-NEEDED and shows no untested-behaviour or TEST-GAP finding and no recommendation to write a new test for it.",
+        "The audit writes its report to zuvo/audits/ and edits or deletes no source or test file, leaving the removal as a proposal."
+      ],
+      "fixtures": [
+        {
+          "path": "src/components/StatusBadge.tsx",
+          "content": "// src/components/StatusBadge.tsx\nimport React from \"react\";\n\nexport interface StatusBadgeProps {\n  label: string;\n  tone: \"info\" | \"warn\";\n}\n\nexport function StatusBadge({ label, tone }: StatusBadgeProps) {\n  return (\n    <span className={`badge badge-${tone}`} title={label}>\n      {label}\n    </span>\n  );\n}\n"
+        },
+        {
+          "path": "src/components/StatusBadge.test.tsx",
+          "content": "// src/components/StatusBadge.test.tsx\nimport React from \"react\";\nimport { describe, it, expect } from \"vitest\";\nimport { render, screen } from \"@testing-library/react\";\nimport { StatusBadge } from \"./StatusBadge\";\n\ndescribe(\"StatusBadge\", () => {\n  it(\"renders\", () => {\n    render(<StatusBadge label=\"Paid\" tone=\"info\" />);\n    expect(screen.getByText(\"Paid\")).toBeInTheDocument();\n  });\n\n  it(\"renders the warn label\", () => {\n    render(<StatusBadge label=\"Overdue\" tone=\"warn\" />);\n    expect(screen.getByText(\"Overdue\")).toBeInTheDocument();\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Audit src/lib/pricing.test.ts. I want to know if these tests would actually catch a wrong price.",
+      "expected_output": "The audit finds that none of the three tests can fail on a wrong price: the first only checks a non-negative result of a zero-priced input, the second asserts a property of its own fixture (input.quantity is already 3 before the call), the third checks only the type. These are tautological or type-only assertions and are recorded as REMOVE or weak-assertion findings with path:line (Q15/Q17 critical-gate failures), so the file is Tier C or lower. The tier discount arithmetic and the RangeError for a non-positive or non-integer quantity are untested behaviours (TEST-GAP), each naming the defect a test would catch (for example a gold discount applied at the wrong rate, or zero quantity silently priced). The audit writes its report to zuvo/audits/ and changes no file.",
+      "files": [
+        "src/lib/pricing.test.ts",
+        "src/lib/pricing.ts"
+      ],
+      "assertions": [
+        "The audit records that the test asserting input.quantity checks a property its own fixture already satisfies, so it cannot fail, and records it as a REMOVE or tautological finding citing path:line in pricing.test.ts.",
+        "The audit records the member-tier discount calculation and the RangeError branch of lineTotalCents as untested behaviours, each with a named defect a test would catch.",
+        "The audit records a failing tier (C or D) for pricing.test.ts driven by a critical-gate failure and writes its report to zuvo/audits/ without editing any source or test file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/pricing.ts",
+          "content": "// src/lib/pricing.ts\nexport interface PriceInput {\n  unitCents: number;\n  quantity: number;\n  memberTier: \"none\" | \"silver\" | \"gold\";\n}\n\nconst TIER_DISCOUNT: Record<PriceInput[\"memberTier\"], number> = {\n  none: 0,\n  silver: 0.05,\n  gold: 0.1,\n};\n\nexport function lineTotalCents(input: PriceInput): number {\n  if (!Number.isInteger(input.quantity) || input.quantity < 1) {\n    throw new RangeError(\"quantity must be a positive integer\");\n  }\n  const gross = input.unitCents * input.quantity;\n  return Math.round(gross * (1 - TIER_DISCOUNT[input.memberTier]));\n}\n"
+        },
+        {
+          "path": "src/lib/pricing.test.ts",
+          "content": "// src/lib/pricing.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { lineTotalCents, type PriceInput } from \"./pricing\";\n\nconst base: PriceInput = { unitCents: 1000, quantity: 3, memberTier: \"gold\" };\n\ndescribe(\"lineTotalCents\", () => {\n  it(\"returns a non-negative amount for a gold member\", () => {\n    const input = { ...base, unitCents: 0 };\n    expect(lineTotalCents(input)).toBeGreaterThanOrEqual(0);\n  });\n\n  it(\"keeps the quantity it was given\", () => {\n    const input = { ...base, quantity: 3 };\n    expect(input.quantity).toBe(3);\n    lineTotalCents(input);\n  });\n\n  it(\"returns a number\", () => {\n    expect(typeof lineTotalCents(base)).toBe(\"number\");\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Audit src/lib/shipping.test.ts for quality and tell me what a reviewer should still ask the author to cover.",
+      "expected_output": "The audit recognises the existing table-driven assertions (exact amounts, weight rounding, the RangeError type and message) as sound: they import the real function and assert computed values, with no tautological-mock or weak-assertion finding. It reports the free-shipping rule for domestic orders with a total of 10000 cents or more as an untested behaviour (TEST-GAP) and names the defect a test would catch, for example the threshold comparison being off by one so an order of exactly 10000 cents is charged, or the free rule leaking to non-domestic destinations. Q11 is not satisfied for that branch. The recommendation is a test for that rule only, not tests per function or per file. The report is written to zuvo/audits/ and no file is edited.",
+      "files": [
+        "src/lib/shipping.test.ts",
+        "src/lib/shipping.ts"
+      ],
+      "assertions": [
+        "The audit records the domestic free-shipping branch (orderTotalCents >= 10000 returns 0) as an untested behaviour or TEST-GAP citing path:line in shipping.ts.",
+        "The audit states the defect a test for that branch would catch, such as an off-by-one threshold or the free rule applying to a non-domestic destination, rather than only saying the branch lacks a test.",
+        "The audit records no tautological-mock, input-echo or weak-assertion finding against shipping.test.ts and writes its report to zuvo/audits/ without editing any file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/shipping.ts",
+          "content": "// src/lib/shipping.ts\nexport interface Parcel {\n  weightKg: number;\n  destination: \"domestic\" | \"eu\" | \"world\";\n  orderTotalCents: number;\n}\n\nconst BASE_CENTS = { domestic: 500, eu: 1200, world: 2500 } as const;\n\nexport function shippingCents(parcel: Parcel): number {\n  if (parcel.weightKg <= 0) {\n    throw new RangeError(\"weightKg must be positive\");\n  }\n  if (parcel.destination === \"domestic\" && parcel.orderTotalCents >= 10000) {\n    return 0;\n  }\n  const extraKg = Math.max(0, Math.ceil(parcel.weightKg) - 1);\n  return BASE_CENTS[parcel.destination] + extraKg * 150;\n}\n"
+        },
+        {
+          "path": "src/lib/shipping.test.ts",
+          "content": "// src/lib/shipping.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { shippingCents } from \"./shipping\";\n\ndescribe(\"shippingCents\", () => {\n  it.each([\n    [\"domestic 1 kg\", { weightKg: 1, destination: \"domestic\", orderTotalCents: 2000 }, 500],\n    [\"eu 1 kg\", { weightKg: 1, destination: \"eu\", orderTotalCents: 2000 }, 1200],\n    [\"world 1 kg\", { weightKg: 1, destination: \"world\", orderTotalCents: 2000 }, 2500],\n    [\"eu 2.5 kg rounds the weight up\", { weightKg: 2.5, destination: \"eu\", orderTotalCents: 2000 }, 1650],\n  ] as const)(\"prices %s\", (_name, parcel, expected) => {\n    expect(shippingCents({ ...parcel })).toBe(expected);\n  });\n\n  it(\"rejects a non-positive weight with a RangeError\", () => {\n    expect(() => shippingCents({ weightKg: 0, destination: \"eu\", orderTotalCents: 100 })).toThrow(\n      new RangeError(\"weightKg must be positive\"),\n    );\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Run a quick test-audit (--quick --read-only) on src/config/limits.test.ts and tell me what to do with each test.",
+      "expected_output": "Even in --quick mode every flagged item carries a path:line citation, not a bare verdict. The two tests that re-state constants (MAX_UPLOAD_MB equals 25, SUPPORTED_LOCALES equals the literal list) are REMOVE proposals (they copy the production constant and fail only when someone edits it on purpose), cited with path:line. The isSupportedLocale test asserts exact results for accepted and rejected input and is kept. The constants themselves are NO-TEST-NEEDED and the audit does not report them as untested or recommend new tests for them. The audit writes a report to zuvo/audits/ and edits no file.",
+      "files": [
+        "src/config/limits.test.ts",
+        "src/config/limits.ts"
+      ],
+      "assertions": [
+        "The audit records the two constant-restating tests in limits.test.ts as REMOVE proposals, each with a path:line citation, even though the run used --quick.",
+        "The audit records the isSupportedLocale test as worth keeping and records no finding that limits.ts constants are untested or need a new test.",
+        "The audit writes a report to zuvo/audits/ and edits or deletes no source or test file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/config/limits.ts",
+          "content": "// src/config/limits.ts\nexport const MAX_UPLOAD_MB = 25;\nexport const SUPPORTED_LOCALES = [\"en\", \"de\", \"fr\"] as const;\nexport type Locale = (typeof SUPPORTED_LOCALES)[number];\n\nexport function isSupportedLocale(value: string): value is Locale {\n  return (SUPPORTED_LOCALES as readonly string[]).includes(value);\n}\n"
+        },
+        {
+          "path": "src/config/limits.test.ts",
+          "content": "// src/config/limits.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { MAX_UPLOAD_MB, SUPPORTED_LOCALES, isSupportedLocale } from \"./limits\";\n\ndescribe(\"limits\", () => {\n  it(\"has the upload limit\", () => {\n    expect(MAX_UPLOAD_MB).toBe(25);\n  });\n\n  it(\"lists the locales\", () => {\n    expect(SUPPORTED_LOCALES).toEqual([\"en\", \"de\", \"fr\"]);\n  });\n\n  it(\"accepts a supported locale and rejects others\", () => {\n    expect(isSupportedLocale(\"de\")).toBe(true);\n    expect(isSupportedLocale(\"pl\")).toBe(false);\n    expect(isSupportedLocale(\"\")).toBe(false);\n  });\n});\n"
         }
       ]
     }

@@ -3,14 +3,16 @@
 ```
 You are a test quality auditor. Evaluate each test file below against Q1-Q25.
 
-RED FLAG PRE-SCAN (do FIRST, before full evaluation):
-- Tests with zero assertions (AP13) -> AUTO TIER-D. Count the assertion form of the file's OWN runner, not
-  only expect(): expect()/assert* (Jest/Vitest), `assert`/pytest.raises/self.assert* (Python), `[ … ]`/`run` +
-  `$status` checks (bats), and in a shell suite any check that prints FAIL or exits non-zero when its condition
-  is false (pass/bad/t_ok/t_no helpers, `[ … ] || fail`). A file whose "checks" only print, with no failing
-  branch, has zero. RTL exception: getByRole/getByText/getByLabelText are implicit assertions.
-- Fixture:assertion ratio > 20:1 (AP16) -> AUTO TIER-D
-- 50%+ of tests use toBeTruthy()/toBeDefined() as sole assertion (AP14) -> AUTO TIER-D
+RED FLAG PRE-SCAN (do FIRST, before full evaluation). AUTO TIER-D is exactly the AP rows marked
+AUTO TIER-D in the AP list below (source: gate-registry.md); no other AP, and no ratio of any other AP,
+is a red flag. This is the ONE place its triggers are detected; every other mention points here:
+- AP13 -- zero assertions. Count the assertion form of the file's OWN runner, not only expect():
+  expect()/assert* (Jest/Vitest), `assert`/pytest.raises/self.assert* (Python), `[ ... ]`/`run` +
+  `$status` checks (bats), and in a shell suite any check that prints FAIL or exits non-zero when its
+  condition is false (pass/bad/t_ok/t_no helpers, `[ ... ] || fail`). A file whose "checks" only print,
+  with no failing branch, has zero. RTL exception: getByRole/getByText/getByLabelText are implicit assertions.
+- AP16 -- fixture:assertion ratio > 20:1.
+- AP31 -- a committed focus marker (`.only`, `fit`, `fdescribe`, ...).
 
 QUICK HEURISTICS:
 - 0 CalledWith in entire file -> likely score <=4
@@ -30,12 +32,26 @@ Read the production file and extract:
 4. Error handling: try/catch, thrown errors, rejected promises
 5. Complexity: THIN (<50 LOC, <=3 branches), STANDARD (50-200 LOC), COMPLEX (>200 LOC or >10 branches)
 
-COMPLEXITY EXPECTATIONS:
-| Complexity | Expected tests | Q11 depth | Edge case scope |
-|------------|---------------|-----------|-----------------|
-| THIN | 8-15 | cache/wiring only | null/undefined on params |
-| STANDARD | 15-40 | all branches | full edge case checklist |
-| COMPLEX | 40-80 (split files) | all branches + combos | full checklist + matrix |
+Complexity sizes the audit only. No number of tests is expected for any size and a test count is never a
+finding (a THIN file that only forwards is NO-TEST-NEEDED).
+
+TEST WORTH -- a test earns its place only if you can name a plausible defect it would catch. Classify
+before scoring:
+- NO-TEST-NEEDED (production code): presentational views/layouts/widgets (placing already-decided values,
+  labels, show/hide, CSS), wiring (DI, decorators, routing, re-exports, barrels), constants and enum
+  lists, getters/setters, pure forwarding that adds nothing. A missing test there is never a gap, its
+  branches are not Q7/Q11 inputs, and it is never listed as untested. Exceptions that DO need a test:
+  markup another system parses (a published data-* contract, links in mail templates), and business logic
+  hiding in a view (permissions, status decisions, calculations) -- that is behaviour: report it and
+  recommend extracting it.
+- REMOVE (a test, with the reason): render-only ("renders", "exists", one test per displayed field),
+  whole-tree snapshot, mock-echo (asserts what a mock returned: AP10/AP29), tautological (the fixture
+  already satisfies the asserted property, so it cannot fail), a test of wiring/constants/getters, the
+  same behaviour re-tested at another level. A test that guards behaviour but scores low is FIX, never REMOVE.
+- Untested behaviour (TEST-GAP): a business rule, calculation, transformation, state transition,
+  authorization/tenant check, cross-system contract or real-input error path that no test exercises. Name
+  the behaviour and the defect a test would catch; a public method or a file with no test is not a gap by
+  itself, and a recommendation for a new test without that defect is not allowed.
 
 CHECKLIST (score 1=YES, 0=NO):
 <!-- GATES:BEGIN kind=q-prompt -->
@@ -104,6 +120,7 @@ AP32: Flake-masking retries — per-test/per-suite `retries:`/`@Retry`/`flaky=Tr
 
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.
 Q16 N/A: score N/A when test covers single function/hook with no shared mutable state.
+Q7/Q11 count behaviour only: branches of NO-TEST-NEEDED code are excluded like out-of-scope ones; when none remain, Q7/Q11 are N/A with that reason.
 Q17 PASS-THROUGH: For thin controllers that are pure delegation, `expect(result).toEqual(mockReturn)` with CalledWith on service mock = Q17=1.
 
 CRITICAL GATE: Q7, Q11, Q13, Q15, Q17 -- any = 0 -> Tier C floor (see TIER CLASSIFICATION).
@@ -165,8 +182,9 @@ not a third option — if the JSON is absent or stale, say so and score `N/A`.
 FOR AUTO TIER-D FILES, use SHORT format:
 ### [filename]
 Production file: [path or ORPHAN]
-Red flags: [AP13/AP14/AP16] -> AUTO TIER-D
+Red flags: [AUTO TIER-D AP ids] -> AUTO TIER-D
 Phantom mocks: [list mocked modules not called by production code, or "none"]
+Removals: [whole file - reason | the tests, each path:line - reason | none]
 Reason: [brief]
 Top 3 gaps: [brief]
 
@@ -180,12 +198,15 @@ Verification: [command, cwd, run ID/artifact, exit/result summary, skips/unrun c
 Complexity: [THIN/STANDARD/COMPLEX] ([LOC] LOC, [N] branches)
 Red flags: ["none"]
 Phantom mocks: [list or "none"]
-Untested methods: [list of public methods with no test coverage, or "all covered"]
+Untested behaviours: [each production behaviour no test exercises: path:line - the defect a test would catch; or "none"]
+No-test-needed: [production code classified NO-TEST-NEEDED, each path:line - kind; or "none"]
+Removals: [whole file - reason | the tests, each path:line - reason | none]
 Score: Q1=[0/1] Q2=[0/1] ... Q25=[0/1]
 Anti-patterns: [AP IDs found, or "none"]
 Total: passed=[N], N/A=[N], out-of-scope=[N], applicable=[N], AP deduction=[N], adjusted=[N]/[applicable] ([%])
 Critical gate: Q7=[0/1] Q11=[0/1] Q13=[0/1] Q15=[0/1] Q17=[0/1] -> [PASS/FAIL]
 Tier: [A/B/C/D]
+Findings: [one line per Q=0, AP, removal and untested behaviour: path:line - what; every mode, QUICK included]
 Top 3 gaps: [brief]
 
 OUTPUT LINE FORMAT (the orchestrator checks these lines by machine; a decorated line counts as
@@ -211,19 +232,17 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   A (>= 82%, all critical gates = 1): No action needed
   B (>= 53% and < 82%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes
   C (< 53%, OR any critical gate = 0): Major rewrite needed
-  D (AUTO TIER-D red flag: AP13, AP16, or AP31 (committed `.only`/focus marker — it disables the REST of the suite while CI stays green, so it is the most destructive of the three)): Delete and rewrite from scratch
+  D (an AUTO TIER-D trigger from the pre-scan): Delete; rewrite only the tests that guard behaviour (TEST WORTH)
 
   A very low score without an auto red flag remains Tier C; D is the specified red-flag classification, not a second raw-count threshold.
 
-  A critical gate at 0 is a FLOOR (Tier C), not a ceiling. Previously it "capped at Tier B",
-  so a tautological suite scoring 16/17 landed in the same bucket as an honest 10/17 — and
-  test quality punished a critical failure LESS than code quality does (where critical = 0
-  is a hard FAIL). Now the two families agree.
+  A critical gate at 0 is a FLOOR: the file is Tier C, never B (an AUTO TIER-D trigger on the same
+  file makes it D). It is a critical-gate failure for the run verdict whatever tier the file lands in.
 
 IMPORTANT:
 - Read BOTH the test file AND its production file
 - Red flag pre-scan first
-- COVERAGE COMPLETENESS: List all public methods in production file. For each, check if test exercises it. Flag untested methods. Exclude control flow keywords, built-ins, SQL keywords. API endpoint exception: test calling client.get("/path") IS testing the handler. Page component exception: render(<Component />) IS testing the export. Re-export exception: only test functions DEFINED in the file, not re-exports.
+- BEHAVIOUR COVERAGE: list the production behaviours (TEST WORTH) and check each is exercised AND its outcome asserted; report the unexercised ones as Untested behaviours. Never list methods or files as such. API endpoint exception: a test calling client.get("/path") IS testing the handler.
 - PHANTOM MOCK DETECTION: List all mocked modules in test. For each: does production code actually call it? Unused mock = phantom mock.
 - SUITE-AWARE MODE: Sibling test files for the same production file may supply Q7/Q11 evidence; name each contributing test and actual production branch. A helper test is not evidence for its caller unless it executes and asserts that caller behavior. Coverage/mutation claims require matching file/symbol and tree identity.
 - CHANGED-LINES SCOPE: a listed file whose production entry carries `changed lines: <ranges>` is
