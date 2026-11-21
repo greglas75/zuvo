@@ -1778,8 +1778,8 @@ fi
 echo "== part 2: Phase 3b reviews the real saved report, not a literal [date] path =="
 
 P3B_LINE='if [ -f "$REPORT" ]; then ~/.zuvo/adversarial-review --mode tests --files "$REPORT"; else echo "adversarial: report not found — write it first" >&2; fi'
-p3b_of() {  # every line (continuations joined) whose first non-blank text is the call — printed RAW, byte for byte
-  join_cont | awk '{ t = $0; sub(/^[ \t]+/, "", t) } index(t, "~/.zuvo/adversarial-review --mode tests") > 0 { print }'
+p3b_of() {  # every line (continuations joined) that contains the call — printed RAW, byte for byte
+  join_cont | awk 'index($0, "~/.zuvo/adversarial-review --mode tests") > 0 { print }'
 }
 p3b_now=$(p3b_of < "$SKILL")
 n_now=$(printf '%s' "$p3b_now" | awk 'END { print NR }')
@@ -1789,7 +1789,10 @@ else
   bad "Phase 3b: exactly one adversarial-review --mode tests line, the pinned literal — $n_now found: ${p3b_now:-<none>}"
 fi
 must "Phase 3b assigns REPORT from the real date, never the [date] placeholder" grep -qF '/audits/test-quality-audit-$(date +%F).md"' "$SKILL"
-if grep -qF 'test-quality-audit-[date]' <(sed -n '/^## Phase 3b/,/^## Phase 4/p' "$SKILL" | grep -F 'adversarial-review'); then
+p3b_section=$(sed -n '/^## Phase 3b/,/^## Phase 4/p' "$SKILL")
+if [ -z "$p3b_section" ]; then
+  bad "Phase 3b: section not found (heading renamed?), so the [date] placeholder check cannot run"
+elif printf '%s\n' "$p3b_section" | grep -F 'adversarial-review' | grep -qF 'test-quality-audit-[date]'; then
   bad "Phase 3b: an adversarial-review line still points at the literal [date] placeholder"
 else
   pass "Phase 3b: no adversarial-review line points at the [date] placeholder"

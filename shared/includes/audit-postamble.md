@@ -17,8 +17,8 @@ listed the retro / run-line / validity-gate steps in contradicting orders.
 | 4 | 1-3 critical findings | `WARN` |
 | 5 | 0 critical findings | `PASS` |
 
-- A `FAIL` reached by rows 1-2 stays `FAIL` when the Validity Gate also failed: the run proved a
-  failure, it only failed to prove coverage. Append `[VALIDITY GATE FAIL]` to NOTES so the
+- A `FAIL` reached by rows 1-2, or by a skill's own stricter rule (below), stays `FAIL` when the
+  Validity Gate also failed: the run proved a failure, it only failed to prove coverage. Append `[VALIDITY GATE FAIL]` to NOTES so the
   incomplete coverage is still visible.
 - `INCOMPLETE` means "this run cannot certify PASS or WARN". It never upgrades anything.
 - "Critical" is the `severity-vocabulary.md` CRITICAL level. A skill whose report uses a different
@@ -29,8 +29,8 @@ listed the retro / run-line / validity-gate steps in contradicting orders.
 A skill may be STRICTER than rows 3-5, never looser: it may return `FAIL` where a row says `INCOMPLETE`,
 `WARN` or `PASS`, and it may never return `WARN` or `PASS` where rows 1-3 say `FAIL` or `INCOMPLETE`.
 Pentest: any confirmed CRITICAL finding is `FAIL` (its row 2 threshold is 1, and it wins over row 3).
-a11y and security-audit: rows 1-3 first, then the grade band decides rows 4-5; security-audit's
-AT RISK / CRITICAL grade is `FAIL` even over row 3.
+a11y and security-audit: rows 1-3 first, then the grade band decides rows 4-5; a11y's grade `FAIL`
+(< 70%) and security-audit's AT RISK / CRITICAL grade are `FAIL` even over row 3.
 
 A skill states only WHICH gates are critical and what trips each one (its gate table). It does not
 restate rows 1-5. A line like `VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+
@@ -49,9 +49,12 @@ critical)` is the bug this file replaces — it omits row 1.
 5. **Validity Gate block** — run `~/.zuvo/verify-audit <saved report>` first (it is the check
    behind `verify_audit_pass`; `append-runlog` repeats it, so the result must already be known),
    then print the block with `gate_status`. Its `postamble` fields check steps 2-4 (they have
-   happened by now); `verify_audit_pass` carries the verify-audit result. If it FAILs, re-evaluate §1
-   (rows 1-2 keep `FAIL`; otherwise row 3 gives `INCOMPLETE`), append `[VALIDITY GATE FAIL]` to NOTES, and
-   rewrite a changed VERDICT in the report header and JSON in place, so all three carriers agree.
+   happened by now); `verify_audit_pass` carries the verify-audit result. A verify-audit rejection
+   is fixed in the report (add the citation or stamp) and re-run until it passes, never turned
+   into `INCOMPLETE`: `append-runlog` repeats the check and would refuse the line. Any other gate
+   FAIL re-evaluates §1 (a `FAIL` already reached stays `FAIL`; otherwise row 3 gives `INCOMPLETE`),
+   appends `[VALIDITY GATE FAIL]` to NOTES, and rewrites a changed VERDICT in the report header and
+   JSON in place, so all three carriers agree.
 6. **Run line** — `printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog` (never `>> runs.log`), with
    the final VERDICT.
 

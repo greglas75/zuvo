@@ -799,11 +799,11 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (rows 1-2 keep `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and carry the final VERDICT in the Run line (the report's `Result` / `result` is the gate result and stays as is).
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and carry the final VERDICT in the Run line (the report's `Result` / `result` is the gate result and stays as is).
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
 
-The report header, JSON `result` and `GEO-AUDIT-RESULT` marker carry the gate result (`PASS`/`FAIL`/`PROVISIONAL`) for CI parsing. The VERDICT (adds `WARN` and `INCOMPLETE`) is the Run line's: `FAIL` when a critical gate fails, else §1 rows 2-5. `PROVISIONAL` does not change the VERDICT by itself; note it in NOTES.
+The report header, JSON `result` and `GEO-AUDIT-RESULT` marker carry the gate result (`PASS`/`FAIL`/`PROVISIONAL`) for CI parsing. The VERDICT (adds `WARN` and `INCOMPLETE`) is the Run line's: `FAIL` when a critical gate fails, else §1 rows 2-5. `PROVISIONAL` does not change the VERDICT by itself; note it in NOTES. When `gate_status = FAIL`, a `PASS` gate result is set to `PROVISIONAL` in the report, JSON and marker (incomplete assurance, so CI never sees an invalid audit as green); a `FAIL` stays.
 
 Append via the retro-gated wrapper, never `>> runs.log`:
 
