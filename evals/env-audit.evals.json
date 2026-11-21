@@ -53,6 +53,31 @@
           "content": "// src/config.ts\n// Startup validation: a missing required var fails fast with a clear error.\nfunction required(name: string): string {\n  const value = process.env[name];\n  if (!value) {\n    throw new Error(`Missing required environment variable: ${name}`);\n  }\n  return value;\n}\n\nexport const config = {\n  databaseUrl: required(\"DATABASE_URL\"),\n  apiToken: required(\"API_TOKEN\"),\n};\n"
         }
       ]
+    },
+    {
+      "id": 3,
+      "prompt": "Run an environment-variable audit on this project and give me the verdict.",
+      "expected_output": "The audit finds that the project has no .env.example while src/config.ts reads DATABASE_URL and PORT, and that the config is validated at startup and nothing secret is committed. The missing .env.example is the ENV1 critical-gate condition, and a tripped critical gate makes the VERDICT FAIL whatever the number of critical findings (audit-postamble.md section 1, row 1): the report header and the Run line both carry FAIL, not PASS or WARN. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/config.ts",
+        ".gitignore"
+      ],
+      "assertions": [
+        "The audit records that the project has no .env.example file while src/config.ts reads DATABASE_URL and PORT, citing src/config.ts.",
+        "The audit records no ENV4 secret-exposure finding and no ENV3 startup-validation finding, because no .env file is committed and the zod schema in src/config.ts validates every variable at import time.",
+        "The Run line the audit prints contains FAIL in its VERDICT field (the sixth tab-separated field), not PASS or WARN.",
+        "The audit writes an env-audit report to zuvo/audits/ whose header shows the same VERDICT as the Run line, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/config.ts",
+          "content": "// src/config.ts\nimport { z } from \"zod\";\n\nconst schema = z.object({\n  DATABASE_URL: z.string().url(),\n  PORT: z.coerce.number().int().positive(),\n});\n\n// Parsed once at import time: the process exits before serving a request if a value is missing or malformed.\nexport const config = schema.parse(process.env);\n"
+        },
+        {
+          "path": ".gitignore",
+          "content": "node_modules\ndist\n.env\n.env.local\n"
+        }
+      ]
     }
   ]
 }
