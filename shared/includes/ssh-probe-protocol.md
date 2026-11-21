@@ -37,7 +37,7 @@ this exact, deterministic serialization:
   cannot hash differently across resolvers/tooling.
 - Each non-host endpoint adds one line `@<role>:<name><TAB>resolved-ip<TAB>port` (role `jump`,
   `scan-via`, `proxy` or `external`; for `external` the port is the scanned set: `top`, `all` with `--deep-scan`, or the listed ports); a run with none hashes exactly as before.
-- Lines sorted by `name` under `LC_ALL=C` (byte-order, locale-stable).
+- Lines deduplicated and sorted as whole lines under `LC_ALL=C` (byte-order, locale-stable); a listed external port set is numerically sorted and comma-joined.
 - Exactly one trailing newline at the end of the list (no trailing blank lines).
 - The sha256 is taken over those bytes verbatim.
 - **DNS TOCTOU is closed by recompute-and-abort:** the run re-resolves every name at

@@ -44,7 +44,7 @@ Parse flags first. `--host` and a `hosts.yaml` path are mutually-complete: exact
 one target source must resolve. `--quick` and `--dimensions` are mutually
 exclusive (error if both). `--resume <run-dir>` takes hosts, dimensions and flags from the
 run's own `state.json`; a flag you repeat must equal the original, else it is refused
-(Resume Semantics, "Scope match").
+(Resume Semantics, "Scope match"). Omitted flags are inherited, never reset to defaults.
 
 Variable mapping for flags that the collector invocation threads through:
 
@@ -271,7 +271,7 @@ Parse the inventory into a host list (`name`, `address`, `ssh_user`, `ssh_port`,
 
 1. Resolve each `address` → IP and reverse PTR.
 2. **Duplicate-endpoint dedup (E11):** if two entries resolve to the **same IP and ssh port**, MERGE
-   them into one target when `jump_host` and external target also match (else reject as conflicting routes) and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
+   them into one target when `ssh_user`, `jump_host` and external target also match (else reject as conflicting routes) and print `[WARN] duplicate IP <ip> — entries <a>,<b> merged; audited once`. Audit the merged host exactly once.
 3. `name` must match `[A-Za-z0-9][A-Za-z0-9._-]*` and be unique ignoring case (it names `raw/<name>/` and `bundle/<name>.json`; `.`, `..` and `WEB`/`web` clashes would share files).
 4. No password fields exist in the schema; password auth must be pre-configured
    in `~/.ssh/config`/agent. The skill never prompts for or stores SSH passwords
@@ -622,11 +622,12 @@ outcome vocabulary (`OK|DEGRADED|UNREACHABLE|FAILED|SKIPPED`, IC-2).
 `fleet-summary.md` is regenerated from per-host reports at the end of every
 resumed run (always written LAST).
 
-**Scope match.** `state.json` `scope` = sha256 of the canonical target list (endpoints included,
-ssh-probe-protocol §1), the dimension set, and `quick`, `no_install`, `deep_scan`, `skip_external`,
-`external_mode`, `proxy`, `scan_via`. A resume continues ONLY when the scope recomputed from the
-current arguments equals it; else print `RESUME-REFUSED: <field> differs` and stop (implicit
-adoption: mint a new `RUN_DIR`). A run dir with no `scope` is not resumable.
+**Scope match.** `state.json` `scope` is an object of fields: `targets` (sha256 of the canonical
+target list, endpoints included, ssh-probe-protocol §1), `dimensions`, `quick`, `no_install`,
+`deep_scan`, `skip_external`, `external_mode`, `proxy`, `scan_via`. Resolve the arguments (omitted
+ones from the stored `scope`), then compare field by field BEFORE any write or probe: continue ONLY
+when all equal; else print `RESUME-REFUSED: <field> differs` and stop (implicit adoption: mint a
+new `RUN_DIR`). A run dir with no `scope` is not resumable.
 
 ---
 

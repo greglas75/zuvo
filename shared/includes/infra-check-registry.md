@@ -8,7 +8,7 @@
 > Do NOT reorder or rename columns.
 
 **Templates are operator instructions (the skill never runs them) and must not lock the operator out:** keep the current session open and
-verify a NEW login before closing it; allow the SSH port before any default-deny; in nftables match interfaces with `iifname`, never `iif`.
+verify a NEW login before closing it; allow the SSH port before any default-deny; in nftables match interfaces with `iifname`, never `iif`. After an sshd change confirm the effective value with `sshd -T` (an `sshd_config.d` drop-in can override).
 
 ## Lynis Default Severity Mapping (DD-7)
 
@@ -49,7 +49,7 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS3-unexpected-listener | IS3 | HIGH | - | Identify with `ss -tulpn`; stop unexpected service: `systemctl stop <service> && systemctl disable <service>` | CIS 2.2 |
 | IS3-db-bound-public | IS3 | CRITICAL | - | Bind database listener to 127.0.0.1 or a private IP; e.g. PostgreSQL: set `listen_addresses = '127.0.0.1'` in postgresql.conf, then restart (a reload does not apply it) after checking no remote app or replica needs it | CIS 2.2 |
-| IS3-firewall-diff-mismatch | IS3 | HIGH | - | Reconcile internal (`ss -tulpn`) vs external scan results; block unexpected ports with `ufw deny <port>` (never the SSH port; Docker-published ports bypass ufw, so unpublish them or bind to 127.0.0.1 in compose) | - |
+| IS3-firewall-diff-mismatch | IS3 | HIGH | - | Reconcile internal (`ss -tulpn`) vs external scan results; block unexpected ports with `ufw deny <port>` after deleting or narrowing any earlier allow in `ufw status numbered` (first match wins; never the SSH port; Docker-published ports bypass ufw, so unpublish them or bind to 127.0.0.1 in compose) | - |
 
 ## IS4 — TLS & Certificates
 
@@ -73,7 +73,7 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates in a maintenance window: `apt-get update && apt-get upgrade`; check pending: `U=$(mktemp) ; apt list --upgradable 2>/dev/null > "$U" ; grep security "$U" ; rm -f "$U"` | CIS 1.8.1 |
+| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates in a maintenance window: `apt-get update`, then upgrade only the packages listed as security below (`apt-get install --only-upgrade <pkg>`); check pending: `U=$(mktemp) ; apt list --upgradable 2>/dev/null > "$U" ; grep security "$U" ; rm -f "$U"` | CIS 1.8.1 |
 | IS6-kernel-reboot-required | IS6 | MEDIUM | - | Reboot to apply new kernel: schedule maintenance window and `reboot`; verify after: `uname -r` | - |
 | IS6-eol-distro | IS6 | CRITICAL | - | Upgrade to a supported OS release; see Ubuntu upgrade: `do-release-upgrade` (test in staging first) | - |
 | IS6-unattended-upgrades-off | IS6 | MEDIUM | - | Enable unattended security updates: `apt-get install -y unattended-upgrades && dpkg-reconfigure unattended-upgrades` | CIS 1.8.2 |
@@ -110,7 +110,7 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS10-redis-no-auth | IS10 | CRITICAL | - | Set `requirepass <strong-password>` in /etc/redis/redis.conf; restart: `systemctl restart redis` | - |
 | IS10-redis-bound-public | IS10 | CRITICAL | - | Bind Redis to localhost: set `bind 127.0.0.1` in /etc/redis/redis.conf; restart: `systemctl restart redis` | - |
-| IS10-pg-trust-auth | IS10 | CRITICAL | - | Set `password_encryption = scram-sha-256` and re-set each affected login role's password (clients must support SCRAM) first, then replace `trust` with `scram-sha-256` in /etc/postgresql/*/main/pg_hba.conf; reload: `systemctl reload postgresql` | CIS DB 1.3.1 |
+| IS10-pg-trust-auth | IS10 | CRITICAL | - | Set `password_encryption = scram-sha-256` and reload, then re-set each affected login role's password (clients must support SCRAM), then replace `trust` with `scram-sha-256` in /etc/postgresql/*/main/pg_hba.conf; reload: `systemctl reload postgresql` | CIS DB 1.3.1 |
 | IS10-pg-listen-all | IS10 | HIGH | - | Restrict PostgreSQL listener: set `listen_addresses = '127.0.0.1'` in postgresql.conf, then restart postgresql (a reload does not apply it) after checking no remote app or replica needs it | - |
 | IS10-mysql-anonymous-user | IS10 | HIGH | - | Remove anonymous MySQL users: `DELETE FROM mysql.user WHERE User=''; FLUSH PRIVILEGES;` | CIS DB 3.1 |
 
