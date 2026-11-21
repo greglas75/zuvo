@@ -510,7 +510,7 @@ Read all batch files from `zuvo/audits/.test-audit-batch/`:
 2. Parse summary tables for tier counts
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
-5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and report them as INCOMPLETE files. A file with nothing applicable to score changes the run VERDICT only when nothing at all is scoreable (the coverage gate, `../../shared/includes/audit-postamble.md` §1 row 3). A file of a batch with no batch file is unevaluated, not unscorable: retry that batch, and if it is still missing the coverage gate FAILs (row 3), unless a tripped critical gate already gives `FAIL`
+5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and report them as INCOMPLETE files. A file with nothing applicable to score changes the run VERDICT only when nothing at all is scoreable (the coverage gate, `../../shared/includes/audit-postamble.md` §1 row 3). A file of a batch with no batch file is unevaluated, not unscorable: retry that batch, and if it is still missing the coverage gate FAILs (row 3: `INCOMPLETE`), unless a tripped critical gate already gives `FAIL`
 
 Build the summary report:
 

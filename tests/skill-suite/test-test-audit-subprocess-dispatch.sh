@@ -1792,7 +1792,7 @@ must "Phase 3b assigns REPORT from the real date, never the [date] placeholder" 
 p3b_section=$(sed -n '/^## Phase 3b/,/^## Phase 4/p' "$SKILL")
 if [ -z "$p3b_section" ]; then
   bad "Phase 3b: section not found (heading renamed?), so the [date] placeholder check cannot run"
-elif printf '%s\n' "$p3b_section" | grep -F 'adversarial-review' | grep -qF 'test-quality-audit-[date]'; then
+elif [ -n "$(printf '%s\n' "$p3b_section" | grep -F 'adversarial-review' | grep -F 'test-quality-audit-[date]')" ]; then
   bad "Phase 3b: an adversarial-review line still points at the literal [date] placeholder"
 else
   pass "Phase 3b: no adversarial-review line points at the [date] placeholder"

@@ -491,7 +491,7 @@ In LIMITED/NO-CODE mode, gates are N/A.
 ```
 earned = sum of the 0-3 scores of the applicable dimensions
 available = 3 * (number of applicable dimensions)      # N/A dimensions leave the denominator
-normalized_score = (earned / available) * 100
+normalized_score = (earned / available) * 100      # available = 0 (every dimension N/A): no score, no grade — VERDICT INCOMPLETE (audit-postamble.md §1 row 3)
 ```
 
 ### 4.4 Grade Assignment
@@ -499,8 +499,8 @@ normalized_score = (earned / available) * 100
 | Range | Grade |
 |-------|-------|
 | >= 85 | A |
-| 70-84 | B |
-| 50-69 | C |
+| >= 70 and < 85 | B |
+| >= 50 and < 70 | C |
 | < 50 | D |
 | Any gate = 0 | FAIL |
 

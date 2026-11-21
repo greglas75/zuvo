@@ -325,7 +325,7 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 ## Output
 
-VERDICT per `../../shared/includes/audit-postamble.md` §1: this skill has no critical gate, and each `[CRITICAL]` issue counts as a critical finding (closing order §2: retro first, then the wrapper).
+VERDICT per `../../shared/includes/audit-postamble.md` §1: this skill has no critical gate, and each `[CRITICAL]` issue counts as a critical finding; the score label `CRITICAL` (0-49) in the report header is a health label, not a finding, so a header `CRITICAL` with no `[CRITICAL]` issue is still a PASS VERDICT (closing order §2: retro first, then the wrapper).
 
 ```
 Run: <ISO-8601-Z>	context-audit	<project>	-	-	<VERDICT>	-	<mode>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>

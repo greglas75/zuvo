@@ -30,7 +30,7 @@ A skill may be STRICTER than rows 3-5, never looser: it may return `FAIL` where 
 `WARN` or `PASS`, and it may never return `WARN` or `PASS` where rows 1-3 say `FAIL` or `INCOMPLETE`.
 Pentest: any confirmed CRITICAL finding is `FAIL` (its row 2 threshold is 1, and it wins over row 3).
 a11y and security-audit: rows 1-3 first, then the grade band decides rows 4-5; a11y's grade `FAIL`
-(< 70%) and security-audit's AT RISK / CRITICAL grade are `FAIL` even over row 3.
+and security-audit's AT RISK / CRITICAL grade are `FAIL` even over row 3 (each skill defines its band).
 
 A skill states only WHICH gates are critical and what trips each one (its gate table). It does not
 restate rows 1-5. A line like `VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+
@@ -50,8 +50,10 @@ critical)` is the bug this file replaces — it omits row 1.
    behind `verify_audit_pass`; `append-runlog` repeats it, so the result must already be known),
    then print the block with `gate_status`. Its `postamble` fields check steps 2-4 (they have
    happened by now); `verify_audit_pass` carries the verify-audit result. A verify-audit rejection
-   is fixed in the report (add the citation or stamp) and re-run until it passes, never turned
-   into `INCOMPLETE`: `append-runlog` repeats the check and would refuse the line. Any other gate
+   is fixed in the report (add the citation or stamp) and the check re-run BEFORE the block is
+   printed, so `verify_audit_pass` is `yes(...)` when it is: `append-runlog` repeats the check and
+   would refuse the line, so a rejection is never turned into `INCOMPLETE`. If it cannot be fixed
+   (a cited source is gone), the run is not logged: say so, per the paragraph below. Any other gate
    FAIL re-evaluates §1 (a `FAIL` already reached stays `FAIL`; otherwise row 3 gives `INCOMPLETE`),
    appends `[VALIDITY GATE FAIL]` to NOTES, and rewrites a changed VERDICT in the report header and
    JSON in place, so all three carriers agree.

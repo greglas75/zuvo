@@ -799,7 +799,7 @@ VALIDITY GATE
   gate_status: [PASS | FAIL]
 ```
 
-`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and carry the final VERDICT in the Run line (the report's `Result` / `result` is the gate result and stays as is).
+`gate_status = FAIL` → `../../shared/includes/audit-postamble.md` §1 (a `FAIL` already reached stays `FAIL`, otherwise row 3 `INCOMPLETE`); append `[VALIDITY GATE FAIL]` to NOTES and carry the final VERDICT in the Run line (the report's `Result` / `result` is the gate result; the only rewrite is the `PASS` -> `PROVISIONAL` rule in the Run-line section below).
 
 ### Run line — VERDICT per `../../shared/includes/audit-postamble.md` §1, closing order §2
 

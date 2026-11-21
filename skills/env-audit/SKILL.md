@@ -353,6 +353,7 @@ Save to: `zuvo/audits/env-audit-[YYYY-MM-DD].md` — at the **project root** (`z
 | Config sources | [.env, .env.example, config.ts, ...] |
 | Vars defined | [N] |
 | Vars used in code | [N] |
+| VERDICT | [PASS / WARN / FAIL / INCOMPLETE per `../../shared/includes/audit-postamble.md` §1; the Run line carries the same value] |
 
 ## Executive Summary
 
