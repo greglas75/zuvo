@@ -889,8 +889,9 @@ iterations, below-A after the cap = loud WARN with each file recorded once as th
 write-tests-specific additions on top of the include:
 
 - Tier D (an AUTO TIER-D trigger: AP13, AP16 or AP31, per the audit's batch prompt) on a PRE-EXISTING file
-  is a rewrite, not a patch: route it through this skill's own Step 1 REWRITE path, keeping the tests that
-  guard behaviour and carrying the audit's REMOVE list to the user (an AP31 fix alone is dropping the focus marker).
+  is a rewrite, not a patch (AP13/AP16): route it through this skill's own Step 1 REWRITE path, keeping the
+  tests that guard behaviour and carrying the audit's REMOVE list to the user. AP31 alone is not a rewrite:
+  delete the focus marker and re-run the file, since un-focusing can surface tests that now fail.
 - Fixing tests can invalidate prior evidence: for every file A2 modified,
   re-run the Step 2.5 validator (line-form evidence may have shifted — prefer
   `path::test name` evidence, or run `test-coverage-gate.py refresh`, to make

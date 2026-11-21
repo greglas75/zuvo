@@ -218,6 +218,9 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   C (< 53%, OR any critical gate = 0): Major rewrite needed
   D (an AUTO TIER-D trigger from the pre-scan): Propose removing the tests (deleted only after the user confirms); rewrite only the tests that guard behaviour (TEST WORTH)
 
+  A file whose every test is a REMOVE candidate guards no behaviour: Tier C at best, whatever its percentage
+  (its action is the removal proposal, not a rewrite).
+
   A very low score without an auto red flag remains Tier C; D is the specified red-flag classification, not a second raw-count threshold.
 
   A critical gate at 0 is a FLOOR: the file is Tier C, never B (an AUTO TIER-D trigger on the same
@@ -249,7 +252,7 @@ exit/result and anything not run in that file's "Verification:" field. For ANY O
 including "read-only reviewer, no shell", an empty value, or an unsubstituted
 `[VERIFICATION CONTEXT]` placeholder — treat this as read-only: record
 `Verification: not run (read-only reviewer)` for every FULL-format file (the SHORT/AUTO TIER-D
-format has no Verification field and scores no Q, except it lists each critical gate at 0); never claim a command ran if it was not run.
+format has no Verification field and scores no Q; it only lists the critical gates found at 0); never claim a command ran if it was not run.
 
 In BOTH cases, score Q24/Q25 from an actual run, or from a cited artifact tied to this tree/HEAD
 (cite its path; the same freshness rule as Q21 above — commit/tree identity only, Q21's

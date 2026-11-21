@@ -12,7 +12,7 @@ seo:
   target_queries:
     - "test quality audit q1-q17 checklist"
     - "detect phantom mocks unit tests"
-    - "find untested behaviours typescript"
+    - "find untested public methods typescript"
     - "tautological mock anti-pattern tests"
     - "batch test file review tiered output"
   canonical: /en/skills/test-audit

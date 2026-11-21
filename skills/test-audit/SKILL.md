@@ -65,7 +65,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 | `[file]` | Audit a single test file with full evidence (forces deep mode) |
 | `[file file2 …]` | Audit exactly the listed test files (space-separated, forces deep mode) — the form the Test Quality Gate (`../../shared/includes/test-quality-gate.md`, called from build/refactor/execute/write-tests/write-e2e) uses to scope to touched files |
 | `--deep` | Collect evidence and fix recommendations for every file |
-| `--quick` | Binary Q verdicts, no prose or fixes; every finding still cites `path:line` |
+| `--quick` | Binary Q verdicts, no prose or fixes; every finding is one line `path:line - what` (an untested behaviour names its defect) |
 | `--include-e2e` | Include E2E test files in scope |
 | `--details` | Save per-file reports to `zuvo/audits/test-audit-details/` |
 | `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`) |
@@ -525,7 +525,7 @@ Evidence map: [per production file/symbol → test branch citations → matching
 | C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite |
 | D (AUTO TIER-D trigger) | [N] | [%] | Propose removal (user confirms); rewrite only tests that guard behaviour |
 | INCOMPLETE (no tier) | [N] | [%] | Finish missing evaluation |
-| ORPHAN | [N] | [%] | Verify or delete |
+| ORPHAN | [N] | [%] | Verify; propose removal (user confirms) |
 
 ## Critical Gate Failures
 
@@ -546,6 +546,11 @@ Evidence map: [per production file/symbol → test branch citations → matching
 
 | File | Test (path:line) | Reason |
 |------|------------------|--------|
+
+## No-Test-Needed (never a gap)
+
+| Production file (path:line) | Kind (presentational / wiring / constants / forwarding) |
+|-----------------------------|----------------------------------------------------------|
 
 ## Top Failed Questions (across all files)
 
@@ -611,8 +616,8 @@ For each audited test file, find its production file row in coverage.md:
 | A (>=82% of applicable, critical gates PASS) | COVERED | Tests are solid |
 | B (>=53% and <82% of applicable, critical gates PASS) | PARTIAL-QUALITY | Has tests but quality issues |
 | C (<53% of applicable OR any critical gate = 0) | PARTIAL-QUALITY | Major quality gaps |
-| D (auto Tier-D red flag) | PARTIAL | Effectively untested |
-| INCOMPLETE (no tier) | Leave existing row unchanged | Evaluation unavailable; never register as COVERED |
+| D (AUTO TIER-D trigger) | PARTIAL | Effectively untested |
+| INCOMPLETE (no tier) | Leave existing row unchanged; add no row | Evaluation unavailable; never register as COVERED |
 
 Only downgrade coverage status, never upgrade. A production file that is wholly NO-TEST-NEEDED is not mapped by tier: leave an existing row unchanged and do not add a missing one. For a mixed file, map by the tier of its test-worthy behaviours. Any other production file not yet in coverage.md is added.
 
@@ -648,20 +653,20 @@ If any step is incomplete, go back and finish it before continuing.
 
 After presenting the report, the user may request fixes:
 
-1. **Fix** -- rewrite test files following the quality rules, only as the report names: strengthen tests that guard behaviour; add a test only for a listed Untested Behaviour; never for NO-TEST-NEEDED code or to lift a score. Business logic found inside a view is a prerequisite, not a test to add: list its extraction (this workflow edits no production code) and keep any existing test of it, the regression test going on the extracted unit later. REMOVE items are shown as one list and deleted only after the user confirms it (no `--commit` value deletes a test)
+1. **Fix** -- rewrite test files following the quality rules, only as the report names: strengthen tests that guard behaviour; add a test only for a listed Untested Behaviour; never for NO-TEST-NEEDED code or to lift a score. Business logic found inside a view is a prerequisite, not a test to add: list its extraction (this workflow edits no production code) and keep any existing test of it, the regression test going on the extracted unit later. REMOVE items are shown as one list and deleted only after the user confirms it (no `--commit` value deletes a test); a file left with no test by that deletion is removed with it
 2. **Test** -- run the test suite to confirm all tests pass
 3. **Verify** -- for each fixed file:
    - Only test files modified (no production code changes)
    - Full test suite green
    - All modified test files <= 400 lines
-   - Q1-Q25 self-eval on each fixed file
+   - Q1-Q25 self-eval on each fixed file that still has tests
    - Tier improvement confirmed (D->C+, C->B+, B->A); a confirmed REMOVE needs no tier
 4. **Commit** -- behavior per `--commit` flag (ask/auto/off). After the code commit, each B-id Phase 5 printed for a finding the fix resolved is closed with that commit's `<sha7>`, as `backlog-protocol.md` "Filing from a skill", **Closing, not removing**, says (an F-id is a ledger record with no entry to close). With no code commit (a declined `ask`, `--commit=off`) there is no `<sha7>`: the entry stays open and the summary names it as fixed and not yet committed
 5. **Re-audit** -- optionally re-run on fixed files to verify improvement
 
 ## Closing Commit for backlog-add's Writes
 
-The closing commit is the last action of whichever comes last. With no fix workflow it is made when the run ends after the report is presented. Phase 7 starts only when the user asks for fixes after the report, so if they do, Phase 7 ends with its own closing commit, for the paths it wrote and any the first one left uncommitted. Each follows `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**, against the snapshot Phase 0.0 printed (none found: stage nothing and list the `wrote=` paths). `--commit` governs the one question the run asks, the code commit of Phase 7 step 4, and the closing commit follows its answer: `--commit=auto` makes it; `--commit=ask` makes it when the code commit was approved; a declined `ask`, `--commit=off`, and an `ask` that was never asked (no fix workflow) make no commit and list the `wrote=` paths. It is never a second pause. Under `--read-only` run directly there are no `backlog-add` calls, so no snapshot and no commit: `Backlog commit: none: nothing to stage` (read-only). When another skill runs this audit, make no commit and print one line in the report, `Backlog writes: <path>, …` (or `Backlog writes: none`): that skill's closing commit carries them. Print the result as `closing commit: <hash>`, `none: nothing to stage`, or `not committed (<reason>): <paths>`, only after the commit step has run, in the final summary and never inside the report presented earlier.
+The closing commit is the last action of whichever comes last. With no fix workflow it is made when the run ends after the report is presented. Phase 7 starts only when the user asks for fixes after the report, so if they do, Phase 7 ends with its own closing commit, for the paths it wrote and any the first one left uncommitted. Each follows `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**, against the snapshot Phase 0.0 printed (none found: stage nothing and list the `wrote=` paths). `--commit` governs the commit question of Phase 7 step 4 (the REMOVE confirmation is separate and never skipped), and the closing commit follows its answer: `--commit=auto` makes it; `--commit=ask` makes it when the code commit was approved; a declined `ask`, `--commit=off`, and an `ask` that was never asked (no fix workflow) make no commit and list the `wrote=` paths. It is never a second pause. Under `--read-only` run directly there are no `backlog-add` calls, so no snapshot and no commit: `Backlog commit: none: nothing to stage` (read-only). When another skill runs this audit, make no commit and print one line in the report, `Backlog writes: <path>, …` (or `Backlog writes: none`): that skill's closing commit carries them. Print the result as `closing commit: <hash>`, `none: nothing to stage`, or `not committed (<reason>): <paths>`, only after the commit step has run, in the final summary and never inside the report presented earlier.
 
 ## Next-Action Routing
 
