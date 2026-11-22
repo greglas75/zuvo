@@ -274,4 +274,21 @@ else
   bad "path with a space lost from the scope (rc/out: $(kv "$out10" mutate_count))"
 fi
 
+# ── 11. config keys Stryker accepts; --no-write creates nothing (dry-run) ────
+# `_generatedBy` made Stryker warn `Unknown stryker config option` on every run.
+out11a="$(cd "$R" && bash "$STRYKER" 2>/dev/null)"; cfg11="$(kv "$out11a" config_path)"
+if [ -f "$cfg11" ] && python3 -c 'import json,sys; sys.exit(1 if any(k.startswith("_") for k in json.load(open(sys.argv[1]))) else 0)' "$cfg11"; then
+  pass "generated config has no unknown underscore keys (Stryker would warn)"
+else
+  bad "generated config carries an unknown underscore key"
+fi
+before="$(cd "$R" && git status --porcelain --ignored | sort | tr '\n' ' ')"
+out11="$(cd "$R" && bash "$STRYKER" --no-write 2>/dev/null)"; rc=$?
+after="$(cd "$R" && git status --porcelain --ignored | sort | tr '\n' ' ')"
+if [ "$rc" -eq 0 ] && [ "$(kv "$out11" mutate_count)" = "7" ] && [ "$before" = "$after" ] && [ ! -e "$(kv "$out11" config_path)" ]; then
+  pass "--no-write prints the scope and creates no file (dry-run writes nothing)"
+else
+  bad "--no-write: rc=$rc mutate_count=$(kv "$out11" mutate_count) tree-changed=$([ "$before" = "$after" ] && echo no || echo yes)"
+fi
+
 if [ "$fail" = 0 ]; then echo "ALL PASSED"; exit 0; else echo "SOME FAILED"; exit 1; fi

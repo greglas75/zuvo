@@ -61,6 +61,9 @@
 #                         exit 124) — default: 600
 #   --dry-run-timeout-min <n>  Stryker's initial-test-run limit (dryRunTimeoutMinutes) — default: 5
 #   --print-config        also echo the generated JSON to stdout
+#   --no-write            compute and print the scope (the KEY=VALUE contract) but create NO file —
+#                         what `zuvo:mutation-test --dry-run` uses. `run_command` then names files that
+#                         do not exist: do not run it.
 #   --vitest-config <p>   (vitest) the Vitest config to run under, instead of the one nearest the files;
 #                         a multi-project one (test.projects/test.workspace) is refused (exit 2)
 #   --test-file <p> ... | --tests-from <list>
@@ -103,6 +106,7 @@ TIMEOUT_MS="60000"
 IDLE_TIMEOUT="600"
 DRY_RUN_MIN="5"
 PRINT_CONFIG=0
+NO_WRITE=0
 DIFF_BASE=""
 WHOLE_FILES=0
 INCLUDE_STATIC=0
@@ -155,6 +159,7 @@ while [ $# -gt 0 ]; do
     --no-progress-timeout) need_val $# "$1"; IDLE_TIMEOUT="$2"; shift 2 ;;
     --dry-run-timeout-min) need_val $# "$1"; DRY_RUN_MIN="$2"; shift 2 ;;
     --print-config) PRINT_CONFIG=1; shift ;;
+    --no-write)    NO_WRITE=1; shift ;;
     --in-place)    [ "$IN_PLACE" = off ] && die "--in-place and --no-in-place contradict each other"; IN_PLACE="on"; shift ;;
     --no-in-place) [ "$IN_PLACE" = on ] && die "--in-place and --no-in-place contradict each other"; IN_PLACE="off"; shift ;;
     -h|--help)     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; exit 0 ;;
@@ -305,7 +310,7 @@ TESTS_JOINED="$(printf '%s\n' ${REL_TESTS[@]+"${REL_TESTS[@]}"})"
 node - "$REPO" "$OUT" "$REPORT" "$TEST_RUNNER" "$COVERAGE" "$CONCURRENCY" "$TIMEOUT_MS" \
   "$INCLUDE_STATIC" "$WHOLE_FILES" "$FILES_FLAG" "$DIFF_BASE" "$PRINT_CONFIG" "$$" \
   "$REL_VITEST_CONFIG" "$TESTS_JOINED" "$VITEST_LIB" "$IDLE_TIMEOUT" "$DRY_RUN_MIN" "$WATCHDOG_SRC" "$IN_PLACE" \
-  ${REL_FILES[@]+"${REL_FILES[@]}"} <<'NODE'
+  "$NO_WRITE" ${REL_FILES[@]+"${REL_FILES[@]}"} <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
@@ -313,7 +318,7 @@ const crypto = require('crypto');
 
 const [repo, outArg, reportArg, runner, coverage, concurrency, timeoutMs, includeStaticArg,
   wholeFilesArg, filesFlagArg, diffBaseArg, printConfigArg, shellPid, vitestConfigArg, testsArg,
-  vitestLib, idleTimeout, dryRunMin, watchdogSrc, inPlaceArg, ...rawFiles] = process.argv.slice(2);
+  vitestLib, idleTimeout, dryRunMin, watchdogSrc, inPlaceArg, noWriteArg, ...rawFiles] = process.argv.slice(2);
 const explicitTests = [...new Set(testsArg.split('\n').filter(Boolean))];
 const givenFiles = [...new Set(rawFiles)];
 const includeStatic = includeStaticArg === '1';
@@ -647,7 +652,6 @@ const inRepo = (f) => fs.existsSync(path.join(repo, f));
 
 const cfg = {
   $schema: 'https://raw.githubusercontent.com/stryker-mutator/stryker-js/master/packages/api/schema/stryker-core.json',
-  _generatedBy: 'zuvo scripts/stryker-scoped-config.sh — scoped run, do not commit',
   // Note `mutate` here is the FULL scope, not a CLI override: decision 1. Everything the project
   // config would otherwise contribute (repo-wide mutate array, its reporters, its tempDirName) is
   // deliberately absent — this file is the whole configuration for this run. Entries are
@@ -712,14 +716,17 @@ if (ignored.length) {
 const written = [];
 // Only files this run creates are rolled back: an --out that already existed is never deleted.
 const write = (file, body) => { if (!fs.existsSync(file)) written.push(file); fs.writeFileSync(file, body); };
+const noWrite = noWriteArg === '1';   // --no-write: compute and print the scope, create nothing
 try {
-  if (vitest) {
-    write(path.join(repo, vitestConfigFile),
-      vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
+  if (!noWrite) {
+    if (vitest) {
+      write(path.join(repo, vitestConfigFile),
+        vlib.renderVitestConfig({ config: vitest.config, root: vitest.root, include: vitest.include }));
+    }
+    write(path.join(repo, watchdogFile), fs.readFileSync(watchdogSrc));
+    if (inPlaceReason) write(path.join(repo, inPlaceListFile), [...scopedFiles].map((f) => `${f}\n`).join(''));
+    write(out, JSON.stringify(cfg, null, 2) + '\n');
   }
-  write(path.join(repo, watchdogFile), fs.readFileSync(watchdogSrc));
-  if (inPlaceReason) write(path.join(repo, inPlaceListFile), [...scopedFiles].map((f) => `${f}\n`).join(''));
-  write(out, JSON.stringify(cfg, null, 2) + '\n');
 } catch (e) {
   for (const f of written) { try { fs.unlinkSync(f); } catch { /* already gone */ } }
   fail(2, `failed to write ${e.path || out}: ${e.message}`);
@@ -768,7 +775,9 @@ const kv = [
     `${inPlaceReason ? ` --in-place-files ./${inPlaceListFile}` : ''} -- npx stryker run ${shq(portable(out))})`],
 ];
 process.stdout.write(kv.map(([k, v]) => `${k}=${v}\n`).join(''));
-if (printConfigArg === '1') process.stdout.write('--- config ---\n' + fs.readFileSync(out, 'utf8'));
+if (printConfigArg === '1') {
+  process.stdout.write('--- config ---\n' + (noWrite ? JSON.stringify(cfg, null, 2) + '\n' : fs.readFileSync(out, 'utf8')));
+}
 NODE
 rc=$?
 case "$rc" in

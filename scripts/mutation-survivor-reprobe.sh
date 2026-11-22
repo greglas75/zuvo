@@ -30,6 +30,23 @@
 #   --test-cmd <cmd>       command that runs the RELEVANT tests (run via `bash -c`)
 #   --timeout <seconds>    kill the test command after N seconds (default 600)
 #   --label <id>           mutant id echoed back in the output (default: -)
+#   --skip-baseline        the caller already proved --test-cmd passes unmutated; skip that run
+#
+# BATCH MODE — the supported LOCAL loop for the LLM engine (no farm needed):
+#   mutation-survivor-reprobe.sh --plan <plan.json> --out <results.json> [--test-cmd <cmd>]
+#                                [--scope-file <list> | --diff <base> | --whole-files]
+#   --plan <p>        {"test_cmd": "...", "mutants": [{"id","file","original","mutated","test_cmd"?}]}
+#                     (or a bare list). Same content-anchored rules as a single probe.
+#   --out <p>         results JSON: per-mutant verdict/test_exit/restored/baseline/reason + counts + score.
+#   --scope-file <p>  the allowed scope, one `path` or `path:start-end` per line. Default: the lines
+#                     this branch changed (merge-base diff incl. uncommitted + untracked files).
+#                     A mutant whose anchor lies outside it is SKIPPED, never run.
+#   --diff <base>     diff base for the default scope.
+#   --whole-files     no scope filter — ONLY on the user's explicit request.
+#   One process: the baseline runs once per distinct test command, each mutant is applied, tested
+#   and restored by a single-probe call. Blocks go to stdout, a summary line to stderr.
+#   Batch exit: 0 every mutant got a verdict · 2 usage · 3 incomplete (ERROR, baseline failed,
+#   a file not restored, interrupted). Interrupt = the running probe restores, the batch stops.
 #
 # Output — KEY=VALUE lines:
 #   label=<id>
@@ -37,6 +54,7 @@
 #   verdict=KILLED|SURVIVED|ERROR
 #   test_exit=<code>|-
 #   restored=yes|no
+#   baseline=passed|failed|skipped|not_run
 #   sha_before=<sha256>
 #   sha_after=<sha256>
 #   reason=<one line>
@@ -79,6 +97,13 @@ TEST_CMD=""
 TIMEOUT_SECONDS=600
 LABEL="-"
 BACKUP=""
+SKIP_BASELINE=0
+BASELINE_STATE="not_run"   # not_run (stopped before it) | skipped | passed | failed — the batch loop reads it
+PLAN=""
+OUT=""
+SCOPE_FILE=""
+DIFF_BASE=""
+WHOLE_FILES=0
 
 die() { echo "$1" >&2; exit "${2:-2}"; }
 
@@ -89,6 +114,7 @@ emit() {
   printf 'verdict=%s\n' "$1"
   printf 'test_exit=%s\n' "$2"
   printf 'restored=%s\n' "$3"
+  printf 'baseline=%s\n' "$BASELINE_STATE"
   printf 'sha_before=%s\n' "${SHA_BEFORE:--}"
   printf 'sha_after=%s\n' "${SHA_AFTER:--}"
   printf 'reason=%s\n' "$4"
@@ -171,10 +197,254 @@ while [ $# -gt 0 ]; do
     --test-cmd)      need_val $# "$1"; TEST_CMD="$2"; shift 2 ;;
     --timeout)       need_val $# "$1"; TIMEOUT_SECONDS="$2"; shift 2 ;;
     --label)         need_val $# "$1"; LABEL="$2"; shift 2 ;;
-    -h|--help)       sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --skip-baseline) SKIP_BASELINE=1; shift ;;
+    --plan)          need_val $# "$1"; PLAN="$2"; shift 2 ;;
+    --out)           need_val $# "$1"; OUT="$2"; shift 2 ;;
+    --scope-file)    need_val $# "$1"; SCOPE_FILE="$2"; shift 2 ;;
+    --diff)          need_val $# "$1"; DIFF_BASE="$2"; shift 2 ;;
+    --whole-files)   WHOLE_FILES=1; shift ;;
+    -h|--help)       sed -n '2,69p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)               die "unknown argument: $1" ;;
   esac
 done
+
+# ── BATCH MODE ──────────────────────────────────────────────────────────────
+# One orchestrator process that calls THIS script in single-probe mode for every mutant, so the
+# apply / test / restore / hash-verify guarantees below are exactly the ones a lone probe has —
+# there is no second implementation of them to drift. The baseline runs once per distinct test
+# command (the first probe of a command runs it, later ones --skip-baseline).
+if [ -n "$PLAN" ]; then
+  [ -z "$FILE$ORIGINAL$MUTATED" ] || die "--plan cannot be combined with --file/--original/--mutated"
+  [ -f "$PLAN" ] || die "--plan: no such file: $PLAN"
+  [ -n "$OUT" ]  || die "--out is required with --plan"
+  [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "--timeout must be an integer >= 1"
+  [ -z "$SCOPE_FILE" ] || [ -f "$SCOPE_FILE" ] || die "--scope-file: no such file: $SCOPE_FILE"
+  [ "$WHOLE_FILES" = 0 ] || [ -z "$SCOPE_FILE$DIFF_BASE" ] || die "--whole-files excludes --scope-file/--diff"
+  exec python3 -I - "$0" "$PLAN" "$OUT" "$SCOPE_FILE" "$DIFF_BASE" "$WHOLE_FILES" "$TEST_CMD" "$TIMEOUT_SECONDS" <<'PY'
+import json, os, re, signal, subprocess, sys, tempfile
+
+script, plan_path, out_path, scope_file, diff_base, whole, default_cmd, timeout = sys.argv[1:9]
+
+
+def usage(msg):
+    print("reprobe: " + msg, file=sys.stderr)
+    sys.exit(2)
+
+
+def git(*args):
+    return subprocess.run(["git", "-c", "core.quotepath=off", *args], capture_output=True, text=True)
+
+
+try:
+    with open(plan_path, encoding="utf-8") as fh:
+        plan = json.load(fh)
+except (OSError, ValueError) as e:
+    usage("--plan: %s" % e)
+if isinstance(plan, list):
+    plan = {"mutants": plan}
+mutants = plan.get("mutants") if isinstance(plan, dict) else None
+if not isinstance(mutants, list) or not mutants:
+    usage("--plan: needs a non-empty mutants list")
+plan_cmd = plan.get("test_cmd") or default_cmd
+seen = set()
+for i, m in enumerate(mutants):
+    if not isinstance(m, dict):
+        usage("--plan: mutant %d is not an object" % i)
+    for k in ("id", "file", "original"):
+        if not isinstance(m.get(k), str) or not m[k]:
+            usage("--plan: mutant %d needs a non-empty string %r" % (i, k))
+    if not isinstance(m.get("mutated"), str):
+        usage("--plan: mutant %d needs a string 'mutated'" % i)
+    m["_cmd"] = m.get("test_cmd") or plan_cmd
+    if not m["_cmd"]:
+        usage("--plan: mutant %s has no test_cmd (set it per mutant, in the plan, or via --test-cmd)" % m["id"])
+    if m["id"] in seen:
+        usage("--plan: duplicate id %s" % m["id"])
+    seen.add(m["id"])
+
+
+def scope_from_file(path):
+    scope = {}
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            p, rng = line, None
+            head, _, tail = line.rpartition(":")
+            if head and re.fullmatch(r"\d+-\d+", tail):
+                p, rng = head, tuple(int(x) for x in tail.split("-"))
+            p = os.path.normpath(p)
+            if rng is None:
+                scope[p] = None
+            elif scope.get(p, []) is not None:
+                scope.setdefault(p, []).append(rng)
+    return scope
+
+
+def scope_from_diff(base_arg):
+    if git("rev-parse", "--is-inside-work-tree").returncode != 0:
+        usage("not a git work tree: pass --scope-file, or --whole-files if the user asked for whole files")
+    cands = [base_arg] if base_arg else []
+    if not base_arg:
+        r = git("symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
+        if r.returncode == 0 and r.stdout.strip():
+            cands.append(r.stdout.strip())
+        cands += ["origin/develop", "origin/main", "origin/master", "develop", "main", "master"]
+    best = None
+    for c in dict.fromkeys(cands):
+        mb = git("merge-base", "HEAD", c)
+        if mb.returncode != 0:
+            continue
+        sha = mb.stdout.strip()
+        n = int(git("rev-list", "--count", sha + "..HEAD").stdout.strip() or 0)
+        if best is None or n < best[0]:
+            best = (n, sha)
+    if best is None:
+        usage("no diff base found (tried %s): pass --diff <base> or --scope-file" % ", ".join(cands))
+    scope = {}
+    cur = None
+    for line in git("diff", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--relative",
+                    best[1], "--").stdout.splitlines():
+        if line.startswith("+++ "):
+            cur = None if line.startswith("+++ /dev/null") else os.path.normpath(line[6:])
+        elif line.startswith("@@") and cur:
+            mt = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+            if mt:
+                start, count = int(mt.group(1)), int(mt.group(2) if mt.group(2) is not None else 1)
+                if count > 0 and scope.get(cur, []) is not None:
+                    scope.setdefault(cur, []).append((start, start + count - 1))
+    for p in git("ls-files", "--others", "--exclude-standard").stdout.splitlines():
+        scope[os.path.normpath(p)] = None
+    return scope
+
+
+if whole == "1":
+    scope = None
+elif scope_file:
+    scope = scope_from_file(scope_file)
+else:
+    scope = scope_from_diff(diff_base)
+
+
+def out_of_scope(m):
+    """True only when the anchor is found exactly once and lies outside the scope.
+
+    The plan's `line` is a hint that expires (2.3b); the anchor's CURRENT line decides. An
+    unfound or ambiguous anchor is left to the probe, which reports ERROR for it.
+    """
+    if scope is None:
+        return False
+    p = os.path.normpath(m["file"])
+    if p not in scope:
+        return True
+    ranges = scope[p]
+    if ranges is None:
+        return False
+    try:
+        with open(m["file"], encoding="utf-8", errors="surrogateescape") as fh:
+            src = fh.read()
+    except OSError:
+        return False
+    if src.count(m["original"]) != 1:
+        return False
+    first = src.count("\n", 0, src.index(m["original"])) + 1
+    return not any(a <= first <= b for a, b in ranges)
+
+
+results = [{"id": m["id"], "file": m["file"], "verdict": "NOT_RUN", "test_exit": "-", "restored": "yes",
+            "baseline": "not_run", "reason": "not reached"} for m in mutants]
+child = None
+state = {}          # test command -> "passed" | "failed"
+stopped = None      # why the batch stopped early, if it did
+
+
+def write_results(interrupted=False):
+    c = {"killed": 0, "survived": 0, "error": 0, "skipped_out_of_scope": 0, "not_run": 0}
+    for r in results:
+        key = {"KILLED": "killed", "SURVIVED": "survived", "ERROR": "error",
+               "SKIPPED": "skipped_out_of_scope", "NOT_RUN": "not_run"}[r["verdict"]]
+        c[key] += 1
+    measured = c["killed"] + c["survived"]
+    complete = not interrupted and not stopped and c["error"] == 0 and c["not_run"] == 0
+    doc = {"version": 1, "plan": plan_path, "complete": complete, "stopped": stopped,
+           "scope": "whole-files" if scope is None else "changed-lines", "counts": c,
+           "score": round(100.0 * c["killed"] / measured, 2) if measured else None, "mutants": results}
+    tmp = "%s.%d.tmp" % (out_path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2)
+    os.replace(tmp, out_path)
+    print("batch: killed=%d survived=%d error=%d skipped_out_of_scope=%d not_run=%d score=%s complete=%s%s"
+          % (c["killed"], c["survived"], c["error"], c["skipped_out_of_scope"], c["not_run"],
+             "n/a" if doc["score"] is None else "%s%%" % doc["score"], str(complete).lower(),
+             " stopped=" + stopped if stopped else ""), file=sys.stderr)
+    return complete
+
+
+def on_signal(sig, frame):
+    global stopped
+    stopped = "interrupted"
+    for r in results:
+        if r["verdict"] == "NOT_RUN":
+            r["reason"] = "batch interrupted"
+    if child is not None and child.poll() is None:
+        child.send_signal(signal.SIGTERM)   # the probe's own trap restores the mutated file
+        try:
+            child.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            child.kill()
+    write_results(interrupted=True)
+    sys.exit(3)
+
+
+signal.signal(signal.SIGINT, on_signal)
+signal.signal(signal.SIGTERM, on_signal)
+
+tmpdir = tempfile.mkdtemp(prefix="reprobe-batch.")
+for idx, m in enumerate(mutants):
+    rec = results[idx]
+    if out_of_scope(m):
+        rec.update(verdict="SKIPPED", reason="anchor is outside the changed-lines scope — not run")
+        print("reprobe: %s skipped: outside the changed-lines scope" % m["id"], file=sys.stderr)
+        continue
+    if state.get(m["_cmd"]) == "failed":
+        rec.update(verdict="ERROR", reason="baseline failed for this test command — no verdict is possible")
+        continue
+    paths = []
+    for name in ("original", "mutated"):
+        p = os.path.join(tmpdir, "%d.%s" % (idx, name))
+        with open(p, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh:
+            fh.write(m[name])
+        paths.append(p)
+    argv = ["bash", script, "--file", m["file"], "--original-file", paths[0], "--mutated-file", paths[1],
+            "--test-cmd", m["_cmd"], "--label", m["id"], "--timeout", timeout]
+    if state.get(m["_cmd"]) == "passed":
+        argv.append("--skip-baseline")
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, errors="surrogateescape")
+    stdout, _ = child.communicate()
+    rc, child = child.returncode, None
+    sys.stdout.write(stdout)
+    sys.stdout.flush()
+    kv = dict(l.split("=", 1) for l in stdout.splitlines() if re.match(r"^[a-z_]+=", l))
+    verdict = kv.get("verdict")
+    if verdict not in ("KILLED", "SURVIVED", "ERROR"):
+        verdict, kv["reason"] = "ERROR", "no verdict emitted (probe exit %d)" % rc
+    rec.update(verdict=verdict, test_exit=kv.get("test_exit", "-"), restored=kv.get("restored", "yes"),
+               baseline=kv.get("baseline", "not_run"), reason=kv.get("reason", ""))
+    if rec["baseline"] in ("passed", "failed"):
+        state[m["_cmd"]] = rec["baseline"]
+    if rec["restored"] != "yes":
+        stopped = "file not restored: %s" % m["file"]
+        for rest in results[idx + 1:]:
+            rest["reason"] = "batch stopped: " + stopped
+        break
+
+for f in os.listdir(tmpdir):
+    os.unlink(os.path.join(tmpdir, f))
+os.rmdir(tmpdir)
+sys.exit(0 if write_results() else 3)
+PY
+fi
 
 [ -n "$FILE" ]      || die "--file is required"
 [ -f "$FILE" ]      || die "--file: no such file: $FILE"
@@ -284,8 +554,17 @@ classify_exit() {   # echoes: verdict-ok | infra:<reason>
 # That manufactures coverage out of a broken command — exactly the class the timeout→ERROR rule
 # already refuses, arriving through the front door. Establish the baseline first, or return no
 # verdict at all.
-run_tests
-BASELINE_EXIT=$?
+#
+# --skip-baseline is the batch loop's: the first probe of a test command ran this baseline and it
+# passed, so the later probes of the same command trust it instead of paying for it again.
+if [ "$SKIP_BASELINE" = 1 ]; then
+  BASELINE_EXIT=0
+  BASELINE_STATE="skipped"
+else
+  run_tests
+  BASELINE_EXIT=$?
+  if [ "$BASELINE_EXIT" -eq 0 ]; then BASELINE_STATE="passed"; else BASELINE_STATE="failed"; fi
+fi
 if [ "$BASELINE_EXIT" -ne 0 ]; then
   BASELINE_CLASS="$(classify_exit "$BASELINE_EXIT")"
   case "$BASELINE_CLASS" in
