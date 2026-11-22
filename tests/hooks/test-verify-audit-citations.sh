@@ -271,6 +271,23 @@ out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
   && pass "D3: a summary line naming a parsed finding ID is not an unparsed second finding" \
   || bad "D3: summary restatement rejected (rc=$rc): $(echo "$out" | head -6)"
 
+# A skipped-steps bullet naming a gate range (`- Q1-Q25: ...`, `- CQ1-CQ40: ...`) is scoring vocabulary, not a finding.
+cat > "$PROBE" <<EOF
+# Review — gate ranges
+
+## R-1 [MUST-FIX] parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+## SKIPPED STEPS
+- Q1-Q25: not printed, no test file
+- CQ1-CQ40: compact
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a 'Q1-Q25' / 'CQ1-CQ40' gate-range bullet is not read as a finding without a citation" \
+  || bad "D3: gate-range bullet rejected (rc=$rc): $(echo "$out" | head -6)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

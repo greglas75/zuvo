@@ -227,7 +227,9 @@ def looks_like_finding(header: str) -> bool:
     h = re.sub(r"^(?:[-*]\s+|\d+\.\s+)", "", h).strip()
 
     first = h.split()[0].rstrip(":—–-.").strip("*_") if h.split() else ""
-    if re.fullmatch(r"(?:CQ|Q)\d+", first, re.IGNORECASE):
+    # A gate RANGE (`Q1-Q25`, `CQ1-CQ40`) is the same scoring vocabulary (a live run's "- Q1-Q25: not printed"
+    # skipped-steps bullet was rejected as a finding with no citation).
+    if re.fullmatch(r"(?:CQ|Q)\d+(?:-(?:CQ|Q)\d+)?", first, re.IGNORECASE):
         return False
     # Same exclusion for the dashed spelling: `CQ-8` is still a score, not a finding id.
     if re.fullmatch(r"(?:CQ|Q)-\d+", first, re.IGNORECASE):
