@@ -210,7 +210,7 @@ COMPLETION GATE CHECK
 - **BUILD SCOPE** — targeted package type-check/tests vs full `turbo build/test --force`. The user *may* legitimately narrow this ("just type-check + targeted tests"), but only if you **declare it**: `[SCOPE: user-reduced — targeted type-check+tests; full build skipped per user]`. Silent narrowing is not allowed; declared narrowing is fine.
 - **TELEMETRY** — retro, run-log, CONTRACT, review artifact. These don't make the code safer, but they are the durable PROOF the gates ran and the history the skill improves from (losing them is exactly how months of retros vanished). Cheap; always do them. Missing telemetry ⇒ the run is *unrecorded* (`INCOMPLETE`), not necessarily unsafe — but it is **not done** either.
 
-Run the shared verifier (`SKILL.md` "Result") against THIS run's explicit contract path and record
+Run the shared verifier (`refactor-contract --contract <path> check`, `SKILL.md` "Result") against THIS run's explicit contract path and record
 its exit status and output. Missing/unreadable evidence is not PASS. Fix unmet requirements before
 COMPLETE; record unresolved risks and publish readiness separately.
 

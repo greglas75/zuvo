@@ -30,11 +30,8 @@ installed/PASS. Continue analysis and explicit verification, but do not claim au
 enforcement; resolve activation before claiming the complete workflow. Do not modify a shared
 or version-controlled hook merely to turn the status green.
 
-**Write probe, once** (`.git` may be read-only):
-
-```bash
-( set -e; for d in "$(git rev-parse --absolute-git-dir)" "$(git rev-parse --path-format=absolute --git-common-dir)"; do t=$(mktemp "$d/zuvo-probe.XXXXXX"); rm -f "$t"; done )
-```
+**Write probe, once** (`.git` may be read-only): `mktemp` then `rm` a file in both `git rev-parse --absolute-git-dir` and
+`git rev-parse --path-format=absolute --git-common-dir`; either failing means read-only.
 
 On failure, or when a later commit fails on permissions (keep commits already made), run
 `no-commit`: after `init`, `~/.zuvo/refactor-contract --contract <path> set commit_execution
