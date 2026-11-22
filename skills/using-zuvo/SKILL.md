@@ -28,6 +28,7 @@ If the session context includes the compressed response protocol, apply it by su
 - Working chatter such as progress updates, clarifying questions, design summaries, and audit summaries defaults to `TERSE`.
 - Findings and operational checklists default to `STRUCTURED_TERSE`.
 - Complete formal output blocks belong in artifacts under `zuvo/`, `docs/` or `memory/`. Human finals state the outcome, checks, limitations and artifact links; explicit requests for depth stay `STANDARD`.
+- **Exception — contract output.** A skill's own contract lines are printed in the final message verbatim, whatever the surface policy says: its named completion header (`## Execution Complete`, `## BUILD COMPLETE`), its `[GATE: …]` markers and the lines a skill declares machine-checked (`[AC-UNPROVEN: …]`, the `### Unproven Acceptance Criteria` section). The policy compresses the prose around them, never them. A final that drops one is a contract violation, not a style choice.
 - Keep code, commands, paths, URLs, symbols, dates, versions, quoted errors, and structured literals exact.
 - When evidence is partial, preserve calibration with `conf: confirmed`, `conf: likely`, or `conf: unclear`.
 - V1 scope is hook-enabled main assistant behavior. Direct skill invocation or sub-agent output may remain on legacy verbosity in degraded mode.

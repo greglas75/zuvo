@@ -27,7 +27,7 @@ After completing item N in a loop, the orchestrator MUST immediately start item 
 
 Stop only when one of these fires:
 
-1. **Hard gate failure** — `BLOCKED_*` state from the skill's own gate protocol (BLOCKED_PLAN_NOT_APPROVED, BLOCKED_TDD_PROTOCOL, BLOCKED_BRANCH_MISMATCH, BLOCKED_MISSING_GATE, BLOCKED_ADVERSARIAL_LOOP, etc.)
+1. **Hard gate failure** — `BLOCKED_*` state from the skill's own gate protocol (BLOCKED_PLAN_NOT_APPROVED, BLOCKED_TDD_PROTOCOL, BLOCKED_BRANCH_MISMATCH, BLOCKED_MISSING_GATE, BLOCKED_ADVERSARIAL_LOOP, BLOCKED_TEST_RUNNER_UNAVAILABLE, etc.)
 2. **All items processed** — terminal state reached (COMPLETED / SKIPPED / BLOCKED for every item)
 3. **Explicit user interrupt** — user typed "stop", "pause", "wait", "halt", "wystarczy", "starczy", or pressed Ctrl+C in the current turn
 4. **Runtime context pressure** — `/context` >85% OR a context-compaction warning. **DEFAULT on an auto-compacting runtime (Claude Code — the context-management contract / a PreCompact snapshot hook is present): do NOT stop.** Keep processing items. The per-item state write (e.g. `execution-state.md` after every task) is your durable checkpoint, and the runtime summarizes the conversation and carries you into the next context window **mid-run** — you resume from the state file automatically, in the SAME invocation, with no user re-run. Halting a 31-task plan every couple of tasks and making the user re-type `/zuvo:execute` is exactly the friction this protocol exists to kill. **FALLBACK only on a runtime that hard-stops at the context limit with no auto-compaction** (some Codex/Cursor configs): write session state, print resume instructions, exit. Either way — never ask the user.

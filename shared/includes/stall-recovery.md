@@ -82,7 +82,7 @@ _WD=$(command -v zuvo-watchdog-check 2>/dev/null \
       || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/zuvo-watchdog-check 2>/dev/null | head -1)
 _SK="${SKILL:-execute}"
 _PR=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-_HBDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.zuvo/context"
+_HBDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo/context"   # one path everywhere: zuvo/context (NOT .zuvo/context)
 _HB="$_HBDIR/$_SK.heartbeat"
 mkdir -p "$_HBDIR" 2>/dev/null || true
 # Seed the heartbeat (status: running). Fill resume: with the real resume command.

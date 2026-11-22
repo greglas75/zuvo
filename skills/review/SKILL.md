@@ -235,6 +235,7 @@ git diff --shortstat "${REVIEWED_FROM}..${REVIEWED_THROUGH}"
 | `batch <file>` | BATCH | Process a queue of commits: review, fix, tag per entry. |
 | `--thorough` | FLAG | Activate multi-pass review with majority voting. |
 | `--depth N` | FLAG | For `status` mode: how many commits to check (default 100). |
+| `--max-tier N` | FLAG | Cap the auto-selected tier at N (0-3). Passed by a calling skill that has measured the diff as small (`zuvo:execute` Phase Final-2 on a `SMALL_PLAN`); it only lowers the tier — risk signals still count, adversarial still runs, FIX-AUTO still applies. Print `[AUTO-DECISION] tier capped at <N> by --max-tier` when it bites. |
 
 ---
 
@@ -271,6 +272,8 @@ If `PROD_LOGIC_LINES = 0`:
 | 15-100 lines, no risk signals | TIER 1 -- LIGHT |
 | 100-500 lines OR 5-15 files OR 1 risk signal | TIER 2 -- STANDARD |
 | >500 lines OR 15+ files OR 2+ risk signals | TIER 3 -- DEEP |
+
+**`--max-tier N`:** after the table and the intent adjustments, if the selected tier is above N, use N. A single "new production file" risk signal otherwise promotes a 20-line script to TIER 2 (Behavior + CQ agents) — a fixed cost a small plan's closing review should not pay; the caller states N, the review does not guess it.
 
 **Intent adjustments:**
 - REFACTOR + <10 files + no DB/security/API/money signal: cap at TIER 2.
@@ -1170,7 +1173,11 @@ VALIDITY GATE
   adversarial:
     passes_run: [<N> | 0 — VIOLATES_MANDATE]
     providers_used: [<provider1,provider2,...> | none]
-    skip_reason: [n/a | single_provider_only | timeout | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
+    skip_reason: [n/a | single_provider_only | timeout | pass_cap | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
+    # pass_cap = the driver refused the pass with exit 7 (`PASS CAP:`): earlier passes of this session
+    # already spent the per-change cap. NOT a degraded path and NOT a violation: set coverage_source to
+    # same-session-same-commit(<the proof files the PASS CAP stderr lists>), print
+    # `[ADVERSARIAL: cap-reached covered-by=<files>]`, and cite those proofs in the artifact's `adversarial:` header.
     # rate_limit is NOT a skip reason — per stall-recovery.md ("Rate-limit
     # is a RETRY condition, NEVER a quality lever"), a rate-limited adversarial pass
     # is RE-RUN across watchdog resumes until it completes, never recorded as a skip
@@ -1199,7 +1206,7 @@ VALIDITY GATE
 
 If `gate_status = FAIL`, override the VERDICT to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the process item `subject:review-incomplete` (Validity-gate process items below).
 
-**Adversarial-skip violation handling (NEW — closes the 2026-05-28 escape-hatch loophole):** If `adversarial.skip_reason` is set to anything OUTSIDE the whitelist `{n/a, single_provider_only, timeout, BLOCKED_CONTEXT_BUDGET}` — including but not limited to "context budget", "already mechanically detected", "self-review low value", "small diff", "documented honestly" — then:
+**Adversarial-skip violation handling (NEW — closes the 2026-05-28 escape-hatch loophole):** If `adversarial.skip_reason` is set to anything OUTSIDE the whitelist `{n/a, single_provider_only, timeout, pass_cap, BLOCKED_CONTEXT_BUDGET}` — including but not limited to "context budget", "already mechanically detected", "self-review low value", "small diff", "documented honestly" — then:
 1. Set `gate_status = FAIL — adversarial skip outside whitelist (<reason>)`.
 2. Override VERDICT to `INCOMPLETE` regardless of finding count.
 3. Append `[ESCAPE-HATCH-VIOLATION:adversarial:<reason>]` to the Run line NOTES column.
@@ -1357,7 +1364,7 @@ Applying fixes without re-checking is how a "fix" silently becomes a regression 
    - **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it as `CHECK settled: <file:line> test|removed|softened`. A settling edit (a test added, a number removed) means one more helper run, and the marker takes that last clean run's id. Confirm the ledger with the include's `awk` lookup: a row for every path in scope (no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`; a scoped path without a row → re-run over the full scope), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]` or `N/A (run=<id> no audited source)`; `N/A (no files written)` is printed only when the scope is empty (include step 1), with no run. If the pass added a test or changed code, re-run step 1.
    - **any other rc** → fix the invocation; if it cannot be fixed, print `[GATE: comment-pass] BLOCKED rc=<n> <reason>` and do not commit or print the FIX-COMPLETE block.
    - **Recheck:** if any file in scope was changed or created after the last clean run (step 2's fixes, anything), re-run this step over the grown scope before step 3's `git add`, and before the commit of any file a later step writes (step 4's gap tests); the marker carries the new run id.
-2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`~/.zuvo/adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), and each residual non-CRITICAL is recorded through `backlog-add` (Backlog Persistence, **Generic write**). Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open.
+2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`~/.zuvo/adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), and each residual non-CRITICAL is recorded through `backlog-add` (Backlog Persistence, **Generic write**). Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open. **If the driver answers exit 7 (`PASS CAP:` — the session's earlier passes, e.g. `zuvo:execute`'s per-task ones, already spent the cap), this step is not another pass:** do not retry, narrow or re-base to dodge it; print `[ADVERSARIAL: cap-reached covered-by=<proofs the PASS CAP stderr lists>]` and prove each applied fix instead with the regression test that fails before it and passes after it (`adversarial-loop.md` Step 5), naming the fix and the test in the output.
 3. **Commit** only after 1+1b+2 pass. Name the applied findings and the deferred ones in the FIX summary, by finding id (`R-<n>`), each deferred RECOMMENDED with its defer-reason; their B- or F-ids appear in the final report's recorded list (Backlog Persistence). This commit never stages a `wrote=` path: those go into the closing commit (Closing commit for backlog-add's writes, below).
    fix-loop.md's `## Commit` happens here, at step 3 — never before 1b and 2 have passed.
 4. **Mutation-test the tests that cover what these commits changed** — see the next section.

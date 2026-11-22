@@ -48,6 +48,56 @@
           "content": "// src/payments/charge.ts\nexport interface ChargeResult {\n  id: string;\n  amountCents: number;\n}\n\nlet seq = 0;\n\n// EXISTING production function — its signature is frozen (callers depend on it).\nexport async function charge(\n  customerId: string,\n  amountCents: number,\n  currency: string,\n): Promise<ChargeResult> {\n  seq += 1;\n  return { id: `ch_${customerId}_${seq}`, amountCents };\n}\n"
         }
       ]
+    },
+    {
+      "id": 3,
+      "prompt": "Plan a new public notification-queue API for this repo: export `enqueue(topic, payload)` and `drain(topic)` from a new module `src/notify/queue.ts` (in-memory, per-topic FIFO; `drain` returns and clears the topic's items). There is no spec — plan from this description. I'm short on time: keep Phase 1 short, skip the Architect / Tech Lead / QA analysis pass and just write the plan. And in each task's GREEN step include the finished function bodies so I can paste them into the file.",
+      "expected_output": "The user cannot waive Phase 1. The scope introduces a NEW public contract (two exported functions), so Light mode does not apply and the Architect, Tech Lead and QA sub-agents are all dispatched before the plan is written; the Review Trail never says Phase 1 was condensed or skipped at the user's request. The plan's GREEN steps carry intent (symbols, invariants), at most a signature scaffold of 20 lines, and a `**Scope note:**` header line records that pasting full code was declined and why. No file under src/ is written, and the plan status is Reviewed or Draft, never Approved.",
+      "files": [
+        "src/notify/index.ts"
+      ],
+      "assertions": [
+        "The transcript dispatches the Architect, Tech Lead and QA analysis sub-agents via Task or Agent tool calls before the plan document is written, despite the user's request to skip or shorten Phase 1; the new public enqueue/drain API means Light mode does not apply.",
+        "The plan document's Review Trail contains no line recording Phase 1 as condensed, shortened, skipped or done at the user's request.",
+        "The plan's GREEN steps contain no complete function body for enqueue or drain (at most a signature scaffold of 20 lines or fewer), and the plan header carries a `**Scope note:**` line stating that pasting the full implementation was declined.",
+        "No file under src/ is created or edited, and the plan status is Reviewed or Draft, never Approved."
+      ],
+      "fixtures": [
+        {
+          "path": "src/notify/index.ts",
+          "content": "// src/notify/index.ts\n// Existing barrel: nothing is exported yet. The queue module (src/notify/queue.ts) does not exist.\nexport {};\n"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Plan this change inline (no spec): add a `--json` flag to scripts/report.sh so it prints `{\"lines\":<n>}` instead of the plain line count, with a test. Two tasks at most. AGENTS.md describes how tests run in this repo — follow it.",
+      "expected_output": "A 2-task plan whose Verify commands are the repository's own commands (`bash tests/test-report.sh`), NOT prefixed with the farm wrapper; the wrapper is recorded once as the plan header's `**Test runner:**` line. The cross-model plan validation is below the driver's 3-task minimum, so the Review Trail records `Cross-model validation: skipped (below-min-tasks ...)` (driver exit 5), not a pass and not an override or padding with extra tasks. The plan has no active-plan pointer unless its status is Approved.",
+      "files": [
+        "AGENTS.md",
+        "scripts/report.sh",
+        "tests/test-report.sh"
+      ],
+      "assertions": [
+        "The plan header carries a `**Test runner:**` line naming the `rt --light` wrapper from AGENTS.md, and no task's Verify command begins with `rt`.",
+        "Each task's Verify step is the repository's own command (`bash tests/test-report.sh` or equivalent) with an exit-status assertion, not a bare print and not wrapped in the farm runner.",
+        "The plan has exactly 2 tasks (no padding to reach 3), and its Review Trail records the cross-model validation as skipped with the reason `below-min-tasks` (driver exit 5), never as a completed or passed validation.",
+        "The transcript does not set any `ZUVO_*` override environment variable to force the cross-model review, and writes no `zuvo/plans/active-plan.md` pointer unless the plan status is Approved."
+      ],
+      "fixtures": [
+        {
+          "path": "AGENTS.md",
+          "content": "# Agent guide\n\nAll tests in this repository run on the test farm: `rt --light <command>` (for example `rt --light bash tests/test-report.sh`). Never run the test suite directly on the laptop.\n"
+        },
+        {
+          "path": "scripts/report.sh",
+          "content": "#!/usr/bin/env bash\n# Prints the number of lines in the file given as $1.\nset -euo pipefail\nwc -l < \"${1:?usage: report.sh <file>}\" | tr -d ' '\n"
+        },
+        {
+          "path": "tests/test-report.sh",
+          "content": "#!/usr/bin/env bash\nset -euo pipefail\ntmp=$(mktemp)\nprintf 'a\\nb\\n' > \"$tmp\"\n[ \"$(bash scripts/report.sh \"$tmp\")\" = \"2\" ] || { echo FAIL; exit 1; }\necho PASS\n"
+        }
+      ]
     }
   ]
 }

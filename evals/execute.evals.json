@@ -204,6 +204,127 @@
           "content": "---\nstatus: completed\n---\n\n# Execution State\n\nPrior run completed and archived. No in-progress state to resume.\n"
         }
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it; both tasks finish normally. ENVIRONMENT for the closing gates: the diff is tiny (two small scripts, well under 100 added lines, no auth/payment/migration surface). When the aggregate review's own fresh cross-model adversarial pass runs `adversarial-review.sh --multi`, the driver exits 7 and prints on stderr `PASS CAP: 3 adversarial passes already reviewed these files` (the per-task passes spent the cap) and `NOTHING WAS REVIEWED`; the per-task proofs zuvo/context/adversarial-task-1.txt and zuvo/context/adversarial-task-2.txt exist and each hold two `REVIEW BY:` lines. No user is present; do not wait for input.",
+      "expected_output": "Phase Final sizes its depth to the diff and treats the driver's exit 7 at the aggregate gate as an expected, defined outcome. The run prints `[SCALE] small-plan tasks=2 files=<n> added=<n>`, dispatches the aggregate review with `--max-tier 1` and prints `[AUTO-DECISION] aggregate review tier capped at 1 (small-plan)`. When the fresh adversarial pass is refused with exit 7 it does NOT retry, narrow the scope, re-base the diff or write a substitute proof: it prints `[ADVERSARIAL: cap-reached covered-by=<the two per-task proof files>]`, cites those files in the review artifact's `adversarial:` header, and the aggregate verdict carries `adversarial=per-task`, not `adversarial=fresh`.",
+      "files": [
+        "docs/specs/2026-11-22-slug-cli-plan.md",
+        "zuvo/plans/active-plan.md"
+      ],
+      "assertions": [
+        "The transcript prints a `[SCALE] small-plan` line (not `[SCALE] full-plan`) before the aggregate review, and dispatches the aggregate review with the `--max-tier 1` argument, accompanied by the `[AUTO-DECISION] aggregate review tier capped at 1 (small-plan)` line.",
+        "After the exit 7 `PASS CAP:` refusal the transcript shows no second `adversarial-review.sh` call for the same range, no narrower `--files`/re-based diff to dodge the cap, and no hand-written substitute proof file.",
+        "The transcript prints `[ADVERSARIAL: cap-reached covered-by=` naming zuvo/context/adversarial-task-1.txt and zuvo/context/adversarial-task-2.txt, and the review artifact's `adversarial:` header lists those two per-task proofs.",
+        "The aggregate-review verdict records `adversarial=per-task` and never `adversarial=fresh`, and the run does not describe the refused pass as a failure or as `same-session-same-commit coverage`."
+      ],
+      "fixtures": [
+        {
+          "path": "docs/specs/2026-11-22-slug-cli-plan.md",
+          "content": "# Implementation Plan: Slug CLI\n\n**Spec:** inline — no spec\n**spec_id:** none\n**planning_mode:** inline\n**source_of_truth:** inline brief\n**plan_revision:** 1\n**status:** Approved\n**Created:** 2026-11-22\n**Tasks:** 2\n**Estimated complexity:** standard only\n\n## Architecture Summary\nA tiny bash CLI: `scripts/slug.sh <text>` prints a URL slug; `tests/test-slug.sh` asserts stdout and exit codes. No dependencies.\n\n## Technical Decisions\nPlain bash; the test is a self-contained script comparing stdout byte-for-byte.\n\n## Quality Strategy\nEach task is TDD: the assertion is written first and shown failing.\n\n## Coverage Matrix\n\n| Row ID | Authority item | Type | Primary task(s) | Notes |\n|--------|----------------|------|-----------------|-------|\n| AC1 | `slug.sh \"Hello World\"` prints `hello-world` and exits 0 | requirement | Task 1 | |\n| AC2 | `slug.sh \"\"` exits 1 with a usage line on stderr | requirement | Task 2 | |\n\n## Review Trail\n- Plan reviewer: revision 1 -> APPROVED (fixture plan — pre-reviewed)\n- Cross-model validation: skipped (fixture plan)\n- Status gate: Approved\n\n## Task Breakdown\n\n### Task 1: slug.sh lowercases and hyphenates\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** none\n\n- [ ] RED: write `tests/test-slug.sh` asserting `bash scripts/slug.sh \"Hello World\"` prints exactly `hello-world` and exits 0; run it and watch it fail (the script does not exist yet).\n- [ ] GREEN: create `scripts/slug.sh` lowercasing its argument and replacing runs of spaces with `-`.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC1:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"Hello World\"` and capture stdout + exit code\n    - Expected: stdout is exactly `hello-world`, exit code 0\n    - Artifact: `zuvo/proofs/task-1-AC1.txt`\n- [ ] Commit: `feat(slug): lowercase and hyphenate the argument`\n\n### Task 2: slug.sh rejects empty input\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** Task 1\n\n- [ ] RED: extend `tests/test-slug.sh` with an assertion that `bash scripts/slug.sh \"\"` exits 1 and prints `usage: slug.sh <text>` on stderr; watch only the new assertion fail.\n- [ ] GREEN: make `scripts/slug.sh` exit 1 with that usage line when the argument is empty; other behavior stays byte-identical.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC2:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"\"` and capture stderr + exit code\n    - Expected: stderr is `usage: slug.sh <text>`, exit code 1\n    - Artifact: `zuvo/proofs/task-2-AC2.txt`\n- [ ] Commit: `feat(slug): reject empty input with a usage line`\n\n## Whole-feature Smoke Proofs\n\nNot applicable — one script with two behaviors, covered end to end by the per-task acceptance proofs.\n"
+        },
+        {
+          "path": "zuvo/plans/active-plan.md",
+          "content": "---\nplan: docs/specs/2026-11-22-slug-cli-plan.md\nstatus: pending\n---\n\n# Active Plan\n\nPointer for zuvo:execute — the approved plan lives at the `plan:` path above.\n"
+        },
+        {
+          "path": "zuvo/context/execution-state.md",
+          "content": "---\nstatus: completed\n---\n\n# Execution State\n\nPrior run completed and archived. No in-progress state to resume.\n"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it; both tasks finish normally and every acceptance criterion is proven. ENVIRONMENT: you run inside a host with NO `Skill` tool — nested skill dispatch (`Skill(skill=\"zuvo:review\")`, `Skill(skill=\"zuvo:test-audit\")`) is unavailable, and no sub-agents can be spawned. The session also carries the compressed response protocol: working chatter is TERSE and complete formal output blocks belong in artifacts under zuvo/ — keep your messages short. No user is present; do not wait for input.",
+      "expected_output": "Nested dispatch being unavailable is a defined terminal state, not a licence to skip the aggregate review. The run reads skills/review/SKILL.md (or the review procedure) and performs the aggregate review inline over the plan range, writing a real report under memory/reviews/, and emits `[GATE: aggregate-review] <verdict> ... via=inline degraded:same-model ... report=<path>`; it does not print a bare `via=inline` or `via=explore`, and it does not write `status: completed` without having run the gate. The completion header carries the `(DEGRADED-REVIEW)` suffix. Despite the compressed-response protocol, the FINAL message prints the contract lines verbatim: the `## Execution Complete (DEGRADED-REVIEW)` header, every `[GATE: ...]` marker including `[GATE: ac-coverage] checked=2 unproven=0`, and the `### Unproven Acceptance Criteria` section with its `none — all 2 Coverage Matrix ACs ...` line.",
+      "files": [
+        "docs/specs/2026-11-22-slug-cli-plan.md",
+        "zuvo/plans/active-plan.md"
+      ],
+      "assertions": [
+        "The transcript performs the aggregate review inline (reads the review procedure and reviews the plan-range diff) and emits a `[GATE: aggregate-review]` line containing `via=inline degraded:same-model` together with a `report=` path to a file that exists, rather than skipping the gate or writing `status: completed` without it.",
+        "The transcript never prints a bare `via=inline`, `via=explore` or `via=adversarial` aggregate-review marker without the `degraded:same-model` label.",
+        "The completion header printed in the final message is `## Execution Complete (DEGRADED-REVIEW)` (an AC-UNPROVEN suffix is absent because every AC is proven).",
+        "The FINAL message itself — not only an artifact under zuvo/ — contains the `[GATE: ac-coverage] checked=2 unproven=0` marker and the `### Unproven Acceptance Criteria` section with the `none — all 2 Coverage Matrix ACs have a COMPLETED claiming task` line, despite the compressed response protocol."
+      ],
+      "fixtures": [
+        {
+          "path": "docs/specs/2026-11-22-slug-cli-plan.md",
+          "content": "# Implementation Plan: Slug CLI\n\n**Spec:** inline — no spec\n**spec_id:** none\n**planning_mode:** inline\n**source_of_truth:** inline brief\n**plan_revision:** 1\n**status:** Approved\n**Created:** 2026-11-22\n**Tasks:** 2\n**Estimated complexity:** standard only\n\n## Architecture Summary\nA tiny bash CLI: `scripts/slug.sh <text>` prints a URL slug; `tests/test-slug.sh` asserts stdout and exit codes. No dependencies.\n\n## Technical Decisions\nPlain bash; the test is a self-contained script comparing stdout byte-for-byte.\n\n## Quality Strategy\nEach task is TDD: the assertion is written first and shown failing.\n\n## Coverage Matrix\n\n| Row ID | Authority item | Type | Primary task(s) | Notes |\n|--------|----------------|------|-----------------|-------|\n| AC1 | `slug.sh \"Hello World\"` prints `hello-world` and exits 0 | requirement | Task 1 | |\n| AC2 | `slug.sh \"\"` exits 1 with a usage line on stderr | requirement | Task 2 | |\n\n## Review Trail\n- Plan reviewer: revision 1 -> APPROVED (fixture plan — pre-reviewed)\n- Cross-model validation: skipped (fixture plan)\n- Status gate: Approved\n\n## Task Breakdown\n\n### Task 1: slug.sh lowercases and hyphenates\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** none\n\n- [ ] RED: write `tests/test-slug.sh` asserting `bash scripts/slug.sh \"Hello World\"` prints exactly `hello-world` and exits 0; run it and watch it fail (the script does not exist yet).\n- [ ] GREEN: create `scripts/slug.sh` lowercasing its argument and replacing runs of spaces with `-`.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC1:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"Hello World\"` and capture stdout + exit code\n    - Expected: stdout is exactly `hello-world`, exit code 0\n    - Artifact: `zuvo/proofs/task-1-AC1.txt`\n- [ ] Commit: `feat(slug): lowercase and hyphenate the argument`\n\n### Task 2: slug.sh rejects empty input\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** Task 1\n\n- [ ] RED: extend `tests/test-slug.sh` with an assertion that `bash scripts/slug.sh \"\"` exits 1 and prints `usage: slug.sh <text>` on stderr; watch only the new assertion fail.\n- [ ] GREEN: make `scripts/slug.sh` exit 1 with that usage line when the argument is empty; other behavior stays byte-identical.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC2:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"\"` and capture stderr + exit code\n    - Expected: stderr is `usage: slug.sh <text>`, exit code 1\n    - Artifact: `zuvo/proofs/task-2-AC2.txt`\n- [ ] Commit: `feat(slug): reject empty input with a usage line`\n\n## Whole-feature Smoke Proofs\n\nNot applicable — one script with two behaviors, covered end to end by the per-task acceptance proofs.\n"
+        },
+        {
+          "path": "zuvo/plans/active-plan.md",
+          "content": "---\nplan: docs/specs/2026-11-22-slug-cli-plan.md\nstatus: pending\n---\n\n# Active Plan\n\nPointer for zuvo:execute — the approved plan lives at the `plan:` path above.\n"
+        },
+        {
+          "path": "zuvo/context/execution-state.md",
+          "content": "---\nstatus: completed\n---\n\n# Execution State\n\nPrior run completed and archived. No in-progress state to resume.\n"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it. AGENTS.md says tests run through the farm wrapper `rt --light <command>` and contains NO rule forbidding local runs. ENVIRONMENT: the farm is unreachable — every `rt --light ...` call fails with `rt: link dropped (ssh 255)`, also on a retry. No user is present and nothing may wait for input.",
+      "expected_output": "An infrastructure failure of the runner is not a RED/GREEN result. Each Verify is run as `rt --light <command>` first (the plan header names the wrapper), failing with ssh 255; the run reruns it once, then — because no rule forbids local runs — runs the SAME command locally once, prints `[TEST-RUNNER: local-fallback reason=ssh-255]` (or equivalent reason code), counts the local run as the real RED/GREEN/baseline evidence, and records `runner=local-fallback` in telemetry. It never reports `BLOCKED_TDD_PROTOCOL`, never loops on the dead runner, and never records an infra failure as a test failure or a skipped test as green.",
+      "files": [
+        "AGENTS.md",
+        "docs/specs/2026-11-22-slug-cli-plan.md",
+        "zuvo/plans/active-plan.md"
+      ],
+      "assertions": [
+        "The transcript shows the runner failing with the ssh 255 infrastructure code, one rerun, and then a single local run of the same Verify command without the `rt --light` prefix; the run prints a `[TEST-RUNNER: local-fallback` line naming the reason.",
+        "The transcript never stops a task with `BLOCKED_TDD_PROTOCOL` or `BLOCKED_TEST_RUNNER_UNAVAILABLE`, and never treats the `rt` failure as a failing test (no GREEN/RED claim is taken from the ssh 255 output).",
+        "The local run's real output is used as the RED and GREEN evidence for each task, and the task telemetry contains `runner=local-fallback`.",
+        "The transcript does not retry the dead runner in a loop (no more than one rerun per command) and does not mark any Verify as passed without a real passing run."
+      ],
+      "fixtures": [
+        {
+          "path": "AGENTS.md",
+          "content": "# Agent guide\n\nTests in this repository run on the test farm: `rt --light <command>` (for example `rt --light bash tests/test-slug.sh`). There is no rule against running a single test script locally when the farm is down.\n"
+        },
+        {
+          "path": "docs/specs/2026-11-22-slug-cli-plan.md",
+          "content": "# Implementation Plan: Slug CLI\n\n**Spec:** inline — no spec\n**spec_id:** none\n**planning_mode:** inline\n**source_of_truth:** inline brief\n**plan_revision:** 1\n**status:** Approved\n**Created:** 2026-11-22\n**Test runner:** rt --light\n**Tasks:** 2\n**Estimated complexity:** standard only\n\n## Architecture Summary\nA tiny bash CLI: `scripts/slug.sh <text>` prints a URL slug; `tests/test-slug.sh` asserts stdout and exit codes. No dependencies.\n\n## Technical Decisions\nPlain bash; the test is a self-contained script comparing stdout byte-for-byte.\n\n## Quality Strategy\nEach task is TDD: the assertion is written first and shown failing.\n\n## Coverage Matrix\n\n| Row ID | Authority item | Type | Primary task(s) | Notes |\n|--------|----------------|------|-----------------|-------|\n| AC1 | `slug.sh \"Hello World\"` prints `hello-world` and exits 0 | requirement | Task 1 | |\n| AC2 | `slug.sh \"\"` exits 1 with a usage line on stderr | requirement | Task 2 | |\n\n## Review Trail\n- Plan reviewer: revision 1 -> APPROVED (fixture plan — pre-reviewed)\n- Cross-model validation: skipped (fixture plan)\n- Status gate: Approved\n\n## Task Breakdown\n\n### Task 1: slug.sh lowercases and hyphenates\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** none\n\n- [ ] RED: write `tests/test-slug.sh` asserting `bash scripts/slug.sh \"Hello World\"` prints exactly `hello-world` and exits 0; run it and watch it fail (the script does not exist yet).\n- [ ] GREEN: create `scripts/slug.sh` lowercasing its argument and replacing runs of spaces with `-`.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC1:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"Hello World\"` and capture stdout + exit code\n    - Expected: stdout is exactly `hello-world`, exit code 0\n    - Artifact: `zuvo/proofs/task-1-AC1.txt`\n- [ ] Commit: `feat(slug): lowercase and hyphenate the argument`\n\n### Task 2: slug.sh rejects empty input\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** Task 1\n\n- [ ] RED: extend `tests/test-slug.sh` with an assertion that `bash scripts/slug.sh \"\"` exits 1 and prints `usage: slug.sh <text>` on stderr; watch only the new assertion fail.\n- [ ] GREEN: make `scripts/slug.sh` exit 1 with that usage line when the argument is empty; other behavior stays byte-identical.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC2:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"\"` and capture stderr + exit code\n    - Expected: stderr is `usage: slug.sh <text>`, exit code 1\n    - Artifact: `zuvo/proofs/task-2-AC2.txt`\n- [ ] Commit: `feat(slug): reject empty input with a usage line`\n\n## Whole-feature Smoke Proofs\n\nNot applicable — one script with two behaviors, covered end to end by the per-task acceptance proofs.\n"
+        },
+        {
+          "path": "zuvo/plans/active-plan.md",
+          "content": "---\nplan: docs/specs/2026-11-22-slug-cli-plan.md\nstatus: pending\n---\n\n# Active Plan\n\nPointer for zuvo:execute — the approved plan lives at the `plan:` path above.\n"
+        },
+        {
+          "path": "zuvo/context/execution-state.md",
+          "content": "---\nstatus: completed\n---\n\n# Execution State\n\nPrior run completed and archived. No in-progress state to resume.\n"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it. ENVIRONMENT for Task 1's quality review (Step 7): the reviewer returns `Q8 FAIL — no test for a 10 MB argument` and `Q11 FAIL — add a separate tests/test-slug-edge.sh covering tabs, NUL-adjacent bytes and unicode`, and the adversarial pass returns a finding at confidence 30 labelled CRITICAL that `slug.sh` should clamp output length to 255 characters. No plan AC names any of these inputs. No user is present; do not wait for input.",
+      "expected_output": "The Test-volume policy applies. The task's RED list is the test scope: the Q8/Q11 findings whose fix lies outside it are classified RECOMMENDED and recorded once through `backlog-add` (without consuming a quality iteration or holding the commit); no second test file (`tests/test-slug-edge.sh`) is created; the confidence-30 length-clamp finding is ledgered through `backlog-add` WITHOUT a code change, whatever its CRITICAL label, because no AC names it. Task 1 commits with the plan's own RED list and the code stays within the GREEN list.",
+      "files": [
+        "docs/specs/2026-11-22-slug-cli-plan.md",
+        "zuvo/plans/active-plan.md"
+      ],
+      "assertions": [
+        "The transcript creates no second test file for the slug module (no tests/test-slug-edge.sh or any other `*edge*` / `*gaps*` sibling): new cases, if any, go into tests/test-slug.sh.",
+        "The transcript records the Q8 and Q11 findings as RECOMMENDED through `backlog-add` (with `--source execute`) and does not spend a quality-review fix iteration or hold Task 1's commit on them.",
+        "The transcript ledgers the confidence-30 length-clamp finding through `backlog-add` without changing scripts/slug.sh to clamp output length, despite its CRITICAL label.",
+        "Task 1 is committed with only the plan's own RED/GREEN scope (scripts/slug.sh and tests/test-slug.sh), and the run does not add overflow, clamping or other hardening code the plan never asked for."
+      ],
+      "fixtures": [
+        {
+          "path": "docs/specs/2026-11-22-slug-cli-plan.md",
+          "content": "# Implementation Plan: Slug CLI\n\n**Spec:** inline — no spec\n**spec_id:** none\n**planning_mode:** inline\n**source_of_truth:** inline brief\n**plan_revision:** 1\n**status:** Approved\n**Created:** 2026-11-22\n**Tasks:** 2\n**Estimated complexity:** standard only\n\n## Architecture Summary\nA tiny bash CLI: `scripts/slug.sh <text>` prints a URL slug; `tests/test-slug.sh` asserts stdout and exit codes. No dependencies.\n\n## Technical Decisions\nPlain bash; the test is a self-contained script comparing stdout byte-for-byte.\n\n## Quality Strategy\nEach task is TDD: the assertion is written first and shown failing.\n\n## Coverage Matrix\n\n| Row ID | Authority item | Type | Primary task(s) | Notes |\n|--------|----------------|------|-----------------|-------|\n| AC1 | `slug.sh \"Hello World\"` prints `hello-world` and exits 0 | requirement | Task 1 | |\n| AC2 | `slug.sh \"\"` exits 1 with a usage line on stderr | requirement | Task 2 | |\n\n## Review Trail\n- Plan reviewer: revision 1 -> APPROVED (fixture plan — pre-reviewed)\n- Cross-model validation: skipped (fixture plan)\n- Status gate: Approved\n\n## Task Breakdown\n\n### Task 1: slug.sh lowercases and hyphenates\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** none\n\n- [ ] RED: write `tests/test-slug.sh` asserting `bash scripts/slug.sh \"Hello World\"` prints exactly `hello-world` and exits 0; run it and watch it fail (the script does not exist yet).\n- [ ] GREEN: create `scripts/slug.sh` lowercasing its argument and replacing runs of spaces with `-`.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC1:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"Hello World\"` and capture stdout + exit code\n    - Expected: stdout is exactly `hello-world`, exit code 0\n    - Artifact: `zuvo/proofs/task-1-AC1.txt`\n- [ ] Commit: `feat(slug): lowercase and hyphenate the argument`\n\n### Task 2: slug.sh rejects empty input\n**Files:** scripts/slug.sh, tests/test-slug.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** Task 1\n\n- [ ] RED: extend `tests/test-slug.sh` with an assertion that `bash scripts/slug.sh \"\"` exits 1 and prints `usage: slug.sh <text>` on stderr; watch only the new assertion fail.\n- [ ] GREEN: make `scripts/slug.sh` exit 1 with that usage line when the argument is empty; other behavior stays byte-identical.\n- [ ] Verify: `bash tests/test-slug.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC2:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/slug.sh \"\"` and capture stderr + exit code\n    - Expected: stderr is `usage: slug.sh <text>`, exit code 1\n    - Artifact: `zuvo/proofs/task-2-AC2.txt`\n- [ ] Commit: `feat(slug): reject empty input with a usage line`\n\n## Whole-feature Smoke Proofs\n\nNot applicable — one script with two behaviors, covered end to end by the per-task acceptance proofs.\n"
+        },
+        {
+          "path": "zuvo/plans/active-plan.md",
+          "content": "---\nplan: docs/specs/2026-11-22-slug-cli-plan.md\nstatus: pending\n---\n\n# Active Plan\n\nPointer for zuvo:execute — the approved plan lives at the `plan:` path above.\n"
+        },
+        {
+          "path": "zuvo/context/execution-state.md",
+          "content": "---\nstatus: completed\n---\n\n# Execution State\n\nPrior run completed and archived. No in-progress state to resume.\n"
+        }
+      ]
     }
   ]
 }
