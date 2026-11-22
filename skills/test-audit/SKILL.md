@@ -74,8 +74,9 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 
 Default with no arguments: `all --quick`, so `--commit=off` (the `--quick` row below); a non-quick run defaults to `--commit=ask`.
 
-**Audit mode** (`MODE`, passed to every batch auditor and to the run line's TIER field): `quick` for `--quick` (and the >50-file
-auto-switch), `deep` for `--deep`, a single `[file]` and a file-list scope, else `standard` (first match wins: `--deep`, file scope, `--quick`, `standard`).
+**Audit mode** (`MODE`, passed to every batch auditor and to the run line's TIER field): first match wins: `deep` for `--deep`, a single
+`[file]` or a file-list scope (an explicit scope beats `--quick`); else `quick` for `--quick` (and the >50-file auto-switch);
+else `standard`.
 
 **Dispatch is already authorized — do not ask, and do not substitute.** Invoking this skill IS the
 request for the gates it mandates. A session-level instruction like "do not use the Agent tool unless
@@ -508,7 +509,7 @@ Read all batch files from `zuvo/audits/.test-audit-batch/`:
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
 5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and report them as INCOMPLETE files. A file with nothing applicable to score changes the run VERDICT only when nothing at all is scoreable (the coverage gate, `../../shared/includes/audit-postamble.md` §1 row 3). A file of a batch with no batch file is unevaluated, not unscorable: retry that batch, and if it is still missing the coverage gate FAILs (row 3: `INCOMPLETE`), unless a tripped critical gate already gives `FAIL`
-6. **REMOVE files and the headline (the one rule).** A `Tier: C` file whose `Removals:` line is `whole file (<n> tests)` (every test proposed for removal) is a **REMOVE file** (a file with an AUTO TIER-D trigger stays D, never a REMOVE file; `<n>` feeds the headline count): it has no tier — it gets its own row in the tier table and joins no tier count, average or coverage mapping. The VERDICT stays §1's (gates and critical findings): REMOVE alone never trips a gate. Whenever any test is proposed for removal, the headline carries `VERDICT: <value> (<N> tests proposed for removal in <M> files, <K> REMOVE files)`.
+6. **REMOVE files and the headline (the one rule).** A `Tier: C` file whose `Removals:` line is `whole file (<n> tests)` (every test proposed for removal) is a **REMOVE file** (a file with an AUTO TIER-D trigger stays D, never a REMOVE file; `<n>` feeds the headline count): it has no tier — it gets its own row in the tier table and joins no tier count or average (its coverage row is the one in Phase 4). The VERDICT stays §1's (gates and critical findings): REMOVE alone never trips a gate. Whenever any test is proposed for removal, the headline carries `VERDICT: <value> (<N> tests proposed for removal in <M> files, <K> REMOVE files)`.
 
 Build the summary report:
 
@@ -597,7 +598,7 @@ REPORT="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/z
 if [ -f "$REPORT" ]; then ~/.zuvo/adversarial-review --mode tests --files "$REPORT"; else echo "adversarial: report not found — write it first" >&2; fi
 ```
 
-**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr). Quote every ID (`"$id"`): zsh reads an unquoted `$P:unknown` as a `:u` modifier, mangles it, and the disposition is silently dropped. Do not print the final summary before this call's exit code is recorded.
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr). Write an ID you build as `"${P}:unknown"` and pass one you hold as `"$id"`: zsh reads `$P:unknown` (quoted or not) as a `:u` modifier, mangles it, and the disposition is silently dropped. Do not print the final summary before this call's exit code is recorded.
 
 A `PASS` beside a Tier C (under 53%, no critical gate = 0) or REMOVE file is by design (`audit-postamble.md` §1 decides by gates, Phase 2 step 6 reports REMOVE): a finding that only contests that pairing is rejected. A critical gate = 0 makes the verdict FAIL, so it never sits beside a PASS.
 
@@ -631,7 +632,7 @@ For each audited test file, find its production file row in coverage.md:
 | C (<53% of applicable OR any critical gate = 0) | PARTIAL-QUALITY | Major quality gaps |
 | D (AUTO TIER-D trigger) | PARTIAL | Effectively untested |
 | INCOMPLETE (no tier) | Leave existing row unchanged; add no row | Evaluation unavailable; never register as COVERED |
-| REMOVE file | PARTIAL | No test guards behaviour, so a COVERED row is downgraded (a wholly NO-TEST-NEEDED production file is left unchanged, below) |
+| REMOVE file | PARTIAL (only when the row is better than PARTIAL) | No test guards behaviour, so a COVERED row is downgraded (a wholly NO-TEST-NEEDED production file is left unchanged, below) |
 | ORPHAN | No row (no production file to map) | |
 
 Only downgrade coverage status, never upgrade. A production file that is wholly NO-TEST-NEEDED is not mapped by tier: leave an existing row unchanged and do not add a missing one. For a mixed file, map by the tier of its test-worthy behaviours. Any other production file not yet in coverage.md is added.

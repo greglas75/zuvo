@@ -262,7 +262,7 @@ tab_clear_batches() {
 }
 
 cmd_setup() {
-  local opt_owner="" opt_nbatch="" opt_token="" opt_mode="standard" base tok n
+  local opt_owner="" opt_nbatch="" opt_token="" opt_mode="standard" prev_mode base tok n
   tab_args owner nbatch token mode -- "$@"
   tab_is_count "$opt_owner" || tab_usage "--owner must be the harness pid (pass \"\$PPID\")"
   case "$opt_mode" in quick|standard|deep) ;; *) tab_usage "--mode must be quick, standard or deep" ;; esac
@@ -279,8 +279,11 @@ cmd_setup() {
   # A re-run keeps the saved batch results; they were produced under the first run's mode, so a different
   # mode now would label standard-depth evidence as deep (or the reverse). The lock stays held: re-run with the
   # recorded mode, or release and start a fresh run.
-  if [ "$TAB_SAME" = 1 ] && [ -r "$TAB_DIR/mode" ] && [ "$(cat "$TAB_DIR/mode")" != "$opt_mode" ]; then
-    tab_stop "this run already used --mode $(cat "$TAB_DIR/mode"), its saved batch results were gathered at that depth - re-run setup with that mode, or release the run and start a new one"
+  if [ "$TAB_SAME" = 1 ]; then
+    prev_mode="$(cat "$TAB_DIR/mode" 2>/dev/null)" || prev_mode=""
+    if [ -n "$prev_mode" ] && [ "$prev_mode" != "$opt_mode" ]; then
+      tab_stop "this run already used --mode $prev_mode, its saved batch results were gathered at that depth - re-run setup with that mode, or release the run and start a new one"
+    fi
   fi
   printf '%s\n' "$opt_mode" > "$TAB_DIR/mode" || exit 1
   tab_clear_batches "$TAB_SAME" "$opt_nbatch"
