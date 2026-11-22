@@ -214,6 +214,14 @@ do_check() {
     if [ -n "$SLUG" ]; then
       case "$(basename "$art")" in *"$SLUG"*) : ;; *) continue ;; esac
     fi
+    # The skill's dated narrative report (`YYYY-MM-DD-<scope>.md`) is not a content-keyed artifact and
+    # carries no marker; --check used to FAIL it and send agents hunting for a header it must not
+    # have (live review test addendum 3). A dated file that DOES carry the marker is still linted.
+    case "$(basename "$art")" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*)
+        grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null \
+          || { echo "SKIP $(basename "$art"): dated narrative report, not a gate artifact"; continue; } ;;
+    esac
     found=1
     lint_artifact "$root" "$art" || fail=1
   done

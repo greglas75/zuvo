@@ -290,5 +290,19 @@ if [ -f "$TMP/zhome/review-archive/c-home/reviews/aaa..bbb-home.md" ] && [ ! -e 
   pass "ZUVO_HOME relocates the archive (D10: sandbox no longer leaks into ~/.zuvo)"
 else bad "D10: --archive ignored ZUVO_HOME — a sandboxed run still writes the real ~/.zuvo/review-archive"; fi
 
+# 8. Addendum 3 (live review test): --check FAILed the skill's own dated narrative report
+# (memory/reviews/YYYY-MM-DD-<scope>.md, no gate marker), sending agents after a header it must not carry.
+fresh c-dated
+printf '# Review report\nno marker here\n' > "$REPO/memory/reviews/2026-11-21-orders.md"
+out=$(bash "$SYNC" --check "$REPO" 2>&1); rc=$?
+if ! printf '%s' "$out" | grep -q 'FAIL 2026-11-21-orders.md'; then
+  pass "--check does not FAIL a dated narrative report for lacking the gate marker"
+else bad "--check still FAILs the dated narrative report (rc=$rc): $out"; fi
+printf '<!-- zuvo-review -->\nrange: aaaaaaa..bbbbbbb\n' > "$REPO/memory/reviews/2026-11-22-marked.md"
+out=$(bash "$SYNC" --check "$REPO" 2>&1) || true
+if printf '%s' "$out" | grep -q '2026-11-22-marked.md' && ! printf '%s' "$out" | grep -q 'SKIP 2026-11-22-marked.md'; then
+  pass "a dated file that carries the marker is still linted"
+else bad "a marked dated file was skipped: $out"; fi
+
 [ "$fail" -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit "$fail"
