@@ -144,6 +144,107 @@
           "content": "// src/config/limits.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { MAX_UPLOAD_MB, SUPPORTED_LOCALES, isSupportedLocale } from \"./limits\";\n\ndescribe(\"limits\", () => {\n  it(\"has the upload limit\", () => {\n    expect(MAX_UPLOAD_MB).toBe(25);\n  });\n\n  it(\"lists the locales\", () => {\n    expect(SUPPORTED_LOCALES).toEqual([\"en\", \"de\", \"fr\"]);\n  });\n\n  it(\"accepts a supported locale and rejects others\", () => {\n    expect(isSupportedLocale(\"de\")).toBe(true);\n    expect(isSupportedLocale(\"pl\")).toBe(false);\n    expect(isSupportedLocale(\"\")).toBe(false);\n  });\n});\n"
         }
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "Audit src/lib/sku.test.ts and show me its gate-by-gate Q1-Q25 scoring with the percentage.",
+      "expected_output": "src/lib/sku.test.ts is a sound suite for a pure validator in a repo that has a single vitest setup, no property-testing library, no Pact or OpenAPI file, no randomized-order configuration, no mutation artifact and no coverage reporting. The conditional gates Q20-Q25 therefore have no trigger: each is recorded N/A with its reason, is excluded from the percentage denominator and is never scored 0. The audit does not recommend adding fast-check, a shuffle run, a contract file or a mutation run, and records no gap for them. The file is Tier A or B and the report is written to zuvo/audits/ with no source or test file edited.",
+      "files": [
+        "src/lib/sku.test.ts",
+        "src/lib/sku.ts",
+        "package.json"
+      ],
+      "assertions": [
+        "The audit records the conditional gates Q20, Q22, Q23, Q24 and Q25 for sku.test.ts as N/A (no trigger in this repo), each with a short reason, and never as a 0 or a failure.",
+        "The audit records the percentage for sku.test.ts as computed over the applicable gates only (the N/A gates are excluded from the denominator), and the file is Tier A or B.",
+        "The audit recommends no property-based test, randomized-order run, contract file or mutation run for sku.ts and records no finding or TEST-GAP for their absence."
+      ],
+      "fixtures": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"name\": \"sku-lib\",\n  \"private\": true,\n  \"scripts\": { \"test\": \"vitest run\" },\n  \"devDependencies\": { \"vitest\": \"^3.2.4\", \"typescript\": \"^5.6.0\" }\n}\n"
+        },
+        {
+          "path": "src/lib/sku.ts",
+          "content": "// src/lib/sku.ts\nconst SKU = /^[A-Z]{3}-\\d{4}$/;\n\n/** Validate a SKU such as ABC-1234. Throws TypeError for a non-string. */\nexport function isValidSku(value: unknown): boolean {\n  if (typeof value !== \"string\") {\n    throw new TypeError(\"isValidSku: value must be a string\");\n  }\n  return SKU.test(value);\n}\n"
+        },
+        {
+          "path": "src/lib/sku.test.ts",
+          "content": "// src/lib/sku.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { isValidSku } from \"./sku\";\n\ndescribe(\"isValidSku\", () => {\n  it(\"accepts three capitals, a hyphen and four digits\", () => {\n    expect(isValidSku(\"ABC-1234\")).toBe(true);\n  });\n\n  it(\"rejects lowercase letters\", () => {\n    expect(isValidSku(\"abc-1234\")).toBe(false);\n  });\n\n  it(\"rejects a three-digit number\", () => {\n    expect(isValidSku(\"ABC-123\")).toBe(false);\n  });\n\n  it(\"rejects a non-string with a TypeError that names the contract\", () => {\n    expect(() => isValidSku(42)).toThrow(TypeError);\n    expect(() => isValidSku(42)).toThrow(\"value must be a string\");\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Audit src/lib/account.test.ts. Do its critical gates pass, and what is still missing?",
+      "expected_output": "Q7 passes: the negative path of parseAge is covered with the RangeError type asserted in one test and the exact message asserted in another test of the same rejection path, which satisfies 'error type AND message' without requiring both in a single assertion. Q11 passes: ACCOUNT_ROLES is a constant list, its members are not branches, and one in-set plus one out-of-set case cover the membership check in isAccountRole. No test per role (admin, guest) is requested and the constants are NO-TEST-NEEDED. Neither Q7 nor Q11 scores 0, and the report is written to zuvo/audits/ with no source or test file edited.",
+      "files": [
+        "src/lib/account.test.ts",
+        "src/lib/account.ts"
+      ],
+      "assertions": [
+        "The audit scores Q7 as passing for account.test.ts, accepting the RangeError type assertion and the message assertion placed in separate tests of the same negative path, and records no Q7 finding that the type and message are not asserted together.",
+        "The audit scores Q11 as passing for account.test.ts and records no finding that the 'admin' and 'guest' members of ACCOUNT_ROLES are untested; it requests no test per list member.",
+        "The audit records no critical gate (Q7, Q11) at 0 for account.test.ts, with no TEST-GAP asking for tests of constants."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/account.ts",
+          "content": "// src/lib/account.ts\nexport const ACCOUNT_ROLES = [\"admin\", \"member\", \"guest\"] as const;\nexport type AccountRole = (typeof ACCOUNT_ROLES)[number];\n\nexport function isAccountRole(value: string): value is AccountRole {\n  return (ACCOUNT_ROLES as readonly string[]).includes(value);\n}\n\n/** Parse an age field. Throws RangeError for a negative or fractional value. */\nexport function parseAge(raw: string): number {\n  const n = Number(raw);\n  if (!Number.isInteger(n) || n < 0) {\n    throw new RangeError(\"age must be a non-negative integer\");\n  }\n  return n;\n}\n"
+        },
+        {
+          "path": "src/lib/account.test.ts",
+          "content": "// src/lib/account.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { isAccountRole, parseAge } from \"./account\";\n\ndescribe(\"isAccountRole\", () => {\n  it(\"accepts a known role\", () => {\n    expect(isAccountRole(\"member\")).toBe(true);\n  });\n\n  it(\"rejects an unknown role\", () => {\n    expect(isAccountRole(\"owner\")).toBe(false);\n  });\n});\n\ndescribe(\"parseAge\", () => {\n  it(\"parses a whole number\", () => {\n    expect(parseAge(\"42\")).toBe(42);\n  });\n\n  it(\"rejects a negative age with a RangeError\", () => {\n    expect(() => parseAge(\"-1\")).toThrow(RangeError);\n  });\n\n  it(\"explains that the age must be a non-negative integer\", () => {\n    expect(() => parseAge(\"-1\")).toThrow(\"age must be a non-negative integer\");\n  });\n\n  it(\"rejects a fractional age with a RangeError\", () => {\n    expect(() => parseAge(\"1.5\")).toThrow(RangeError);\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Run a test-audit on src/components/Tag.test.tsx and give me the file's tier and the run's VERDICT headline.",
+      "expected_output": "Both tests of Tag.test.tsx only check that a passed-in text appears, so every test is proposed for removal and the file is a REMOVE file: it has no A-D tier, is listed on its own REMOVE file row of the tier table and joins no tier count or average. Tag.tsx is NO-TEST-NEEDED, so nothing is missing. The run VERDICT is decided by the gates only (REMOVE alone never trips a gate), and the headline carries the removal counts: 2 tests proposed for removal in 1 file, 1 REMOVE file. The report is written to zuvo/audits/ and no file is edited or deleted.",
+      "files": [
+        "src/components/Tag.test.tsx",
+        "src/components/Tag.tsx"
+      ],
+      "assertions": [
+        "The audit records Tag.test.tsx as a REMOVE file with no A/B/C/D tier assigned to it (it is not graded Tier A, B, C or D and is not counted in a tier count or average).",
+        "The run's VERDICT headline records the removal counts: 2 tests proposed for removal in 1 file and 1 REMOVE file.",
+        "The run VERDICT shows a result decided by the gates only (REMOVE alone never trips it, so it is never FAIL merely because the file is a REMOVE file), Tag.tsx is NO-TEST-NEEDED with no TEST-GAP, and no source or test file is edited or deleted."
+      ],
+      "fixtures": [
+        {
+          "path": "src/components/Tag.tsx",
+          "content": "// src/components/Tag.tsx\nimport React from \"react\";\n\nexport function Tag({ text }: { text: string }) {\n  return <span className=\"tag\">{text}</span>;\n}\n"
+        },
+        {
+          "path": "src/components/Tag.test.tsx",
+          "content": "// src/components/Tag.test.tsx\nimport React from \"react\";\nimport { describe, it, expect } from \"vitest\";\nimport { render, screen } from \"@testing-library/react\";\nimport { Tag } from \"./Tag\";\n\ndescribe(\"Tag\", () => {\n  it(\"renders\", () => {\n    render(<Tag text=\"New\" />);\n    expect(screen.getByText(\"New\")).toBeInTheDocument();\n  });\n\n  it(\"renders the sale text\", () => {\n    render(<Tag text=\"Sale\" />);\n    expect(screen.getByText(\"Sale\")).toBeInTheDocument();\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "Audit src/services/greeter.test.ts and tell me whether its mock assertions satisfy Q3.",
+      "expected_output": "Q3 applies to the state-changing dependency only. The mailer.send mock has a positive toHaveBeenCalledWith (recipient and body) and a negative not.toHaveBeenCalled for the opted-out user, so Q3 passes. The store.getUser mock is a pure read: its value is asserted through the greeting the function returns, so Q3 does not apply to it and the audit neither fails Q3 nor asks for a CalledWith or not-called assertion on it. The file is Tier A or B and the report is written to zuvo/audits/ with no source or test file edited.",
+      "files": [
+        "src/services/greeter.test.ts",
+        "src/services/greeter.ts"
+      ],
+      "assertions": [
+        "The audit records Q3 as passing for greeter.test.ts, judging it on the state-changing mailer.send mock (positive CalledWith with arguments and a negative not.toHaveBeenCalled).",
+        "The audit records no finding that the store.getUser mock lacks a CalledWith or a not-called assertion (a pure-read mock is not subject to Q3), and asks for no such assertion.",
+        "The audit records Tier A or B for greeter.test.ts and writes its report to zuvo/audits/ without editing any source or test file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/services/greeter.ts",
+          "content": "// src/services/greeter.ts\nexport interface UserStore {\n  getUser(id: string): { name: string; optedOut: boolean };\n}\n\nexport interface Mailer {\n  send(to: string, body: string): void;\n}\n\nexport function greet(id: string, store: UserStore, mailer: Mailer): string {\n  const user = store.getUser(id);\n  if (user.optedOut) {\n    return \"skipped\";\n  }\n  const body = `Hello, ${user.name}!`;\n  mailer.send(id, body);\n  return body;\n}\n"
+        },
+        {
+          "path": "src/services/greeter.test.ts",
+          "content": "// src/services/greeter.test.ts\nimport { beforeEach, describe, it, expect, vi } from \"vitest\";\nimport { greet } from \"./greeter\";\n\nconst store = { getUser: vi.fn() };\nconst mailer = { send: vi.fn() };\n\ndescribe(\"greet\", () => {\n  beforeEach(() => {\n    store.getUser.mockReset();\n    mailer.send.mockReset();\n  });\n\n  it(\"greets a user by name and sends the same text\", () => {\n    store.getUser.mockReturnValue({ name: \"Ada\", optedOut: false });\n    expect(greet(\"u1\", store, mailer)).toBe(\"Hello, Ada!\");\n    expect(mailer.send).toHaveBeenCalledWith(\"u1\", \"Hello, Ada!\");\n  });\n\n  it(\"sends nothing to an opted-out user\", () => {\n    store.getUser.mockReturnValue({ name: \"Bob\", optedOut: true });\n    expect(greet(\"u2\", store, mailer)).toBe(\"skipped\");\n    expect(mailer.send).not.toHaveBeenCalled();\n  });\n});\n"
+        }
+      ]
     }
   ]
 }

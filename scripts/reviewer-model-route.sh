@@ -159,13 +159,19 @@ is_hint() { [[ -n "${1:-}" && "$1" != "unknown" ]]; }
 detect_platform() {
   if [[ -n "$PLATFORM_OVERRIDE" ]]; then
     printf '%s\n' "$PLATFORM_OVERRIDE"
+  # The INNERMOST host wins: a Codex child started from a Claude Code session inherits CLAUDECODE=1 and
+  # CLAUDE_MODEL, but the Codex markers are set by the child itself. Claude first made that child a
+  # "claude" writer, routed it a Codex reviewer, and the writer reviewed itself (live test 2026-11-22).
+  # The reverse nesting (Claude inside a Codex shell) is not a supported lane.
+  elif zms_is_codex_host; then
+    printf 'codex\n'
   # A writer variable holding the literal `unknown` names no writer, so it is no host signal either
   # (is_hint): CLAUDE_MODEL=unknown answers exactly like an unset CLAUDE_MODEL.
   elif [[ "${CLAUDECODE:-}" == "1" ]] || is_hint "${CLAUDE_MODEL:-}"; then
     printf 'claude\n'
   # ZUVO_CODEX_MODEL is this router's own writer-model hint, not a host signal: it stays here, and
   # the library knows only the host's own signals.
-  elif zms_is_codex_host || is_hint "${ZUVO_CODEX_MODEL:-}"; then
+  elif is_hint "${ZUVO_CODEX_MODEL:-}"; then
     printf 'codex\n'
   elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Cursor"* || -n "${CURSOR_AGENT_MODEL:-}" || -n "${CURSOR_MODEL:-}" ]]; then
     printf 'cursor\n'

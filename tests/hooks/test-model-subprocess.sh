@@ -911,6 +911,21 @@ RD
   fi
   rtmp_clean "$L"
 fi
+# Bug caught (2026-11-22 live test): codex installed behind a symlink (/opt/homebrew/bin/codex ->
+# Caskroom/.../bin/codex) got only the resolved dir in the profile; codex re-execs itself through the
+# symlink path, the sandbox refused the exec and every `model-run --access read` died with rc=4.
+L="codex read, client behind a symlink"
+LNK_REAL="$T/caskroom/bin"; LNK_BIN="$T/linkbin"; mkdir -p "$LNK_REAL" "$LNK_BIN"
+install_spy "$LNK_REAL/codex"; ln -s "$LNK_REAL/codex" "$LNK_BIN/codex"
+LNK_REAL="$(cd "$LNK_REAL" && pwd -P)"; LNK_BIN="$(cd "$LNK_BIN" && pwd -P)"
+out="$(rrun codex ZUVO_CODEX_BIN="$LNK_BIN/codex" -- --model gpt-6-sol --access read --read-root "$RROOT" --prompt-file "$PROMPT" --timeout 60)"
+expect_eq "$L: exit 0" "rc=0" "$out"
+if spy_ran codex "$L"; then
+  expect_eq "$L: readable holds the symlink's directory AND the resolved install dir" \
+    "$RROOT|$LNK_BIN|$LNK_REAL" \
+    "$(rec codex config | awk -F'"' '/^"\// && / = "read"$/ { printf "%s%s", (n++ ? "|" : ""), $2 } END { print "" }')"
+fi
+rtmp_clean "$L"
 # Bug caught: a path that rewrites the profile — a quote ends the TOML key, a newline starts a new entry.
 L="codex read, a root whose name could rewrite the profile"
 QR="$T/quote\"root"; mkdir -p "$QR"

@@ -27,7 +27,7 @@
 #     the include; no `GATES:BEGIN` marker survives in SKILL.md);
 #   - SKILL.md's own Phase 1 text agrees with the include's contract: it
 #     states the fenced-body-only handoff rule, that the orchestrator
-#     substitutes BOTH placeholders (`[BATCH FILE LIST]` and
+#     substitutes ALL THREE placeholders (`[BATCH FILE LIST]`, `[AUDIT MODE]` and
 #     `[VERIFICATION CONTEXT]`), and the CONCRETE save gate taken from the
 #     include's own FULL/SHORT output format heading (`### [filename]`, one
 #     per file in the batch, path exactly as listed) — tied to "orchestrator
@@ -585,10 +585,10 @@ if phase1_block=$(extract_block "$SKILL" exact '## Phase 1: Batch Evaluation' pr
   esac
 
   case "$phase1_block" in
-    *"orchestrator substitutes BOTH placeholders"*)
-      pass "SKILL.md Phase 1 says the orchestrator substitutes BOTH placeholders" ;;
+    *"orchestrator substitutes ALL THREE placeholders"*"[AUDIT MODE]"*)
+      pass "SKILL.md Phase 1 says the orchestrator substitutes ALL THREE placeholders, [AUDIT MODE] among them" ;;
     *)
-      bad "SKILL.md Phase 1 says the orchestrator substitutes BOTH placeholders" ;;
+      bad "SKILL.md Phase 1 says the orchestrator substitutes ALL THREE placeholders, [AUDIT MODE] among them" ;;
   esac
 
   case "$phase1_block" in
@@ -639,7 +639,7 @@ else
   bad "SKILL.md Phase 1 states the fenced-body-only handoff rule (Phase 1 block not found)"
   bad "SKILL.md Phase 1 carries the [BATCH FILE LIST] placeholder (Phase 1 block not found)"
   bad "SKILL.md Phase 1 carries the [VERIFICATION CONTEXT] placeholder (Phase 1 block not found)"
-  bad "SKILL.md Phase 1 says the orchestrator substitutes BOTH placeholders (Phase 1 block not found)"
+  bad "SKILL.md Phase 1 says the orchestrator substitutes ALL THREE placeholders, [AUDIT MODE] among them (Phase 1 block not found)"
   bad "SKILL.md Phase 1 states the concrete save gate (### [filename] heading, path as listed, one per file) (Phase 1 block not found)"
   bad "SKILL.md Phase 1 dispatch comment allows read-only verification commands (agrees with 'shell available') (Phase 1 block not found)"
   bad "SKILL.md Phase 1 dispatch comment no longer says 'Read + CodeSift only' (contradicted 'shell available') (Phase 1 block not found)"
@@ -863,7 +863,7 @@ else
   bad "Phase 1a section located — $(eb_reason)"
   p1a=""
 fi
-block_has "$p1a" '~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --token "$RUN_TOKEN"' "1a carries the setup call, the harness pid passed as --owner"
+block_has "$p1a" '~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --mode "$MODE" --token "$RUN_TOKEN"' "1a carries the setup call, the harness pid passed as --owner and the run's audit mode as --mode"
 block_has "$p1a" '~/.zuvo/test-audit-batch group --owner "$PPID" --nbatch "$NBATCH" --first "$FIRST" --token "$RUN_TOKEN"' "1a carries the group call, the harness pid passed as --owner"
 block_has "$p1a" '~/.zuvo/test-audit-batch release --owner "$PPID" --token' "1a names the release call for a run that STOPs"
 block_has "$p1a" 'model-run --route --mode audit --access read' "1a says what each batch is run as"
@@ -1501,6 +1501,29 @@ exec /bin/mkdir "$@"
   { [ "$rc" = 3 ] && err_has "STOP: NBATCH='0'"; }
   hres "setup with NBATCH=0 STOPs (item 5)" $?
 
+  # --- D3: the run's MODE reaches every batch prompt through setup --mode; a bad mode is a usage error
+  #     (a helper that ignored the mode would hand a --quick run the same full-depth prompt as --deep)
+  rm -f "$B/.lock"
+  SETUP_DEEP="$(printf '%s\n' "$SETUP_SH" | awk 'match($0, /^[ \t]*MODE=/) { print substr($0, 1, RLENGTH) "deep"; next } { print }')"
+  run_block "$SETUP_DEEP" 2 1 560 15; rc=$?
+  { [ "$rc" = 0 ] && [ "$(grep -c '^Audit mode: deep$' "$B/batch-1.prompt")" = 1 ] && [ "$(grep -c '^Audit mode: deep$' "$B/batch-2.prompt")" = 1 ]; }
+  hres "setup with MODE=deep writes 'Audit mode: deep' into every batch prompt (D3)" $?
+  rm -f "$B/.lock"
+  SETUP_BAD="$(printf '%s\n' "$SETUP_SH" | awk 'match($0, /^[ \t]*MODE=/) { print substr($0, 1, RLENGTH) "bogus"; next } { print }')"
+  run_block "$SETUP_BAD" 2 1 560 15; rc=$?
+  { [ "$rc" = 2 ] && err_has "--mode must be quick, standard or deep"; }
+  hres "setup with an unknown MODE is a usage error (exit 2), not a silently standard run (D3)" $?
+  rm -f "$B/.lock"
+  # a same-run re-run keeps the saved batch results, so it may not switch the mode under them (they would be
+  # relabelled with a depth they were not gathered at)
+  run_block "$SETUP_DEEP" 1 1 560 15
+  tk_="$(awk -F= '/^RUN_TOKEN=/ { print $2 }' "$X/log/out")"
+  SETUP_RERUN="$(printf '%s\n' "$SETUP_SH" | awk -v tk="$tk_" 'match($0, /^[ \t]*RUN_TOKEN=/) { print substr($0, 1, RLENGTH) tk; next } { print }')"
+  run_block "$SETUP_RERUN" 1 1 560 15; rc=$?
+  { [ -n "$tk_" ] && [ "$rc" = 3 ] && err_has "already used --mode deep"; }
+  hres "a same-run setup re-run with a different MODE STOPs instead of relabelling kept batch results (D3)" $?
+  rm -f "$B/.lock"
+
   # --- item 3/N8: a .lock that is a directory or a regular file (not our link) STOPs by name
   rm -f "$B/.lock"; mkdir "$B/.lock"
   run_block "$SETUP_SH" 3 1 560 15; rc=$?
@@ -1848,6 +1871,7 @@ is not an install root|not an install root
 is not a positive whole number|a bad `NBATCH`
 is not a lock link|a `.lock` that is not a lock link (an older layout)
 could not be set aside|a prompt that could not be set aside
+already used --mode|same-run re-run with a different mode
 PAIRS
 n_stops="$(printf '%s\n' "$setup_stops" | awk 'NF { n++ } END { print n + 0 }')"
 if [ "$n_stops" -eq "$n_pairs" ]; then pass "every one of the setup's $n_stops STOP reasons is paired with the exit-3 list"

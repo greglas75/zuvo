@@ -1132,6 +1132,11 @@ sv "claude, platform=codex, under CLAUDECODE=1 (a lying platform=) — the host'
 sv "codex, platform=claude, under CLAUDECODE=1 — cross-vendor, host reported" 1 claude codex claude CLAUDECODE=1
 sv "claude, platform=codex, on a Codex host — cross-vendor, host reported" 1 codex claude codex CODEX_SHELL=1
 sv "an empty client is never a match" 1 "" "" claude
+# Bug caught (live test 2026-11-22): a Codex child inheriting CLAUDECODE=1 was classed as a Claude host, so its
+# own Codex reviewer passed as cross-vendor. Both markers: the innermost (Codex) host is the writer.
+sv "codex, platform=codex, Codex child under an inherited CLAUDECODE=1 — the writer's own vendor, host codex" 0 codex codex codex CODEX_SHELL=1 CLAUDECODE=1
+sv "claude, platform=codex, Codex child under an inherited CLAUDECODE=1 — cross-vendor, host codex" 1 codex claude codex CODEX_SHELL=1 CLAUDECODE=1
+sv "codex, platform=claude, both markers — still refused (a lying platform= and the host both say codex)" 0 codex codex claude CODEX_SHELL=1 CLAUDECODE=1
 
 # ── 1. codex off the PATH, ECHOING → canary-failed for codex ──────────────────
 new_case codex-echo
@@ -2319,26 +2324,26 @@ else
   critical_setup_fail "same-vendor guard (codex)"
 fi
 
-# ── 21f1b. T7 (adversarial pass 3, f1-10): CONFLICTING host signals — CLAUDECODE=1 AND
-# CODEX_SANDBOX=seatbelt set TOGETHER. Pins the documented precedence (scripts/reviewer-preflight.sh:
-# `if CLAUDECODE=1 ... elif zms_is_codex_host ...` — CLAUDECODE checked first, so it wins). Isolated
-# from platform= entirely: platform=codex (so the platform-based half of the guard's OR does NOT
-# match ROUTED_CLIENT=claude either), leaving ONLY host-vendor detection able to decide the outcome.
-# If CLAUDECODE wins (the documented behaviour), host vendor = claude = ROUTED_CLIENT -> guard
-# fires. If codex had wrongly won instead, host vendor = codex != claude -> guard would NOT fire and
-# this would come back "ok" with the claude spy answering first.
+# ── 21f1b. T7 (adversarial pass 3, f1-10; precedence reversed 2026-11-22): CONFLICTING host signals —
+# CLAUDECODE=1 AND CODEX_SANDBOX=seatbelt set TOGETHER. The INNERMOST host wins: a Codex child started
+# from a Claude Code session inherits CLAUDECODE=1, so the Codex markers decide (zms_route_same_vendor:
+# `if zms_is_codex_host ... elif CLAUDECODE=1`). Before, CLAUDECODE won and the child's own Codex
+# reviewer passed as cross-vendor. Isolated from platform= entirely: platform=claude (so the platform
+# half of the guard's OR does NOT match ROUTED_CLIENT=codex either), leaving ONLY host-vendor detection
+# able to decide. If codex wins, host vendor = codex = ROUTED_CLIENT -> guard fires. If claude had won,
+# host vendor = claude != codex -> this would come back "ok" with the codex spy answering first.
 new_case route-same-vendor-guard-conflicting-host-signals
-if install_home_driver && write_stub_router 'reviewer_model=claude-opus-5-5' 'platform=codex'; then
-  spy "$C/off" claude
+if install_home_driver && write_stub_router 'reviewer_model=gpt-6-sol' 'platform=claude'; then
+  spy "$C/off" codex
   spy "$C/bin" agy
-  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CLAUDE_BIN="$C/off/claude" SPY_REPLY=42 \
+  run_pf "$C/solo/reviewer-preflight.sh" ZUVO_CODEX_BIN="$C/off/codex" SPY_REPLY=42 \
     CLAUDECODE=1 CODEX_SANDBOX=seatbelt ZUVO_REVIEW_TEST_PROVIDERS=agy
   expect_eq "conflicting host signals: exit 0" "0" "$RC"
-  expect_eq "conflicting host signals: preflight_status=degraded-routing (CLAUDECODE wins over CODEX_SANDBOX; host vendor=claude=ROUTED_CLIENT)" \
+  expect_eq "conflicting host signals: preflight_status=degraded-routing (the Codex markers win over an inherited CLAUDECODE; host vendor=codex=ROUTED_CLIENT)" \
     "degraded-routing" "$(field preflight_status)"
-  expect_has "conflicting host signals: stderr attributes the vendor CLAUDECODE resolved to (claude), proving CLAUDECODE's precedence decided this, not platform=" \
-    "independently detected as claude" "$ERR"
-  spy_not_ran "conflicting host signals (CLAUDECODE must win — claude is the detected host vendor)" claude
+  expect_has "conflicting host signals: stderr attributes the vendor the Codex markers resolved to (codex), proving the host precedence decided this, not platform=" \
+    "independently detected as codex" "$ERR"
+  spy_not_ran "conflicting host signals (the Codex markers must win — codex is the detected host vendor)" codex
   spy_ran "conflicting host signals" agy
   contract "conflicting host signals"
   tmp_clean "conflicting host signals"

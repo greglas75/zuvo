@@ -175,6 +175,16 @@ if probed cc "the Claude-host probe"; then
     || pass "Claude host: nothing auto-excluded"
 fi
 
+# 4e2. A Codex run started from a Claude session inherits CLAUDECODE=1; the innermost host (Codex) wins, so the
+#      panel must not announce a Claude host (which would keep every Codex lane and let Codex review itself).
+run ccx CODEX_SHELL=1 CLAUDECODE=1 CODEX_MODEL=gpt-5.5 --
+if probed ccx "the Codex-child-of-Claude probe"; then
+  grep -q "Host detected: claude" "$XS_T/ccx.out" && bad "Codex child with an inherited CLAUDECODE=1 was detected as a Claude host" \
+    || pass "Codex child with an inherited CLAUDECODE=1 is not a Claude host"
+  grep -q "Host detected: codex-5.4" "$XS_T/ccx.out" && pass "Codex child with an inherited CLAUDECODE=1 is detected as a Codex host" \
+    || bad "Codex child with an inherited CLAUDECODE=1: no 'Host detected: codex-5.4' line — $(grep 'Host detected' "$XS_T/ccx.out" | tr '\n' ' ')"
+fi
+
 # 4c. Source guard: detect_host_platform must keep returning both lanes for Antigravity.
 # Source guards read the program as one text — driver + modules (tests/lib/adversarial-driver.sh).
 . "$ROOT/tests/lib/adversarial-driver.sh"

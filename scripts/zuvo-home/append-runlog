@@ -470,14 +470,20 @@ case "$SKILL" in
       #   location first, then fall back to the legacy audits/ and audit-results/
       #   dirs so in-flight projects mid-migration still pass the gate.
       ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
+      # test-audit writes test-quality-audit-<date>.md (its own SKILL.md names it so), not
+      # test-audit-<date>.md; looking only for the skill name skipped the verify gate on every run.
+      REPORT_STEMS="$SKILL"
+      [ "$SKILL" = "test-audit" ] && REPORT_STEMS="test-quality-audit test-audit"   # canonical name first
       for base in "$ZUVO_DIR/audits" "audits" "audit-results"; do
-        for candidate in \
-          "$base/$SKILL-$AUDIT_DATE.md" \
-          $(ls -t "$base"/$SKILL-$AUDIT_DATE*.md 2>/dev/null); do
-          if [ -f "$candidate" ]; then
-            AUDIT_REPORT="$candidate"
-            break 2
-          fi
+        for stem in $REPORT_STEMS; do
+          for candidate in \
+            "$base/$stem-$AUDIT_DATE.md" \
+            $(ls -t "$base"/$stem-$AUDIT_DATE*.md 2>/dev/null); do
+            if [ -f "$candidate" ]; then
+              AUDIT_REPORT="$candidate"
+              break 3
+            fi
+          done
         done
       done
       # `review` does not use the <skill>-<date>.md shape at all: per its own skill spec it
@@ -509,7 +515,10 @@ case "$SKILL" in
       fi
       if [ -z "$AUDIT_REPORT" ]; then
         # No today's report found — try most recent across all locations
-        AUDIT_REPORT=$(ls -t "$ZUVO_DIR"/audits/$SKILL-*.md audits/$SKILL-*.md audit-results/$SKILL-*.md 2>/dev/null | head -1)
+        for stem in $REPORT_STEMS; do
+          AUDIT_REPORT=$(ls -t "$ZUVO_DIR"/audits/$stem-*.md audits/$stem-*.md audit-results/$stem-*.md 2>/dev/null | head -1)
+          [ -n "$AUDIT_REPORT" ] && break
+        done
       fi
 
       if [ -n "$AUDIT_REPORT" ] && [ -f "$AUDIT_REPORT" ]; then

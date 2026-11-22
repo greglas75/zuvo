@@ -54,3 +54,15 @@ else
   # reliably stage — the point of this file is the two WARN paths above.
   pass "failing-verification path not exercised here (rc=$rc; report lookup is CWD-dependent)"
 fi
+
+start_test "B-1.d test-audit's own report name (test-quality-audit-<date>.md) is found and verified, not skipped (L8)"
+Z=$(_z); mkdir -p "$Z/bin" "$Z/proj/zuvo/audits"
+printf 'RETRO: %s\ttest-audit\tdemo\tOTHER\tno-friction\t-\tnone\t0\t0\t0\t0\tmain\tabc1234\tN/A\tN/A\tN/A\tok\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$Z/retros.log"
+printf '#!/bin/sh\necho "$*" >> "%s/verified"\necho "bad findings" >&2\nexit 1\n' "$Z" > "$Z/bin/verify-audit"; chmod +x "$Z/bin/verify-audit"
+: > "$Z/proj/zuvo/audits/test-quality-audit-$(date -u +%Y-%m-%d).md"
+RUN_TA='2026-05-18T12:00:00Z\ttest-audit\tdemo\t0-critical\t0-total\tPASS\t-\t25-dimensions\tprobe\tmain\tabc1234\tAUTO\tQUICK'
+out=$(cd "$Z/proj" && ZUVO_HOME="$Z" ZUVO_BIN="$Z/bin" ZUVO_OUTPUT_DIR="$Z/proj/zuvo" \
+       bash -c 'printf "%b\n" "'"$RUN_TA"'" | "'"$ADV"'"' 2>&1); rc=$?
+assert_exit_code 2 "$rc" "a failing verification of test-quality-audit-<date>.md blocks (the old lookup never saw that name and skipped)"
+assert_contains "$(cat "$Z/verified" 2>/dev/null)" "test-quality-audit-" "the verifier was handed the test-quality-audit report path"

@@ -459,7 +459,9 @@ cross-vendor reviewer could not run asks the router again with `--fallback`.
 
 Routing contract:
 
-- detect the platform, then the writer, from the environment. Claude host: `CLAUDECODE=1` or a `CLAUDE_MODEL`
+- detect the platform, then the writer, from the environment. Codex host signals are checked before
+  `CLAUDECODE=1`, which every child of a Claude session inherits, so a Codex run started from Claude is a Codex host
+  (Claude started from Codex is unsupported and detects as Codex). Claude host: `CLAUDECODE=1` or a `CLAUDE_MODEL`
   hint; writer `CLAUDE_MODEL`, unset → `unknown` (never an assumed `sonnet`). Codex host: any of the four host
   signals (`zms_is_codex_host`) or a `ZUVO_CODEX_MODEL` hint; writer `ZUVO_CODEX_MODEL` → `CODEX_MODEL` → the
   top-level `model =` of `${CODEX_HOME:-~/.codex}/config.toml` → `unknown`. A variable holding the literal

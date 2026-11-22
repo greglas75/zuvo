@@ -92,7 +92,9 @@ zms_is_codex_host() {
 # none) either way, for the caller's diagnostic. The preflight and model-run both refuse on status 0.
 zms_route_same_vendor() {
   local client="${1:-}" platform="${2:-}" host=""
-  if [ "${CLAUDECODE:-}" = 1 ]; then host=claude; elif zms_is_codex_host; then host=codex; fi
+  # Innermost host first, as the router's detect_platform: Codex markers beat the CLAUDECODE=1 a Codex
+  # child inherits from a Claude Code session, so the child's Codex reviewer is refused, Claude's is not.
+  if zms_is_codex_host; then host=codex; elif [ "${CLAUDECODE:-}" = 1 ]; then host=claude; fi
   printf '%s\n' "$host"
   [ -n "$client" ] || return 1
   [ "$client" = "$platform" ] || [ "$client" = "$host" ]
@@ -701,13 +703,16 @@ _zms_run_validate() {
 }
 
 # _zms_codex_readable — fills `readable` for codex --access read: the root, its git dir and the common git dir
-# (a linked worktree's objects and refs live in the main checkout's .git), and the directory codex is installed
-# in. Physical paths, each once. A root outside git, or no git on PATH, is the root alone.
+# (a linked worktree's objects and refs live in the main checkout's .git), the directory of the client path as
+# given (codex re-execs itself through that path, e.g. /opt/homebrew/bin/codex, and the sandbox helper fails with
+# "execvp ... Operation not permitted" when only the symlink-resolved Caskroom dir is readable), and the directory
+# codex is installed in. Physical paths, each once. A root outside git, or no git on PATH, is the root alone.
 _zms_codex_readable() {
   local p q seen=" "
   for p in "$root" \
            "$(git -C "$root" rev-parse --path-format=absolute --git-dir 2>/dev/null)" \
            "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+           "$(dirname -- "$bin")" \
            "$(_zms_install_dir "$bin")"; do
     [ -n "$p" ] && [ -d "$p" ] || continue
     q="$(CDPATH='' cd -P -- "$p" 2>/dev/null && pwd -P)" || continue

@@ -102,9 +102,6 @@ detect_host_platform() {
   # Self-review (Gemini reviewing Gemini, Codex reviewing Codex) produces
   # low-value findings and can cause auth/process conflicts.
 
-  # Claude Code: sets CLAUDECODE=1
-  [[ "${CLAUDECODE:-}" == "1" ]] && echo "claude" && return
-
   # Codex CLI / Codex Desktop — any of the four host signals (zms_is_codex_host). Without the shared
   # runner the codex lanes cannot run at all, so there is nothing to exclude.
   if [[ -n "$ZMS_LOADED" ]] && zms_is_codex_host; then
@@ -124,6 +121,11 @@ detect_host_platform() {
       *)  echo "codex-5.4" && return ;;              # host = 5.4/5.5 -> exclude 5.4 (spark stays as reviewer)
     esac
   fi
+
+  # Claude Code: sets CLAUDECODE=1. Checked AFTER the Codex signals on purpose: CLAUDECODE is inherited by
+  # every process a Claude session starts, so a Codex run launched from Claude still carries it, and the
+  # innermost host (the one actually reviewing) is the Codex one. The reverse nesting is not supported.
+  [[ "${CLAUDECODE:-}" == "1" ]] && echo "claude" && return
 
   # Qwen Code: its shell tool exports QWEN_CODE=1 into every command it runs (read from the
   # v0.20.0 bundle, the same env block that sets TERM). A review launched from inside Qwen Code
