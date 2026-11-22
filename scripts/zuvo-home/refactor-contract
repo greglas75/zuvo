@@ -29,13 +29,18 @@ fills it — you cannot enter a phase whose prerequisites are still `not_run`. T
 point. A contract that records `prove.regression_red: not_run` and a stage of PHASE-4 is not a
 resumable state, it is a claim with no evidence behind it.
 
-Usage:
+Usage (--file/--contract select the contract and go BEFORE the subcommand; `init` takes its own --file):
+  ~/.zuvo/refactor-contract init --file <src> [--type T] [--scope-fence P...] [--behavior-mode M] [--behavior-scope S...]
   ~/.zuvo/refactor-contract [--file <src>] [--contract <path>] show
   ~/.zuvo/refactor-contract list [--stale-days N] [--json]
   ~/.zuvo/refactor-contract stage <STAGE> [--force]
   ~/.zuvo/refactor-contract prove <field> <evidence>
   ~/.zuvo/refactor-contract set <dotted.key> <json-value>
-  ~/.zuvo/refactor-contract append progress <text>
+  ~/.zuvo/refactor-contract append <list-key> <text>
+  ~/.zuvo/refactor-contract baseline [--mode M] "<characterization command>"
+  ~/.zuvo/refactor-contract recheck
+  ~/.zuvo/refactor-contract regression <finding-id> red|green "<test command>"
+  ~/.zuvo/refactor-contract check
 
 Exit codes:
   0  done
@@ -141,6 +146,9 @@ REQUIRES = {
     "COMPLETE": ["characterization", "regression_red", "findings_disposition", "test_quality",
                  "mutation"],
 }
+
+# `prove` also takes the probe tally the lock step records; it is not part of the stage gate.
+PROVE_WRITABLE = PROVE_FIELDS + ["characterization_probes"]
 
 UNPROVEN = ("not_run", "pending", "", "-", "todo", "tbd", "n/a-pending")
 
@@ -477,6 +485,17 @@ def cmd_stage(a, root, path):
                   file=sys.stderr)
         return 1
 
+    if target == "COMPLETE" and c.get("commit_execution"):
+        print("REFUSED — commit_execution=%s: nothing was committed, so the end state is "
+              "EXECUTION_COMPLETE, not COMPLETE" % c["commit_execution"], file=sys.stderr)
+        return 1
+    if target == "COMPLETE" and version >= 7:
+        # COMPLETE means `check` exits 0 — the same verdict the result must carry. No --force.
+        rc = cmd_check(a, root, path)
+        if rc != 0:
+            print("REFUSED — COMPLETE requires `check` exit 0 (it exited %d)" % rc, file=sys.stderr)
+            return 1
+        c = read_json(path)
     c["stage"] = target
     if not write_atomic(path, c):
         print("refactor-contract: could not write %s" % path, file=sys.stderr)
@@ -490,9 +509,9 @@ def cmd_prove(a, root, path):
     if c is None:
         print("refactor-contract: unreadable contract: %s" % path, file=sys.stderr)
         return 2
-    if a.field not in PROVE_FIELDS:
+    if a.field not in PROVE_WRITABLE:
         print("refactor-contract: '%s' is not a prove field. One of: %s"
-              % (a.field, ", ".join(PROVE_FIELDS)), file=sys.stderr)
+              % (a.field, ", ".join(PROVE_WRITABLE)), file=sys.stderr)
         return 2
     ev = (a.value or "").strip()
     if ev.lower() in UNPROVEN or len(ev) < 3:
@@ -784,8 +803,13 @@ def cmd_check(a, root, path):
         if version >= 6:
             print("QUALITY: " + str((c.get("prove") or {}).get("test_quality", "N/A")).split(":", 1)[0])
         if version >= 7:
-            mutation = str((c.get("prove") or {}).get("mutation", "N/A")).split(":", 2)
-            print("MUTATION: " + ":".join(mutation[:2]))
+            mutation = str((c.get("prove") or {}).get("mutation", "N/A"))
+            if mutation.startswith("not_run:"):
+                print("MUTATION: WARN " + mutation)   # accepted, never a silent pass
+            else:
+                print("MUTATION: " + ":".join(mutation.split(":", 2)[:2]))
+        if c.get("commit_execution"):
+            print("COMMIT: none (commit_execution=%s) — worktree changes retained" % c["commit_execution"])
     return result.returncode
 
 
@@ -847,7 +871,69 @@ def tail_of(text, n=20):
     return "\n".join(lines[-n:])
 
 
+def cmd_init(a, root):
+    """Create the v7 contract for a target — the schema in refactor-reference.md, written by the tool.
+
+    Contracts were hand-written JSON (two live runs did it) and the hand-written ones missed fields
+    the gates read. The key is the CLI's own `target_hash` of the repo-relative path, so the file a
+    run creates is the file `--file` later finds.
+    """
+    src = a.init_file or a.file
+    if not src:
+        print("refactor-contract: init needs --file <source>", file=sys.stderr)
+        return 2
+    rel = os.path.relpath(os.path.abspath(src), root)
+    if rel.startswith(".."):
+        print("refactor-contract: %s is outside the repository %s" % (src, root), file=sys.stderr)
+        return 2
+    rel = rel.replace(os.sep, "/")
+    key = target_hash(rel)
+    d = contracts_dir(root)
+    path = os.path.join(d, "refactor-%s.json" % key)
+    if os.path.exists(path):
+        existing = read_json(path) or {}
+        head7 = git_head(root)
+        # Archive ONLY a finished run from an earlier commit; an unfinished one is resumable.
+        if (canonical_stage(existing.get("stage"))[0] == "COMPLETE"
+                and head7 not in Path(path).read_text(encoding="utf-8", errors="replace")):
+            os.replace(path, os.path.join(d, "refactor-%s-%s.json" % (key, head7)))
+            side = os.path.join(d, "%s-findings.json" % key)
+            if os.path.exists(side):
+                os.replace(side, os.path.join(d, "%s-%s-findings.json" % (key, head7)))
+        else:
+            print("refactor-contract: %s exists (stage=%s) — RESUME it, do not overwrite"
+                  % (os.path.relpath(path, root), existing.get("stage", "?")), file=sys.stderr)
+            return 1
+    fence = a.scope_fence or [rel]
+    contract = {
+        "version": 7, "kind": "refactor-contract",
+        "behavior_mode": a.behavior_mode, "behavior_scope": a.behavior_scope or [],
+        "fix_findings": [], "findings_outcome": "none", "evidence": {},
+        "file": rel, "type": a.type, "mode": "full", "stage": "PHASE-1",
+        "queue_file": None, "queue_entry": None, "cq_before": {},
+        "scope_fence": fence, "plan": {}, "test_mode": "",
+        "test_audit_before": {"test_file": None, "q7": 0, "q11": 0, "q13": 0, "units_total": 0,
+                              "units_covered": 0, "uncovered_units": []},
+        "modules_created": [],
+        "prove": {k: "not_run" for k in PROVE_FIELDS if k != "findings_disposition"},
+        "progress": [],
+    }
+    contract["prove"]["findings_disposition"] = "pending"
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".refactor-", dir=d)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(contract, fh, indent=1)
+    os.replace(tmp, path)
+    print("created %s (target hash %s)" % (os.path.relpath(path, root), key))
+    return 0
+
+
 def cmd_set(a, root, path):
+    if a.key.split(".")[0] == "stage":
+        # `set stage COMPLETE` skipped every gate `stage` enforces — a forged COMPLETE.
+        print("refactor-contract: use `stage <STAGE>`; `set` cannot write the stage "
+              "(it would bypass the evidence gate)", file=sys.stderr)
+        return 1
     c = read_json(path)
     if c is None:
         return 2
@@ -886,6 +972,15 @@ def main(argv):
     ap.add_argument("--contract", help="explicit path to the contract json")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    p_init = sub.add_parser("init")
+    p_init.add_argument("--file", dest="init_file", help="target source file (repo-relative or absolute)")
+    p_init.add_argument("--type", default="", help="refactor type, e.g. SPLIT_FILE, EXTRACT_METHODS")
+    p_init.add_argument("--scope-fence", nargs="+", metavar="PATH",
+                        help="files this run may touch (default: the target)")
+    p_init.add_argument("--behavior-mode", default="preserve_behavior",
+                        choices=["preserve_behavior", "refactor_and_fix"])
+    p_init.add_argument("--behavior-scope", nargs="+", metavar="SYMBOL",
+                        help="the symbols whose defects the request asked to fix")
     sub.add_parser("show")
     p_list = sub.add_parser("list")
     p_list.add_argument("--stale-days", type=int, default=14)
@@ -918,6 +1013,8 @@ def main(argv):
 
     if a.cmd == "list":
         return cmd_list(a, root)
+    if a.cmd == "init":
+        return cmd_init(a, root)
 
     path = find_contract(a, root)
     if path is None:

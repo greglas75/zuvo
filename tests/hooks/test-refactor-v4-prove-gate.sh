@@ -266,9 +266,32 @@ case "$(push)" in *"repo-relative"*) ok "'..' traversal in the artifact path: BL
 mcontract 7 "N/A"
 case "$(push)" in *"bare N/A"*) ok "bare 'N/A': BLOCK (an unexplained skip is not a disposition)" ;;
   *) bad "bare N/A accepted for prove.mutation" ;; esac
+mcontract 7 "N/A:no-test-runner"
+case "$(push)" in *"prove.mutation"*) bad "a coded N/A reason was still blocked" ;;
+  *) ok "'N/A:<code>' with a closed reason code: accepted" ;; esac
+
+#     Live-test defect (2026-11-22): the same situation (no mutation runner configured) was accepted
+#     as 'N/A:<free text>' in one run and blocked as 'not_run' in another. Free text is no reason.
 mcontract 7 "N/A:no test runner in this project"
-case "$(push)" in *"prove.mutation"*) bad "a NAMED N/A reason was still blocked" ;;
-  *) ok "'N/A:<why>' with a nameable condition: accepted" ;; esac
+case "$(push)" in *"free text is not a reason"*) ok "free-text N/A reason: BLOCK (closed vocabulary only)" ;;
+  *) bad "free-text N/A reason accepted for prove.mutation" ;; esac
+mcontract 7 "N/A:owner permits skipping mutation"
+case "$(push)" in *"free text is not a reason"*) ok "an invented N/A rationale: BLOCK" ;;
+  *) bad "invented N/A rationale accepted" ;; esac
+
+#     Headless / no-native-runner runs have a defined outcome: not_run WITH a closed reason is
+#     accepted (the contract check reports it as a WARN); a bare not_run or a free reason is not.
+for v in "not_run:no-native-runner" "not_run:no-consent" "not_run:no-native-runner:no stryker config"; do
+  mcontract 7 "$v"
+  case "$(push)" in *"prove.mutation"*) bad "'$v' (defined headless outcome) was blocked" ;;
+    *) ok "'$v': accepted (WARN at check, not a block)" ;; esac
+done
+mcontract 7 "not_run:because"
+case "$(push)" in *"free text is not a reason"*) ok "'not_run:<free text>': BLOCK" ;;
+  *) bad "free-text not_run reason accepted" ;; esac
+mcontract 7 "N/A:plan-only"
+case "$(push)" in *"prove.mutation"*) bad "N/A:plan-only was blocked" ;;
+  *) ok "'N/A:plan-only': accepted" ;; esac
 
 #     The honest shapes.
 mcontract 7 "PASS:100%(native):zuvo/audits/mt.json"

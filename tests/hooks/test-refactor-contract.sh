@@ -304,6 +304,92 @@ else
   bad "v6 rollout returned exit=$rc without the expected v6-only proof reason: $(head -3 "$TMP/err")"
 fi
 
+# ── 13. live-test defects (zuvo:refactor, 2026-11-22) ────────────────────────
+# Real git repo: `check` shells into the hook library and needs a consistent contract, so these
+# cases build one the way a run does — `init`, a measured baseline/recheck, then the prove fields.
+E="$TMP/e2e"
+mkdir -p "$E/src" "$E/zuvo/audits"
+git -C "$E" init -q
+printf 'export const a = 1\n' > "$E/src/a.ts"
+printf '# audit\nStatus: PASS\n' > "$E/zuvo/audits/tq.md"
+git -C "$E" -c user.email=t@t -c user.name=t add -A >/dev/null 2>&1
+git -C "$E" -c user.email=t@t -c user.name=t commit -qm init >/dev/null 2>&1
+ec() { ( cd "$E" && ZUVO_AI_RUN=1 python3 "$BIN" --file src/a.ts "$@" ) > "$TMP/out" 2> "$TMP/err"; }
+
+# D9: the contract was hand-written JSON. init writes the v7 schema and keys it by the CLI's hash.
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+KEY=$(python3 -c "import hashlib;print(hashlib.sha256(b'src/a.ts').hexdigest()[:8])")
+if [ "$rc" -eq 0 ] && [ -f "$E/zuvo/contracts/refactor-$KEY.json" ] &&
+   python3 - "$E/zuvo/contracts/refactor-$KEY.json" <<'PY2'
+import json, sys
+c = json.load(open(sys.argv[1]))
+ok = (c["version"] == 7 and c["kind"] == "refactor-contract" and c["file"] == "src/a.ts"
+      and c["scope_fence"] == ["src/a.ts"] and c["behavior_mode"] == "preserve_behavior"
+      and c["prove"]["mutation"] == "not_run" and c["stage"] == "PHASE-1")
+sys.exit(0 if ok else 1)
+PY2
+then pass "init writes a v7 contract keyed by SHA-256(path)[:8], found again by --file"
+else bad "init did not create the expected contract (exit=$rc): $(head -3 "$TMP/err")"; fi
+ec show; rc=$?
+[ "$rc" -eq 0 ] && pass "the init'd contract is selected by --file" || bad "--file did not find the init'd contract (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file src/a.ts ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'RESUME' "$TMP/err" \
+  && pass "init refuses to overwrite an unfinished contract" \
+  || bad "init overwrote a resumable contract (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file /etc/hosts ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 2 ] && pass "init refuses a target outside the repository" || bad "init accepted a path outside the repo (exit=$rc)"
+
+# D9: `prove characterization_probes` is rejected while the skill tells the run to record it.
+ec prove characterization_probes "3/3"; rc=$?
+[ "$rc" -eq 0 ] && pass "prove accepts characterization_probes" || bad "characterization_probes rejected (exit=$rc)"
+
+# Fill the rest honestly, through the same commands a run uses.
+ec baseline "printf 'Tests  3 passed (3)\n'" >/dev/null
+ec recheck >/dev/null
+ec prove blind_audit clean:strict >/dev/null
+ec prove adversarial clean >/dev/null
+ec prove findings_disposition none >/dev/null
+ec prove regression_red "n/a-no-fixes" >/dev/null
+ec prove test_quality "PASS:A:zuvo/audits/tq.md" >/dev/null
+ec prove split_coverage N/A >/dev/null
+ec prove mutation "not_run:no-consent" >/dev/null
+
+# D2: no runner and no consent is a DEFINED outcome — check exits 0 and says WARN, never silent.
+ec check; rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'MUTATION: WARN not_run:no-consent' "$TMP/out"; then
+  pass "check accepts not_run:<closed reason> for mutation and reports it as a WARN"
+else bad "check did not accept/flag a coded not_run mutation (exit=$rc): $(tail -3 "$TMP/out")"; fi
+
+# D6: COMPLETE is impossible while check is non-zero — via `stage` AND via `set`.
+ec set prove.adversarial not_run >/dev/null
+ec stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'requires `check` exit 0' "$TMP/err" \
+  && pass "stage COMPLETE is refused while check exits non-zero (no forged COMPLETE)" \
+  || bad "COMPLETE accepted over a failing check (exit=$rc)"
+ec stage COMPLETE --force; rc=$?
+[ "$rc" -eq 1 ] && pass "--force cannot certify COMPLETE over a failing check" || bad "--force certified COMPLETE (exit=$rc)"
+ec set stage '"COMPLETE"'; rc=$?
+[ "$rc" -eq 1 ] && pass "set cannot write the stage around the gate" || bad "set stage COMPLETE slipped through (exit=$rc)"
+python3 -c "
+import json,sys
+sys.exit(0 if json.load(open('$E/zuvo/contracts/refactor-$KEY.json'))['stage']=='PHASE-1' else 1)" \
+  && pass "the refused attempts left the stage untouched" || bad "a refused attempt changed the stage"
+ec set prove.adversarial clean >/dev/null
+
+# D3: .git not writable -> the run records commit_execution and ends in EXECUTION_COMPLETE.
+ec set commit_execution '"blocked:index.lock not writable"' >/dev/null
+ec check; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'COMMIT: none (commit_execution=blocked:' "$TMP/out" \
+  && pass "check passes in no-commit mode and states that nothing was committed" \
+  || bad "check lost the no-commit disclosure (exit=$rc)"
+ec stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'EXECUTION_COMPLETE' "$TMP/err" \
+  && pass "an uncommitted run cannot be marked COMPLETE" \
+  || bad "COMPLETE accepted although nothing was committed (exit=$rc)"
+ec stage EXECUTION_COMPLETE; rc=$?
+[ "$rc" -eq 0 ] && pass "EXECUTION_COMPLETE is the accepted end state of a no-commit run" \
+  || bad "EXECUTION_COMPLETE refused for a no-commit run (exit=$rc): $(head -3 "$TMP/err")"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

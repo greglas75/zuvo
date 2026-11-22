@@ -233,8 +233,10 @@ refactor_prove_v4_check() (
     if [ "$rpv_cv" -ge 7 ] 2>/dev/null; then
       rpv_mu=$(_prove_field "$rpv_c" mutation)
       case "$rpv_mu" in
-        N/A:?*) ;;
-        N/A) echo "BLOCK: refactor CONTRACT prove.mutation='N/A' — a bare N/A does not say which condition made a mutation run impossible (no test runner, empty scope). Record 'N/A:<why>' [$rpv_c]"; rpv_blocked=1 ;;
+        N/A:no-test-runner|N/A:no-test-runner:*|N/A:plan-only|N/A:plan-only:*) ;;
+        not_run:no-native-runner|not_run:no-native-runner:*|not_run:no-consent|not_run:no-consent:*) ;;
+        N/A) echo "BLOCK: refactor CONTRACT prove.mutation='N/A' — a bare N/A does not say which condition made a mutation run impossible. Record 'N/A:no-test-runner' or 'N/A:plan-only' [$rpv_c]"; rpv_blocked=1 ;;
+        N/A:*|not_run:*) echo "BLOCK: refactor CONTRACT prove.mutation='$rpv_mu' — free text is not a reason. Use N/A:no-test-runner, N/A:plan-only, not_run:no-native-runner or not_run:no-consent [$rpv_c]"; rpv_blocked=1 ;;
         PASS:*:*|WARN:*:*)
           rpv_mrep=${rpv_mu#*:}; rpv_mrep=${rpv_mrep#*:}
           case "$rpv_mrep" in
