@@ -490,10 +490,17 @@ def cmd_stage(a, root, path):
               "EXECUTION_COMPLETE, not COMPLETE" % c["commit_execution"], file=sys.stderr)
         return 1
     if target == "COMPLETE" and version >= 7:
-        # COMPLETE means `check` exits 0 — the same verdict the result must carry. No --force.
+        # COMPLETE means `check` exits 0 and the move is committed: HEAD has to be past the
+        # commit `init` recorded. No --force.
         rc = cmd_check(a, root, path)
         if rc != 0:
             print("REFUSED — COMPLETE requires `check` exit 0 (it exited %d)" % rc, file=sys.stderr)
+            return 1
+        base, now = c.get("head"), git_head(root)
+        if base and now and base == now:
+            print("REFUSED — COMPLETE needs the refactor committed: HEAD is still %s, where `init` "
+                  "started. Commit it, or end the run as EXECUTION_COMPLETE with "
+                  "commit_execution set." % now, file=sys.stderr)
             return 1
         c = read_json(path)
     c["stage"] = target
@@ -882,31 +889,62 @@ def cmd_init(a, root):
     if not src:
         print("refactor-contract: init needs --file <source>", file=sys.stderr)
         return 2
-    rel = os.path.relpath(os.path.abspath(src), root)
-    if rel.startswith(".."):
-        print("refactor-contract: %s is outside the repository %s" % (src, root), file=sys.stderr)
+    if not a.type:
+        # An empty type silently skips the complexity-effectiveness gate for a split.
+        print("refactor-contract: init needs --type (e.g. SPLIT_FILE, EXTRACT_METHODS)", file=sys.stderr)
         return 2
-    rel = rel.replace(os.sep, "/")
+    real_root = os.path.realpath(root)
+    cand = os.path.abspath(src)
+    if not os.path.isabs(src) and not os.path.isfile(cand):
+        cand = os.path.join(real_root, src)  # repo-relative input works from any directory
+    real_src = os.path.realpath(cand)
+    if os.path.commonpath([real_root, real_src]) != real_root or not os.path.isfile(real_src):
+        print("refactor-contract: %s is not an existing file inside the repository %s" % (src, root),
+              file=sys.stderr)
+        return 2
+    if bool(a.behavior_scope) != (a.behavior_mode == "refactor_and_fix"):
+        # The fix-now table acts on behavior_scope; a scope without the mode (or the mode without a
+        # symbol) would authorize a fix nobody asked for, or none at all.
+        print("refactor-contract: --behavior-mode refactor_and_fix and --behavior-scope <symbol> "
+              "go together", file=sys.stderr)
+        return 2
+    rel = os.path.relpath(real_src, real_root).replace(os.sep, "/")
     key = target_hash(rel)
     d = contracts_dir(root)
     path = os.path.join(d, "refactor-%s.json" % key)
+    head7 = git_head(root)
     if os.path.exists(path):
         existing = read_json(path) or {}
-        head7 = git_head(root)
-        # Archive ONLY a finished run from an earlier commit; an unfinished one is resumable.
-        if (canonical_stage(existing.get("stage"))[0] == "COMPLETE"
-                and head7 not in Path(path).read_text(encoding="utf-8", errors="replace")):
-            os.replace(path, os.path.join(d, "refactor-%s-%s.json" % (key, head7)))
-            side = os.path.join(d, "%s-findings.json" % key)
-            if os.path.exists(side):
-                os.replace(side, os.path.join(d, "%s-%s-findings.json" % (key, head7)))
+        # Finished = COMPLETE, or an EXECUTION_COMPLETE run whose work was left uncommitted: once
+        # HEAD moves (the owner committed it) the next run on the target must not be blocked.
+        done = (canonical_stage(existing.get("stage"))[0] == "COMPLETE"
+                or bool(existing.get("commit_execution")))
+        if done and existing.get("head") != head7:
+            # Archive a finished run of an earlier commit; never clobber an earlier archive.
+            n, dest = 1, os.path.join(d, "refactor-%s-%s.json" % (key, head7))
+            while os.path.exists(dest):
+                n += 1
+                dest = os.path.join(d, "refactor-%s-%s-%d.json" % (key, head7, n))
+            suffix = dest[len(os.path.join(d, "refactor-%s" % key)):-len(".json")]
+            os.replace(path, dest)
+            for side in ("%s-findings.json" % key, "refactor-%s-findings.json" % key,
+                         "refactor-%s-adversarial.json" % key):
+                sp = os.path.join(d, side)
+                if os.path.exists(sp):
+                    stem = side[:-len(".json")].replace(key, key + suffix, 1)
+                    os.replace(sp, os.path.join(d, stem + ".json"))
+        elif done:
+            print("refactor-contract: %s is finished and nothing has been committed since (HEAD %s); "
+                  "commit its work, then init again" % (os.path.relpath(path, root), head7),
+                  file=sys.stderr)
+            return 1
         else:
             print("refactor-contract: %s exists (stage=%s) — RESUME it, do not overwrite"
                   % (os.path.relpath(path, root), existing.get("stage", "?")), file=sys.stderr)
             return 1
     fence = a.scope_fence or [rel]
     contract = {
-        "version": 7, "kind": "refactor-contract",
+        "version": 7, "kind": "refactor-contract", "head": head7,
         "behavior_mode": a.behavior_mode, "behavior_scope": a.behavior_scope or [],
         "fix_findings": [], "findings_outcome": "none", "evidence": {},
         "file": rel, "type": a.type, "mode": "full", "stage": "PHASE-1",
@@ -929,10 +967,11 @@ def cmd_init(a, root):
 
 
 def cmd_set(a, root, path):
-    if a.key.split(".")[0] == "stage":
-        # `set stage COMPLETE` skipped every gate `stage` enforces — a forged COMPLETE.
-        print("refactor-contract: use `stage <STAGE>`; `set` cannot write the stage "
-              "(it would bypass the evidence gate)", file=sys.stderr)
+    if a.key.split(".")[0] in ("stage", "version", "kind", "head"):
+        # `set stage COMPLETE` skipped every gate `stage` enforces; `set version 6` switched the
+        # v7 check off — either one forges COMPLETE.
+        print("refactor-contract: `set` cannot write %s (use `stage <STAGE>`); it would bypass "
+              "the evidence gate" % a.key.split(".")[0], file=sys.stderr)
         return 1
     c = read_json(path)
     if c is None:

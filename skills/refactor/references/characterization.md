@@ -39,6 +39,8 @@ file and run them with a separate command. Include that future file in the scope
 Never overwrite the old-code baseline after extraction to hide an increased test count or drift.
 Use content-keyed evidence to avoid repeating an unchanged recheck after report-only edits.
 
+**Override seam (every test mode, class splits).** For every overridable method (non-final, on a subclassable type) that another method reaches via `this.<m>` / `self.<m>`, add one test with a subclass that overrides `<m>` and assert the override still receives the call. A split whose helpers call a sibling directly silently bypasses overrides that output-pinning tests never see. Run it on the pre-refactor code (green) and again after every extraction.
+
 **CHARACTERIZE_GAP:** The existing test does not exercise every unit being moved (`coverage_gap > 0`). Close the gap BEFORE any production edit:
 1. For **each** uncovered unit in `uncovered_units`, write a characterization (pin-down) test that executes it with a representative input and asserts on real output — mount/render the component, or call the function, with a payload that reaches actual logic (not an empty-state/early-return path). Source representative inputs from existing fixtures, sample data, or recover them from git history (e.g. `git show <sha>:<path>`) when they were deleted; never invent shapes the code never sees.
    - The bar is "fails loudly if behavior changes," not full Q1-Q25. A smoke test that mounts the unit and asserts `does not throw` + a stable output snapshot is the minimum; prefer a value assertion where the unit returns something checkable.
@@ -50,7 +52,6 @@ Use content-keyed evidence to avoid repeating an unchanged recheck after report-
      substitute for an old-code baseline. Byte identity complements this evidence; it does not
      make an unrun pre-change test green. If no consumer can exercise a moved unit, resolve that
      gap before editing rather than inventing an `extracted-identical` baseline.
-   - **Override seam.** For every public or protected method that another method reaches via `this.<m>` / `self.<m>`, add one test with a subclass that overrides `<m>` and assert the override still receives the call. A split that moves callers into helpers which call a sibling directly silently bypasses overrides, and ordinary output-pinning tests never see it. Run it on the pre-refactor code (green) and again after every extraction.
 2.5. **Probe the lock before trusting it** — per `../../../shared/includes/test-mutation-probes.md`,
    run 2-3 mutation probes against the **pre-refactor** unit and confirm the new
    characterization tests KILL them. Every probe must be reverted byte-exact; the

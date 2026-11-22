@@ -18,8 +18,8 @@ The first runs against pre-fix code with the new assertions; the second after th
 inputs identical. The helper requires a parsed failing test summary for red (Tests/Jest/Vitest, pytest, unittest, TAP, cargo, PHPUnit success and Zuvo harness summaries); infrastructure exits and unknown failure counts do not count. Other runner
 formats require adding a tested parser, not a hand-written green→green claim. Logs are persisted.
 Each pair lives in `evidence.fix_regressions[]`. Pure extraction requires no red regression pair.
-For an authorized behavior fix, refresh characterization against the explicitly approved new
-behavior after capturing its red→green proof; keep the original characterization record in history.
+For an authorized behavior fix, update only the pin the fix invalidates, after capturing its red→green
+proof; keep the original characterization record in history.
 
 Run `~/.zuvo/refactor-contract --contract <path> check` before completion. It invokes the same
 hook predicates, not a second prose implementation. Use legacy paths on resume; new target names
@@ -339,10 +339,10 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 2. **Test handling:** Write/verify tests per test mode routing
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
 4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ40 AFTER (all 40 gates).
-5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size, at most 3 (`adversarial-loop.md` Step 5).
-6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs surfaced, fix them + update/add tests and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
+5. **Adversarial:** Run iterative adversarial review (`--rotate`) on the review patch with context-enriched input (same protocol as Phase 3). Pass count by diff size, at most 3 (`adversarial-loop.md` Step 5).
+6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs (introduced, or in `behavior_scope`) surfaced, fix them with a regression test in a NEW file and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
 7. **Queue update:** Update line with CQ before/after and commit hash(es).
-8. **Record deferrals:** ONLY out-of-scope-fence items and declined decisions — NOT mechanical bugs (those were fixed in step 6) — each through `backlog-add` as Phase 4's "Backlog Persistence" prints it: `--source refactor` for the `DEFERRED` items and declined decisions, `--source drive-by:refactor` for the `BACKLOG ITEMS` (`backlog-protocol.md` "Filing from a skill": **Generic write** for a finding, **Process item** for a declined decision). Stage nothing here: append each `wrote=` path this entry's calls printed to its queue line, as `wrote: <path>, …` after the commit hash(es) of step 7, so a resumed batch still finds them; they go into the batch's one closing commit, made after the aggregate review (the run's last `backlog-add` calls), so the review's paths are in it too, or after the last queue entry when no aggregate review runs (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
+8. **Record deferrals:** ONLY out-of-scope-fence items and declined decisions — NOT introduced bugs (fixed in step 6); a pre-existing bug in moved code is filed here as `preserved-verbatim` unless the request asked for the fix — each through `backlog-add` as Phase 4's "Backlog Persistence" prints it: `--source refactor` for the `DEFERRED` items and declined decisions, `--source drive-by:refactor` for the `BACKLOG ITEMS` (`backlog-protocol.md` "Filing from a skill": **Generic write** for a finding, **Process item** for a declined decision). Stage nothing here: append each `wrote=` path this entry's calls printed to its queue line, as `wrote: <path>, …` after the commit hash(es) of step 7, so a resumed batch still finds them; they go into the batch's one closing commit, made after the aggregate review (the run's last `backlog-add` calls), so the review's paths are in it too, or after the last queue entry when no aggregate review runs (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
 
 ### GOD_CLASS Batch Exception
 

@@ -94,7 +94,7 @@ inline is labeled with its actual independence. Under `preserve_behavior`, fix i
 regressions and report unrelated existing risks with their original severity. Authorized existing
 bugfixes require demonstrated red/green tests; green characterization rechecks are different proof.
 
-Create new v7 contracts with `~/.zuvo/refactor-contract init --file <src>` (schema and flags in
+Create v7 contracts with `~/.zuvo/refactor-contract init --file <src> --type <T>` (flags in
 `../../shared/includes/refactor-reference.md`), never by hand; preserve v3–v6 records on resume.
 Format before the final snapshot and review. Reuse completed test, mutation and review evidence
 only for verified matching inputs and scope; never treat pending runs as PASS.
@@ -103,23 +103,21 @@ quality completion. Full repository checks required before push remain required.
 
 ## Behavior mode
 
-Default `preserve_behavior`. A bug found in code you move moves verbatim: pin it with a test as
-current behavior, name it in the first lines of the result, and file it with `backlog-add`. Fix it
-in-run only when the request itself asks for the fix: wording that tells you to fix, repair or
-correct a named defect or symbol ("fix it", "also fix the X bug", "refactor and fix"). Merely
-noticing or describing a bug, its severity and its size are not that request. When the request
-asks, run `init` with `--behavior-mode refactor_and_fix --behavior-scope <symbol>`: that defect,
-and only it, is fixed as a second commit with red/green proof; every other finding stays baseline debt.
+Default `preserve_behavior`. A bug in code you move moves verbatim: pin it with a test as current
+behavior, name it in the first lines of the result, file it with `backlog-add`. Fix it in-run only
+when the request itself says to fix, repair or correct a named defect or symbol ("fix it", "also fix
+the X bug"); describing a bug, its severity or its size is not that request. Then `init
+--behavior-mode refactor_and_fix --behavior-scope <symbol>`: that defect, and only it, is fixed as
+a second commit with red/green proof; every other pre-existing finding stays baseline debt.
 
 ## Runs that cannot ask or write
 
 Decide once, record it, finish; never ask mid-run, never forge a stage.
 
-- No native mutation runner, or an install that needs consent nobody can give:
-  `prove.mutation = not_run:no-native-runner` or `not_run:no-consent`; `check` accepts it as a WARN,
-  listed under unresolved risks. No free-text `N/A`, no `--no-install` to dodge the prompt.
-- `.git` not writable (probe once in Phase 0): switch to `no-commit`, run `refactor-contract set
-  commit_execution '"blocked:<reason>"'`, and finish every other gate. This is an accepted end state.
+- No native mutation runner, or an install needing consent nobody can give: `prove.mutation =
+  not_run:no-native-runner` or `not_run:no-consent` (a `check` WARN). No free-text `N/A`.
+- `.git` not writable: `no-commit` with `commit_execution` set (`references/bootstrap.md` probe); an
+  accepted end state.
 
 ## Result
 
@@ -127,8 +125,7 @@ Decide once, record it, finish; never ask mid-run, never forge a stage.
 ~/.zuvo/refactor-contract --contract <this-run-contract.json> check
 ```
 
-Use the real exit status (it calls the hook predicates; do not recreate them). The result opens
-with two lines, the status following from `n`:
+The exit status is the hook predicates; do not recreate them. The result opens with:
 
 ```
 REFACTOR <COMPLETE|UNCOMMITTED|PARTIAL|BLOCKED>
@@ -136,10 +133,10 @@ Gate: refactor-contract check exit=<n>
 ```
 
 - `n=0`, committed: `COMPLETE`. `n=0`, `no-commit` (flag or `commit_execution`): `UNCOMMITTED`, contract
-  stage `EXECUTION_COMPLETE`, with the exact worktree and diff path.
-- `n≠0`: never COMPLETE or UNCOMMITTED. `PARTIAL` (work finished, a gate unmet: name each unmet line) or
-  `BLOCKED` (cannot proceed). The CLI refuses `stage COMPLETE` and `set stage` in that state.
+  `stage EXECUTION_COMPLETE` (the CLI records it as PHASE-3.5), with the exact worktree and diff path.
+- `n≠0`: never COMPLETE or UNCOMMITTED: `PARTIAL` (work finished, name each unmet gate) or `BLOCKED`.
+  The CLI refuses `stage COMPLETE` then, and `set stage` always.
 
-Then: actual checks, unresolved risks, readiness to publish, commit and file links; the formal
-receipt, CQ matrix and finding ledger go in artifacts, and `../../shared/includes/run-logger.md`
-with `../../shared/includes/retrospective.md` run once per run.
+Then: checks run, unresolved risks, publish readiness, commit and file links. Receipt, CQ matrix
+and finding ledger go in artifacts; `../../shared/includes/run-logger.md` and
+`../../shared/includes/retrospective.md` run once.

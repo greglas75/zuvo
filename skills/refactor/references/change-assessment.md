@@ -2,7 +2,7 @@
 
 Use this policy for `preserve_behavior` runs. It governs CQ, review disposition and completion
 within this skill; it does not change standalone code-audit scores, release rules or project gates. Whether a bug in
-moved code may be fixed at all is `SKILL.md` "Behavior mode"; this file only classifies findings.
+moved code is fixed: `SKILL.md` "Behavior mode".
 
 ## Compare before deciding what blocks
 

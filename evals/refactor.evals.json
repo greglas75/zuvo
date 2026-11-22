@@ -28,9 +28,9 @@
         "src/services/order.service.ts"
       ],
       "assertions": [
-        "The transcript commits the behavior-preserving move and makes no commit that changes the Math.abs clamp, so calculateTax still returns a positive tax for a negative subtotal after the run.",
+        "The transcript commits the behavior-preserving move (or, when the git dir is not writable, ends UNCOMMITTED with the diff) and makes no commit that changes the Math.abs clamp, so calculateTax still returns a positive tax for a negative subtotal after the run.",
         "The transcript writes a test that pins the refund behavior, asserting the CURRENT result (+20 for -100 at rate 0.2) and labels it current behavior rather than a correct one.",
-        "The result names the Math.abs refund bug in its opening lines and the transcript files it with backlog-add (or its ledger fallback) instead of silently dropping it."
+        "The transcript records the Math.abs refund bug in the first lines of its result and writes it to the backlog through backlog-add (or its ledger fallback) instead of silently dropping it."
       ],
       "fixtures": [
         {
@@ -48,8 +48,8 @@
       ],
       "assertions": [
         "The transcript initialises the contract with behavior_mode refactor_and_fix and a behavior_scope naming calculateTax (or records an equivalent explicit authorization).",
-        "The transcript commits the behavior-preserving move first, then commits the bug fix as a separate stacked commit in the same run.",
-        "The transcript removes the absolute-value clamp so refunds produce a tax credit and shows a regression test run red against the pre-fix code and green after it, in a new file rather than an edited characterization file.",
+        "The transcript commits the behavior-preserving move first, then commits the bug fix as a separate stacked commit in the same run (or shows it as a second diff when the git dir is not writable).",
+        "The transcript removes the absolute-value clamp so refunds produce a tax credit and shows a regression test run red against the pre-fix code and green after it, in a new file, edits only the one pinned assertion the fix invalidates, and ends with the whole suite green.",
         "The bug is not deferred to the backlog; the transcript shows an in-run fix commit rather than a backlog entry for the defect."
       ],
       "fixtures": [

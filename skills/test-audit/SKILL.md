@@ -518,7 +518,7 @@ Build the summary report:
 
 Date: [date]
 Project: [name]
-Status: [PASS (all files tier A) | WARN (B or C present) | FAIL (any D or critical-gate failure) | INCOMPLETE]
+Status: [PASS | WARN | FAIL | INCOMPLETE]
 Files audited: [N]
 Total tests: [count from test runner]
 Checkout: [absolute branch/worktree path]

@@ -185,7 +185,7 @@ COMPLETION GATE CHECK
 [ ] Independent CQ Auditor (blind audit) RAN — telemetry is clean:strict or clean:degraded, NOT skipped/not_run (HARD GATE; if it could not be dispatched the verdict is BLOCKED, never PASS/WARN — CodeSift being unavailable does NOT excuse skipping it)
 [ ] Adversarial review ran on final diff
 [ ] Comment pass (Phase 3.5 0b before the refactor commit, 3d before a fix commit): [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source) for each; every CHECK claim listed as CHECK settled:; re-run before every git add that follows a later write; its comment_pass: line pasted into the retro Telemetry block
-[ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
+[ ] Bug remediation (Phase 3.5): every introduced/worsened bug and every `behavior_scope` defect fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; a pre-existing bug in moved code is pinned, reported and filed unless the request asked for the fix. If bugs were fixed, the run has 2 commits (refactor, then fix)
 [ ] Regression red DEMONSTRATED (only when fix-now items were applied): the new regression assertions were actually RUN against the pre-fix code with the failing output captured — not inferred from the old assertion's flip — and `prove.regression_red` recorded in the CONTRACT (the gate blocks the fix commit without it)
 [ ] Effectiveness (v5, SPLIT_FILE/GOD_CLASS/SIMPLIFY only): `prove.complexity_before` recorded in
     Phase 1 (before any edit) and `prove.complexity_reduced` recorded in Phase 3.7 with the
@@ -222,7 +222,7 @@ Gate: refactor-contract check exit=<n>
 ------------------------------------
 Type: [TYPE] | Target: [filename]
 Files modified: [N] | Files created: [N]
-CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)]
+CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)] | Preserved bugs: [N filed]
 Complexity: maxfn [before]→[after] ([-N%| ESSENTIAL — file remains complex: <reason>]) | file LOC [before]→[after]   (SPLIT/GOD_CLASS/SIMPLIFY only)
 Backlog commit: [<sha7> | none: nothing to stage | not committed: <path>, …] [left out: <path> (<reason>)]
 
@@ -238,7 +238,7 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
-Field hints — VERDICT: PASS/WARN/FAIL/BLOCKED/ABORTED. CQ: post-audit score. Q: test score or `-`. TASKS: files modified+created. DURATION: phase reached (e.g., `phase-3`). NOTES: type + target (max 80 chars).
+Field hints — VERDICT: PASS/WARN/FAIL/BLOCKED/ABORTED (COMPLETE with baseline debt or `not_run:` mutation = WARN, UNCOMMITTED = WARN, PARTIAL = FAIL). CQ: post-audit score. Q: test score or `-`. TASKS: files modified+created. DURATION: phase reached (e.g., `phase-3`). NOTES: type + target (max 80 chars).
 
 ---
 

@@ -17,7 +17,7 @@ that supports each decision. Resume the current policy; refresh changed capabili
 | `runner` | Project's documented command and required wrapper; retain the exact command |
 | `local_fallback` | Allowed only when project/session rules permit it; elapsed queue time is no consent |
 | `index` | Exact repository identity and permission to index; a user prohibition wins over setup advice |
-| `behavior_mode` | `preserve_behavior` (default refactor) or `refactor_and_fix` (the request itself asks for the fix: `skills/refactor/SKILL.md` "Behavior mode") |
+| `behavior_mode` | `preserve_behavior` (default refactor) or `refactor_and_fix` (the request asks for the fix) |
 | `commit` / `push` | Authorization and required checks from the current session; no new permission ritual |
 
 For the four consuming skills (refactor, mutation-test, test-audit, ship), this policy is the

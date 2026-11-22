@@ -81,7 +81,7 @@ unseen receipts are not evidence the remote reviewer has read.
  echo "---ORIGINAL SOURCE (excerpt-capped)---";
  head -c 40000 [target file before refactoring];
  echo "---DIFF---";
- git diff --staged) | ~/.zuvo/adversarial-review --multi --mode [code|security]
+ ~/.zuvo/build-review-patch "<fence-file-1>" "<fence-file-2>") | ~/.zuvo/adversarial-review --multi --mode [code|security]
 ```
 
 **Measure the payload BEFORE dispatch, do not discover the cap by being truncated.** Pipe the
@@ -170,7 +170,8 @@ If a CRITICAL cannot be proven fixed by its regression test, that CRITICAL count
 | Finding | Action |
 |---------|--------|
 | **CRITICAL** | Introduced/worsened: fix and re-test. Verified baseline debt: disclose under `change-assessment.md`; unproven comparison blocks. |
-| **WARNING — real bug, one clearly-correct fix** | Fix it in Phase 3.5 (the fix commit). **Size is irrelevant** — a 40-line mechanical bug is still fix-now. Never park a bug just because the fix is large. |
+| **WARNING — real bug introduced or worsened by the diff, or the defect `behavior_scope` names, one clearly-correct fix** | Fix it in Phase 3.5 (the fix commit). **Size is irrelevant** — never park such a bug because the fix is large. |
+| **WARNING — pre-existing bug in code moved verbatim** | `preserved-verbatim`: pin it, report it, `backlog-add` it (`SKILL.md` "Behavior mode"); fix only when the request asked. |
 | **WARNING — needs a behavior/product DECISION** (e.g. on total failure: partial result vs hard error) | Not a bug, a choice. Interactive → ask the user (Phase 3.5 decision gate, ≤1 question). Batch/`--auto`/`no-pause` → pick the safe default, log `[DECISION-DEFAULT: …]`, surface in report. |
 | **WARNING — fix needs files OUTSIDE the scope fence** | Recorded in Phase 4 through `backlog-add` with `--source refactor` at its file and line (`backlog-protocol.md` "Filing from a skill": **Generic write** for a deferred finding, **Process item** for a declined decision; the commands are in `completion.md` "Backlog Persistence") — genuinely out of this contract's reach. |
 | **INFO** | Known concerns (max 3, one line each). |
@@ -178,7 +179,7 @@ If a CRITICAL cannot be proven fixed by its regression test, that CRITICAL count
 
 The old "WARNING > 10 lines → backlog" rule is gone: line count is not a proxy for scope. A big mechanical fix is still a fix; a one-line product decision is still a decision.
 
-**Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless. (`diff_lines` = the sum from `git diff --staged --numstat`, computed BEFORE prompt enrichment — never derived from reviewer input or prompt line count.)
+**Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless. (`diff_lines` = the line count of the `build-review-patch` output, computed BEFORE prompt enrichment — never derived from reviewer input or prompt line count.)
 
 Do not discard findings based on confidence or file membership. Use the baseline comparison in
 `change-assessment.md`; keep every debt finding visible, with its severity and evidence.

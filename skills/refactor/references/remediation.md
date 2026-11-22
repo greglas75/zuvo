@@ -67,7 +67,7 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
 2. **Triage** the CQ-auditor + adversarial findings into the table above.
 3. **If fix-now items exist:**
    a. Apply every fix-now fix.
-   b. Behavior now CHANGES. The characterization files are frozen: put the regression test in a NEW file, **red on `REFACTOR_SHA`, green on the fix**, and record the superseded old pin in `evidence.fix_regressions`. Editing a frozen file makes `recheck` report DRIFT.
+   b. Behavior now CHANGES. Put the regression test in a NEW file, **red on `REFACTOR_SHA`, green on the fix**. The characterization files stay frozen until now; the one assertion that pinned the old behaviour is edited in this fix commit and named in its message (`recheck` runs before the fix, never after, so a deliberate change is not drift).
    c. **DEMONSTRATE the red — a logical implication is not proof.** Run the NEW assertions
       against the PRE-fix code with a real tool call and capture the failing output (`git show REFACTOR_SHA:<file>` into a scratch
       copy, or a runner importing the pre-fix module; never `git stash`), then run them against the fixed code and capture the
@@ -218,7 +218,7 @@ Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` a
 unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
 audited file lies under it, or each audited file is a `files[].path` entry.
 Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
-No candidate → the field cannot be filled: re-run Step 2 over the audited files. A missing artifact has no `N/A`.
+No candidate → re-run Step 2 over the audited files, or record a closed code below.
 Never from memory. `WARN` when gaps remain after the fix loop, each surviving mutant recorded with
 `~/.zuvo/backlog-add --repo "$R" --class MUTATION --conf <N> --source refactor --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`
 (`backlog-protocol.md` "Filing from a skill", **Generic write**): `F`, `<n>` and `A` the mutated
