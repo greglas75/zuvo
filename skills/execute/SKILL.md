@@ -1456,7 +1456,9 @@ Print it after the drive-by step and the closing commit below, so it can name ev
 [GATE: ac-coverage] checked=<N> unproven=<k>
 ### Unproven Acceptance Criteria
 <k = 0: none — all <N> Coverage Matrix ACs have a COMPLETED claiming task | k > 0: one [AC-UNPROVEN: …] line per unproven AC>
-``` **The header is conditional:** `<k>` IS the number of
+```
+
+**The header is conditional:** `<k>` IS the number of
 `[AC-UNPROVEN: …]` lines the AC-coverage item of the final Completion Gate emitted (one per
 unproven AC — see that item for the single definition of PROVEN), so if it emitted `k > 0` of
 them, the header MUST read `## Execution Complete (AC-UNPROVEN: <k>)` (followed by ` (DEGRADED-REVIEW)` when that suffix also applies) — a bare
