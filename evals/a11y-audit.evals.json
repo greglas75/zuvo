@@ -30,7 +30,7 @@
       "assertions": [
         "The audit records no missing-alt and no missing-label finding against public/index.html — the <img> has alt text and the <input id=\"email\"> is associated with a <label for=\"email\">.",
         "The audit records no fabricated keyboard or contrast finding and no A2/A4 gate FAIL — Menu is a real keyboard-operable <button>, and the #ffffff-on-#0a5c2e Submit button meets the 4.5:1 AA contrast minimum. A2/A4 are PASS only with live keyboard/axe evidence; without it they are CANNOT DETERMINE, never PASS from static analysis.",
-        "The audit writes an a11y-audit report to zuvo/audits/ and modifies no source file."
+        "The audit writes an a11y-audit report to zuvo/audits/ and modifies no source file. Its VERDICT is PASS only with live A2/A4 evidence and INCOMPLETE when either gate is CANNOT DETERMINE; it never answers that the page meets WCAG AA from static analysis alone."
       ],
       "fixtures": [
         {

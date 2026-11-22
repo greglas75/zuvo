@@ -212,7 +212,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Form validation errors announced | 4.1.3 | Error summary not in `aria-live` region |
 | Related fields grouped | 1.3.1 | Radio groups, address fields without `<fieldset>`/`<legend>` |
 | No redundant entry | 3.3.7 | Multi-step form that re-asks data already entered, with no autofill or "same as" option |
-| Accessible authentication | 3.3.8 | Paste blocked (`onPaste` `preventDefault`) on login/password fields; CAPTCHA with no alternative |
+| Accessible authentication | 3.3.8 | Paste blocked (`onPaste` `preventDefault`) on login/password fields; cognitive-test CAPTCHA (not object or personal-content recognition) with no alternative |
 
 ### A6: Images & Media (weight 8)
 
@@ -488,7 +488,7 @@ Read deferred files:
 
 | Gate | FAIL (proven) | PASS | Otherwise |
 |------|---------------|------|-----------|
-| A2 Keyboard | a keyboard trap (2.1.2); `outline: none`/`0` with no replacement focus style anywhere in the audited sources (global `:focus-visible`, ring utilities, `box-shadow`) (2.4.7); a click handler on a non-interactive element (not a modal backdrop, presentational wrapper or delegation container) with no `tabindex`/`role`, no key handler and no keyboard-reachable control for the same action (2.1.1) | live evidence: `audit_keyboard` or a tab-through that exercises every custom widget and modal (Enter/Space included; name any unexercised one and the gate stays `CANNOT DETERMINE`) finds none of these | `CANNOT DETERMINE` |
+| A2 Keyboard | a keyboard trap (2.1.2); `outline: none`/`0` with no replacement focus style anywhere in the audited sources (global `:focus-visible`, ring utilities, `box-shadow`) (2.4.7); a click handler on a non-interactive element (not a modal backdrop, presentational wrapper or delegation container) with no `tabindex`/`role`, no key handler and no keyboard-reachable control for the same action (2.1.1) | live evidence: `audit_keyboard` or a tab-through that exercises every custom widget and modal (Enter/Space included; name any unexercised one and the gate stays `CANNOT DETERMINE`) finds none of these and no other failing A2 check | `CANNOT DETERMINE` |
 | A4 Contrast | the effective foreground/background pair of one enabled element (not an overridden rule or a disabled control) under the selected standard's ratio (AA 4.5:1, 3:1 large; AAA 7:1, 4.5:1 large), or an axe contrast violation | an axe contrast scan of the live URL over the audited states with zero violations and no `incomplete` contrast nodes | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
 
 Across components a gate is FAIL if any component fails, PASS only if all pass, else `CANNOT DETERMINE`; an undecided gate makes the checks that need the missing evidence (focus order and operability for A2, rendered contrast for A4) `CANNOT DETERMINE`. `--quick` never has live evidence: its gates end FAIL or `CANNOT DETERMINE` (INCOMPLETE).
