@@ -524,6 +524,7 @@ Per-dimension: `score = (sum of check values / count of non-excluded checks) * 1
 | D12 (Internationalization) | Single-language site (no hreflang, no i18n config) |
 | D13 (Monitoring) | Static export with no analytics config — mark as advisory |
 | D9 (Content Quality) | No content corpus (no markdown/blog/pages directories) |
+| Any | Every check in it is excluded (INSUFFICIENT DATA, or `N/A` through an exempt gate) |
 
 ### 4.3 Overall Score
 
