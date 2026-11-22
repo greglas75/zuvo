@@ -31,7 +31,7 @@ Parse `$ARGUMENTS` for these flags:
 | Argument | Effect |
 |----------|--------|
 | _(no flags)_ | Auto-scaled pipeline based on diff size |
-| `--full` | Force full pipeline: tests + review + design-review + coverage + bump + push |
+| `--full` | Force full pipeline: tests + review + design-review + coverage + bump (direct flow; a feature branch never bumps) + push |
 | `--no-bump` | Skip version bumping (hotfixes, chores) |
 | `--no-tag` | Skip git tag creation |
 | `--dry-run` | Show what would happen. Changes nothing: no fetch, no ref, tag, commit, push or file write (see Phase 0 step 0) |
@@ -556,7 +556,7 @@ bailing, a missing binary) prints nothing, which reads exactly like a clean resu
 with no findings = the scan did not run — fall back to another scanner or `git diff | grep` for the
 high-signal patterns, and record which one produced the verdict. Never carry an errored scan as a
 pass. `scan_secrets` needs an indexed repo; without one the fallback is `gitleaks git
---log-opts="${DIFF_BASE}..HEAD"` plus `git diff "$DIFF_BASE" HEAD | grep -c -E 'AKIA[0-9A-Z]{16}'` (a count: a match is never echoed into the transcript; a non-zero `git diff` status is an errored scan, not a clean one).
+--log-opts="${DIFF_BASE}..HEAD"` plus `SCAN_DIFF=$(git diff "$DIFF_BASE" HEAD) || <errored scan>; printf '%s\n' "$SCAN_DIFF" | grep -c -E 'AKIA[0-9A-Z]{16}'` (capture first so a failed `git diff` is an errored scan, not a clean one; a count, so a match is never echoed into the transcript). On a first release `DIFF_BASE` is the empty-tree SHA, which `git log` rejects: run `gitleaks git` with no `--log-opts` there.
 A hit the scanner allow-lists (the AWS documentation key) is still a hit when the diff or commit
 says "credentials", "key" or "secret": report it, never wave it through on the allow-list.
 
@@ -1035,8 +1035,9 @@ This step runs regardless of flags and diff size (fast path included). It does N
 2. **Skip gate — THREE conditions, and only the first is a flag:**
 
    a. `--no-bump` was passed. No version change and no tag. On direct flow, if `CHANGELOG.md`
-      exists, add the entry under `## [Unreleased]`, commit it as `docs(changelog): <summary>`
-      (not `release:`) and push; if the file does not exist, create nothing. In PR flow (b) governs
+      exists, add the entry under `## [Unreleased]` and leave it for Phase 4 Step 1-2, which stages it
+      and commits it as `docs(changelog): <summary>` (not `release:`) with the push: Phase 3 itself
+      commits and pushes nothing. If the file does not exist, create nothing. In PR flow (b) governs
       the changelog.
 
    b. **The flow is PR flow** (Phase 0 put you on a non-default branch). On a feature branch,
@@ -1346,6 +1347,10 @@ git add CHANGELOG.md
 ### Step 2: Commit
 
 ```bash
+# Commit only what Step 1 staged: `git diff --cached --quiet` (exit 0) means nothing is staged
+# (a PR-flow run with no changelog.d note, `--no-bump` without a CHANGELOG.md, a release script that
+# owns the version) — skip the commit, do not let `git commit` fail on "nothing to commit".
+git diff --cached --quiet && echo "[SHIP] nothing staged — no commit" || \
 git commit -m "release: v<version>"     # a version bump was performed
 # No bump (`--no-bump`, PR flow, a release script owns the version): the subject names what the
 # commit is, never a release that did not happen:
@@ -1487,7 +1492,12 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head moved or is not the commit this run pushed — re-run the gate"; exit 1; }
   [ "$(jq -r '.state' <<<"$PR_NOW")" = "OPEN" ] \
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is not OPEN ($(jq -r '.state' <<<"$PR_NOW"))"; exit 1; }
-  jq -r '"[SHIP] PR #'"$PR_NUMBER"' state=\(.state) merge=\(.mergeStateStatus) review=\(.reviewDecision // "none")"' <<<"$PR_NOW"   # report this; a CHANGES_REQUESTED review is stated in the completion block, never merged over
+  jq -r '"[SHIP] PR #'"$PR_NUMBER"' state=\(.state) merge=\(.mergeStateStatus) review=\(.reviewDecision // "none")"' <<<"$PR_NOW"   # report this; never merge on it
+  # An open PR that cannot merge as it stands is not delivered: say which, and stop.
+  [ "$(jq -r '.mergeStateStatus' <<<"$PR_NOW")" != "DIRTY" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is CONFLICTING with $TARGET_BRANCH — resolve it (ship does not merge the base into an open PR)"; exit 1; }
+  [ "$(jq -r '.reviewDecision // ""' <<<"$PR_NOW")" != "CHANGES_REQUESTED" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER has changes requested — address the review"; exit 1; }
   ```
 
   **Read PR state, not exit codes.** Two shapes that are not what they look like:

@@ -400,7 +400,7 @@ Steps:
 6. Merge: `git merge <feature-branch>`.
 7. If merge conflict occurs: report conflicts and STOP. Do not auto-resolve. Tell the user which files conflict and wait for instructions.
 8. If merge succeeds: run tests again on the merged result. Report pass/fail.
-9. Cleanup worktree: `git worktree remove "$WT_PATH"`.
+9. Cleanup worktree: first run the PRUNE Step 3 local-files check on `$WT_PATH` (ignored files other than install/build output, secret-looking files included; a failed inspection counts as "found"). If it finds any, keep the worktree, list them, and report `Worktree kept: ignored local files`; otherwise `git worktree remove "$WT_PATH"` (no `--force`).
 10. Delete feature branch: `git branch -d <feature-branch>`.
 
 Report: "Merged <branch> into <base>. Tests: N passing. Worktree removed."
@@ -422,7 +422,7 @@ Steps:
    gh pr create --title "<title>" --body "<body>" --base "<base-branch>"
    ```
 6. Report the PR URL.
-7. Leave the worktree first, then remove it: `cd "$MAIN_ROOT" && git worktree remove "$WT_PATH"`.
+7. Leave the worktree first, then remove it after the same local-files check as Option 1 step 9 (found any: keep the worktree and say why): `cd "$MAIN_ROOT" && git worktree remove "$WT_PATH"`.
 8. Do NOT delete the branch (it is now tracked by the PR).
 
 Report: "PR created: <url>. Worktree removed. Branch preserved on remote."
@@ -503,7 +503,7 @@ For each entry in `git worktree list --porcelain`, excluding the main checkout a
 | Dirty | `git -C <wt> status --porcelain` non-empty | uncommitted or untracked work |
 | Local files | `git -C <wt> status --porcelain --ignored` prints a `!! <path>` line that is not install/build output (`node_modules`, `dist`, `build`, `.turbo`, `.next`, `coverage`, `__pycache__`, `.pytest_cache`, `target`, `.venv`), **or** `git -C <wt> ls-files -o -i --exclude-standard` lists a secret-looking file (`.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`, `id_ed25519`, `credentials*`) even inside one of those directories (git collapses an ignored directory to `!! build/`, hiding a `build/.env`). A command that fails is "cannot inspect", never "no local files" | git-ignored files that exist only on this disk: `.env*`, local databases, keys, notes |
 | Merged | `git -C <wt> merge-base --is-ancestor HEAD "$BASE"` exit 0, **or** the same against `origin/$BASE` | every commit already in base |
-| Own commits | `git -C <wt> reflog show HEAD` has an entry whose message starts `commit`, `merge`, `rebase`, `pull`, `cherry-pick` or `am` (the worktree's own HEAD log: a fresh worktree holds only its creation entries, even when it checked out an old branch with a long history) | work was done in this worktree |
+| Own commits | `git -C <wt> reflog show HEAD` has an entry whose message starts `commit`, `cherry-pick` or `am` (the worktree's own HEAD log; a fast-forward or a branch rename adds entries without any work: a fresh worktree holds only its creation entries, even when it checked out an old branch with a long history) | work was done in this worktree |
 | Created | `find "<wt>/.git" -maxdepth 0 -mtime +<N>` prints the path (`<N>` = `$ZUVO_WORKTREE_IDLE_DAYS`, default 30) | the worktree is older than N days |
 | Age | `git -C <wt> log -1 --format=%cr` | how long since last commit |
 
@@ -604,7 +604,7 @@ These apply across all three modes:
 3. **Never delete `main` or `master`.** If a deletion command would target these branches, refuse and explain why.
 4. **Always verify tests before merge.** Options 1 and 2 run tests before the destructive step. If tests fail, the user must explicitly choose to proceed.
 5. **Always confirm before discard.** Option 4 requires typed confirmation. No shortcuts.
-6. **Uncommitted changes block FINISH Options 1-3.** They require a clean working tree and the main checkout must be clean too. Report it and stop; never stash or commit for the user. Option 4 lists what it will lose before the typed `discard`.
+6. **Uncommitted changes block FINISH Options 1-2** (a clean worktree), and **Option 1 also needs a clean main checkout** (it checks out and pulls there); Option 3 keeps everything in place and is never blocked. Report it and stop; never stash or commit for the user. Option 4 lists what it will lose before the typed `discard`.
 7. **Report, do not assume.** When detecting base branches, test runners, or setup commands, report what was detected and what will run before running it.
 8. **Never default a worktree inside the repo.** New worktrees go to `../<repo>-worktrees/`. A nested directory is honored only when it already exists or a project instruction declares it, and only alongside the nested-layout warning.
 9. **PRUNE removes only provably reclaimable worktrees.** Clean, no git-ignored local files besides install/build output (`git worktree remove` deletes them silently), merged into base (verified against both the local and remote-tracking base), and not freshly created. No `--force` in any prune command, ever. Dirty, unmerged, locked, current-directory or ignored-file worktrees are reported, never touched.
