@@ -53,7 +53,7 @@ how_it_works:
 
 output:
   artifact: "Committed refactored code + contract state file (completed) + memory/backlog.md (updated)"
-  format: "A REFACTORING COMPLETE summary with type, target file, files modified/created, CQ before/after scores, test status, and commit hash."
+  format: "A REFACTOR <COMPLETE|UNCOMMITTED|PARTIAL|BLOCKED> summary, with the contract check exit code, type, target file, files modified/created, CQ before/after scores, test status, and commit hash."
   sections:
     - "CQ pre-audit (all 22 gates)"
     - "Refactoring plan with scope fence"

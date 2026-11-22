@@ -14,6 +14,10 @@ import re
 
 TERMINAL = {"COMPLETE", "BLOCKED", "ABORTED"}
 REDUCTION_TYPES = {"SPLIT_FILE", "GOD_CLASS", "SIMPLIFY"}
+# prove.mutation values that carry no artifact. `N/A` = the gate cannot apply; `not_run` = it applies
+# but could not run (headless, no native runner). Free text was accepted before and hid skipped gates.
+MUTATION_REASONS = {"N/A": {"no-test-runner", "plan-only"},
+                    "not_run": {"no-native-runner", "no-consent"}}
 
 
 def contract_version(contract):
@@ -74,13 +78,20 @@ def mutation_report(value, root):
     if value is None or (isinstance(value, str)
                          and value.strip().lower() in ("not_run", "pending", "", "-", "todo", "tbd")):
         return None
-    if isinstance(value, str) and (value == "N/A" or value.startswith("N/A:")):
-        return None
+    if isinstance(value, str) and value.partition(":")[0] in ("N/A", "not_run"):
+        kind, _, rest = value.partition(":")
+        if rest.partition(":")[0] in MUTATION_REASONS[kind]:
+            return None
+        raise ValueError(
+            "prove.mutation: '%s' needs a closed reason code: %s. Free text hides a skipped gate"
+            % (kind, ", ".join("%s:%s" % (kind, r) for r in sorted(MUTATION_REASONS[kind])))
+        )
     parts = value.split(":", 2) if isinstance(value, str) else []
     if len(parts) != 3 or parts[0] not in ("PASS", "WARN") or not re.search(r"\d", parts[1]):
         raise ValueError(
             "prove.mutation: use 'PASS:<score_triaged>%(<engine>):<report path>', the WARN form, "
-            "or 'N/A:<why>'. The score comes from the run's own artifact and must carry a number"
+            "'N/A:<no-test-runner|plan-only>' or 'not_run:<no-native-runner|no-consent>'. "
+            "The score comes from the run's own artifact and must carry a number"
         )
     return existing_report("prove.mutation", parts[2], root, "score")
 

@@ -4,7 +4,7 @@
 
 Phase 3.5 has already committed: the pure refactor (`REFACTOR_SHA`), and — when fix-now bugs existed — a separate `fix(…)` commit. Record BOTH SHAs in the contract and the Post-Completion Summary. If no bugs surfaced, there is just the one refactor commit.
 
-In no-commit mode: Phase 3.5 showed both diffs + proposed messages instead of committing; nothing to record here beyond the proposed messages.
+In no-commit mode (the flag, or `commit_execution` set after the Phase 0 write probe): Phase 3.5 showed both diffs + proposed messages instead of committing; record those and the diff path, and stop at stage `EXECUTION_COMPLETE`.
 
 **Telemetry vs commits:** Phase 4's run telemetry (CONTRACT, review artifact, retro, doc notes) is local and never staged into the refactor/fix commits. The `wrote=` paths `backlog-add` prints follow `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**: never in a refactor, fix or per-file commit, one closing commit after the run's last call when the run commits (none when no path remains: the Post-Completion Summary reads `none: nothing to stage`), and a list in the Post-Completion Summary in no-commit mode. Refactor's own facts: in batch mode each entry keeps its `wrote=` paths on its queue line (`refactor-reference.md` step 8), so a resumed batch still finds them, and the closing commit comes after the last queue entry and, when refactor runs the aggregate review, after that review, carrying the paths the review listed on its `Backlog writes:` line too (a review run inside refactor makes no closing commit of its own). If the repo tracks the other telemetry paths, a separate `chore(refactor): telemetry` commit MAY carry them, never a `wrote=` path; the `commits` array still lists only the production refactor/fix commits. Expected final `git status`: clean, or dirty only with untracked/ignored telemetry paths, the `wrote=` paths the closing commit left out because the snapshot listed them (someone else's edits), and, in no-commit mode, every `wrote=` path; the Post-Completion Summary names each of those `wrote=` paths. That is the intended end state, not an unfinished run.
 
@@ -14,7 +14,7 @@ Apply `change-assessment.md` first. `cq_after` is the refactor-delta assessment;
 post-audit unchanged in its linked artifact. Verified baseline debt requires WARN and explicit
 disclosure, never an overall code-quality PASS. New/unproven failures still block.
 
-Mark contract: `"stage": "COMPLETE"`, `"cq_after": { "score": "18/18", "critical_failures": [] }`, `"commits": ["abc1234"]`.
+Mark contract (when it commits) with `~/.zuvo/refactor-contract stage COMPLETE`; the CLI refuses it unless `check` exits 0. Set `"cq_after": { "score": "18/18", "critical_failures": [] }` (the delta shape in `change-assessment.md` when baseline debt remains) and `"commits": ["abc1234"]`.
 
 **Record applicability separately from compliance.** N/A is excluded from both numerator and
 denominator; never count an unevaluated gate as passing:
@@ -35,13 +35,10 @@ Unknown evidence remains 0/unproven. Use the normal percentage and active-critic
 
 After committing: `index_file(path=<changed-file>)` for every changed file.
 
-**A linked worktree gets indexed — it is not an exception.** This section used to say the opposite
-("do not index a secondary worktree"), and that instruction is retracted: auto-indexing *refuses*
-linked worktrees and silently defers to the parent checkout, so an unindexed worktree does not mean
-"no index" — it means every later query answers about the PARENT's copy of your files. Measured
-2026-08-10 on a run that fell back to `grep`/`cat` because of this: **21.8M tokens, 13.2% of the
-whole run**. A refactor in `rewards-api` got a CQ14 clone reported at `paypal-webhook.ts:564` in a
-facade that is 212 lines long — the wrong tree's answer reached the gate's output.
+**A linked worktree gets indexed — it is not an exception.** Auto-indexing refuses linked worktrees
+and silently defers to the parent checkout, so an unindexed worktree means every later query
+answers about the PARENT's copy of your files (one run fell back to `grep`/`cat` and spent 13% of
+its tokens on it).
 `../../../shared/includes/codesift-setup.md` is the source of truth here; if this file and step 2 of
 that include ever disagree again, **step 2 wins**.
 
@@ -188,16 +185,16 @@ COMPLETION GATE CHECK
 [ ] Independent CQ Auditor (blind audit) RAN — telemetry is clean:strict or clean:degraded, NOT skipped/not_run (HARD GATE; if it could not be dispatched the verdict is BLOCKED, never PASS/WARN — CodeSift being unavailable does NOT excuse skipping it)
 [ ] Adversarial review ran on final diff
 [ ] Comment pass (Phase 3.5 0b before the refactor commit, 3d before a fix commit): [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source) for each; every CHECK claim listed as CHECK settled:; re-run before every git add that follows a later write; its comment_pass: line pasted into the retro Telemetry block
-[ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
+[ ] Bug remediation (Phase 3.5): every introduced/worsened bug and every `behavior_scope` defect fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; a pre-existing bug in moved code is pinned, reported and filed unless the request asked for the fix. If bugs were fixed, the run has 2 commits (refactor, then fix)
 [ ] Regression red DEMONSTRATED (only when fix-now items were applied): the new regression assertions were actually RUN against the pre-fix code with the failing output captured — not inferred from the old assertion's flip — and `prove.regression_red` recorded in the CONTRACT (the gate blocks the fix commit without it)
 [ ] Effectiveness (v5, SPLIT_FILE/GOD_CLASS/SIMPLIFY only): `prove.complexity_before` recorded in
     Phase 1 (before any edit) and `prove.complexity_reduced` recorded in Phase 3.7 with the
     matching baseline number — verdict `reduced` (maxfn ≥10% smaller), `already-small` (baseline
     ≤50), or `essential:reason=<shape>` with the completion block saying the file REMAINS complex.
     A halved file with an intact worst function is a relocation, not a refactor
-[ ] Per-module coverage (Phase 3.6 Step 0): every path in `modules_created` either has a test that imports it DIRECTLY, or was tested in-run via `zuvo:write-tests`, or is recorded through backlog-add (Phase 3.6 Step 0, item 3) with an out-of-fence/user-declined reason; `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` recorded (`"N/A"` only when the refactor created no files). The characterization lock does NOT satisfy this item — it targets the pre-refactor surface by construction, so it can never cover a module that did not exist yet
+[ ] Per-module coverage (Phase 3.6 Step 0): every path in `modules_created` has its behaviour tested (a direct import, or `covered-via-facade:<ids>` through the frozen characterization suite), was tested in-run via `zuvo:write-tests`, or is recorded through backlog-add (Phase 3.6 Step 0, item 3) with an out-of-fence/user-declined reason; `prove.split_coverage = "<created>/<covered>:<disposition>"` recorded (`"N/A"` only when the refactor created no files)
 [ ] Test Quality Gate (Phase 3.6) ran: `[GATE: test-quality] PASS|WARN|N/A` printed with a REAL `zuvo/audits/` test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a `test:` commit or WARN with each one recorded through backlog-add (test-quality-gate.md step 5); `prove.test_quality` recorded
-[ ] Mutation gate (Phase 3.6 Step 2) ran: the REAL `zuvo:mutation-test` dispatched over the tests this refactor created or touched (including Step 0's new specs), survivors CLOSED in-run — never `--report-only`, never `--no-install` — and `prove.mutation = "<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>"` recorded from the artifact. Phase 2.5's probes do NOT satisfy this item: they probe the pre-refactor lock, not the specs this run wrote. `N/A` only as `N/A:<why>` with a nameable condition
+[ ] Mutation gate (Phase 3.6 Step 2) ran: the REAL `zuvo:mutation-test` dispatched over the tests this refactor created or touched (including Step 0's new specs), survivors CLOSED in-run — never `--report-only` — and `prove.mutation = "<PASS|WARN>:<score_triaged>%(<engine>):<artifact path>"` recorded from the artifact, or one of the closed codes `N/A:no-test-runner`, `N/A:plan-only`, `not_run:no-native-runner`, `not_run:no-consent` (Phase 3.6 Step 2). Phase 2.5's probes do NOT satisfy this item
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Drive-by findings recorded per drive-by-findings.md: the `Drive-by: N recorded (…)` line and every SEC in the final summary, and the `~/.zuvo/log-drive-by` receipt written — zeros allowed
@@ -213,23 +210,19 @@ COMPLETION GATE CHECK
 - **BUILD SCOPE** — targeted package type-check/tests vs full `turbo build/test --force`. The user *may* legitimately narrow this ("just type-check + targeted tests"), but only if you **declare it**: `[SCOPE: user-reduced — targeted type-check+tests; full build skipped per user]`. Silent narrowing is not allowed; declared narrowing is fine.
 - **TELEMETRY** — retro, run-log, CONTRACT, review artifact. These don't make the code safer, but they are the durable PROOF the gates ran and the history the skill improves from (losing them is exactly how months of retros vanished). Cheap; always do them. Missing telemetry ⇒ the run is *unrecorded* (`INCOMPLETE`), not necessarily unsafe — but it is **not done** either.
 
-Run the shared verifier against THIS run's explicit contract path:
-
-```bash
-~/.zuvo/refactor-contract --contract <this-run-contract.json> check
-```
-
-Record its actual exit status and output. Missing/unreadable evidence is not PASS. Fix unmet
-requirements before COMPLETE; record unresolved risks and publish readiness separately.
+Run the shared verifier (`refactor-contract --contract <path> check`, `SKILL.md` "Result") against THIS run's explicit contract path and record
+its exit status and output. Missing/unreadable evidence is not PASS. Fix unmet requirements before
+COMPLETE; record unresolved risks and publish readiness separately.
 
 ### Post-Completion Summary
 
 ```
-REFACTORING COMPLETE
+REFACTOR <COMPLETE|UNCOMMITTED|PARTIAL|BLOCKED>
+Gate: refactor-contract check exit=<n>
 ------------------------------------
 Type: [TYPE] | Target: [filename]
 Files modified: [N] | Files created: [N]
-CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)]
+CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)] | Preserved bugs: [N filed]
 Complexity: maxfn [before]→[after] ([-N%| ESSENTIAL — file remains complex: <reason>]) | file LOC [before]→[after]   (SPLIT/GOD_CLASS/SIMPLIFY only)
 Backlog commit: [<sha7> | none: nothing to stage | not committed: <path>, …] [left out: <path> (<reason>)]
 
@@ -245,7 +238,7 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
-Field hints — VERDICT: PASS/WARN/FAIL/BLOCKED/ABORTED. CQ: post-audit score. Q: test score or `-`. TASKS: files modified+created. DURATION: phase reached (e.g., `phase-3`). NOTES: type + target (max 80 chars).
+Field hints — VERDICT: PASS/WARN/FAIL/BLOCKED/ABORTED (COMPLETE with baseline debt or `not_run:` mutation = WARN, UNCOMMITTED = WARN, PARTIAL = FAIL). CQ: post-audit score. Q: test score or `-`. TASKS: files modified+created. DURATION: phase reached (e.g., `phase-3`). NOTES: type + target (max 80 chars).
 
 ---
 
@@ -268,7 +261,6 @@ When GOD_CLASS is detected (>600L, 5+ responsibilities):
    is still ≥90% of the Phase 1 baseline, the extraction removed the easy parts and left the reason
    the file was a GOD_CLASS. Decompose that function itself (within-function strategies in
    `refactor-reference.md` → "ADDITIVE vs ESSENTIAL") before recording `prove.complexity_reduced` —
-   or record `essential:...:reason=` and say the file remains complex. Measured: this exact
-   file-halved-core-intact outcome shipped 13 times in 14 days with every safety gate green.
+   or record `essential:...:reason=` and say the file remains complex.
 
 ---

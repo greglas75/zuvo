@@ -18,8 +18,8 @@ The first runs against pre-fix code with the new assertions; the second after th
 inputs identical. The helper requires a parsed failing test summary for red (Tests/Jest/Vitest, pytest, unittest, TAP, cargo, PHPUnit success and Zuvo harness summaries); infrastructure exits and unknown failure counts do not count. Other runner
 formats require adding a tested parser, not a hand-written green→green claim. Logs are persisted.
 Each pair lives in `evidence.fix_regressions[]`. Pure extraction requires no red regression pair.
-For an authorized behavior fix, refresh characterization against the explicitly approved new
-behavior after capturing its red→green proof; keep the original characterization record in history.
+For an authorized behavior fix, update only the pin the fix invalidates, after capturing its red→green
+proof; keep the original characterization record in history.
 
 Run `~/.zuvo/refactor-contract --contract <path> check` before completion. It invokes the same
 hook predicates, not a second prose implementation. Use legacy paths on resume; new target names
@@ -99,33 +99,14 @@ Create a resumable state file per target. The path is scoped so batch mode can t
 | Single-file (full) | `zuvo/contracts/refactor-{target-hash}.json` |
 | Batch | `zuvo/contracts/refactor-{target-hash}.json` (one per queue entry) |
 
-Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path (e.g., `sha1("src/services/order.service.ts")[:8]`).
+Where `{target-hash}` is the first 8 hex chars of SHA-256 of the repo-relative target path (the CLI's `target_hash`).
 
-**Archive before overwriting (the contract is the only durable record of a run).** The path is
-keyed by target hash ALONE, so refactoring the same file a second time writes over the first run's
-contract — destroying its `prove` telemetry, findings, and commit SHAs, the very evidence the
-completion gate and later retros read. Before creating a new active contract, if one already
-exists for that hash with `stage: "COMPLETE"` **and** current HEAD is not among its recorded
-commits (i.e. it describes an *earlier, already-shipped* refactor, not this session):
-
-```bash
-C="zuvo/contracts/refactor-${HASH}.json"
-if [ -f "$C" ]; then
-  STAGE=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("stage",""))' "$C")
-  HEAD7=$(git rev-parse --short=7 HEAD)
-  # BOTH conditions, or we are destroying a RESUMABLE run — the exact loss this rule prevents.
-  if [ "$STAGE" = "COMPLETE" ] && ! grep -q "$HEAD7" "$C"; then
-    mv "$C" "zuvo/contracts/refactor-${HASH}-${HEAD7}.json"
-    [ -f "zuvo/contracts/${HASH}-findings.json" ] && \
-      mv "zuvo/contracts/${HASH}-findings.json" "zuvo/contracts/${HASH}-${HEAD7}-findings.json"
-  else
-    echo "contract ${HASH}: stage=$STAGE — RESUME it, do not archive or overwrite"
-  fi
-fi
-```
-
-Never overwrite a COMPLETE contract in place. An *incomplete* contract for the same hash is a
-resumable run, not an archive candidate — resume it per the rules below instead of replacing it.
+**Create it with the CLI, never by hand:**
+`~/.zuvo/refactor-contract init --file <src> --type T [--scope-fence P...] [--behavior-mode M] [--behavior-scope S...]`
+writes a v7 contract from the schema below. It refuses to overwrite an unfinished contract (resume it) and
+archives a finished one from an earlier HEAD, with its sidecars, to `archive/` (outside the hooks' scan).
+`prove` accepts `characterization_probes`; `set` refuses `stage`/`version`/`head`, and `stage COMPLETE` refuses unless `check` exits 0 and the scope fence is committed.
+`commit_execution` (`blocked:<reason>`, set by the Phase 0 write probe) marks a run that cannot commit: it ends at `EXECUTION_COMPLETE`.
 
 **Resume contract:**
 - `continue <path>`: compute hash from relative path, load `zuvo/contracts/refactor-{hash}.json`.
@@ -177,23 +158,18 @@ A completed assessment with accepted warnings is WARN, not an incomplete assessm
 as PASS. The canonical check reports verification and quality separately. Baseline CQ failures
 are not current failures merely because they remain in the historical record.
 
-**`prove.split_coverage`** — `"<created>/<with_own_spec>:<disposition>"` from the per-module coverage
-gate, or `"N/A"` when `modules_created` is empty. See "Per-module coverage" in `skills/refactor/SKILL.md`.
+**`prove.split_coverage`** — `"<created>/<covered>:<disposition>"` (covered = direct spec or `covered-via-facade`) from the per-module coverage
+gate, or `"N/A"` when `modules_created` is empty. See Phase 3.6 Step 0 in `skills/refactor/references/remediation.md`.
 
 ## `prove.mutation` (v7) — did the tests NOTICE?
 
-`"PASS:<score_triaged>%(<engine>):<artifact path>"`, the `WARN:` form, or `"N/A:<why>"` — written
+`"PASS:<score_triaged>%(<engine>):<artifact path>"`, the `WARN:` form, or a closed `N/A:`/`not_run:` code — written
 in Phase 3.6 after the `zuvo:mutation-test` dispatch that follows the test-quality gate. Enforced
 pre-push at `version >= 7`, and required to enter `PHASE-4`/`COMPLETE`.
 
-**Why it is a separate field from `test_quality`.** They answer different questions and the
-difference is the whole point: `test_quality` is `zuvo:test-audit` reading the tests (Q1-Q25,
-static — do they look right?), `mutation` is a runner changing the production code and watching
-whether anything goes red (do they notice?). A test that asserts nothing scores well on the first
-and zero on the second. The refactor pipeline had only the first, plus the Phase 2.5 probes — and
-those probe the PRE-refactor lock, so they say nothing about the specs Step 0 writes for
-`modules_created`. rs_be PR #291 is the case on record: mutation-test Grade A, scoped to the
-facade's spec, 7 created modules with no spec at all.
+**Separate from `test_quality`:** that is `zuvo:test-audit` reading the tests (do they look right?),
+`mutation` is a runner changing production code to see whether anything goes red (do they notice?).
+The Phase 2.5 probes cover only the PRE-refactor lock, not the specs Step 0 writes.
 
 **The score must carry a digit** and the artifact must EXIST. `WARN:substituted-inline` matched the
 `test_quality` shape check perfectly when a field run invented it; a mutation run's own output is a
@@ -203,20 +179,18 @@ Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` a
 unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
 audited file lies under it, or each audited file is a `files[].path` entry.
 Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
-No candidate → the field cannot be filled: re-run `zuvo:mutation-test` over the audited files. A missing artifact has no `N/A`.
+No candidate → re-run `zuvo:mutation-test` over the audited files, or record a code below.
 
-**`N/A` needs a reason.** A bare `N/A` is blocked: the only honest N/A cases are nameable ones
-(the project has no test runner, the scope came out empty), and an unexplained one is how a skipped
-gate looks identical to an inapplicable one.
+**Closed codes, each with an optional `:<detail>` suffix.** `N/A:no-test-runner`, `N/A:plan-only`
+(inapplicable); `not_run:no-native-runner`, `not_run:no-consent` (could not run: a `check` WARN).
+A bare `N/A`, other text after `N/A:`/`not_run:` and a bare `not_run` are blocked: free text makes a
+skipped gate look inapplicable.
 
 ## Effectiveness fields (v5): `complexity_before` / `complexity_reduced`
 
-**Why they exist — measured 2026-08-20, 101 split-ish refactors across 4 repos in 14 days.** 87%
-reduced the worst function. 13% halved the FILE while the worst function stayed intact or grew:
-`exerciseDesignMapper.ts` lost 614 lines with maxfn 103→103; `kano-advanced.helpers.ts` maxfn
-63→**87**; `income-timing-integrity.scorer.ts` was split TWICE, 43→45 both times. Every safety gate
-passed on all of them — the prove fields all asked "did it break?" and none asked "did it help?".
-These two make effectiveness a recorded fact instead of an implied one. Enforced (pre-push, contract
+**Why they exist.** Of 101 measured split-ish refactors, 13% halved the FILE while the worst function
+stayed intact or grew, and every safety gate passed: the prove fields asked "did it break?", never
+"did it help?". These two make effectiveness a recorded fact. Enforced (pre-push, contract
 `version >= 5`) only for the intents that PROMISE reduction: `SPLIT_FILE`, `GOD_CLASS`, `SIMPLIFY`.
 
 **`prove.complexity_before`** — `"maxfn:<loc>,branches:<n>,loc:<n>"`, written in **Phase 1, before
@@ -365,10 +339,10 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 2. **Test handling:** Write/verify tests per test mode routing
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
 4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ40 AFTER (all 40 gates).
-5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size, at most 3 (`adversarial-loop.md` Step 5).
-6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs surfaced, fix them + update/add tests and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
+5. **Adversarial:** Run iterative adversarial review (`--multi`) on the review patch with context-enriched input (same protocol as Phase 3). Pass count by diff size, at most 3 (`adversarial-loop.md` Step 5).
+6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs (introduced, or in `behavior_scope`) surfaced, fix them with a regression test in a NEW file and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
 7. **Queue update:** Update line with CQ before/after and commit hash(es).
-8. **Record deferrals:** ONLY out-of-scope-fence items and declined decisions — NOT mechanical bugs (those were fixed in step 6) — each through `backlog-add` as Phase 4's "Backlog Persistence" prints it: `--source refactor` for the `DEFERRED` items and declined decisions, `--source drive-by:refactor` for the `BACKLOG ITEMS` (`backlog-protocol.md` "Filing from a skill": **Generic write** for a finding, **Process item** for a declined decision). Stage nothing here: append each `wrote=` path this entry's calls printed to its queue line, as `wrote: <path>, …` after the commit hash(es) of step 7, so a resumed batch still finds them; they go into the batch's one closing commit, made after the aggregate review (the run's last `backlog-add` calls), so the review's paths are in it too, or after the last queue entry when no aggregate review runs (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
+8. **Record deferrals:** ONLY out-of-scope-fence items and declined decisions — NOT introduced bugs (fixed in step 6); a pre-existing bug in moved code is filed here as `preserved-verbatim` unless the request asked for the fix — each through `backlog-add` as Phase 4's "Backlog Persistence" prints it: `--source refactor` for the `DEFERRED` items and declined decisions, `--source drive-by:refactor` for the `BACKLOG ITEMS` (`backlog-protocol.md` "Filing from a skill": **Generic write** for a finding, **Process item** for a declined decision). Stage nothing here: append each `wrote=` path this entry's calls printed to its queue line, as `wrote: <path>, …` after the commit hash(es) of step 7, so a resumed batch still finds them; they go into the batch's one closing commit, made after the aggregate review (the run's last `backlog-add` calls), so the review's paths are in it too, or after the last queue entry when no aggregate review runs (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
 
 ### GOD_CLASS Batch Exception
 

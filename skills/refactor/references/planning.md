@@ -76,9 +76,9 @@ Showing only failures hides false positives in the 1s. All 28 scores must be vis
 ### CONTRACT State File
 
 The CONTRACT JSON schema (v7) and the migration rules live in
-`../../../shared/includes/refactor-reference.md` -> "CONTRACT State File". Create
-`zuvo/contracts/refactor-{target-hash}.json` per that schema (`{target-hash}` = first 8 chars of
-SHA-256 of the relative target path). It now includes the `prove` block the commit-gate reads.
+`../../../shared/includes/refactor-reference.md` -> "CONTRACT State File". Create it with
+`~/.zuvo/refactor-contract init --file <src> --type <TYPE>` (never by hand; the file is
+`zuvo/contracts/refactor-{target-hash}.json`). It includes the `prove` block the commit-gate reads.
 Update it after each phase; `continue` resumes from the last recorded `stage`.
 
 ### Sub-Agent Dispatch (FULL mode)

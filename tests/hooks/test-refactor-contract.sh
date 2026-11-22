@@ -304,6 +304,155 @@ else
   bad "v6 rollout returned exit=$rc without the expected v6-only proof reason: $(head -3 "$TMP/err")"
 fi
 
+# ── 13. live-test defects (zuvo:refactor, 2026-11-22) ────────────────────────
+# Real git repo: `check` shells into the hook library and needs a consistent contract, so these
+# cases build one the way a run does — `init`, a measured baseline/recheck, then the prove fields.
+E="$TMP/e2e"
+mkdir -p "$E/src" "$E/zuvo/audits"
+git -C "$E" init -q
+printf 'export const a = 1\n' > "$E/src/a.ts"
+printf '# audit\nStatus: PASS\n' > "$E/zuvo/audits/tq.md"
+git -C "$E" -c user.email=t@t -c user.name=t add -A >/dev/null 2>&1
+git -C "$E" -c user.email=t@t -c user.name=t commit -qm init >/dev/null 2>&1
+ec() { ( cd "$E" && ZUVO_AI_RUN=1 python3 "$BIN" --file src/a.ts "$@" ) > "$TMP/out" 2> "$TMP/err"; }
+
+# D9: the contract was hand-written JSON. init writes the v7 schema and keys it by the CLI's hash.
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+KEY=$(python3 -c "import hashlib;print(hashlib.sha256(b'src/a.ts').hexdigest()[:8])")
+if [ "$rc" -eq 0 ] && [ -f "$E/zuvo/contracts/refactor-$KEY.json" ] &&
+   python3 - "$E/zuvo/contracts/refactor-$KEY.json" <<'PY2'
+import json, sys
+c = json.load(open(sys.argv[1]))
+ok = (c["version"] == 7 and c["kind"] == "refactor-contract" and c["file"] == "src/a.ts"
+      and c["scope_fence"] == ["src/a.ts"] and c["behavior_mode"] == "preserve_behavior"
+      and c["prove"]["mutation"] == "not_run" and c["stage"] == "PHASE-1")
+sys.exit(0 if ok else 1)
+PY2
+then pass "init writes a v7 contract keyed by SHA-256(path)[:8], found again by --file"
+else bad "init did not create the expected contract (exit=$rc): $(head -3 "$TMP/err")"; fi
+ec show; rc=$?
+[ "$rc" -eq 0 ] && pass "the init'd contract is selected by --file" || bad "--file did not find the init'd contract (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'RESUME' "$TMP/err" \
+  && pass "init refuses to overwrite an unfinished contract" \
+  || bad "init overwrote a resumable contract (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file /etc/hosts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 2 ] && pass "init refuses a target outside the repository" || bad "init accepted a path outside the repo (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file src/typo.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 2 ] && pass "init refuses a file that does not exist (a typo must not mint a contract)" || bad "init accepted a nonexistent file (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type split ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 2 ] && pass "init rejects a non-canonical --type (a mistyped split would skip the effectiveness gate)" || bad "init accepted --type split (exit=$rc)"
+ec set behavior_mode '"refactor_and_fix"' >/dev/null; rc=$?
+[ "$rc" -eq 1 ] && pass "set cannot switch behavior_mode around init's mode/scope check" || bad "set behavior_mode accepted (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file src/a.ts ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 2 ] && pass "init needs --type (an empty type silently skips the v5 effectiveness gate)" || bad "init accepted an empty --type (exit=$rc)"
+
+# D9: `prove characterization_probes` is rejected while the skill tells the run to record it.
+ec prove characterization_probes "3/3"; rc=$?
+[ "$rc" -eq 0 ] && pass "prove accepts characterization_probes" || bad "characterization_probes rejected (exit=$rc)"
+
+# Fill the rest honestly, through the same commands a run uses.
+fill() {
+  ec baseline "printf 'Tests  3 passed (3)\n'" >/dev/null
+  ec recheck >/dev/null
+  ec prove blind_audit clean:strict >/dev/null
+  ec prove adversarial clean >/dev/null
+  ec prove findings_disposition none >/dev/null
+  ec prove regression_red "n/a-no-fixes" >/dev/null
+  ec prove test_quality "PASS:A:zuvo/audits/tq.md" >/dev/null
+  ec prove split_coverage N/A >/dev/null
+  ec prove mutation "not_run:no-consent" >/dev/null
+}
+fill
+
+# D2: no runner and no consent is a DEFINED outcome — check exits 0 and says WARN, never silent.
+ec check; rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'MUTATION: WARN not_run:no-consent' "$TMP/out"; then
+  pass "check accepts not_run:<closed reason> for mutation and reports it as a WARN"
+else bad "check did not accept/flag a coded not_run mutation (exit=$rc): $(tail -3 "$TMP/out")"; fi
+
+# D6: COMPLETE is impossible while check is non-zero — via `stage` AND via `set`.
+ec set prove.adversarial not_run >/dev/null
+ec stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'requires `check` exit 0' "$TMP/err" \
+  && pass "stage COMPLETE is refused while check exits non-zero (no forged COMPLETE)" \
+  || bad "COMPLETE accepted over a failing check (exit=$rc)"
+ec stage COMPLETE --force; rc=$?
+[ "$rc" -eq 1 ] && pass "--force cannot certify COMPLETE over a failing check" || bad "--force certified COMPLETE (exit=$rc)"
+ec set stage '"COMPLETE"'; rc=$?
+[ "$rc" -eq 1 ] && pass "set cannot write the stage around the gate" || bad "set stage COMPLETE slipped through (exit=$rc)"
+python3 -c "
+import json,sys
+sys.exit(0 if json.load(open('$E/zuvo/contracts/refactor-$KEY.json'))['stage']=='PHASE-1' else 1)" \
+  && pass "the refused attempts left the stage untouched" || bad "a refused attempt changed the stage"
+ec set prove.adversarial clean >/dev/null
+
+# COMPLETE also needs the move committed: every proof green, HEAD never moved -> refused.
+ec stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'needs the refactor committed' "$TMP/err" \
+  && pass "stage COMPLETE is refused when every proof is green but nothing was committed" \
+  || bad "COMPLETE accepted with no commit since init (exit=$rc)"
+ec set version 6 >/dev/null; rc=$?
+[ "$rc" -eq 1 ] && pass "set cannot downgrade the schema version to dodge the v7 check" || bad "set version was accepted (exit=$rc)"
+
+# An unrelated commit moves HEAD while the target stays dirty: still not committed.
+printf 'export const a = 2\n' > "$E/src/a.ts"; printf 'x\n' > "$E/src/other.ts"
+git -C "$E" add src/other.ts; git -C "$E" -c user.email=t@t -c user.name=t commit -qm unrelated >/dev/null 2>&1
+fill
+ec stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'uncommitted changes in the scope fence' "$TMP/err" \
+  && pass "an unrelated commit does not make an uncommitted refactor COMPLETE" \
+  || bad "COMPLETE accepted with the target still dirty (exit=$rc)"
+git -C "$E" checkout -q -- src/a.ts 2>/dev/null
+
+# The positive path: a proven, committed run reaches COMPLETE, and the next init archives it.
+printf 'export const a = 2\n' > "$E/src/a.ts"
+git -C "$E" -c user.email=t@t -c user.name=t commit -qam second >/dev/null 2>&1
+fill
+ec stage COMPLETE; rc=$?
+python3 -c "
+import json,sys
+sys.exit(0 if json.load(open('$E/zuvo/contracts/refactor-$KEY.json'))['stage']=='COMPLETE' else 1)" \
+  && [ "$rc" -eq 0 ] && pass "stage COMPLETE is accepted when check exits 0 and HEAD moved" || bad "a valid run could not reach COMPLETE (exit=$rc): $(head -3 "$TMP/err")"
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+H2=$(git -C "$E" rev-parse --short=7 HEAD)
+[ "$rc" -eq 0 ] && [ -f "$E/zuvo/contracts/archive/refactor-$KEY-$H2.json" ] && [ ! -f "$E/zuvo/contracts/refactor-$KEY-$H2.json" ] \
+  && pass "init archives a COMPLETE contract and starts a fresh one" \
+  || bad "init did not archive the COMPLETE contract (exit=$rc): $(head -3 "$TMP/err")"
+printf 'export const a = 3\n' > "$E/src/a.ts"; git -C "$E" -c user.email=t@t -c user.name=t commit -qam third >/dev/null 2>&1
+fill
+ec stage COMPLETE >/dev/null
+printf 'export const a = 4\n' > "$E/src/a.ts"; git -C "$E" -c user.email=t@t -c user.name=t commit -qam fourth >/dev/null 2>&1
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(ls "$E/zuvo/contracts/archive/" | grep -c "^refactor-$KEY-.*\.json$")" -eq 2 ] \
+  && pass "successive archives are kept side by side" || bad "the earlier archive was lost (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS --behavior-scope foo ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 2 ] && pass "init refuses a behavior scope without refactor_and_fix" || bad "scope without mode accepted (exit=$rc)"
+( cd "$E/src" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 1 ] && grep -q RESUME "$TMP/err" && pass "a repo-relative --file resolves from a subdirectory" || bad "subdirectory init missed the target (exit=$rc)"
+fill
+
+# D3: .git not writable -> the run records commit_execution and ends in EXECUTION_COMPLETE.
+ec set commit_execution '"blocked:index.lock not writable"' >/dev/null
+ec check; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'COMMIT: none (commit_execution=blocked:' "$TMP/out" \
+  && pass "check passes in no-commit mode and states that nothing was committed" \
+  || bad "check lost the no-commit disclosure (exit=$rc)"
+ec stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'EXECUTION_COMPLETE' "$TMP/err" \
+  && pass "an uncommitted run cannot be marked COMPLETE" \
+  || bad "COMPLETE accepted although nothing was committed (exit=$rc)"
+ec stage EXECUTION_COMPLETE; rc=$?
+[ "$rc" -eq 0 ] && pass "EXECUTION_COMPLETE is the accepted end state of a no-commit run" \
+  || bad "EXECUTION_COMPLETE refused for a no-commit run (exit=$rc): $(head -3 "$TMP/err")"
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'nothing has been committed' "$TMP/err" \
+  && pass "an uncommitted finished run is not silently overwritten" || bad "init over an uncommitted run (exit=$rc)"
+printf 'export const a = 5\n' > "$E/src/a.ts"; git -C "$E" -c user.email=t@t -c user.name=t commit -qam fifth >/dev/null 2>&1
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 0 ] && pass "once the owner committed the uncommitted run, the next run on the target can start" \
+  || bad "a finished uncommitted run blocks the next one (exit=$rc): $(head -3 "$TMP/err")"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

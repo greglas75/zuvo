@@ -1,14 +1,11 @@
 ## Phase 3.5: Bug Remediation + Commit (in-process — leave the file CORRECT, not just tidier)
 
-Apply `behavior_mode` and `behavior_scope` from the contract. For preserve_behavior, introduced
-regressions are fixed; unrelated existing findings keep their severity and explicit disposition.
-For v6+, use `refactor-contract regression <id> red|green '<command>'` and `fix_findings` for each
-applied fix. The older textual proof examples below describe legacy v3–v5 records only.
-
-
-Classify findings with `change-assessment.md` before selecting fixes. In preserve-behavior mode,
-fix regressions and authorized remediation targets. Verified baseline debt is reported rather
-than changing established behavior to satisfy an absolute audit score.
+Apply `behavior_mode` and `behavior_scope` from the contract; `SKILL.md` "Behavior mode" says when a
+found bug may be fixed. Introduced regressions are always fixed; every other finding keeps its
+severity and an explicit disposition (`change-assessment.md`). Verified baseline debt is reported,
+not "fixed" to raise an audit score. For v6+, use `refactor-contract regression <id> red|green
+'<command>'` (the green command string must equal the red one) and `fix_findings` for each applied
+fix; the textual proof examples below describe legacy v3–v5 records only.
 
 This phase OWNS all committing of the refactor and its fixes. Phase 4 records; the `wrote=` paths `backlog-add` printed go into the run's one closing commit, and only when the run commits (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
 
@@ -16,9 +13,9 @@ This phase OWNS all committing of the refactor and its fixes. Phase 4 records; t
 
 | Finding | Disposition |
 |---------|-------------|
-| Introduced/worsened bug or authorized remediation target, one clearly-correct fix (any size) | **Fix now** (commit 2). Mechanical correctness has one answer — don't park it. |
+| Introduced/worsened bug, or the defect `behavior_scope` names, one clearly-correct fix (any size) | **Fix now** (commit 2). A bug you merely moved is not in this row: pin it, report it, `backlog-add` it. |
 | Real bug, fix needs files OUTSIDE the scope fence | Recorded in Phase 4 through `backlog-add` with `--source refactor` at its file and line (`backlog-protocol.md` "Filing from a skill", **Generic write**; the command is the `DEFERRED` line of `completion.md` "Backlog Persistence") — genuinely out of this contract's reach. |
-| Behavior/product DECISION (partial vs hard error on failure; swallow vs surface a cost; etc.) | **Not a bug — a choice.** Interactive: ask the user (≤1 question), apply the chosen fix into commit 2. Batch/`--auto`/`no-pause`: pick the safe, conservative default, log `[DECISION-DEFAULT: …]`, surface in the report. If the user later declines, Phase 4 records the decision through `backlog-add` with `--source refactor` (`backlog-protocol.md` "Filing from a skill", **Process item**). |
+| Behavior/product DECISION (partial vs hard error on failure; swallow vs surface a cost; etc.) | **Not a bug — a choice.** Interactive: ask the user (≤1 question), apply the chosen fix into commit 2. Batch/`--auto`/`no-pause`/headless: pick the safe, conservative default, log `[DECISION-DEFAULT: …]`, surface in the report. If the user later declines, Phase 4 records the decision through `backlog-add` with `--source refactor` (`backlog-protocol.md` "Filing from a skill", **Process item**). |
 
 **Before applying the FIRST fix, size its blast radius.** When a finding changes the *error*,
 *validation*, or *authorization* behaviour of an **exported** symbol, the fix is a contract change,
@@ -32,8 +29,7 @@ need this.
 
 **Draft-only / unwired parity repairs.** A repair that only brings a path with **no live consumers**
 up to parity with the wired path has no live behaviour to regress, so a red-on-pre-fix regression
-test is unsatisfiable by construction. This is a narrow carve-out, not a way around step 3c: it
-applies only when the path's zero-consumer status is PROVEN with the same evidence DELETE_DEAD
+test is unsatisfiable by construction. Narrow carve-out, not a way around step 3c: it applies only when the path's zero-consumer status is PROVEN with the same evidence DELETE_DEAD
 requires (symbol references + repo-wide import/re-export/dynamic/string-literal search), and it is
 recorded, not skipped — `prove.regression_red = "n/a-unreachable:<evidence>"`. The gate accepts that
 value (it is not empty/`skipped`/`not_run`) and it stays visible in telemetry. If ANY consumer
@@ -51,7 +47,7 @@ exists, or you cannot prove none does, the demonstrated red is required as norma
    re-measure. Recording `essential:` after an ADDITIVE classification is a contradiction the
    review will catch: you claimed the split would work, then claimed it could not.
 
-0. **Record the Prove step in the CONTRACT — BEFORE you commit (the external gate reads it).** After the blind audit + adversarial passes (Phase 3), write their outcomes into the contract's `prove`: `prove.blind_audit` = the blind-audit telemetry (`clean:strict` / `clean:degraded` / `fix:N`, never `skipped`/`not_run`); `prove.adversarial` = `clean` / `Nfindings` / `Nfindings:preserved`. **Both record what the pass
+0. **Record the Prove step in the CONTRACT — BEFORE you commit (the external gate reads it).** After the blind audit + adversarial passes (Phase 3), write their outcomes into the contract's `prove`: `prove.blind_audit` = the blind-audit telemetry (`clean:strict` / `clean:degraded` / `clean:degraded:same-model` for an inline pass / `fix:N`, never `skipped`/`not_run`); `prove.adversarial` = `clean` / `Nfindings` / `Nfindings:preserved`. **Both record what the pass
 FOUND, not how the run ended.** An audit that surfaced four bugs you then fixed stays `fix:4` — do
 not rewrite it to `clean:strict` because the tree is clean now. The completion state lives in
 `findings_disposition` and `cq_after`; overwriting the audit value erases the only record that the
@@ -67,15 +63,14 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
    - **any other rc** → fix the invocation; if it cannot be fixed, print `[GATE: comment-pass] BLOCKED rc=<n> <reason>` and do not commit.
    - **Recheck:** if any file in scope was changed or created after the last clean run (step 1's split of fix hunks included), re-run this step over the grown scope before `git add`; the marker carries the new run id.
 1. **Commit the pure refactor (always).** Stage scope-fence files → `git commit -m "refactor([scope]): [what moved]"`. This is the behavior-preserving proof: the Phase-2 characterization/existing tests, UNCHANGED, still pass. Record `REFACTOR_SHA`. (no-commit mode: show the diff + message, don't commit.)
-   If adversarial passes recorded findings destined for fix-now, set `findings_disposition = "stacked-correction-pending"` BEFORE this commit — a transition value the gate accepts (it is not empty/`pending`/`unresolved` and does not contain `fix`, so `regression_red` is not demanded yet); after the demonstrated red in step 3, replace it with `fixed:<N>`. If any fix was already applied to the working tree during Phase 3 passes ("CRITICAL — fix immediately"), separate it out (stash, or stage move-hunks only) so THIS commit is the pure move; the fix hunks land in commit 2.
+   If adversarial passes recorded findings destined for fix-now, set `findings_disposition = "stacked-correction-pending"` BEFORE this commit — a transition value the gate accepts (it is not empty/`pending`/`unresolved` and does not contain `fix`, so `regression_red` is not demanded yet); after the demonstrated red in step 3, replace it with `fixed:<N>`. If any fix was already applied to the working tree during Phase 3 passes ("CRITICAL — fix immediately"), separate it out (stage move-hunks only; never `git stash`) so THIS commit is the pure move; the fix hunks land in commit 2.
 2. **Triage** the CQ-auditor + adversarial findings into the table above.
 3. **If fix-now items exist:**
    a. Apply every fix-now fix.
-   b. Behavior now CHANGES, so update the characterization test that pinned the OLD (buggy) behavior to assert the NEW correct behavior, and add a regression test that is **red on `REFACTOR_SHA`, green on the fix**.
+   b. Behavior now CHANGES. Put the regression test in a NEW file, **red on `REFACTOR_SHA`, green on the fix**. The characterization files stay frozen until now; the one assertion that pinned the old behaviour is edited in this fix commit and named in its message (`recheck` runs before the fix, never after, so a deliberate change is not drift).
    c. **DEMONSTRATE the red — a logical implication is not proof.** Run the NEW assertions
-      against the PRE-fix code with a real tool call and capture the failing output (e.g.
-      `git stash`/`git show REFACTOR_SHA:<file>` into a scratch copy, or a `/tmp` runner
-      importing the pre-fix module), then run them against the fixed code and capture the
+      against the PRE-fix code with a real tool call and capture the failing output (`git show REFACTOR_SHA:<file>` into a scratch
+      copy, or a runner importing the pre-fix module; never `git stash`), then run them against the fixed code and capture the
       pass. "The old test asserted +20 and passed, so -20 would have failed" is the exact
       inference two consecutive skill-eval runs (2026-07-10) showed agents substituting for
       the actual red run — and one of those runs even logged a self-contradictory 'RED'
@@ -90,7 +85,7 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
    Else: print `[REMEDIATION: none — no fixable bugs surfaced]`.
 4. **Decisions:** resolve per the table (ask / safe-default+log). Out-of-scope-fence items are recorded in Phase 4 through `backlog-add` with `--source refactor` (`backlog-protocol.md` "Filing from a skill", **Generic write**).
 
-**Why two commits and not one:** a single mixed commit can't be bisected — if prod breaks you can't tell "moved the code" from "changed the logic." Two commits in one run cost you nothing and keep that boundary. (If you genuinely want one commit, that's the only thing to override here — the in-run fixing stays either way.)
+**Why two commits and not one:** a single mixed commit can't be bisected — if prod breaks you can't tell "moved the code" from "changed the logic." Two commits in one run cost you nothing and keep that boundary. (If you genuinely want one commit, that is the only thing to override here.)
 
 ---
 
@@ -102,8 +97,7 @@ Phase 3.5 commits — behavior is now proven and locked, so improving tests can 
 request for the gates it mandates. A session-level instruction like "do not use the Agent tool unless
 the user asked" does NOT apply here: the user asked, by invoking this skill. Reading it as a
 prohibition and recording a self-scored result is the substituted gate this step forbids — it
-happened twice in the field (2026-08-07, 2026-08-08), the second time invented as
-`WARN:substituted-inline`, a value no vocabulary defines. If the harness genuinely has no dispatch
+happened in the field, once invented as `WARN:substituted-inline`, a value no vocabulary defines. If the harness genuinely has no dispatch
 capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical workers), follow the ONE documented exception in
 `test-quality-gate.md`; otherwise dispatch.
 
@@ -116,27 +110,28 @@ split writes therefore lands in the *facade's* spec. That is correct for safety 
 coverage of the modules you just created — and until this step existed, nothing in this skill ever
 looked at them.
 
-The failure is on record. `rs_be` PR #291 (`refactor(result): split result export responsibilities`)
-created 7 `.operations.ts` modules holding 2 586 lines of moved logic, added 215 lines of
-characterization tests to `result-export.service.spec.ts`, and shipped with **zero** spec files for
-the 7 modules — no spec in the repo imports any of them to this day. Blind audit, adversarial,
-mutation-test Grade A, review APPROVE, ship PASS. Every gate was satisfied because no gate asked.
+Every gate can be satisfied by a split that created modules with no spec of their own, because no
+gate asked. This step asks.
 
 For each path in `modules_created`:
 
-1. Does a test file exercise it **directly** (imports the module, not only the facade)? Search by
-   import, not by filename convention — a module covered from a differently-named spec is covered.
-2. **Uncovered modules get tests IN THIS RUN.** Dispatch `Skill(zuvo:write-tests <module> --invoked-by refactor)` per
-   uncovered module (the flag makes it list its `Backlog writes:` for refactor's closing commit instead of committing them), commit as `test(<scope>):`. This is the same in-run fix rule Phase 3.5 applies
-   to bugs: a gap you surfaced and parked is not dispositioned, it is deferred onto the user, who
-   finds it two weeks later on a "files without tests" list.
+1. Is the module's behaviour exercised? Search by import, not filename. A module the frozen
+   characterization suite reaches through the public API is covered: record
+   `covered-via-facade:<characterization test ids>` and add NO spec for it. Tests attach to
+   behaviour, never to files: no `<module>.test.ts` per new source file; table-driven edge
+   cases; test LOC above 1.5x the source it covers is a smell: say so in the report.
+2. **A module with behaviour no test reaches gets tests IN THIS RUN**, in the existing spec of its
+   behaviour area (a new spec only for a new area, named by behaviour). Dispatch
+   `Skill(zuvo:write-tests <module> --invoked-by refactor)` (the flag makes it list its
+   `Backlog writes:` for refactor's closing commit), commit as `test(<scope>):`. A parked gap is
+   deferred onto the user.
 3. Only these defer, and only **named**: a module whose test needs files outside the scope fence, or
-   one the user explicitly declined. Size, lateness and "the facade covers it" are not reasons. Record
-   each module once with `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source refactor --file "$F" --line 1 --title "$T" --evidence "$E"`
+   one the user explicitly declined. Size and lateness are not reasons. Record each module once with `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source refactor --file "$F" --line 1 --title "$T" --evidence "$E"`
    (`backlog-protocol.md` "Filing from a skill", "The location rule", **whole-file**): `F` the module, `T` starting "Whole file: …", `E` the reason it defers, and no
    `--anchor`; assign `"$R"`, `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
-4. Record `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` — e.g. `"7/7:fixed-in-run"`,
-   `"7/5:2-backlogged-out-of-fence"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
+4. Record `prove.split_coverage = "<created>/<covered>:<disposition>"` where `<covered>` counts modules
+   with a direct spec or a `covered-via-facade` disposition — e.g. `"7/7:fixed-in-run"`,
+   `"7/5:2-backlogged-out-of-fence"`, `"4/4:covered-via-facade:T1,T2"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
    `backlogged` in that value means recorded (backlog-add prints whether it went to the backlog or the
    ledger; a TEST-GAP like item 3's stays in the ledger), so the Post-Completion Summary names each F-id.
 
@@ -172,12 +167,9 @@ Q-gate pinned to a line, "The location rule", **whole-file** for the file's tier
 **Run it last in 3.6 — after Step 0's new specs and after the test-quality fix loop.** Both steps
 CHANGE tests, and mutating a suite you are about to rewrite measures a draft.
 
-A green suite says the tests RAN. Tier A says they LOOK right. Neither says they would have
-NOTICED. Nothing earlier in this skill asks that question about the code this run produced: the
-Phase 2.5 probes answer it for the **pre-refactor** lock, and by construction cannot touch the
-specs Step 0 just wrote for `modules_created`. That is the gap `rs_be` PR #291 shipped through —
-it carried a mutation-test **Grade A** scoped to the facade's spec while 7 created modules had no
-spec at all.
+A green suite says the tests RAN, tier A says they LOOK right; neither says they would have
+NOTICED. The Phase 2.5 probes answer that for the **pre-refactor** lock only, never for the specs
+Step 0 just wrote for `modules_created`.
 
 **Scope — derive it, do not guess, and never pass a bare directory.** An unscoped invocation
 re-mutates everything the last twenty commits touched; `zuvo:mutation-test` names that a bug in
@@ -201,7 +193,7 @@ Skill(skill="zuvo:mutation-test", args="<space-separated files from MUTATION_SCO
 | Flag | Why it is forbidden here |
 |---|---|
 | `--report-only` | skips the 4.2b fix loop — the survivors would be reported and left, which is the backlog-instead-of-fix drift this whole phase exists to prevent |
-| `--no-install` | suppresses the 0.1c consent gate, so a project that has no runner silently never gets offered one. **Leave it off**: the gate asks the human, prints the install AND uninstall command, and a decline degrades loudly to the LLM engine. Consent stays a human decision — there is deliberately no flag that grants it |
+| `--no-install` | suppresses the 0.1c consent gate, so a project with no runner is never offered one. **Leave it off** when a human can answer: the gate prints the install AND uninstall command, and a decline degrades loudly to the LLM engine. Consent stays a human decision — no flag grants it. A run that cannot be asked records `not_run:no-consent` (below) instead of passing the flag |
 | `--dry-run` | executes nothing |
 
 **Close what it finds — in this run.** `zuvo:mutation-test` already fixes the tests whose gaps let
@@ -225,7 +217,7 @@ Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` a
 unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
 audited file lies under it, or each audited file is a `files[].path` entry.
 Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
-No candidate → the field cannot be filled: re-run Step 2 over the audited files. A missing artifact has no `N/A`.
+No candidate → re-run Step 2 over the audited files, or record a closed code below.
 Never from memory. `WARN` when gaps remain after the fix loop, each surviving mutant recorded with
 `~/.zuvo/backlog-add --repo "$R" --class MUTATION --conf <N> --source refactor --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`
 (`backlog-protocol.md` "Filing from a skill", **Generic write**): `F`, `<n>` and `A` the mutated
@@ -234,10 +226,11 @@ whole-file record (`backlog-protocol.md` "Filing from a skill", "The location ru
 that names the artifact's mutant id, and no `--anchor`, since MUTATION, like TEST-GAP, requires none.
 Assign `"$R"`, `"$F"`, `"$M"` and `"$T"` before the call, and `"$A"` only when you pass
 `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
-The only `N/A` values are `N/A:<why>` with a nameable condition — no test runner in the project, or
-`plan-only`/VERIFY_COMPILATION (the same runs that skip Step 1). **A bare `N/A` is blocked**, as is
-a score with no digit in it: `WARN:substituted-inline` is a real value a field run once invented
-for `test_quality`, and it passed a shape-only check.
+No artifact can exist in two cases, each a closed code (optional `:<detail>`): inapplicable,
+`N/A:no-test-runner` or `N/A:plan-only` (VERIFY_COMPILATION, which skips Step 1); applicable but not
+run, `not_run:no-native-runner` (none installed) or `not_run:no-consent` (the install needs a consent
+nobody can give). `check` and the hook accept the `not_run:` pair as a WARN: list it under unresolved
+risks. Free text after `N/A:`/`not_run:`, a bare `N/A` and a score with no digit are blocked.
 
 The field is enforced at `git push` and at the `PHASE-4` boundary, against the artifact on disk —
 `refactor-gate-lib.sh` (contract `version >= 7`) and `REQUIRES` in `~/.zuvo/refactor-contract`.
