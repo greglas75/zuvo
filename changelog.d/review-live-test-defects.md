@@ -21,3 +21,4 @@
   DISAGREEMENT; an empty or non-JSON transcript is an error, not UNKNOWN.
 - `build-review-patch` leaves `zuvo/` and `memory/reviews/` untracked files out of the patch.
 - `log-ideas --help` prints usage and writes no receipt.
+- `verify-audit` reads a gate range (`Q1-Q25`, `CQ1-CQ40`) as scoring vocabulary, not a finding, and parses finding IDs of up to 8 letters (`BLOCKER-1`).
