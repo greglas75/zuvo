@@ -209,7 +209,7 @@ CONTENT_FORMAT = [markdown | database | none]
 CONTENT_PROFILE = [marketing | docs | blog | ecommerce | app-shell]
 ```
 
-`CONTENT_PROFILE` is `--profile` (or its legacy alias); without it (or with `auto`), resolve it here and print the reason. A client-rendered app behind login (auth-guarded routes, no public content corpus, no sitemap config) is `app-shell`; a docs generator or a `docs/` tree that is the site is `docs`; a post-dominated tree is `blog`; product/cart routes are `ecommerce`; everything else is `marketing`. The profile also decides which critical gates apply (Phase 4.1); a detected profile that exempts gates prints them and the signals behind it in the header and Known Gaps.
+`CONTENT_PROFILE` is `--profile` (or its legacy alias); without it (or with `auto`), resolve it here and print the reason. A client-rendered app behind login (every route auth-guarded, no public landing or content pages, no sitemap config) is `app-shell`; a docs generator or a `docs/` tree that is the site is `docs`; a post-dominated tree is `blog`; product/cart routes are `ecommerce`; everything else is `marketing`. The profile also decides which critical gates apply (Phase 4.1); a detected profile that exempts gates prints them and the signals behind it in the header and Known Gaps.
 
 Print:
 ```
@@ -488,14 +488,14 @@ CG6: AI crawler policy conscious       -- from D5
 **Profile applicability (read `CONTENT_PROFILE`, `seo-page-profile-registry.md` "Gate applicability").** Agents report raw gate statuses; this step overrides an exempt gate to `N/A`, keeps the raw status in the evidence, and applies it before Phase 4.2: the gate's own blocking check (its row in `seo-check-registry.md`) is `N/A`, excluded from scoring, with no finding and no fix. Other checks (e.g. `robots-exists`) stay scored. `docs`: a raw CG5 FAIL whose evidence says no JSON-LD exists becomes `N/A`; client-only JSON-LD that exists stays FAIL.
 
 **Gates that need a live response are decided from source when source can decide them, in the default (no `--live-url`) mode.** Without a live response a gate is never FAIL for lack of one and never PASS for lack of contrary evidence. CG3 is the one gate whose proof is a response:
-- `PASS` -- deploy/host config enforces HTTPS (HSTS header, `force_ssl` or an http-to-https redirect rule, Cloudflare Always-HTTPS) and no production base URL is `http://`, or a live HTTPS response. A CSP `upgrade-insecure-requests` only upgrades subresources and is not proof.
-- `FAIL` -- source proves the site is published over HTTP: the production `site` / `baseURL` / `metadataBase` / canonical / sitemap `<loc>` is `http://` on a non-local host (`localhost`, `127.0.0.1`, `*.local`, `*.test`, `*.internal` excluded) and no HTTPS enforcement is found, or a live probe shows no HTTPS.
+- `PASS` -- deploy/host config enforces HTTPS (HSTS header, `force_ssl` or an http-to-https redirect rule, Cloudflare Always-HTTPS) and no production base URL is `http://`, or a live request where `http://` redirects to `https://`. A CSP `upgrade-insecure-requests` only upgrades subresources and is not proof.
+- `FAIL` -- source proves the site is published over HTTP: the production (not dev or env-fallback) `site` / `baseURL` / `metadataBase` / canonical / sitemap `<loc>` is `http://` on a non-local host (`localhost`, `127.0.0.1`, `*.local`, `*.test`, `*.internal` excluded) and no HTTPS enforcement is found, or a live probe shows no HTTPS.
 - `INSUFFICIENT DATA` -- anything else, including an `http://` base URL next to HTTPS enforcement (report the stale scheme on the canonical/sitemap check, not under CG3). No `http://` refs is not proof of HTTPS.
 
 CG5 and CG6 follow the same rule: client-only JSON-LD in source is a FAIL, an edge/WAF override that only a probe can rule out is `INSUFFICIENT DATA`.
 
 **Scoring rules:**
-- Any blocking critical gate = `FAIL` -> overall result = `FAIL` regardless of score
+- Any blocking critical gate = `FAIL` (after the profile exemption) -> overall result = `FAIL` regardless of score
 - Any blocking critical gate = `INSUFFICIENT DATA` -> overall result = `PROVISIONAL` until live/source verification is completed
 - `PROVISIONAL` does not block CI gates (it is not a FAIL) but flags incomplete assurance
 - Only `blocking` checks and critical gates control `FAIL` vs `PROVISIONAL`.

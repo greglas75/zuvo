@@ -30,6 +30,7 @@ for gate in CG1 CG2 CG3 CG4 CG5 CG6; do
 done
 assert_contains "$REGISTRY" "only when JSON-LD exists"
 cg3_row=$(grep -F "| CG3 HTTPS" "$REGISTRY")
+[ -n "$cg3_row" ] || fail "CG3 HTTPS row missing from the gate applicability table"
 case "$cg3_row" in *N/A*) fail "CG3 (HTTPS) must apply to every profile, got: $cg3_row" ;; esac
 
 pass "seo-page-profile-registry"

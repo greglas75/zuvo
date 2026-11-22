@@ -70,7 +70,7 @@
 
 ## Gate applicability
 
-A gate a profile exempts is `N/A`, not FAIL and not PROVISIONAL (`seo-audit` Phase 4.1). Every other cell: the gate applies in full.
+A gate a profile exempts is `N/A`, not FAIL and not PROVISIONAL (`seo-audit` Phase 4.1). Every other cell: the gate applies in full. An exempt gate's own blocking check (its row in `seo-check-registry.md`) is `N/A`: excluded from scoring, no finding.
 
 | Gate | marketing | blog | ecommerce | docs | app-shell |
 |------|-----------|------|-----------|------|-----------|

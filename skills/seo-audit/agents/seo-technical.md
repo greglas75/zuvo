@@ -430,7 +430,7 @@ This agent evaluates these critical gates and must report explicit PASS | FAIL |
 |------|------------|--------|---------------|---------------------------|
 | **CG1** | Sitemap exists | D4 | sitemap.xml file or generation config found | -- |
 | **CG2** | Googlebot not blocked | D5 | No `Disallow: /` for Googlebot or `User-agent: *` | -- |
-| **CG3** | HTTPS active | D11 | Deploy/host config enforces HTTPS, or a live HTTPS response (FAIL: production base/canonical URL is `http://` on a non-local host) | Anything else in code-only mode, including "no `http://` refs found" |
+| **CG3** | HTTPS active | D11 | Deploy/host config enforces HTTPS and no production base URL is `http://`, or a live request where `http://` redirects to `https://` (FAIL: production base/canonical URL is `http://` on a non-local host and no enforcement is found) | Anything else in code-only mode, including "no `http://` refs found" |
 | **CG4** | Canonical tags present | D11 | `<link rel="canonical">` found in layout/head template | -- |
 | **CG6** | AI crawler policy conscious | D5 | Explicit, non-contradictory policy for relevant bots from `seo-bot-registry.md`, with at least 3 named bots or a documented tier-based strategy plus evidence. | When code suggests host-layer overrides or policy cannot be trusted without live probing |
 

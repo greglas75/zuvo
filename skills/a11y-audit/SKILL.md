@@ -418,7 +418,7 @@ For each dimension, verify against WCAG 2.2 success criteria:
    - **PASS** -- criterion satisfied with evidence
    - **FAIL** -- criterion violated with evidence
    - **CANNOT DETERMINE** -- requires manual verification (e.g., screen reader testing, cognitive assessment)
-3. For CANNOT DETERMINE items, describe what manual test is needed. A CANNOT DETERMINE check earns no points and leaves its dimension's maximum (and the total `possible`) in 5.2
+3. For CANNOT DETERMINE items, describe what manual test is needed. A CANNOT DETERMINE check earns no points; its maximum stays in the dimension and in the total `possible` (5.2).
 
 **WCAG Level mapping:**
 - Level A (minimum): 1.1.1, 1.2.1, 1.2.2, 1.3.1, 1.4.1, 1.4.2, 2.1.1, 2.1.2, 2.2.2, 2.3.1, 2.4.1, 2.4.2, 2.4.3, 2.4.4, 3.1.1, 3.2.1, 3.2.6, 3.3.1, 3.3.2, 3.3.7, 4.1.2
@@ -482,18 +482,18 @@ Read deferred files:
 
 **Per-dimension scoring:** Each dimension has a max weight. Score = sum of check scores within dimension.
 
-**Overall score:** `(total earned / total possible) * 100`, where *possible* is the sum of the maxima of the dimensions in scope (`full` = 76: A1-A9; A10 is the legal risk section and is never scored; `--quick` = 22: A2 12 + A4 10), minus the maximum weight of every CANNOT DETERMINE check (print the effective denominator; at 0 there is no score and the run is INCOMPLETE).
+**Overall score:** `(total earned / total possible) * 100`, where *possible* is the sum of the maxima of the dimensions in scope (`full` = 76: A1-A9; A10 is the legal risk section and is never scored; `--quick` = 22: A2 12 + A4 10), with a CANNOT DETERMINE check earning 0 and staying in `possible` (undecided never raises the score; the grade of such a run is provisional).
 
 **Critical gates are decided by evidence, never by a score threshold.** Static analysis cannot prove keyboard operability or rendered contrast, so it may only FAIL a gate on a proven violation; PASS needs live evidence.
 
 | Gate | FAIL (proven) | PASS | Otherwise |
 |------|---------------|------|-----------|
-| A2 Keyboard | a keyboard trap (2.1.2); positive `tabindex` that overrides DOM order (2.4.3); `outline: none`/`0` with no replacement focus style (2.4.7); a click handler on a non-interactive element (not a modal backdrop, presentational wrapper or delegation container) with no `tabindex`/`role`, no key handler and no keyboard-reachable control for the same action (2.1.1) | live evidence: `audit_keyboard` or a tab-through that exercises every custom widget and modal (Enter/Space included; name any unexercised one and the gate stays `CANNOT DETERMINE`) finds none of these | `CANNOT DETERMINE` |
+| A2 Keyboard | a keyboard trap (2.1.2); `outline: none`/`0` with no replacement focus style anywhere in the audited sources (global `:focus-visible`, ring utilities, `box-shadow`) (2.4.7); a click handler on a non-interactive element (not a modal backdrop, presentational wrapper or delegation container) with no `tabindex`/`role`, no key handler and no keyboard-reachable control for the same action (2.1.1) | live evidence: `audit_keyboard` or a tab-through that exercises every custom widget and modal (Enter/Space included; name any unexercised one and the gate stays `CANNOT DETERMINE`) finds none of these | `CANNOT DETERMINE` |
 | A4 Contrast | the effective foreground/background pair of one enabled element (not an overridden rule or a disabled control) under the selected standard's ratio (AA 4.5:1, 3:1 large; AAA 7:1, 4.5:1 large), or an axe contrast violation | an axe contrast scan of the live URL over the audited states with zero violations and no `incomplete` contrast nodes | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
 
 Across components a gate is FAIL if any component fails, PASS only if all pass, else `CANNOT DETERMINE`; an undecided gate makes the checks that need the missing evidence (focus order and operability for A2, rendered contrast for A4) `CANNOT DETERMINE`. `--quick` never has live evidence: its gates end FAIL or `CANNOT DETERMINE` (INCOMPLETE).
 
-A keyboard trap is **proven** when a focus lock (custom trap, `Tab` keydown `preventDefault`, blur-to-refocus) has no keyboard exit of any kind (Escape, a close control, another documented key). A proven trap is a CRITICAL finding and fails A2. A library dialog (MUI, Radix, Headless UI) supplies Escape and focus handling: it is neither proof of a trap nor proof that none exists elsewhere.
+A keyboard trap is **proven** when a focus lock (custom trap, `Tab` keydown `preventDefault`, blur-to-refocus) has no keyboard exit of any kind (Escape, a close control, another documented key) in the audited sources, including global handlers and native `<dialog>`. A positive `tabindex` (2.4.3) is a finding, not a gate FAIL. A proven trap is a CRITICAL finding and fails A2. A library dialog (MUI, Radix, Headless UI) supplies Escape and focus handling: it is neither proof of a trap nor proof that none exists elsewhere.
 
 **Grade thresholds:**
 | Grade | Score | Condition |
