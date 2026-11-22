@@ -519,7 +519,7 @@ Standard: WCAG 2.2 [AA|AAA]
 Legal: [ADA Title II | EAA | Section 508 | N/A]
 A11y Tooling: [detected tools or "none"]
 
-SCORE: [N]% -- Grade [A/B/C/FAIL]
+SCORE: [N]% -- Grade [A/B/FAIL]
 ===============================================
 
 ## Critical Gate Status
@@ -627,7 +627,7 @@ A11Y-AUDIT COMPLETE
 -----
 Components audited: [N]
 Standard: WCAG 2.2 [AA|AAA]
-Score: [N]% -- Grade [A/B/C/FAIL]
+Score: [N]% -- Grade [A/B/FAIL]
 Critical gates: A2=[PASS/FAIL/CANNOT DETERMINE] A4=[PASS/FAIL/CANNOT DETERMINE]
 Findings: [N] CRITICAL, [N] HIGH, [N] MEDIUM
 Fixes generated: [N] (if --fix)
