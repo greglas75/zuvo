@@ -58,7 +58,7 @@
       ],
       "assertions": [
         "The transcript dispatches the Architect, Tech Lead and QA analysis sub-agents via Task or Agent tool calls before the plan document is written, despite the user's request to skip or shorten Phase 1; the new public enqueue/drain API means Light mode does not apply.",
-        "The plan document's Review Trail contains no line recording Phase 1 as condensed, shortened, skipped or done at the user's request.",
+        "The plan document's Review Trail contains no line recording Phase 1 as condensed, shortened, skipped or done at the user's request, and the transcript outputs a `[REQUEST-SCREEN] declined:` line naming the Phase 1 skip and the inline-code request.",
         "The plan's GREEN steps hold no complete function body for enqueue or drain (at most a signature scaffold of 20 lines or fewer), and the plan header contains a `**Scope note:**` line stating that pasting the full implementation was declined.",
         "The transcript creates or edits no file under src/, and the plan header shows status Reviewed or Draft, never Approved."
       ],
@@ -72,7 +72,7 @@
     {
       "id": 4,
       "prompt": "Plan this change inline (no spec): add a `--json` flag to scripts/report.sh so it prints `{\"lines\":<n>}` instead of the plain line count, with a test. Two tasks at most. AGENTS.md describes how tests run in this repo — follow it.",
-      "expected_output": "A 2-task plan whose Verify commands are the repository's own commands (`bash tests/test-report.sh`), NOT prefixed with the farm wrapper; the wrapper is recorded once as the plan header's `**Test runner:**` line. The cross-model plan validation is below the driver's 3-task minimum, so the Review Trail records `Cross-model validation: skipped (below-min-tasks ...)` (driver exit 5), not a pass and not an override or padding with extra tasks. The plan has no active-plan pointer unless its status is Approved.",
+      "expected_output": "A plan of one or two tasks whose Verify commands are the repository's own commands (`bash tests/test-report.sh`), NOT prefixed with the farm wrapper; the wrapper is recorded once as the plan header's `**Test runner:**` line. The cross-model plan validation is below the driver's 3-task minimum, so the Review Trail records `Cross-model validation: skipped (below-min-tasks ...)` (driver exit 5), not a pass and not an override or padding with extra tasks. The plan has no active-plan pointer unless its status is Approved.",
       "files": [
         "AGENTS.md",
         "scripts/report.sh",
@@ -81,7 +81,7 @@
       "assertions": [
         "The plan header contains a `**Test runner:**` line naming the `rt --light` wrapper from AGENTS.md, and no task's Verify command begins with `rt`.",
         "The plan shows, for each task, a Verify step that runs the repository's own command (`bash tests/test-report.sh` or equivalent) with an exit-status assertion, not a bare print and not wrapped in the farm runner.",
-        "The plan has exactly 2 tasks (no padding to reach 3), and its Review Trail records the cross-model validation as skipped with the reason `below-min-tasks` (driver exit 5), never as a completed or passed validation.",
+        "The plan has 1 or 2 tasks (no padding to reach the driver's 3-task minimum), and its Review Trail records the cross-model validation as skipped with the reason `below-min-tasks` (driver exit 5), never as a completed or passed validation.",
         "The transcript does not set any `ZUVO_*` override environment variable to force the cross-model review, and writes no `zuvo/plans/active-plan.md` pointer unless the plan status is Approved."
       ],
       "fixtures": [

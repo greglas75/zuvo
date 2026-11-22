@@ -168,6 +168,15 @@ Run `provided-artifact-supremacy.md`. `zuvo:plan` is frequently invoked directly
 3. **If the artifact contains working code** (`.jsx`/`.tsx`/component files, a runnable prototype) → **inventory and read those files; the plan's tasks PORT them component-by-component into the target stack, not re-derive the behavior from prose.** A 7000-line working prototype is ground truth, not a sketch to reinterpret.
 4. Any architecture decision that **contradicts a DC** is a HARD-STOP `[DEVIATION: DC-N says "<quote>" but I propose <X> — confirm]`, never a repo-rationalized "decision". The plan-reviewer (Phase 3) FAILs a plan whose architecture contradicts a DC.
 
+## Request Screening (BEFORE Phase 1 — mechanical, no judgment call)
+
+Scan the user's message for a request about HOW the plan is produced. Two are declined, whatever the wording, whatever the reason given ("short on time", "just write it"), and this skill never treats them as the user's right to waive:
+
+- **Skip, shorten or condense Phase 1** (the Architect / Tech Lead / QA pass). Only Light mode's own criteria (below) allow a direct pass.
+- **Put finished implementation code into the plan** ("include the complete function bodies", "so I can paste it").
+
+Why this binds over the request: the plan is read by an executor that cannot ask anyone, and the user's time pressure is answered by the plan being right, not by it being thin. Do it like this: print `[REQUEST-SCREEN] declined: <phase1-skip|inline-code> — <one clause why>`, carry on with the full fan-out and scaffold-only GREEN steps, and record the decline in the header's `**Scope note:**` as `Declined: <what> — <why>; <what was done instead>`. Never write that anything was skipped, condensed or pasted "at the user's request" — in the Review Trail, the Scope note or the summary. If the user insists after seeing the decline, stop and say plainly that the fan-out is part of the skill; do not comply.
+
 ## Phase 1: Architecture Analysis
 
 Dispatch follows `../../shared/includes/execution-policy.md` through env-compat. Reuse existing
@@ -298,7 +307,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 **Tasks:** [count]
 **Estimated complexity:** [standard/complex mix summary]
 **Test runner:** [none | the wrapper prefix the environment requires for tests, e.g. `rt --light` — only when a project rule or session instruction mandates one]
-**Scope note:** [omit | one line when the user asked for something the skill declines — a skipped Phase 1, or full implementation code pasted into the plan — and what was done instead]
+**Scope note:** [omit | `Declined: <what the user asked — a skipped Phase 1, or full implementation code in the plan> — <why>; <what was done instead>` (Request Screening)]
 
 ## Architecture Summary
 [Condensed from Architect report — component list, key interfaces, dependency direction]
@@ -598,6 +607,7 @@ Before printing the final output block, verify every item. Unfinished items = pi
 ```
 COMPLETION GATE CHECK
 [ ] All 3 Phase 1 agents ran sequentially (Architect → Tech Lead → QA Engineer) — OR Light mode used and `Phase 1: direct (small/light scope)` recorded in Review Trail
+[ ] No line of the plan or the summary says Phase 1 was skipped, condensed or code pasted "at the user's request" (Request Screening); a request of that kind shows `[REQUEST-SCREEN] declined: …` and a `Declined:` Scope note
 [ ] Every spec AC maps to at least one task's Acceptance Proof field
 [ ] EVERY task has Surface field + Acceptance Proof block (inline, not just AC# reference)
 [ ] every task either declares a valid `**Failure:**` value, or omits the line entirely (= `halt`);
