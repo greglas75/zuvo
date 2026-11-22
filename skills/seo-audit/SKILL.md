@@ -209,7 +209,7 @@ CONTENT_FORMAT = [markdown | database | none]
 CONTENT_PROFILE = [marketing | docs | blog | ecommerce | app-shell]
 ```
 
-`CONTENT_PROFILE` is `--profile` (or its legacy alias); without it, resolve it here and print the reason. A client-rendered app behind login (auth-guarded routes, no public content corpus, no sitemap config) is `app-shell`; a docs generator or a `docs/` tree that is the site is `docs`; a post-dominated tree is `blog`; product/cart routes are `ecommerce`; everything else is `marketing`. The profile also decides which critical gates apply (Phase 4.1).
+`CONTENT_PROFILE` is `--profile` (or its legacy alias); without it (or with `auto`), resolve it here and print the reason. A client-rendered app behind login (auth-guarded routes, no public content corpus, no sitemap config) is `app-shell`; a docs generator or a `docs/` tree that is the site is `docs`; a post-dominated tree is `blog`; product/cart routes are `ecommerce`; everything else is `marketing`. The profile also decides which critical gates apply (Phase 4.1).
 
 Print:
 ```
@@ -483,12 +483,12 @@ CG6: AI crawler policy conscious       -- from D5
 - `INSUFFICIENT DATA` -- static analysis is inconclusive and no live verification is available
 - `N/A` -- the active page profile exempts the gate (table below); not counted as FAIL or PROVISIONAL
 
-**Profile applicability (read `CONTENT_PROFILE`, `seo-page-profile-registry.md` "Gate applicability").** Agents report raw gate statuses; this step overrides an exempt gate to `N/A` and keeps the agent's raw status in the evidence.
+**Profile applicability (read `CONTENT_PROFILE`, `seo-page-profile-registry.md` "Gate applicability").** Agents report raw gate statuses; this step overrides an exempt gate to `N/A`, keeps the raw status in the evidence, and applies it before Phase 4.2: the gate's own blocking check (its row in `seo-check-registry.md`) is `N/A`, excluded from scoring, with no finding and no fix. Other checks (e.g. `robots-exists`) stay scored.
 
 **Gates that need a live response are decided from source when source can decide them, in the default (no `--live-url`) mode.** Without a live response a gate is never FAIL for lack of one and never PASS for lack of contrary evidence. CG3 is the one gate whose proof is a response:
-- `PASS` -- deploy/host config enforces HTTPS (HSTS header, `force_ssl` or an http-to-https redirect rule, Cloudflare Always-HTTPS, `upgrade-insecure-requests`), or a live HTTPS response.
+- `PASS` -- deploy/host config enforces HTTPS (HSTS header, `force_ssl` or an http-to-https redirect rule, Cloudflare Always-HTTPS) and no production base URL is `http://`, or a live HTTPS response. A CSP `upgrade-insecure-requests` only upgrades subresources and is not proof.
 - `FAIL` -- source proves the site is published over HTTP: the production `site` / `baseURL` / `metadataBase` / canonical / sitemap `<loc>` is `http://` on a non-local host (`localhost`, `127.0.0.1`, `*.local`, `*.test`, `*.internal` excluded), or a live probe shows no HTTPS.
-- `INSUFFICIENT DATA` -- anything else. No `http://` refs is not proof of HTTPS.
+- `INSUFFICIENT DATA` -- anything else, including an `http://` base URL next to HTTPS enforcement (report the stale scheme on the canonical/sitemap check, not under CG3). No `http://` refs is not proof of HTTPS.
 
 CG5 and CG6 follow the same rule: client-only JSON-LD in source is a FAIL, an edge/WAF override that only a probe can rule out is `INSUFFICIENT DATA`.
 
@@ -800,7 +800,7 @@ Wait for complete output. Then:
 
 Overall: [N]/100 -- Tier [A/B/C/D] | Result: [PASS/FAIL/PROVISIONAL]
 SEO: [N]/100 | GEO: [N]/100 | Tech: [N]/100
-Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA]
+Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA] / [N N/A]
 Findings: [N critical] / [N total]
 
 ### Retrospective (REQUIRED)

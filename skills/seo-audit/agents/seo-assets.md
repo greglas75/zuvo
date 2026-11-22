@@ -176,7 +176,7 @@ Verify that JSON-LD is rendered server-side (present in initial HTML), not injec
 **Detection patterns for client-only JSON-LD (FAIL):**
 - JSON-LD created inside `useEffect`, `componentDidMount`, or similar client-only hooks
 - JSON-LD injected via `document.createElement('script')` or `innerHTML`
-- JSON-LD inside a component wrapped in `'use client'` without SSR fallback (Next.js)
+- JSON-LD inside a `'use client'` component (Next.js) whose script is created only on a client path; a client component can still prerender it, so an unresolved render path is INSUFFICIENT DATA, not FAIL
 
 **Detection patterns for server-side JSON-LD (PASS):**
 - JSON-LD in Astro component body (Astro renders server-side by default)

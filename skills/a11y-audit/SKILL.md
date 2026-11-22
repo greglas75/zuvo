@@ -173,11 +173,11 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | All interactive elements focusable | 2.1.1 | `<div onClick>` without `tabIndex` or `role="button"` |
 | Tab order matches visual order (no positive tabindex) | 2.4.3 | `tabindex` values > 0 |
 | Focus visible on all interactive elements | 2.4.7 | `:focus-visible` or `:focus` styles present for interactive elements |
-| No keyboard traps | 2.1.2 | Focus lock with no keyboard exit: `Tab` keydown `preventDefault`, blur-to-refocus, custom focus trap with no Escape/close control (a trap is CRITICAL, see 5.2) |
+| No keyboard traps | 2.1.2 | Focus lock with no keyboard exit: `Tab` keydown `preventDefault`, blur-to-refocus, custom focus trap with no keyboard exit (Escape, close control, documented key) (a trap is CRITICAL, see 5.2) |
 | Skip navigation link present | 2.4.1 | First focusable element links to `#main` or `#content` |
 | Custom component keyboard handlers | 2.1.1 | Custom interactive elements missing `onKeyDown`/`onKeyUp` for Enter, Space, Escape, Arrow keys |
 | Modal/dialog focus management | 2.4.3 | Focus trapped inside modal, focus returns to trigger on close |
-| Focused element not hidden by sticky UI | 2.4.11 | `position: fixed/sticky` header or banner without `scroll-padding-top` / `scroll-margin` |
+| Focused element not hidden by sticky UI | 2.4.11 | `position: fixed/sticky` header or banner without `scroll-padding-top` / `scroll-margin`: a prompt to verify, FAIL only when the UI hides the whole focused component |
 
 ### A3: ARIA Patterns (weight 10)
 
@@ -232,8 +232,8 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 |-------|------|-----------|
 | Content reflows at 320px width | 1.4.10 | Horizontal scroll triggers, fixed-width containers |
 | Text resizable to 200% | 1.4.4 | Fixed `height`/`max-height` on text containers that clip enlarged text (`px` font sizes alone pass: browser zoom scales them) |
-| Target size >= 24x24 CSS px (44x44 is AAA 2.5.5) | 2.5.8 | Small click/tap targets (links, buttons, icons) |
-| Drag has a single-pointer alternative | 2.5.7 | Drag-only interactions (`draggable`, dnd-kit, sortable lists, card sorts) with no button or keyboard alternative |
+| Target size >= 24x24 CSS px (44x44 is AAA 2.5.5) | 2.5.8 | Click/tap targets under 24x24 with under 24 px spacing to neighbours (inline links and user-agent controls are exempt) |
+| Drag has a single-pointer alternative | 2.5.7 | Drag-only interactions (`draggable`, dnd-kit, sortable lists, card sorts) with no single-pointer alternative that needs no dragging (e.g. Move up/down buttons); a keyboard alternative alone does not satisfy it |
 | No content hidden at zoom | 1.4.10 | `overflow: hidden` on containers with text |
 | Viewport no disable scaling | 1.4.4 | `maximum-scale=1` or `user-scalable=no` in viewport meta |
 
@@ -256,7 +256,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Link text is descriptive | 2.4.4 | "click here", "read more", "learn more" without context |
 | Consistent navigation | 3.2.3 | Nav component differs across pages |
 | Page titles descriptive and unique | 2.4.2 | Missing `<title>`, duplicate titles, generic titles |
-| Help in a consistent place | 3.2.6 | Help/contact link present on some pages but moved or missing on others |
+| Help in a consistent place | 3.2.6 | Help/contact link offered on several pages but in a different relative order |
 
 ### A10: Legal Compliance Status (NOT scored — separate legal risk section)
 
@@ -482,16 +482,16 @@ Read deferred files:
 
 **Per-dimension scoring:** Each dimension has a max weight. Score = sum of check scores within dimension.
 
-**Overall score:** `(total earned / total possible) * 100`, where *possible* is the sum of the maxima of the dimensions in scope (`full` = 76: A1-A9; A10 is the legal risk section and is never scored; `--quick` = 22: A2 12 + A4 10), minus the points of CANNOT DETERMINE checks.
+**Overall score:** `(total earned / total possible) * 100`, where *possible* is the sum of the maxima of the dimensions in scope (`full` = 76: A1-A9; A10 is the legal risk section and is never scored; `--quick` = 22: A2 12 + A4 10), minus the maximum weight of every CANNOT DETERMINE check (print the effective denominator; at 0 there is no score and the run is INCOMPLETE).
 
 **Critical gates are decided by evidence, never by a score threshold.** Static analysis cannot prove keyboard operability or rendered contrast, so it may only FAIL a gate on a proven violation; PASS needs live evidence.
 
 | Gate | FAIL (proven) | PASS | Otherwise |
 |------|---------------|------|-----------|
-| A2 Keyboard | a keyboard trap (2.1.2); positive `tabindex` (2.4.3); `outline: none`/`0` with no replacement focus style (2.4.7); a click handler on a non-interactive element with no `tabindex`/`role` and no key handler (2.1.1) | live evidence: `audit_keyboard` or a tab-through finds none of these | `CANNOT DETERMINE` |
-| A4 Contrast | a literal foreground/background pair in one rule or element under 4.5:1 (3:1 large text), or an axe contrast violation | an axe contrast scan of the live URL with zero violations | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
+| A2 Keyboard | a keyboard trap (2.1.2); positive `tabindex` that overrides DOM order (2.4.3); `outline: none`/`0` with no replacement focus style (2.4.7); a click handler on a non-interactive element with no `tabindex`/`role` and no key handler (2.1.1) | live evidence: `audit_keyboard` or a tab-through (Enter/Space on custom controls included) finds none of these | `CANNOT DETERMINE` |
+| A4 Contrast | the effective foreground/background pair of one enabled element (not an overridden rule or a disabled control) under the selected standard's ratio (AA 4.5:1, 3:1 large; AAA 7:1, 4.5:1 large), or an axe contrast violation | an axe contrast scan of the live URL over the audited states with zero violations and no `incomplete` contrast nodes | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
 
-A keyboard trap is **proven** when a focus lock (custom trap, `Tab` keydown `preventDefault`, blur-to-refocus) has no Escape or close control reachable by keyboard. A proven trap is a CRITICAL finding and fails A2. A library dialog (MUI, Radix, Headless UI) supplies Escape and focus handling: it is neither proof of a trap nor proof that none exists elsewhere.
+A keyboard trap is **proven** when a focus lock (custom trap, `Tab` keydown `preventDefault`, blur-to-refocus) has no keyboard exit of any kind (Escape, a close control, another documented key). A proven trap is a CRITICAL finding and fails A2. A library dialog (MUI, Radix, Headless UI) supplies Escape and focus handling: it is neither proof of a trap nor proof that none exists elsewhere.
 
 **Grade thresholds:**
 | Grade | Score | Condition |
