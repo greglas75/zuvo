@@ -112,7 +112,7 @@ a second commit with red/green proof; every other pre-existing finding stays bas
 
 ## Runs that cannot ask or write
 
-Decide once, record it, finish; never ask mid-run, never forge a stage.
+Decide once, record it, finish; never ask, never forge a stage.
 
 - No native mutation runner, or an install needing consent nobody can give: `prove.mutation =
   not_run:no-native-runner` or `not_run:no-consent` (a `check` WARN). No free-text `N/A`.

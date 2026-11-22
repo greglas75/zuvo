@@ -497,7 +497,17 @@ def cmd_stage(a, root, path):
             print("REFUSED — COMPLETE requires `check` exit 0 (it exited %d)" % rc, file=sys.stderr)
             return 1
         base, now = c.get("head"), git_head(root)
-        if base and now and base == now:
+        dirty = []
+        if now != "unknown":
+            st = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--"]
+                                + list(c.get("scope_fence") or [c.get("file", "")]),
+                                cwd=root, capture_output=True, text=True, timeout=30)
+            dirty = [l[3:] for l in st.stdout.splitlines()]
+        if dirty:
+            print("REFUSED — COMPLETE needs the refactor committed: uncommitted changes in the "
+                  "scope fence: %s" % ", ".join(dirty[:5]), file=sys.stderr)
+            return 1
+        if base and now != "unknown" and base == now:
             print("REFUSED — COMPLETE needs the refactor committed: HEAD is still %s, where `init` "
                   "started. Commit it, or end the run as EXECUTION_COMPLETE with "
                   "commit_execution set." % now, file=sys.stderr)
@@ -889,7 +899,7 @@ def cmd_init(a, root):
     if not src:
         print("refactor-contract: init needs --file <source>", file=sys.stderr)
         return 2
-    if not a.type:
+    if not (a.type or "").strip():
         # An empty type silently skips the complexity-effectiveness gate for a split.
         print("refactor-contract: init needs --type (e.g. SPLIT_FILE, EXTRACT_METHODS)", file=sys.stderr)
         return 2
@@ -908,7 +918,9 @@ def cmd_init(a, root):
         print("refactor-contract: --behavior-mode refactor_and_fix and --behavior-scope <symbol> "
               "go together", file=sys.stderr)
         return 2
-    rel = os.path.relpath(real_src, real_root).replace(os.sep, "/")
+    # Key by the in-repo spelling (directories resolved, the file itself not): `--file <alias>` finds it.
+    rel = os.path.relpath(os.path.join(os.path.realpath(os.path.dirname(cand)), os.path.basename(cand)),
+                          real_root).replace(os.sep, "/")
     key = target_hash(rel)
     d = contracts_dir(root)
     path = os.path.join(d, "refactor-%s.json" % key)
@@ -917,22 +929,27 @@ def cmd_init(a, root):
         existing = read_json(path) or {}
         # Finished = COMPLETE, or an EXECUTION_COMPLETE run whose work was left uncommitted: once
         # HEAD moves (the owner committed it) the next run on the target must not be blocked.
-        done = (canonical_stage(existing.get("stage"))[0] == "COMPLETE"
-                or bool(existing.get("commit_execution")))
+        stage = canonical_stage(existing.get("stage"))[0]
+        done = (stage == "COMPLETE"
+                or (bool(existing.get("commit_execution")) and stage in ("PHASE-3.5", "PHASE-3.6", "PHASE-4")))
         if done and existing.get("head") != head7:
             # Archive a finished run of an earlier commit; never clobber an earlier archive.
-            n, dest = 1, os.path.join(d, "refactor-%s-%s.json" % (key, head7))
+            # Archives live in archive/: the hooks scan `refactor-*.json` in this directory, and an old
+            # run's snapshot must never be judged against the next run's tree.
+            ad = os.path.join(d, "archive")
+            os.makedirs(ad, exist_ok=True)
+            n, dest = 1, os.path.join(ad, "refactor-%s-%s.json" % (key, head7))
             while os.path.exists(dest):
                 n += 1
-                dest = os.path.join(d, "refactor-%s-%s-%d.json" % (key, head7, n))
-            suffix = dest[len(os.path.join(d, "refactor-%s" % key)):-len(".json")]
+                dest = os.path.join(ad, "refactor-%s-%s-%d.json" % (key, head7, n))
+            suffix = dest[len(os.path.join(ad, "refactor-%s" % key)):-len(".json")]
             os.replace(path, dest)
             for side in ("%s-findings.json" % key, "refactor-%s-findings.json" % key,
                          "refactor-%s-adversarial.json" % key):
                 sp = os.path.join(d, side)
                 if os.path.exists(sp):
                     stem = side[:-len(".json")].replace(key, key + suffix, 1)
-                    os.replace(sp, os.path.join(d, stem + ".json"))
+                    os.replace(sp, os.path.join(ad, stem + ".json"))
         elif done:
             print("refactor-contract: %s is finished and nothing has been committed since (HEAD %s); "
                   "commit its work, then init again" % (os.path.relpath(path, root), head7),

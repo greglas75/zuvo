@@ -336,7 +336,7 @@ ec show; rc=$?
 [ "$rc" -eq 1 ] && grep -q 'RESUME' "$TMP/err" \
   && pass "init refuses to overwrite an unfinished contract" \
   || bad "init overwrote a resumable contract (exit=$rc)"
-( cd "$E" && python3 "$BIN" init --file /etc/hosts ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+( cd "$E" && python3 "$BIN" init --file /etc/hosts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 [ "$rc" -eq 2 ] && pass "init refuses a target outside the repository" || bad "init accepted a path outside the repo (exit=$rc)"
 ( cd "$E" && python3 "$BIN" init --file src/typo.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 [ "$rc" -eq 2 ] && pass "init refuses a file that does not exist (a typo must not mint a contract)" || bad "init accepted a nonexistent file (exit=$rc)"
@@ -391,6 +391,16 @@ ec stage COMPLETE; rc=$?
 ec set version 6 >/dev/null; rc=$?
 [ "$rc" -eq 1 ] && pass "set cannot downgrade the schema version to dodge the v7 check" || bad "set version was accepted (exit=$rc)"
 
+# An unrelated commit moves HEAD while the target stays dirty: still not committed.
+printf 'export const a = 2\n' > "$E/src/a.ts"; printf 'x\n' > "$E/src/other.ts"
+git -C "$E" add src/other.ts; git -C "$E" -c user.email=t@t -c user.name=t commit -qm unrelated >/dev/null 2>&1
+fill
+ec stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'uncommitted changes in the scope fence' "$TMP/err" \
+  && pass "an unrelated commit does not make an uncommitted refactor COMPLETE" \
+  || bad "COMPLETE accepted with the target still dirty (exit=$rc)"
+git -C "$E" checkout -q -- src/a.ts 2>/dev/null
+
 # The positive path: a proven, committed run reaches COMPLETE, and the next init archives it.
 printf 'export const a = 2\n' > "$E/src/a.ts"
 git -C "$E" -c user.email=t@t -c user.name=t commit -qam second >/dev/null 2>&1
@@ -402,7 +412,7 @@ sys.exit(0 if json.load(open('$E/zuvo/contracts/refactor-$KEY.json'))['stage']==
   && [ "$rc" -eq 0 ] && pass "stage COMPLETE is accepted when check exits 0 and HEAD moved" || bad "a valid run could not reach COMPLETE (exit=$rc): $(head -3 "$TMP/err")"
 ( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 H2=$(git -C "$E" rev-parse --short=7 HEAD)
-[ "$rc" -eq 0 ] && [ -f "$E/zuvo/contracts/refactor-$KEY-$H2.json" ] \
+[ "$rc" -eq 0 ] && [ -f "$E/zuvo/contracts/archive/refactor-$KEY-$H2.json" ] && [ ! -f "$E/zuvo/contracts/refactor-$KEY-$H2.json" ] \
   && pass "init archives a COMPLETE contract and starts a fresh one" \
   || bad "init did not archive the COMPLETE contract (exit=$rc): $(head -3 "$TMP/err")"
 printf 'export const a = 3\n' > "$E/src/a.ts"; git -C "$E" -c user.email=t@t -c user.name=t commit -qam third >/dev/null 2>&1
@@ -410,7 +420,7 @@ fill
 ec stage COMPLETE >/dev/null
 printf 'export const a = 4\n' > "$E/src/a.ts"; git -C "$E" -c user.email=t@t -c user.name=t commit -qam fourth >/dev/null 2>&1
 ( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
-[ "$rc" -eq 0 ] && [ "$(ls "$E/zuvo/contracts/" | grep -c "^refactor-$KEY-.*\.json$")" -eq 2 ] \
+[ "$rc" -eq 0 ] && [ "$(ls "$E/zuvo/contracts/archive/" | grep -c "^refactor-$KEY-.*\.json$")" -eq 2 ] \
   && pass "successive archives are kept side by side" || bad "the earlier archive was lost (exit=$rc)"
 ( cd "$E" && python3 "$BIN" init --file src/a.ts --type EXTRACT_METHODS --behavior-scope foo ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 [ "$rc" -eq 2 ] && pass "init refuses a behavior scope without refactor_and_fix" || bad "scope without mode accepted (exit=$rc)"

@@ -227,13 +227,11 @@ whole-file record (`backlog-protocol.md` "Filing from a skill", "The location ru
 that names the artifact's mutant id, and no `--anchor`, since MUTATION, like TEST-GAP, requires none.
 Assign `"$R"`, `"$F"`, `"$M"` and `"$T"` before the call, and `"$A"` only when you pass
 `--anchor`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
-No artifact can exist in two cases, each a closed code (optional `:<detail>` after it): inapplicable,
-`N/A:no-test-runner` (the project has no test runner) or `N/A:plan-only` (plan-only/VERIFY_COMPILATION,
-the runs that skip Step 1); applicable but not run, `not_run:no-native-runner` (no native mutation
-runner, none installed) or `not_run:no-consent` (the install needs a consent nobody can give). `check`
-and the hook accept the `not_run:` pair as a WARN: list it under unresolved risks. Free text after
-`N/A:`/`not_run:`, a bare `N/A` and a score with no digit are blocked (`WARN:substituted-inline` is a
-value a field run once invented).
+No artifact can exist in two cases, each a closed code (optional `:<detail>`): inapplicable,
+`N/A:no-test-runner` or `N/A:plan-only` (VERIFY_COMPILATION, which skips Step 1); applicable but not
+run, `not_run:no-native-runner` (none installed) or `not_run:no-consent` (the install needs a consent
+nobody can give). `check` and the hook accept the `not_run:` pair as a WARN: list it under unresolved
+risks. Free text after `N/A:`/`not_run:`, a bare `N/A` and a score with no digit are blocked.
 
 The field is enforced at `git push` and at the `PHASE-4` boundary, against the artifact on disk —
 `refactor-gate-lib.sh` (contract `version >= 7`) and `REQUIRES` in `~/.zuvo/refactor-contract`.

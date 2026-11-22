@@ -69,6 +69,7 @@ unseen receipts are not evidence the remote reviewer has read.
 **Context-enriched input:** Prepend refactoring context + full source files so the provider can verify behavioral equivalence, not just diff syntax:
 
 ```bash
+PATCH=$(~/.zuvo/build-review-patch "<fence-file-1>" "<fence-file-2>") || exit  # 2 = bad invocation: stop; 3 = empty patch
 (echo "CONTEXT: refactor [TYPE] [TARGET] scope:[N files]";
  echo "CQ-PRE: [pre-audit score]. CQ-POST: [post-audit score]. Critical: [gates]";
  echo "SCOPE-FENCE: [file list]";
@@ -81,7 +82,7 @@ unseen receipts are not evidence the remote reviewer has read.
  echo "---ORIGINAL SOURCE (excerpt-capped)---";
  head -c 40000 [target file before refactoring];
  echo "---DIFF---";
- ~/.zuvo/build-review-patch "<fence-file-1>" "<fence-file-2>") | ~/.zuvo/adversarial-review --multi --mode [code|security]
+ printf "%s\n" "$PATCH") | ~/.zuvo/adversarial-review --multi --mode [code|security]
 ```
 
 **Measure the payload BEFORE dispatch, do not discover the cap by being truncated.** Pipe the
@@ -179,7 +180,7 @@ If a CRITICAL cannot be proven fixed by its regression test, that CRITICAL count
 
 The old "WARNING > 10 lines → backlog" rule is gone: line count is not a proxy for scope. A big mechanical fix is still a fix; a one-line product decision is still a decision.
 
-**Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless. (`diff_lines` = the line count of the `build-review-patch` output, computed BEFORE prompt enrichment — never derived from reviewer input or prompt line count.)
+**Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless. (`diff_lines` = the added plus deleted lines of `$PATCH`, computed BEFORE prompt enrichment — never derived from reviewer input or prompt line count.)
 
 Do not discard findings based on confidence or file membership. Use the baseline comparison in
 `change-assessment.md`; keep every debt finding visible, with its severity and evidence.

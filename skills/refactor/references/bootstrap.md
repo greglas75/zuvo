@@ -30,7 +30,7 @@ installed/PASS. Continue analysis and explicit verification, but do not claim au
 enforcement; resolve activation before claiming the complete workflow. Do not modify a shared
 or version-controlled hook merely to turn the status green.
 
-**Write probe, once** (some sandboxes mount `.git` read-only):
+**Write probe, once** (`.git` may be read-only):
 
 ```bash
 ( set -e; for d in "$(git rev-parse --absolute-git-dir)" "$(git rev-parse --path-format=absolute --git-common-dir)"; do t=$(mktemp "$d/zuvo-probe.XXXXXX"); rm -f "$t"; done )
@@ -38,8 +38,8 @@ or version-controlled hook merely to turn the status green.
 
 On failure, or when a later commit fails on permissions (keep commits already made), run
 `no-commit`: after `init`, `~/.zuvo/refactor-contract --contract <path> set commit_execution
-'"blocked:<reason>"'`. Every other gate still runs; the end state is `UNCOMMITTED` (`SKILL.md`
-"Result"), never BLOCKED, never COMPLETE.
+'"blocked:<reason>"'`. Every other gate still runs; the end state is `UNCOMMITTED` when `check`
+exits 0 (else `PARTIAL`/`BLOCKED`, `SKILL.md` "Result"), never COMPLETE.
 
 Resolve the installed root for the **current harness** from the execution policy first
 (Codex: `~/.codex`, Claude Code: its active plugin root). Do not choose another harness's cache

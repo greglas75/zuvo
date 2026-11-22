@@ -102,10 +102,10 @@ Create a resumable state file per target. The path is scoped so batch mode can t
 Where `{target-hash}` is the first 8 hex chars of SHA-256 of the repo-relative target path (the CLI's `target_hash`).
 
 **Create it with the CLI, never by hand:**
-`~/.zuvo/refactor-contract init --file <src> [--type T] [--scope-fence P...] [--behavior-mode M] [--behavior-scope S...]`
+`~/.zuvo/refactor-contract init --file <src> --type T [--scope-fence P...] [--behavior-mode M] [--behavior-scope S...]`
 writes a v7 contract from the schema below. It refuses to overwrite an unfinished contract (resume it) and
-archives a COMPLETE one from an earlier HEAD, with its findings sidecar, as `refactor-{hash}-{head7}.json`.
-`prove` accepts `characterization_probes`; `set` refuses `stage`, and `stage COMPLETE` refuses unless `check` exits 0.
+archives a finished one from an earlier HEAD, with its sidecars, to `archive/` (outside the hooks' scan).
+`prove` accepts `characterization_probes`; `set` refuses `stage`/`version`/`head`, and `stage COMPLETE` refuses unless `check` exits 0 and the scope fence is committed.
 `commit_execution` (`blocked:<reason>`, set by the Phase 0 write probe) marks a run that cannot commit: it ends at `EXECUTION_COMPLETE`.
 
 **Resume contract:**
@@ -182,9 +182,9 @@ Among candidates whose `commit` == HEAD (else among all), take the newest by mti
 No candidate → re-run `zuvo:mutation-test` over the audited files, or record a code below.
 
 **Closed codes, each with an optional `:<detail>` suffix.** `N/A:no-test-runner`, `N/A:plan-only`
-(inapplicable); `not_run:no-native-runner`, `not_run:no-consent` (applicable, could not run: `check`
-accepts it as a WARN). A bare `N/A`, any other text after `N/A:`/`not_run:` and a bare `not_run`
-are blocked: free text is how a skipped gate looks identical to an inapplicable one.
+(inapplicable); `not_run:no-native-runner`, `not_run:no-consent` (could not run: a `check` WARN).
+A bare `N/A`, other text after `N/A:`/`not_run:` and a bare `not_run` are blocked: free text makes a
+skipped gate look inapplicable.
 
 ## Effectiveness fields (v5): `complexity_before` / `complexity_reduced`
 
@@ -339,7 +339,7 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 2. **Test handling:** Write/verify tests per test mode routing
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
 4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ40 AFTER (all 40 gates).
-5. **Adversarial:** Run iterative adversarial review (`--rotate`) on the review patch with context-enriched input (same protocol as Phase 3). Pass count by diff size, at most 3 (`adversarial-loop.md` Step 5).
+5. **Adversarial:** Run iterative adversarial review (`--multi`) on the review patch with context-enriched input (same protocol as Phase 3). Pass count by diff size, at most 3 (`adversarial-loop.md` Step 5).
 6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs (introduced, or in `behavior_scope`) surfaced, fix them with a regression test in a NEW file and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
 7. **Queue update:** Update line with CQ before/after and commit hash(es).
 8. **Record deferrals:** ONLY out-of-scope-fence items and declined decisions — NOT introduced bugs (fixed in step 6); a pre-existing bug in moved code is filed here as `preserved-verbatim` unless the request asked for the fix — each through `backlog-add` as Phase 4's "Backlog Persistence" prints it: `--source refactor` for the `DEFERRED` items and declined decisions, `--source drive-by:refactor` for the `BACKLOG ITEMS` (`backlog-protocol.md` "Filing from a skill": **Generic write** for a finding, **Process item** for a declined decision). Stage nothing here: append each `wrote=` path this entry's calls printed to its queue line, as `wrote: <path>, …` after the commit hash(es) of step 7, so a resumed batch still finds them; they go into the batch's one closing commit, made after the aggregate review (the run's last `backlog-add` calls), so the review's paths are in it too, or after the last queue entry when no aggregate review runs (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**; `completion.md` "Telemetry vs commits").
