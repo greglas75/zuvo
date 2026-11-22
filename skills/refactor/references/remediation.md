@@ -131,7 +131,7 @@ For each path in `modules_created`:
    `--anchor`; assign `"$R"`, `"$F"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`).
 4. Record `prove.split_coverage = "<created>/<covered>:<disposition>"` where `<covered>` counts modules
    with a direct spec or a `covered-via-facade` disposition — e.g. `"7/7:fixed-in-run"`,
-   `"7/5:2-backlogged-out-of-fence"`, `"4/4:covered-via-facade"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
+   `"7/5:2-backlogged-out-of-fence"`, `"4/4:covered-via-facade:T1,T2"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
    `backlogged` in that value means recorded (backlog-add prints whether it went to the backlog or the
    ledger; a TEST-GAP like item 3's stays in the ledger), so the Post-Completion Summary names each F-id.
 

@@ -30,7 +30,7 @@ point. A contract that records `prove.regression_red: not_run` and a stage of PH
 resumable state, it is a claim with no evidence behind it.
 
 Usage (--file/--contract select the contract and go BEFORE the subcommand; `init` takes its own --file):
-  ~/.zuvo/refactor-contract init --file <src> [--type T] [--scope-fence P...] [--behavior-mode M] [--behavior-scope S...]
+  ~/.zuvo/refactor-contract init --file <src> --type T [--scope-fence P...] [--behavior-mode M] [--behavior-scope S...]
   ~/.zuvo/refactor-contract [--file <src>] [--contract <path>] show
   ~/.zuvo/refactor-contract list [--stale-days N] [--json]
   ~/.zuvo/refactor-contract stage <STAGE> [--force]
@@ -497,12 +497,17 @@ def cmd_stage(a, root, path):
             print("REFUSED — COMPLETE requires `check` exit 0 (it exited %d)" % rc, file=sys.stderr)
             return 1
         base, now = c.get("head"), git_head(root)
-        dirty = []
-        if now != "unknown":
-            st = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--"]
-                                + list(c.get("scope_fence") or [c.get("file", "")]),
-                                cwd=root, capture_output=True, text=True, timeout=30)
-            dirty = [l[3:] for l in st.stdout.splitlines()]
+        if now == "unknown":
+            print("REFUSED — COMPLETE cannot verify the commit: git HEAD is unreadable", file=sys.stderr)
+            return 1
+        paths = sorted(set((c.get("scope_fence") or []) + [c.get("file", "")]
+                           + list(c.get("modules_created") or [])) - {""})
+        st = subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal", "--"] + paths,
+                            cwd=root, capture_output=True, text=True, timeout=30)
+        if st.returncode != 0:
+            print("REFUSED — COMPLETE cannot verify the commit: git status failed", file=sys.stderr)
+            return 1
+        dirty = [l[3:] for l in st.stdout.splitlines()]
         if dirty:
             print("REFUSED — COMPLETE needs the refactor committed: uncommitted changes in the "
                   "scope fence: %s" % ", ".join(dirty[:5]), file=sys.stderr)
@@ -899,9 +904,9 @@ def cmd_init(a, root):
     if not src:
         print("refactor-contract: init needs --file <source>", file=sys.stderr)
         return 2
-    if not (a.type or "").strip():
+    if not re.fullmatch(r"[A-Z][A-Z_]+", (a.type or "").strip()):
         # An empty type silently skips the complexity-effectiveness gate for a split.
-        print("refactor-contract: init needs --type (e.g. SPLIT_FILE, EXTRACT_METHODS)", file=sys.stderr)
+        print("refactor-contract: init needs --type in the canonical UPPER_SNAKE form (e.g. SPLIT_FILE, EXTRACT_METHODS)", file=sys.stderr)
         return 2
     real_root = os.path.realpath(root)
     cand = os.path.abspath(src)
@@ -984,7 +989,7 @@ def cmd_init(a, root):
 
 
 def cmd_set(a, root, path):
-    if a.key.split(".")[0] in ("stage", "version", "kind", "head"):
+    if a.key.split(".")[0] in ("stage", "version", "kind", "head", "behavior_mode", "behavior_scope"):
         # `set stage COMPLETE` skipped every gate `stage` enforces; `set version 6` switched the
         # v7 check off — either one forges COMPLETE.
         print("refactor-contract: `set` cannot write %s (use `stage <STAGE>`); it would bypass "

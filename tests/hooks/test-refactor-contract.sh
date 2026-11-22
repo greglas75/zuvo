@@ -340,6 +340,10 @@ ec show; rc=$?
 [ "$rc" -eq 2 ] && pass "init refuses a target outside the repository" || bad "init accepted a path outside the repo (exit=$rc)"
 ( cd "$E" && python3 "$BIN" init --file src/typo.ts --type EXTRACT_METHODS ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 [ "$rc" -eq 2 ] && pass "init refuses a file that does not exist (a typo must not mint a contract)" || bad "init accepted a nonexistent file (exit=$rc)"
+( cd "$E" && python3 "$BIN" init --file src/a.ts --type split ) > "$TMP/out" 2> "$TMP/err"; rc=$?
+[ "$rc" -eq 2 ] && pass "init rejects a non-canonical --type (a mistyped split would skip the effectiveness gate)" || bad "init accepted --type split (exit=$rc)"
+ec set behavior_mode '"refactor_and_fix"' >/dev/null; rc=$?
+[ "$rc" -eq 1 ] && pass "set cannot switch behavior_mode around init's mode/scope check" || bad "set behavior_mode accepted (exit=$rc)"
 ( cd "$E" && python3 "$BIN" init --file src/a.ts ) > "$TMP/out" 2> "$TMP/err"; rc=$?
 [ "$rc" -eq 2 ] && pass "init needs --type (an empty type silently skips the v5 effectiveness gate)" || bad "init accepted an empty --type (exit=$rc)"
 

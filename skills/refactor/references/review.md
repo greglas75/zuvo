@@ -170,7 +170,7 @@ If a CRITICAL cannot be proven fixed by its regression test, that CRITICAL count
 
 | Finding | Action |
 |---------|--------|
-| **CRITICAL** | Introduced/worsened: fix and re-test. Verified baseline debt: disclose under `change-assessment.md`; unproven comparison blocks. |
+| **CRITICAL** | Introduced/worsened, or the defect `behavior_scope` names: fix and re-test. Verified baseline debt: disclose under `change-assessment.md`; unproven comparison blocks. |
 | **WARNING — real bug introduced or worsened by the diff, or the defect `behavior_scope` names, one clearly-correct fix** | Fix it in Phase 3.5 (the fix commit). **Size is irrelevant** — never park such a bug because the fix is large. |
 | **WARNING — pre-existing bug in code moved verbatim** | `preserved-verbatim`: pin it, report it, `backlog-add` it (`SKILL.md` "Behavior mode"); fix only when the request asked. |
 | **WARNING — needs a behavior/product DECISION** (e.g. on total failure: partial result vs hard error) | Not a bug, a choice. Interactive → ask the user (Phase 3.5 decision gate, ≤1 question). Batch/`--auto`/`no-pause` → pick the safe default, log `[DECISION-DEFAULT: …]`, surface in report. |

@@ -159,7 +159,7 @@ as PASS. The canonical check reports verification and quality separately. Baseli
 are not current failures merely because they remain in the historical record.
 
 **`prove.split_coverage`** — `"<created>/<covered>:<disposition>"` (covered = direct spec or `covered-via-facade`) from the per-module coverage
-gate, or `"N/A"` when `modules_created` is empty. See "Per-module coverage" in `skills/refactor/SKILL.md`.
+gate, or `"N/A"` when `modules_created` is empty. See Phase 3.6 Step 0 in `skills/refactor/references/remediation.md`.
 
 ## `prove.mutation` (v7) — did the tests NOTICE?
 
