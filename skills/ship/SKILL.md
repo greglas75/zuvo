@@ -556,7 +556,7 @@ bailing, a missing binary) prints nothing, which reads exactly like a clean resu
 with no findings = the scan did not run — fall back to another scanner or `git diff | grep` for the
 high-signal patterns, and record which one produced the verdict. Never carry an errored scan as a
 pass. `scan_secrets` needs an indexed repo; without one the fallback is `gitleaks git
---log-opts="${DIFF_BASE}..HEAD"` plus `SCAN_DIFF=$(git diff "$DIFF_BASE" HEAD) || <errored scan>; printf '%s\n' "$SCAN_DIFF" | grep -c -E 'AKIA[0-9A-Z]{16}'` (capture first so a failed `git diff` is an errored scan, not a clean one; a count, so a match is never echoed into the transcript). On a first release `DIFF_BASE` is the empty-tree SHA, which `git log` rejects: run `gitleaks git` with no `--log-opts` there.
+--log-opts="${DIFF_BASE}..HEAD"` plus `SCAN_DIFF=$(git diff "$DIFF_BASE" HEAD) || { echo "[SHIP] secret scan errored"; exit 1; }; HITS=$(printf '%s\n' "$SCAN_DIFF" | grep -c -E 'AKIA[0-9A-Z]{16}' || true)` (capture first so a failed `git diff` is an errored scan, not a clean one; `grep -c` exits 1 on zero matches, which is not an error; a count, so a match is never echoed into the transcript). On a first release `DIFF_BASE` is the empty-tree SHA, which `git log` rejects: run `gitleaks git` with no `--log-opts` there.
 A hit the scanner allow-lists (the AWS documentation key) is still a hit when the diff or commit
 says "credentials", "key" or "secret": report it, never wave it through on the allow-list.
 
@@ -714,7 +714,7 @@ LIST
 
    **Independent of the band** (also on the fast path and on `reused`): if the diff contains a
    frontend file (`.tsx`, `.jsx`, `.vue`, `.svelte`, `.css`, `.scss`, `.html`; look at the whole range,
-   `git diff --name-only "$DIFF_BASE" HEAD`, not only `REVIEW_SCOPE`), invoke
+   `git diff --no-renames --name-only "$DIFF_BASE" HEAD`, so a `view.tsx` -> `view.ts` rename still shows the frontend path; not only `REVIEW_SCOPE`), invoke
    `Skill(skill="zuvo:design-review")`. A 29-LOC `.tsx` change dispatches it exactly as a 900-LOC
    one does; the band below never decides it (live test 2026-11-22: two of three executors read
    only the table and skipped it on a small frontend diff).
@@ -1049,7 +1049,8 @@ This step runs regardless of flags and diff size (fast path included). It does N
       so the PR is self-contained" is exactly the case the rule exists for (live test 2026-11-22:
       one executor treated it as an exception and committed `release: v1.4.3` on the feature
       branch). Do not bump. Print the `[AUTO-DECISION]` line, add `changelog.d/<branch-slug>.md`
-      instead, and tell the user why: the version is set on `<TARGET_BRANCH>` after the merge
+      (`mkdir -p changelog.d`; the slug is the branch name with `/` replaced by `-`; record the path
+      as `CHANGELOG_NOTE` for Phase 4 Step 1) instead, and tell the user why: the version is set on `<TARGET_BRANCH>` after the merge
       (by `zuvo:ship` there or the project's release script), because two PRs bumping the same line
       collide and the second declares a number that is already taken.
 
@@ -1334,7 +1335,7 @@ git add CHANGELOG.md
 # Only when Phase 3 skip gate (b) created `changelog.d/<branch-slug>.md` in this run (the user asked
 # for a bump or an entry, or the repo already keeps a changelog.d/ directory): stage that one NEW
 # file by its quoted path. A default PR-flow run creates no such file and stages nothing here.
-[ -f "changelog.d/<branch-slug>.md" ] && git add -- "changelog.d/<branch-slug>.md"
+[ -n "${CHANGELOG_NOTE:-}" ] && git add -- "$CHANGELOG_NOTE"   # CHANGELOG_NOTE=changelog.d/<branch-slug>.md, set only by the step that created it
 
 # On PR flow neither of the first two lines above runs. If `git status` shows the version
 # file or CHANGELOG.md modified while you are on a feature branch, Phase 3's skip
@@ -1350,11 +1351,14 @@ git add CHANGELOG.md
 # Commit only what Step 1 staged: `git diff --cached --quiet` (exit 0) means nothing is staged
 # (a PR-flow run with no changelog.d note, `--no-bump` without a CHANGELOG.md, a release script that
 # owns the version) — skip the commit, do not let `git commit` fail on "nothing to commit".
-git diff --cached --quiet && echo "[SHIP] nothing staged — no commit" || \
-git commit -m "release: v<version>"     # a version bump was performed
-# No bump (`--no-bump`, PR flow, a release script owns the version): the subject names what the
-# commit is, never a release that did not happen:
-#   git commit -m "docs(changelog): <summary>"
+git diff --cached --quiet; _staged=$?        # 0 nothing staged, 1 something staged, >1 error
+if [ "$_staged" -gt 1 ]; then echo "SHIP INCOMPLETE: cannot read the index"; exit 1
+elif [ "$_staged" -eq 0 ]; then echo "[SHIP] nothing staged — no commit"
+elif [ "$FLOW" != "pr" ] && [ -n "${NEW_VERSION:-}" ] && [ -z "${VERSION_OWNER:-}" ]; then
+  git commit -m "release: v$NEW_VERSION"     # a version bump was performed
+else
+  git commit -m "docs(changelog): <summary>" # no bump: the subject never names a release that did not happen
+fi
 RELEASE_SHA=$(git rev-parse HEAD)
 ```
 
@@ -1406,6 +1410,7 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   deliverable; ship ends with `PR: #N open`.
 
   ```sh
+  SHIPPED_SHA=$(git rev-parse "$BRANCH")   # the commit THIS run pushes; every later head check compares to it, not to the mutable branch
   git push -u "$PUSH_REMOTE" "$BRANCH"
 
   # Reuse an existing PR — `gh pr create` exits non-zero when one is already open for this head,
@@ -1423,7 +1428,8 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   fi
   # `--fill` writes the commit messages only. When Phase 0 step 4(b) did not merge a moved base, or
   # did, append that one line to the body (read the current body first; keep the author's text):
-  #   gh pr edit "$PR_NUMBER" --body "$(gh pr view "$PR_NUMBER" --json body -q .body)"$'\n\n'"<base distance / base merged line>"
+  #   BODY=$(gh pr view "$PR_NUMBER" --json body -q .body) || stop   # never edit from a failed read
+  #   case "$BODY" in *"<line>"*) ;; *) gh pr edit "$PR_NUMBER" --body "$BODY"$'\n\n'"<line>" ;; esac
 
   # DO NOT read the verdict from the exit code of `--watch`. It returns IMMEDIATELY when no check
   # has been dispatched yet — which is the normal state of a PR created a second earlier — so a
@@ -1488,7 +1494,7 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   PR_NOW=$(gh pr view "$PR_NUMBER" --json headRefOid,state,mergeStateStatus,reviewDecision 2>/dev/null) \
     || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER state — refusing to report green blind"; exit 1; }
   HEAD_AFTER=$(jq -r '.headRefOid' <<<"$PR_NOW")
-  { [ "$HEAD_BEFORE" = "$HEAD_AFTER" ] && [ "$HEAD_AFTER" = "$(git rev-parse "$BRANCH")" ]; } \
+  { [ "$HEAD_BEFORE" = "$HEAD_AFTER" ] && [ "$HEAD_AFTER" = "$SHIPPED_SHA" ]; } \
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head moved or is not the commit this run pushed — re-run the gate"; exit 1; }
   [ "$(jq -r '.state' <<<"$PR_NOW")" = "OPEN" ] \
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is not OPEN ($(jq -r '.state' <<<"$PR_NOW"))"; exit 1; }
