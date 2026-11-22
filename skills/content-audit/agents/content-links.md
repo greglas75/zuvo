@@ -20,7 +20,7 @@ HTTP responses.
 
 ## Mandatory File Loading
 
-Read before starting (`agents/content-encoding.md` is the sibling agent file, for its Output Format):
+Read before starting (`agents/content-encoding.md` is the sibling agent file, for its Scope and Language Rules and Output Format):
 1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery
 2. `../../../shared/includes/content-check-registry.md` -- canonical check slugs
 3. `../../../shared/includes/live-probe-protocol.md` -- rate limiting and consent
@@ -194,6 +194,8 @@ Checks requiring live access that was not provided (`img-404-live`, `link-extern
 - You are **read-only**. Do not modify files.
 - Follow `live-probe-protocol.md` for all HTTP requests. Bash is read-only: `find`/`ls`, and
   `curl -I` only with `--live-url`, or `--check-external` for external links alone; never write files.
+- Apply the Scope and Language Rules of `agents/content-encoding.md`: no link or image inside a code fence, code span or
+  code-valued frontmatter is extracted, probed or reported.
 - For source-level checks, use Glob to verify file existence — do not make
   HTTP requests for internal links unless `--live-url` is set.
 - Skip binary files (images, PDFs) — only scan content files for link/image

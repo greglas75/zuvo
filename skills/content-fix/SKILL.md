@@ -207,7 +207,7 @@ ZWJ/ZWNJ are legitimate in many languages and scripts; re-check the span as the 
 - Remove BOM marker from file start
 - Remove soft hyphens (U+00AD)
 - Scope: body content AND frontmatter string fields
-- Skip content inside fenced code blocks
+- Skip content inside fenced code blocks, code spans and code-valued frontmatter
 
 **`markdown-fix`:**
 - Close unclosed `*` or `_` at paragraph end (append matching marker)

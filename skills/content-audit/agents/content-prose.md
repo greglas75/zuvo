@@ -255,6 +255,6 @@ Checks requiring `aspell`/`hunspell` not installed → `INSUFFICIENT DATA`.
 - Duplicate detection is capped at 50 files. Declare sampling strategy in evidence.
 - Strip template expressions (`{...}`, `{{ }}`, `<% %>`) from frontmatter values and from `.astro`/`.tsx`/`.jsx`/`.mdx` text before encoding and CC8 checks.
 - Bash is read-only (`git log`, `which`, `aspell`/`hunspell` on text piped in); never write files.
-- CC8 never reports text inside code fences or code spans.
+- CC4, CC7 and CC8 follow the Scope Rules: nothing inside a code fence, code span or code-valued frontmatter is reported or counted.
 - `fm-title-missing` and `fm-description-missing` are advisory, not scored.
   SEO effectiveness is seo-audit's domain.

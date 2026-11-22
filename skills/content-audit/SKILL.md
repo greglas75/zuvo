@@ -225,7 +225,7 @@ fences, so mask code with a small script before grepping:
 - CC7 entirely (content analysis requires agent)
 - CC8 entirely (language detection + LLM judgment)
 - `fm-yaml-malformed` → `INSUFFICIENT DATA` (needs YAML parser, not grep)
-- `img-404-live` → `N/A` (needs `--live-url`; "CANNOT DETERMINE", not a failure)
+- `img-404-live`, `link-external-dead`, `link-external-redirect` → `N/A` without their flag ("CANNOT DETERMINE", not a failure); `INSUFFICIENT DATA` when the flag was passed but `--quick` skipped the probe
 
 Proceed to Phase 2.
 
@@ -243,14 +243,14 @@ Agent A: Content Encoding
 
 Agent B: Content Links
   model: sonnet
-  type: Explore (read-only)
+  type: Explore (read-only; tools Read, Grep, Glob, Bash for read-only commands)
   instructions: [read agents/content-links.md]
   input: file manifest, detected stack, live-probe-protocol.md, --live-url if set, --check-external if set
   dimensions: CC5, CC6
 
 Agent C: Content Prose
   model: sonnet
-  type: Explore (read-only)
+  type: Explore (read-only; tools Read, Grep, Glob, Bash for read-only commands)
   instructions: [read agents/content-prose.md]
   input: file manifest, detected language, content-check-registry.md
   dimensions: CC4, CC7, CC8

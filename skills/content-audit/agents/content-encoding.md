@@ -74,7 +74,7 @@ Search for non-breaking spaces (U+00A0): Grep for the literal character or PCRE 
 
 NBSP is correct typography in many languages. Do NOT report it between a digit and a unit, currency
 symbol or `%` (any language); in `fr` before `: ; ! ? » %` and after `«`; in `pl`, `cs`, `sk`, `ru`, `uk`
-after a one-letter word (`a i k o s u v w z`; ru/uk `в к с у и о а`). Report every other NBSP with file:line.
+after a one-letter word, either case (`a i k o s u v w z`; ru `в к с у и о а`; uk `в у з і й о а к`). Report every other NBSP with file:line.
 Czech `v Praze`, `k mostu` and digit groups (`1 000`) are the same convention. A
 reported NBSP always has `fix_type: null`: a lone NBSP line or adjacent NBSPs may be deliberate spacing.
 
@@ -87,7 +87,7 @@ Search for zero-width characters:
 - U+FEFF (BOM / zero-width no-break space, when not at file start)
 
 A ZWJ between emoji (a ZWJ sequence; U+FE0F is optional) is required, as are ZWJ and ZWNJ in an Indic script (U+0900-U+0DFF), an Arabic-script language
-including Persian (U+0600-U+06FF, U+0750-U+077F, U+FB50-U+FDFF, U+FE70-U+FEFF), Khmer (U+1780-U+17FF)
+including Persian (U+0600-U+06FF, U+0750-U+077F, U+FB50-U+FDFF, U+FE70-U+FEFE), Khmer (U+1780-U+17FF)
 or Myanmar (U+1000-U+109F). U+200B is a word separator in Thai, Lao, Khmer and Myanmar. Do not report
 those. Report any other zero-width character with `fix_type: null`: a ZWNJ/ZWJ may suppress a ligature, a U+200B may
 be a deliberate break opportunity, and an interior U+FEFF means no-break.
