@@ -20,7 +20,7 @@ tool integration for spell checking.
 
 ## Mandatory File Loading
 
-Read before starting (`content-encoding.md` is the sibling agent file, for its Scope and Language Rules and Output Format):
+Read before starting (`agents/content-encoding.md` is the sibling agent file, for its Scope and Language Rules and Output Format):
 1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery
 2. `../../../shared/includes/content-check-registry.md` -- canonical check slugs
 
@@ -88,7 +88,7 @@ Check frontmatter string fields (`title`, `description`, `summary`, `alt`,
 - Zero-width characters
 
 Apply the CC1 "Scope and Language Rules" and per-check exceptions in the sibling agent file
-`content-encoding.md` unchanged: skip values that are code, and never report NBSP, ZWJ/ZWNJ or a
+`agents/content-encoding.md` unchanged: skip values that are code, and never report NBSP, ZWJ/ZWNJ or a
 capital-letter pair that the language makes legitimate. A finding the rules call ambiguous has
 `fix_type: null`.
 
@@ -204,13 +204,12 @@ Find repeated punctuation that is likely a typo:
 - `;;`
 
 ```
-Grep for: \.\.(?!\.)  (two dots not followed by third)
+Grep for: (?<!\.)\.\.(?!\.)  (a run of exactly two dots)
 Grep for: ,,|;;
 ```
 
 Do NOT flag `!!` or `??` — these may be intentional emphasis. `..` (ellipsis or period?) and `,,`
-(the ASCII form of the opening quote `„` in `pl`, `de`, `cs`, `sk`, `ro`, `hu`, `bg`, `ru`, `uk`, and in
-any language when `detected_language` is `unknown`) are ambiguous: report them with `fix_type: null`.
+(the ASCII form of the opening quote `„` in `pl`, `de`, `cs`, `sk`, `ro`, `hu`, `bg`, `ru`, `uk`) are ambiguous: report them with `fix_type: null`.
 Only `;;`, and `,,` in other languages, carry `fix_type: typography-fix`.
 
 ### Check: `typo-spell-check`
@@ -241,7 +240,7 @@ quotes suggest copy-paste from different sources, but the right style is a langu
 
 ## Output Format
 
-Return `check_results[]` and `findings[]` as specified in `content-encoding.md` "Output Format".
+Return `check_results[]` and `findings[]` as specified in `agents/content-encoding.md` "Output Format", with this agent's own dimensions (not CC1-CC3).
 `check_results[]` covers EVERY check in CC4, CC7, CC8 (all 16), even when passed. Checks requiring language detection that failed → `INSUFFICIENT DATA`.
 Checks requiring `aspell`/`hunspell` not installed → `INSUFFICIENT DATA`.
 

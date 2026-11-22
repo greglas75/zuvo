@@ -93,7 +93,7 @@ This audit is read-only against source files.
 | `[path]` | Scope to specific file or directory |
 | `--content-path <dir>` | Override auto-detected content directory |
 | `--live-url <url>` | Enable live link/image checks (CC5 img-404-live, CC6 link-external-dead, CC6 link-external-redirect) |
-| `--quick` | Source-only grep checks, no agent dispatch. Runs CC1-CC3 grep patterns + CC5/CC6 path resolution. Skips CC4/CC7/CC8 entirely. Checks requiring agents or live access return `INSUFFICIENT DATA`. |
+| `--quick` | Source-only grep checks, no agent dispatch. Runs CC1-CC3 grep patterns + CC5/CC6 path resolution. Skips CC4/CC7/CC8 entirely. Checks requiring agents return `INSUFFICIENT DATA`; live-only checks return `N/A`. |
 | `--lang <code>` | Force language for spell/typography checks (ISO 639-1: `pl`, `en`, `de`, `tr`, etc.) |
 | `--check-external` | Enable external link checking (requires network access) |
 | `--persist-backlog` | Record findings through `backlog-add` (Phase 5) |
@@ -182,7 +182,7 @@ checks.
   `.pdf`, `.woff`, `.woff2`, `.ttf`, `.mp4`, `.mp3`, `.zip`, `.tar`, `.gz`,
   `.DS_Store`
 
-For each file, check encoding via `file -i` (available on Unix/macOS). Flag
+For each file, check encoding via `file -b --mime-encoding -- <file>` (`file -i` prints `regular file` on macOS). Flag
 non-UTF-8 files with check `encoding-mismatch` (advisory).
 
 ### 0.5 Print discovery summary
@@ -290,6 +290,7 @@ Calculate per-dimension and overall scores:
 # N/A and INSUFFICIENT DATA checks are not applicable: out of both counts
 dimension_score = checks_passed / checks_applicable * 100
 overall_score = sum(dimension_scores) / dimensions_with_applicable_checks
+# a dimension with no applicable check shows `n/a`, not a percentage; no applicable check at all: unscored
 ```
 
 Grade mapping:
@@ -311,8 +312,9 @@ without `--live-url` it is `N/A`, never a blocking failure.
 
 ### 2.4 Tag fixable findings
 
-For each finding with a non-null `fix_type` in the registry, tag it with the
-fix_type and safety classification from `content-fix-registry.md`.
+For each finding whose agent-assigned `fix_type` is non-null, add the safety classification from
+`content-fix-registry.md`. Never fill in a `fix_type` the agent left `null`: the registry column is the type for
+certain corruption only, and a null marks the finding MANUAL.
 
 ---
 
@@ -373,7 +375,7 @@ Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
   "result": "PASS | FAIL | PROVISIONAL",
   "score": {
     "overall": 75,
-    "tier": "B",
+    "tier": "D",
     "sub_scores": {
       "CC1": 85, "CC2": 71, "CC3": 100, "CC4": 83,
       "CC5": 67, "CC6": 50, "CC7": 80, "CC8": 60
@@ -412,7 +414,8 @@ Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
 ```
 
 Use `result: "PROVISIONAL"` when a blocking gate that applies to this run returns
-`INSUFFICIENT DATA` (e.g., `fm-yaml-malformed` in `--quick` mode). `img-404-live` without
+`INSUFFICIENT DATA` (e.g., `fm-yaml-malformed` in `--quick` mode) and no gate is a confirmed FAIL. A confirmed
+blocking FAIL always gives tier D and `FAIL`; list the unresolved gate in the report. `img-404-live` without
 `--live-url` is `N/A`, not PROVISIONAL.
 
 ---
@@ -503,7 +506,7 @@ Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>
 
 | Edge case | Handling |
 |-----------|---------|
-| **Mixed encoding in file** | `file -i` per file. Non-UTF-8 → `encoding-mismatch` (advisory), Unicode checks → `INSUFFICIENT DATA` |
+| **Mixed encoding in file** | `file -b --mime-encoding -- <file>` per file. Non-UTF-8 → `encoding-mismatch` (advisory), Unicode checks → `INSUFFICIENT DATA` |
 | **Large files (100KB+)** | Read in 500-line chunks. Flag: "large file — chunked read" |
 | **Binary files in content dir** | Skip by extension whitelist. Log in "Skipped files" section |
 | **CMS-backed content** | Detect CMS config. Emit `CONTENT INACCESSIBLE`. Recommend `--live-url` |

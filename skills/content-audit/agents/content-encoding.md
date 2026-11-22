@@ -12,7 +12,7 @@ tools:
 
 # Agent: Content Encoding (CC1, CC2, CC3)
 
-> Model: Sonnet | Type: Explore (read-only; Bash only for read-only commands: `file -i`, `head`, `xxd`)
+> Model: Sonnet | Type: Explore (read-only; Bash only for read-only commands: `file -b --mime-encoding`, `head`, `xxd`)
 
 Scan content files for byte-level encoding issues, markdown formatting defects, and legacy CMS artifacts. Checks are grep/regex-based; the scope and language rules below decide which matches are defects.
 
@@ -43,10 +43,13 @@ If any file is missing, STOP.
 
 ## Scope and Language Rules (apply to every check below)
 
-1. **Skip code.** Report nothing inside a fenced block (` ``` ` or `~~~`), an inline code span, or a
-   frontmatter value that is code (a block scalar under a `code`/`snippet`/`example` key, or a value in
-   backticks). Grep only finds candidates: before reporting one, confirm the line is outside a fence
-   (count fence markers above it) and outside backticks. Exempt, because they concern the code markup or the
+1. **Skip code.** Report nothing inside a fenced block, an inline code span, or a frontmatter value that is
+   code (the value of a `code`/`snippet`/`command`/`example` key in any YAML scalar style, or a value in
+   backticks; a block scalar under another key is prose unless it reads as code). Grep only finds candidates:
+   before reporting one, confirm its position. A fence opens with 3+ backticks or tildes and closes only with
+   the same character, at least as many, and no info string, so a shorter fence line inside is content; an
+   unlabeled-block grep also matches closing fences, so count only openers. A code span is closed by a run of
+   equal length and may cross lines. Exempt, because they concern the code markup or the
    whole file: `bom-present`, `encoding-mismatch`, `unclosed-code`, `unlabeled-code-block`.
 2. **Language decides what is a defect.** A rule that is wrong for the language of the text must not fire;
    the CC1 checks name the cases. Judge by `detected_language` and by the script of the neighbouring
@@ -67,9 +70,10 @@ Search for non-breaking spaces (U+00A0): Grep for the byte sequence `\xC2\xA0`, 
 
 NBSP is correct typography in many languages. Do NOT report it between a digit and a unit, currency
 symbol or `%` (any language); in `fr` before `: ; ! ? » %` and after `«`; in `pl`, `cs`, `sk`, `ru`, `uk`
-after a one-letter word (`a i o u w z`; ru/uk `в к с у и о а`). Report every other NBSP with file:line.
-Only an NBSP at line start or end, or beside another whitespace character, is certain junk
-(`fix_type: encoding-strip`); any other reported NBSP has `fix_type: null`.
+after a one-letter word (`a i k o s u v w z`; ru/uk `в к с у и о а`). Report every other NBSP with file:line.
+Czech `v Praze`, `k mostu` and digit groups (`1 000`) are the same convention. Only in Markdown, an NBSP at
+line start or end is certain junk (`fix_type: encoding-strip`); in HTML, beside another whitespace character
+(deliberate spacing), or elsewhere, a reported NBSP has `fix_type: null`.
 
 ### Check: `zero-width-present`
 
@@ -79,17 +83,17 @@ Search for zero-width characters:
 - U+200D (zero-width joiner)
 - U+FEFF (BOM / zero-width no-break space, when not at file start)
 
-ZWJ and ZWNJ are required characters, not artifacts, when a neighbouring character is an emoji
-(ZWJ sequences, with U+FE0F) or in an Indic script (U+0900-U+0DFF), an Arabic-script language
+A ZWJ between emoji (a ZWJ sequence, with U+FE0F) is required, as are ZWJ and ZWNJ in an Indic script (U+0900-U+0DFF), an Arabic-script language
 including Persian (U+0600-U+06FF, U+0750-U+077F, U+FB50-U+FDFF, U+FE70-U+FEFF), Khmer (U+1780-U+17FF)
 or Myanmar (U+1000-U+109F). U+200B is a word separator in Thai, Lao, Khmer and Myanmar. Do not report
-those. Report any other zero-width character; `fix_type: encoding-strip` only when it sits between Latin,
-Cyrillic or Greek letters (or is a U+FEFF), otherwise `fix_type: null`.
+those. Report any other zero-width character. Only U+200B between Latin, Cyrillic or Greek letters is certain junk
+(`fix_type: encoding-strip`); ZWNJ/ZWJ there may suppress a ligature and an interior U+FEFF means no-break,
+so those have `fix_type: null`.
 
 ### Check: `bom-present`
 
 Check first 3 bytes of each file for UTF-8 BOM marker (`\xEF\xBB\xBF`), read-only:
-`head -c 3 <file> | xxd` (`file -i` does not report a BOM).
+`head -c 3 <file> | xxd` (`file` does not report a BOM).
 
 ### Check: `mojibake-detected` (BLOCKING)
 
@@ -99,13 +103,15 @@ This is the most critical check — mojibake means content is corrupted.
 **Grep patterns (Latin-1/Windows-1252, ISO-8859-2, ISO-8859-9, smart quotes, general):**
 ```
 Ã©|Ã¨|Ã¡|Ã\x{00A0}|Ã³|Ã²|Ã¼|Ã¶|Ã¤|Ã±|Ã§|Ãª|Ã®|Ã¢|Ã´|Ã»|Ã¯
-Ä…|Ä™|Å›|Å¼|Åº|Å‚|Å„|Ä‡|Å¡|Å¾|Å™|Å¯|Ä±|ÅŸ
+Ä…|Ä™|Å›|Å¼|Åº|Å‚|Å„|Ä‡|Å¡|Å¾|Å™|Å¯|Ä±|ÅŸ|Ä\x{008D}|ÄŸ|Ä\x{2018}
 â€“|â€”|â€™|â€˜|â€œ|â€\x{009D}|â€¢|â€¦|Â£|Â©|Â®|Â°|Â»|Â«
 ```
 
-**Not mojibake:** a capital lead letter followed by an ordinary space or a letter (`IRMÃ E` in
-Portuguese, `Ä`/`Å` in German or Swedish capitals). A signature is a lead character followed by the symbol
-or control character shown above; `Ã` + NBSP (`\x{00A0}`, the corruption of `à`) is the only `Ã` + space form.
+**Not mojibake:** a lead letter (`Ã`, `Ä`, `Å`) followed by an ASCII space or ASCII letter (`IRMÃ E`, German or
+Swedish capitals). A signature is a lead character followed by the symbol or control character shown above.
+`Ã` + NBSP (`\x{00A0}`, the corruption of `à`) counts only when the `Ã` does not follow an uppercase letter
+(`IRMÃ<NBSP>E` is a Portuguese word). A confirmed signature is reported once, as `mojibake-detected`, never
+also as `nbsp-present`.
 
 **Evidence format:** Include the corrupted text, what it should be, and the
 likely source encoding.
@@ -117,8 +123,8 @@ bytes that could not be decoded.
 
 ### Check: `encoding-mismatch`
 
-Run `file -i <filepath>` (read-only) on each file. Flag any file not detected as `utf-8` or `us-ascii`
-(skip `binary`).
+Run `file -b --mime-encoding -- <filepath>` (read-only; `file -i` prints `regular file` on macOS) on each file.
+Flag any file not detected as `utf-8` or `us-ascii` (skip `binary`).
 
 ### Check: `soft-hyphen-present`
 
@@ -315,7 +321,7 @@ passed. This is required for scoring.
 ## Constraints
 
 - You are **read-only**. Do not create, modify, or delete any source files. Use Bash only for read-only
-  commands (`file -i`, `head`, `xxd`); never redirect output into a file.
+  commands (`file -b --mime-encoding`, `head`, `xxd`); never redirect output into a file.
 - Use CodeSift when available. Fall back to Grep/Read/Glob otherwise.
 - Every FAIL finding must have file:line evidence.
 - Apply the Scope and Language Rules above to every check.

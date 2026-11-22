@@ -44,7 +44,7 @@
 | `bom-present` | UTF-8 BOM marker at file start | `content-encoding` | encoding | advisory | code | `encoding-strip` |
 | `mojibake-detected` | Garbled multi-byte sequences from encoding mismatch | `content-encoding` | encoding | blocking | code | `encoding-mojibake` |
 | `replacement-char` | U+FFFD replacement characters present | `content-encoding` | encoding | scored | code | `encoding-strip` |
-| `encoding-mismatch` | File encoding is not UTF-8 (detected via `file -i`) | `content-encoding` | encoding | advisory | code | null |
+| `encoding-mismatch` | File encoding is not UTF-8 (detected via `file -b --mime-encoding`) | `content-encoding` | encoding | advisory | code | null |
 | `soft-hyphen-present` | Soft hyphens (U+00AD) in content | `content-encoding` | encoding | advisory | code | `encoding-strip` |
 
 ## CC2 — Markdown Syntax
@@ -120,7 +120,7 @@
 |------------|-------|-------------|-------|-------------|---------------|----------|
 | `typo-diacritics` | Missing or corrupted diacritics for detected language | `content-prose` | typography | scored | code | null |
 | `typo-double-space` | Multiple consecutive spaces in prose (not code blocks) | `content-prose` | typography | advisory | code | `typography-fix` |
-| `typo-double-punctuation` | Repeated punctuation (`..` not `...`, `,,`, `!!`) | `content-prose` | typography | advisory | code | `typography-fix` |
+| `typo-double-punctuation` | Repeated punctuation (`..` not `...`, `,,`, `;;`) | `content-prose` | typography | advisory | code | `typography-fix` |
 | `typo-spell-check` | Spell checker findings (requires `aspell`/`hunspell` installed) | `content-prose` | typography | advisory | code | null |
 | `typo-inconsistent-quotes` | Mixed straight and curly quotes in same file | `content-prose` | typography | advisory | code | null |
 

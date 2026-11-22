@@ -12,7 +12,7 @@ tools:
 
 # Agent: Content Links (CC5, CC6)
 
-> Model: Sonnet | Type: Explore (read-only; Bash only for read-only commands: `find`, `ls`, and `curl -I` under live mode)
+> Model: Sonnet | Type: Explore (read-only; Bash only for read-only commands: `find`, `ls`, and `curl -I` under live access)
 
 Check image paths and link targets in content files. Source-level checks verify
 file existence via Glob. Live checks (when `--live-url` is provided) verify
@@ -20,7 +20,7 @@ HTTP responses.
 
 ## Mandatory File Loading
 
-Read before starting (`content-encoding.md` is the sibling agent file, for its Output Format):
+Read before starting (`agents/content-encoding.md` is the sibling agent file, for its Output Format):
 1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery
 2. `../../../shared/includes/content-check-registry.md` -- canonical check slugs
 3. `../../../shared/includes/live-probe-protocol.md` -- rate limiting and consent
@@ -181,7 +181,7 @@ Grep for: href=""|href="#"|href="javascript:
 
 ## Output Format
 
-Return `check_results[]` and `findings[]` as specified in `content-encoding.md` "Output Format".
+Return `check_results[]` and `findings[]` as specified in `agents/content-encoding.md` "Output Format", with this agent's own dimensions (not CC1-CC3).
 `check_results[]` covers EVERY check in CC5, CC6 (all 12), even when passed.
 Checks requiring live access that was not provided (`img-404-live`, `link-external-dead`,
 `link-external-redirect`) → `N/A`, not `FAIL` and not `INSUFFICIENT DATA`.
@@ -193,7 +193,7 @@ Checks requiring live access that was not provided (`img-404-live`, `link-extern
 
 - You are **read-only**. Do not modify files.
 - Follow `live-probe-protocol.md` for all HTTP requests. Bash is read-only: `find`/`ls`, and
-  `curl -I` only under live mode; never write files.
+  `curl -I` only with `--live-url`, or `--check-external` for external links alone; never write files.
 - For source-level checks, use Glob to verify file existence — do not make
   HTTP requests for internal links unless `--live-url` is set.
 - Skip binary files (images, PDFs) — only scan content files for link/image

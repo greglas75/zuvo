@@ -44,6 +44,12 @@ above.
 
 ## Expanded Fix Contracts
 
+**Edit only the flagged span.** A finding's position is its `file:line` plus the text quoted in `evidence`.
+Re-read that line before every edit and change only the occurrence the evidence quotes; when the line has
+changed, the quoted text is absent, or the line holds several candidates the evidence does not tell apart
+(or the span is inside code), mark the finding `NEEDS_REVIEW`. This holds for every `fix_type` below, and for
+reports from older audit versions.
+
 ### `encoding-strip`
 
 - **Target characters** (only at the positions of findings carrying this `fix_type`; NBSP and
@@ -57,7 +63,7 @@ above.
   - U+FFFD (replacement character) → remove (flag for manual review)
 - **Scope:** Body content AND frontmatter string fields
 - **Exclusions:** Do not modify content inside fenced code blocks (` ``` `)
-- **Validation:** After fix, grep for target characters — expect 0 matches
+- **Validation:** After fix, re-read each edited span and confirm the target character is gone there (other occurrences are not findings)
 
 ### `encoding-mojibake`
 
@@ -92,12 +98,12 @@ above.
   | `Â°` | `°` | degree |
   | `Â»` | `»` | right guillemet |
   | `Â«` | `«` | left guillemet |
-  | `â€“` | `–` | en-dash |
-  | `â€”` | `—` | em-dash |
-  | `â€™` | `'` | right single quote |
-  | `â€˜` | `'` | left single quote |
-  | `â€œ` | `"` | left double quote |
-  | `â€` + U+009D | `”` | right double quote |
+  | `â€“` | U+2013 | en-dash |
+  | `â€”` | U+2014 | em-dash |
+  | `â€™` | U+2019 | right single quote |
+  | `â€˜` | U+2018 | left single quote |
+  | `â€œ` | U+201C | left double quote |
+  | `â€` + U+009D | U+201D | right double quote |
   | `â€¢` | `•` | bullet |
   | `â€¦` | `…` | ellipsis |
 
@@ -118,7 +124,7 @@ above.
   | `Ä` + U+008D | `č` | c-caron | Czech/Slovak |
   | `Å™` | `ř` | r-caron | Czech |
   | `Å¯` | `ů` | u-ring | Czech |
-  | `Ä'` | `đ` | d-stroke | Croatian |
+  | `Ä‘` | `đ` | d-stroke | Croatian |
 
   **ISO-8859-9 (Turkish) → UTF-8 corruption:**
 
@@ -132,7 +138,7 @@ above.
   | `Ã§` | `ç` | c-cedilla |
 
 - **Longest match first.** A bare `Ä`, `Ã`, `Å` or `â€` is a real letter or a prefix, never a signature.
-- **Validation:** After fix, grep for all corrupted forms — expect 0 matches
+- **Validation:** After fix, re-read each edited span and confirm the signature is gone there; leave signatures with no finding untouched
 - **Caveat:** Code examples or documentation about encoding issues may contain
   intentional mojibake sequences. Before fixing, check if the match is inside
   a fenced code block — if so, skip.
@@ -178,8 +184,7 @@ above.
   does not tag a double space after `.`, `!`, `?`, `:`). Do NOT modify inside code blocks, code spans, or markdown tables.
 - **Double punctuation:** Replace `;;` with `;`, and `,,` with `,` where the audit tagged it. Never touch
   `..` (ellipsis or period), `...`, `!!` or `??`: they are ambiguous and the audit reports them without a fix.
-- **Validation:** Grep for double spaces and double punctuation — expect 0
-  matches outside code blocks.
+- **Validation:** Re-read each edited span: the double space or punctuation is gone there.
 
 ## Confidence Scale
 
