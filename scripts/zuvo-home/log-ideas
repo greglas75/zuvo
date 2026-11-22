@@ -20,6 +20,13 @@
 # never break a skill's completion path.
 set -u
 
+# An agent probing the syntax with --help must not write a receipt (an `unknown` row per probe — the same
+# defect log-drive-by already fixed; live review test D14) nor touch the filesystem. The usage is the
+# leading comment.
+case "${1:-}" in
+  -h|--help) awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
+esac
+
 ZUVO_HOME="${ZUVO_HOME:-$HOME/.zuvo}"
 mkdir -p "$ZUVO_HOME" 2>/dev/null || exit 0
 LOG="$ZUVO_HOME/ideas.log"

@@ -18,7 +18,8 @@
 #
 # Untracked files are INCLUDED BY DEFAULT (a review that cannot see brand-new files
 # is a review with a hole in it). Set ZUVO_REVIEW_PATCH_NO_UNTRACKED=1 to exclude them.
-# With PATH args, only untracked files under those paths are included.
+# The review's own outputs — untracked files under zuvo/ and memory/reviews/ — are left out unless a PATH
+# names them (a PATH of "." does not). With PATH args, only untracked files under those paths are included.
 # An untracked file that yields no diff text (binary, or empty) is NOT dropped —
 # it gets a marker block naming the path, so the reviewer sees it exists and a
 # repo whose only change is one binary/empty file never masquerades as "no changes".
@@ -433,6 +434,7 @@ fi
 if [ "${ZUVO_REVIEW_PATCH_NO_UNTRACKED:-0}" != "1" ]; then
   gitothers > "$TMPD/others" || { rc=$?; err "git ls-files --others failed (rc=$rc)"; exit 2; }
   nunt=0
+  excluded_outputs=0
   manifest="$TMPD/manifest"
   : > "$manifest" || { err "cannot initialise the untracked-file manifest"; exit 2; }
   note_included() {  # record a path for the stderr summary
@@ -441,6 +443,22 @@ if [ "${ZUVO_REVIEW_PATCH_NO_UNTRACKED:-0}" != "1" ]; then
   }
   while IFS= read -r -d '' f; do
     [ -n "$f" ] || continue
+    # The review's own outputs are never review scope: adversarial proofs under zuvo/ and artifacts
+    # under memory/reviews/ are written DURING the review. Sweeping them into the next pass fed a
+    # provider 22K chars of its own earlier output and it reported directives embedded in them
+    # (live review test, addendum 1).
+    case "$f" in zuvo/*|memory/reviews/*)
+      # a PATH that names the file or a directory above it (but not the whole repo, ".") is a request
+      named=0; i=0
+      while [ "$i" -lt "$npaths" ]; do
+        r="${rel[$i]%/}"
+        if [ "$r" != "." ] && [ -n "$r" ]; then
+          case "$f" in "$r"|"$r"/*) named=1 ;; esac
+        fi
+        i=$((i + 1))
+      done
+      if [ "$named" -eq 0 ]; then excluded_outputs=$((excluded_outputs + 1)); continue; fi ;;
+    esac
     # Entries whose contents must NOT be rendered. Each gets a marker rather
     # than a stderr-only note: a stderr note leaves the patch empty, so a repo
     # whose only change is one of these exits 3 "no changes" and the caller
@@ -503,6 +521,9 @@ if [ "${ZUVO_REVIEW_PATCH_NO_UNTRACKED:-0}" != "1" ]; then
     out_cat "$TMPD/one" "$f"
     note_included "$f"
   done < "$TMPD/others"
+  if [ "$excluded_outputs" -gt 0 ]; then
+    err "left out $excluded_outputs untracked review output(s) under zuvo/ or memory/reviews/ (name the path to include them)"
+  fi
   if [ "$nunt" -gt 0 ]; then
     err "untracked files included in the patch ($nunt):"
     while IFS= read -r u; do printf '  %s\n' "$u" >&2; done < "$manifest"

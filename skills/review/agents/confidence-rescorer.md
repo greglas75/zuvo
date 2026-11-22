@@ -43,7 +43,7 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 1. Full list of candidate findings (ID, severity, file, code quote, problem description)
 2. Change intent and tier
 3. Pre-existing data (blame results)
-4. `PRECOMPUTED_DATA` — reference counts, hotspot ranks from Phase 0.5
+4. `PRECOMPUTED_DATA` — reference counts, hotspot ranks from Phase 0.6
 5. Path to backlog file (`memory/backlog.md`)
 6. List of adversarial findings and their source providers
 

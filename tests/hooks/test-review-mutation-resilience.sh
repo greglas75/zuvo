@@ -25,7 +25,7 @@ bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
 echo "=== review: read-only audit checkout (executed) ==="
 
-BLOCK=$(awk '/^REVIEW_TREE=\$\(mktemp -d\)/,/^fi$/' "$REV")
+BLOCK=$(awk '/^REVIEW_TREE=\$\(mktemp -d/,/^fi$/' "$REV")   # mktemp takes a TMPDIR-aware template (D10)
 [ -n "$BLOCK" ] && ok "audit-checkout block extracted from the skill" \
                 || bad "could not extract the audit-checkout block — re-anchor this test"
 

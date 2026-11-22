@@ -127,6 +127,167 @@ out=$( cd "$FIXTURE" && python3 "$BIN" "$WM/memory/reviews/wt.md" 2>&1 ); rc=$?
   && pass "control: from ANOTHER repository's checkout the report keeps its own root, the main checkout (a different git common dir)" \
   || bad "foreign-repo control: rc=$rc out=$out"
 
+# ── D3 (live review test 2026-11-21): the SKILL's own finding example parsed to zero findings ──
+# `R-1 [MUST-FIX] title` with no `##`/`**`/`-` opener matched nothing, and a report of such findings
+# exited 0 having verified nothing.
+lines=$(wc -l < "$FIXTURE/scripts/zuvo-home/poll-cost" | tr -d ' ')
+cat > "$PROBE" <<EOF
+# Review — bare shape
+
+R-1 [MUST-FIX] bare finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: a bare 'R-1 [MUST-FIX]' finding is parsed and its citation checked" \
+  || bad "D3: bare-shape finding not verified (rc=$rc): $(echo "$out" | tail -2)"
+cat > "$PROBE" <<EOF
+# Review — unparseable
+
+1) [MUST-FIX] tenant filter dropped (see scripts/zuvo-home/poll-cost:3)
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] \
+  && pass "D3: severity-tagged findings that parse to zero sections are rejected, not passed vacuously" \
+  || bad "D3: unparseable tagged findings exited $rc (vacuous pass)"
+# A clean report mentions a severity tag and a file:line in different places: not a finding (the first
+# D3 fix rejected it with a whole-file co-occurrence check).
+cat > "$PROBE" <<EOF
+# Review — clean
+
+0 [MUST-FIX] findings. DEPLOYMENT RISK [LOW]: none.
+QUALITY WINS: scripts/zuvo-home/poll-cost:3 reads cleanly.
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a clean report with a tag and a citation in different lines is not rejected" \
+  || bad "D3: clean report rejected (rc=$rc): $(echo "$out" | tail -2)"
+# 'R-1 — [MUST-FIX] title' (dash before the tag) is a header too, so its citation is checked.
+cat > "$PROBE" <<EOF
+# Review — dash shape
+
+R-1 — [MUST-FIX] dashed finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: 'R-1 — [MUST-FIX]' is parsed and its citation checked" \
+  || bad "D3: dash-shape finding not verified (rc=$rc): $(echo "$out" | tail -2)"
+
+# Round-2 review: a tag-only line with the citation on the NEXT line was passed as "0 findings".
+cat > "$PROBE" <<EOF
+# Review — tag then citation
+
+- [MUST-FIX] tenant filter dropped in the list query
+  scripts/zuvo-home/poll-cost:3
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] \
+  && pass "D3: a tagged line whose citation is on the next line is rejected, not passed vacuously" \
+  || bad "D3: tag-then-citation report exited $rc"
+# One parsed finding must not vouch for a second, unparsed one in the same report.
+cat > "$PROBE" <<EOF
+# Review — mixed
+
+## R-1 — parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+1) [MUST-FIX] second finding the header grammar skips (scripts/zuvo-home/poll-cost:$((lines + 5000)))
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "not in a recognised header shape" <<< "$out" \
+  && pass "D3: an unparsed tagged finding next to a parsed one is rejected, its citation never verified" \
+  || bad "D3: mixed report exited $rc: $(echo "$out" | tail -2)"
+SHA=$(git -C "$FIXTURE" rev-parse --short=7 HEAD)   # earlier cases moved the fixture's HEAD
+# Round-2 review (Carbon): a subordinated NIT bullet, and the Pre-existing block's "[NIT] (true severity
+# [MUST-FIX])" line, carry a citation and no finding ID. They are not findings the gate verifies, so they
+# must not turn a good report into a rejection (exit 0 beside a parsed finding, and in a report that has none).
+cat > "$PROBE" <<EOF
+# Review — NIT bullets
+
+## R-1 — parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+Pre-existing (outside changed lines):
+  - [NIT] (true severity [MUST-FIX]) tenant filter missing, scripts/zuvo-home/poll-cost:3
+  - [NIT] rename x in scripts/zuvo-home/poll-cost:4
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: NIT bullets with a citation and no ID do not reject a report with a parsed finding" \
+  || bad "D3: NIT bullets rejected a good report (rc=$rc): $(echo "$out" | head -8)"
+cat > "$PROBE" <<EOF
+# Review — NIT only
+
+0 [MUST-FIX] findings.
+  - [NIT] rename x in scripts/zuvo-home/poll-cost:4
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a NIT-only report with a cited bullet is not rejected as unparseable" \
+  || bad "D3: NIT-only report rejected (rc=$rc): $(echo "$out" | tail -2)"
+# CRITICAL-1 (8-letter prefix) is a header, its citation is checked.
+cat > "$PROBE" <<EOF
+# Review — long prefix
+
+CRITICAL-1 [CRITICAL] long id finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: an 8-letter finding prefix is parsed and its citation checked" \
+  || bad "D3: CRITICAL-1 finding not verified (rc=$rc): $(echo "$out" | tail -2)"
+
+# Round-3: a prefix that is not CRITICAL/HIGH (BLOCKER-1, SECURITY-1) is a header too, and a summary line
+# that restates a parsed finding (`- [MUST-FIX] R-1 ... file:line`) is not a second unparsed finding.
+cat > "$PROBE" <<EOF
+# Review — long non-severity prefix
+
+BLOCKER-1 [MUST-FIX] long id finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: BLOCKER-1 [MUST-FIX] is parsed as a header and its citation checked" \
+  || bad "D3: BLOCKER-1 finding not verified (rc=$rc): $(echo "$out" | tail -2)"
+cat > "$PROBE" <<EOF
+# Review — summary restates a finding
+
+## R-1 [MUST-FIX] parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+Summary:
+  - [MUST-FIX] R-1 fixed in scripts/zuvo-home/poll-cost:3
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a summary line naming a parsed finding ID is not an unparsed second finding" \
+  || bad "D3: summary restatement rejected (rc=$rc): $(echo "$out" | head -6)"
+
+# A skipped-steps bullet naming a gate range (`- Q1-Q25: ...`, `- CQ1-CQ40: ...`) is scoring vocabulary, not a finding.
+cat > "$PROBE" <<EOF
+# Review — gate ranges
+
+## R-1 [MUST-FIX] parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+## SKIPPED STEPS
+- Q1-Q25: not printed, no test file
+- CQ1-CQ40: compact
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a 'Q1-Q25' / 'CQ1-CQ40' gate-range bullet is not read as a finding without a citation" \
+  || bad "D3: gate-range bullet rejected (rc=$rc): $(echo "$out" | head -6)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

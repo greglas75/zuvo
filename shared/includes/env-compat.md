@@ -6,7 +6,7 @@
 
 | Capability | Claude Code | Kimi Code | Codex | Antigravity | Cursor |
 |-----------|-------------|-----------|-------|-------------|--------|
-| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | Native dispatch when available and authorized by execution-policy; fresh context is not proof of model independence. | Sequential (no spawning) | Sequential (no spawning) |
+| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | Native dispatch when available and authorized by execution-policy; fresh context is not proof of model independence. | `define_subagent` / `invoke_subagent` when the `agy` CLI exposes them (same model), else sequential | Sequential (no spawning) |
 | Concurrency | Unrestricted background tasks | Background tasks (`run_in_background`) | Limited | Sequential | Sequential |
 | User interaction | Native interactive prompts | Native interactive prompts (`AskUserQuestion`) | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
 | Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.kimi-code/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |
@@ -290,7 +290,7 @@ No agent spawning capability. When a skill references an agent:
 <!-- PLATFORM:ANTIGRAVITY -->
 ### Antigravity
 
-Google Antigravity is an agent-first IDE (VS Code fork, released Nov 2025 with Gemini 3). No sub-agent spawning via API — execute sequentially like Cursor.
+Google Antigravity is an agent-first IDE (VS Code fork, released Nov 2025 with Gemini 3). The `agy` CLI agent exposes `define_subagent` / `invoke_subagent` (same model, so `degraded:same-model`): when that tool is in your tool list, dispatch the skill's agents with it. Only when it is absent, execute sequentially like Cursor.
 
 **Install paths:** `~/.gemini/antigravity/` (skills, shared, rules, scripts)
 
@@ -302,7 +302,7 @@ Google Antigravity is an agent-first IDE (VS Code fork, released Nov 2025 with G
 
 **Adversarial review:** Host auto-excluded (`gemini` provider skipped). Cross-review uses codex, claude, codestral, or cursor-agent. Script at `~/.gemini/antigravity/scripts/adversarial-review.sh`.
 
-When a skill references an agent:
+With no sub-agent tool, when a skill references an agent:
 1. Read the agent's instruction file (e.g., `agents/blast-radius.md`)
 2. Perform that analysis yourself in the current context
 3. Maintain identical output format and quality standards

@@ -216,6 +216,9 @@ pg_is_production() {
     # fale i godziny czekania przy pushu. Recenzujemy generator, nie jego wynik.
     .zuvo/*|*/.zuvo/*)                 return 1 ;;
     memory/findings/*.jsonl|*/memory/findings/*.jsonl) return 1 ;;
+    # knowledge/*.jsonl: the review's own run-log helper appends knowledge rows after the artifact is
+    # written; counting them as production left that closing commit without coverage.
+    knowledge/*.jsonl|*/knowledge/*.jsonl) return 1 ;;
     # Extensionless repo-metadata files. Without these the `*)` catch-all below
     # classifies them as production, so a pure release/metadata commit (which
     # bumps VERSION and nothing else — every other file in it is already excluded

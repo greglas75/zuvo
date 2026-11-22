@@ -12,7 +12,7 @@
 #
 # Usage:
 #   review-artifact-sync.sh --archive [<checkout>] [--slug <substr>]
-#       Copy every artifact AND every proof it cites to ~/.zuvo/review-archive/<repo>/
+#       Copy every artifact AND every proof it cites to ${ZUVO_HOME:-~/.zuvo}/review-archive/<repo>/
 #       (proofs/<artifact-stem>/<repo-relative proof path>) — outside every checkout,
 #       so the pair survives `git worktree remove`. Run it right after a review.
 #
@@ -214,6 +214,14 @@ do_check() {
     if [ -n "$SLUG" ]; then
       case "$(basename "$art")" in *"$SLUG"*) : ;; *) continue ;; esac
     fi
+    # The skill's dated narrative report (`YYYY-MM-DD-<scope>.md`) is not a content-keyed artifact and
+    # carries no marker; --check used to FAIL it and send agents hunting for a header it must not
+    # have (live review test addendum 3). A dated file that DOES carry the marker is still linted.
+    case "$(basename "$art")" in
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*)
+        head -n 5 "$art" 2>/dev/null | grep -q '^<!-- zuvo-review -->' \
+          || { echo "SKIP $(basename "$art"): dated narrative report, not a gate artifact"; continue; } ;;
+    esac
     found=1
     lint_artifact "$root" "$art" || fail=1
   done
@@ -298,9 +306,9 @@ do_sync() {
 # recover those; the review happened and its evidence no longer exists anywhere on the machine.
 #
 # So the fix is not better recovery, it is not losing them: keep a copy OUTSIDE every checkout.
-# $ZUVO_ARCHIVE (default ~/.zuvo/review-archive/<repo>/) is HOME-local, survives `worktree remove`,
+# $ZUVO_ARCHIVE (default ${ZUVO_HOME:-~/.zuvo}/review-archive/<repo>/) is HOME-local, survives `worktree remove`,
 # and is the one place a proof can be found again after its worktree is gone.
-ARCHIVE_ROOT="${ZUVO_REVIEW_ARCHIVE:-$HOME/.zuvo/review-archive}"
+ARCHIVE_ROOT="${ZUVO_REVIEW_ARCHIVE:-${ZUVO_HOME:-$HOME/.zuvo}/review-archive}"
 
 # An `adversarial:` header is supposed to be a repo-relative PATH. Some are prose — a whole run
 # narrative ("--multi; pass1 32 chunks exit 0; …"). The gate cannot resolve those either, so they

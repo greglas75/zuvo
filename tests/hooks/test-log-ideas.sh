@@ -35,4 +35,12 @@ echo "=== worktree-safe project resolution ==="
 mkdir -p "$TMP/r"; ( cd "$TMP/r" || exit 1; git init -q; bash "$LI" --skill review >/dev/null 2>&1 )
 tail -1 "$ZUVO_HOME/ideas.log" | grep -q $'\tr\t' && ok "project resolves to repo basename" || ok "project resolved (non-empty)"
 
+echo "=== D14: --help is a probe, not a receipt ==="
+rm -f "$ZUVO_HOME/ideas.log"
+out="$(bash "$LI" --help 2>&1)"
+[ ! -e "$ZUVO_HOME/ideas.log" ] && printf '%s' "$out" | grep -q 'log-ideas' && ok "--help prints usage and writes no receipt" || bad "--help wrote a bogus receipt"
+# ...and touches no filesystem: ZUVO_HOME is not even created (the first fix still ran mkdir before parsing).
+out="$(ZUVO_HOME="$TMP/never/created" bash "$LI" --help 2>&1)"
+[ ! -e "$TMP/never" ] && printf '%s' "$out" | grep -q 'log-ideas' && ok "--help creates no ZUVO_HOME directory" || bad "--help created $TMP/never"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

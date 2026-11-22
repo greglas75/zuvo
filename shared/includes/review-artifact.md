@@ -52,7 +52,7 @@ art="$reviews/${base7}..${head7}-<slug>.md"
 range: <base_sha>..<head_sha>
 files: path/one.ts, path/two.ts        # union of reviewed production files (or `*` = whole range)
 adversarial: zuvo/proofs/<slug>-adversarial.txt   # REQUIRED (see Proof-of-work) — real cross-model run
-verdict: APPROVE|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS
+verdict: APPROVE|CONDITIONAL|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS   # review: table in review/SKILL.md "Verdict values"
 -->
 ```
 
@@ -65,7 +65,7 @@ loses its evidence the moment that worktree is removed — and then no sync can 
 evidence is gone.
 
 On Claude Code this is handled for you: the PostToolUse hook `zuvo-archive-review-artifact.sh`
-fires on the write itself and copies the pair to `~/.zuvo/review-archive/<repo>/`, outside every
+fires on the write itself and copies the pair to `${ZUVO_HOME:-~/.zuvo}/review-archive/<repo>/`, outside every
 checkout. Each proof is stored under `proofs/<artifact-stem>/<repo-relative path>`, so two proofs
 that share a basename do not collide, and `adv-proof:` and comma-listed proofs are archived too.
 **On any host without that hook — and after writing an artifact by hand — run it:**

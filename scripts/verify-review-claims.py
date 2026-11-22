@@ -184,6 +184,53 @@ def parse_tool_calls(path: Path) -> list[tuple[str, dict]]:
     return calls
 
 
+def recognized_format(path: Path) -> bool:
+    """True when the file holds at least one record in a transcript format this verifier parses
+    (Claude `message.content` blocks, Codex `response_item` payloads). An Antigravity or other
+    host transcript holds none, so "zero tool calls seen" there is missing evidence, not proof
+    that nothing was dispatched (live review test D8: a false DISAGREEMENT with dispatches=0
+    although four dispatches ran)."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            msg = rec.get("message")
+            if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+                return True
+            if rec.get("type") == "response_item" and isinstance(rec.get("payload"), dict):
+                return True
+    return False
+
+
+def first_record_keys(path: Path) -> list[str] | None:
+    """Sorted keys of the first non-empty JSON object (a JSONL line, else the whole file as one JSON
+    document, whose first object may sit in a top-level list), or None when the file holds none
+    (empty, binary, prose, `{}`). Names the format in the UNKNOWN verdict, and tells the transcript of a
+    host we do not parse from a bogus file passed to dodge the check."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    docs = []
+    for line in text.splitlines():
+        try:
+            docs.append(json.loads(line))
+        except ValueError:
+            continue
+    if not docs:
+        try:
+            docs = [json.loads(text)]
+        except ValueError:
+            return None
+    for rec in docs:
+        for cand in (rec if isinstance(rec, list) else [rec]):
+            if isinstance(cand, dict) and cand:
+                return sorted(cand)[:8]
+    return None
+
+
 def adversarial_invocations(command: str) -> list[str]:
     """Argument strings of the real `adversarial-review` invocations in one Bash command.
 
@@ -328,6 +375,20 @@ def main() -> int:
     for tp in tpaths:
         calls.extend(parse_tool_calls(tp))
     c = claims_from(text)
+    if not any(recognized_format(tp) for tp in tpaths):
+        print(f"verify-review-claims: {note}")
+        shapes = [first_record_keys(tp) for tp in tpaths]
+        if all(k is None for k in shapes):
+            # No JSON record in any file: an empty or copied non-transcript file. That is not a host whose
+            # format we do not parse, and "UNVERIFIED" must not be reachable by passing a bogus path.
+            print("  ERROR: the transcript holds no JSON records at all (empty or not a session log); "
+                  "pass the real session transcript.")
+            return 2
+        print(f"  first record keys: {next(k for k in shapes if k is not None)}")
+        print("  VERDICT: UNKNOWN — the transcript is not in a format this verifier parses "
+              "(Claude or Codex); no tool-call evidence can be derived, so no claim is accused or confirmed.")
+        print("  Record the gate line as UNVERIFIED(unparsed-transcript), not as a failure.")
+        return 2 if args.strict else 0
     o = observed(calls)
     unknown = unsupported_dependencies(c, o)
     findings = verify(c, o, unknown)

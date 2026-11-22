@@ -112,9 +112,17 @@ def find_project_root(audit_path: Path) -> Path:
 # `[A-Z]{1,3}\d+` with no dash and accepted only `#`/`**` openers, so it matched NONE of them:
 # 64 of 73 reports parsed to zero findings and exited 0 having verified nothing. Widening the
 # opener set and making the dash optional is what turns those vacuous passes into real checks.
+# A bare `R-1 [MUST-FIX] title` line (no opener) is also a header: the review SKILL's own finding
+# example used exactly that shape and parsed to zero findings (live test D3, 2026-11-21).
+SEVERITY_TAG = r"\[(?:MUST-FIX|RECOMMENDED|NIT|CRITICAL|HIGH|MEDIUM|LOW|BLOCKER)\]"
+FINDING_LINE_RE = re.compile(
+    r"^\s*(?:#{1,4}\s+|[*_]{2}\s*|[-*]\s+|\d+[.)]\s+)?(?:[A-Z]{1,8}-?\d+(?:\.\d+)?\s*[—–:.-]*\s*)?[*_]{0,2}"
+    + SEVERITY_TAG,
+    re.IGNORECASE,
+)
 FINDING_HEADER_RE = re.compile(
-    r"^(?:#{2,4}\s+|[*_]{2}\s*|[-*]\s+|\d+\.\s+)"
-    r"(?:[HMLC]\d+\b|(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b|[A-Z]{1,4}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b)",
+    r"^(?:(?:#{2,4}\s+|[*_]{2}\s*|[-*]\s+|\d+\.\s+)|(?=[A-Z]{1,8}-?\d+(?:\.\d+)?\s*[—–:.-]*\s*" + SEVERITY_TAG + r"))"
+    r"(?:[HMLC]\d+\b|(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b|[A-Z]{1,8}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b)",
     re.IGNORECASE,
 )
 
@@ -169,6 +177,37 @@ def split_findings(text: str) -> list[tuple[str, str]]:
     return [(h, "".join(body)) for h, body in findings]
 
 
+def unparsed_tagged_lines(text: str, parsed_ids: frozenset | set = frozenset()) -> list[str]:
+    """Severity-tagged finding lines (`- [MUST-FIX] title`, `R-1 [MUST-FIX] title`) that
+    split_findings does not treat as a header, with a file:line citation on the line itself or in the
+    lines below it up to the next blank line (max 6). A clean report that merely mentions `[LOW]`
+    without a citation is not matched; neither is a parsed header."""
+    lines = text.splitlines()
+    out = []
+    for idx, ln in enumerate(lines):
+        if not FINDING_LINE_RE.match(ln):
+            continue
+        # a NIT / LOW / MEDIUM bullet (and the "Pre-existing" block's `[NIT] (true severity [MUST-FIX])`) is
+        # not a finding the gate verifies, so its citation being unchecked is not a hole
+        first_tag = re.search(SEVERITY_TAG, ln, re.IGNORECASE)
+        if first_tag and first_tag.group(0).strip("[]").upper() in ("NIT", "LOW", "MEDIUM"):
+            continue
+        # a summary or body line that names an already-parsed finding (`- [MUST-FIX] fixed R-1 in a.ts:12`)
+        # restates it; its citation was checked under its own header
+        if any(re.search(r"(?<![A-Za-z0-9])" + re.escape(i) + r"(?![0-9])", ln, re.IGNORECASE) for i in parsed_ids):
+            continue
+        if FINDING_HEADER_RE.match(ln.strip()) and looks_like_finding(ln.strip()):
+            continue
+        window = [ln]
+        for nxt in lines[idx + 1: idx + 7]:
+            if not nxt.strip() or FINDING_LINE_RE.match(nxt) or FINDING_HEADER_RE.match(nxt.strip()):
+                break
+            window.append(nxt)
+        if any(FILE_LINE_RE.search(w) for w in window):
+            out.append(ln.strip())
+    return out
+
+
 def looks_like_finding(header: str) -> bool:
     """Heuristic: any of these patterns are findings:
        - H/M/L/C<digit>  (generic severity)
@@ -188,7 +227,9 @@ def looks_like_finding(header: str) -> bool:
     h = re.sub(r"^(?:[-*]\s+|\d+\.\s+)", "", h).strip()
 
     first = h.split()[0].rstrip(":—–-.").strip("*_") if h.split() else ""
-    if re.fullmatch(r"(?:CQ|Q)\d+", first, re.IGNORECASE):
+    # A gate RANGE (`Q1-Q25`, `CQ1-CQ40`) is the same scoring vocabulary (a live run's "- Q1-Q25: not printed"
+    # skipped-steps bullet was rejected as a finding with no citation).
+    if re.fullmatch(r"(?:CQ|Q)\d+(?:-(?:CQ|Q)\d+)?", first, re.IGNORECASE):
         return False
     # Same exclusion for the dashed spelling: `CQ-8` is still a score, not a finding id.
     if re.fullmatch(r"(?:CQ|Q)-\d+", first, re.IGNORECASE):
@@ -199,7 +240,7 @@ def looks_like_finding(header: str) -> bool:
         or re.match(r"^(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b", h, re.IGNORECASE)
         # The dash is OPTIONAL here: `R-1`/`ADV-1`/`P-1` is the shape 109 of this repo's
         # findings actually use, and requiring `R1` made the parser blind to all of them.
-        or re.match(r"^[A-Z]{1,4}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b", h, re.IGNORECASE)
+        or re.match(r"^[A-Z]{1,8}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b", h, re.IGNORECASE)
     )
 
 
@@ -251,6 +292,25 @@ def main() -> None:
 
     text = audit_path.read_text()
     findings = [(h, b) for h, b in split_findings(text) if looks_like_finding(h)]
+    parsed_ids = {m.group(0).upper() for h, _ in findings
+                  if (m := re.search(r"[A-Z]{1,8}-?\d+(?:\.\d+)?", h.lstrip("#*_ -"), re.IGNORECASE))}
+    unparsed = unparsed_tagged_lines(text, parsed_ids)
+
+    if findings and unparsed:
+        # One parsed finding must not vouch for a second one the parser skipped (a bullet with no ID,
+        # or an ID the header grammar rejects): its citation was never looked at.
+        print(
+            f"REJECTED: {audit_path.name} — {len(unparsed)} severity-tagged finding line(s) are not in a "
+            f"recognised header shape, so their file:line citations were never verified: "
+            + "; ".join(u[:80] for u in unparsed[:3]),
+            file=sys.stderr,
+        )
+        print(
+            "  Open each finding with `## R-1 — title`, `**R-1 — title**` or `R-1 [MUST-FIX] title` "
+            "(an ID of 1-8 letters, e.g. R-1).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     if not findings:
         # A report with no finding sections is genuinely informational — nothing to verify.
@@ -275,21 +335,26 @@ def main() -> None:
             text,
             re.M | re.IGNORECASE,
         ) is not None
-        if claims_findings:
+        # Severity-tagged findings (`[MUST-FIX]`) that cite file:line but parsed to zero sections are
+        # the same vacuous pass (live test D3: the SKILL's own example shape verified nothing).
+        # A finding LINE: opener, optional ID, then the severity tag, with the citation on the same line.
+        # (Whole-file co-occurrence rejected clean reports that merely mention `[LOW]` and a file:line.)
+        tagged = bool(unparsed)
+        if claims_findings or tagged:
             print(
                 f"REJECTED: {audit_path.name} — the report has a MUST-FIX/BLOCKER/CRITICAL "
-                f"heading but NOT ONE finding section under it could be parsed, so nothing "
-                f"was verified.",
+                f"heading or severity-tagged file:line findings but NOT ONE finding section "
+                f"could be parsed, so nothing was verified.",
                 file=sys.stderr,
             )
             print(
                 "  Findings must open with a recognised header: `## R1 — title` or "
-                "`**R1 — title**` (letter-prefixed ID, no dash before the digits), each "
+                "`**R-1 — title**` or `R-1 [MUST-FIX] title` (letter-prefixed ID, dash optional), each "
                 "carrying at least one path/to/file.ext:LINE citation.",
                 file=sys.stderr,
             )
             print(
-                "  A bullet list (`- R-1 ...`) parses to zero sections and used to exit 0.",
+                "  A line that opens with prose before the ID parses to zero sections and used to exit 0.",
                 file=sys.stderr,
             )
             sys.exit(2)

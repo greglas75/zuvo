@@ -468,5 +468,41 @@ then pass "Codex invocation evidence and unsupported-call boundaries"
 else bad "Codex invocation evidence and unsupported-call boundaries"
 fi
 
+# ── D8 (live review test 2026-11-21): a transcript in a format the verifier does not parse ──
+# An Antigravity transcript holds no Claude/Codex records. "Zero tool calls seen" there is missing
+# evidence, and used to print a false DISAGREEMENT (dispatches=0 although four dispatches ran).
+printf '%s\n' '{"step":1,"kind":"invoke_subagent","name":"behavior"}' '{"step":2,"kind":"run_command","cmd":"adversarial-review --multi"}' > "$TMP/agy.jsonl"
+out="$(printf '%s' "$CLAIMS_2" | python3 "$V" --claims - --transcript "$TMP/agy.jsonl" --strict 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "UNKNOWN" && ! printf '%s' "$out" | grep -q "DISAGREEMENT"; then
+  pass "D8: an unparsed (non-Claude/Codex) transcript is UNKNOWN (exit 2), never a false DISAGREEMENT"
+else
+  bad "D8: unparsed transcript expected rc=2 UNKNOWN, got rc=$rc: $out"
+fi
+
+# Round-2 review: UNVERIFIED must not be reachable by passing an empty or non-transcript file.
+: > "$TMP/d8-empty.jsonl"
+out="$(printf '%s' "$CLAIMS_2" | python3 "$V" --claims - --transcript "$TMP/d8-empty.jsonl" 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "ERROR" && ! printf '%s' "$out" | grep -q "UNKNOWN"; then
+  pass "D8: an empty transcript is an ERROR (exit 2), not an UNKNOWN that downgrades the gate to UNVERIFIED"
+else
+  bad "D8: empty transcript expected rc=2 ERROR, got rc=$rc: $out"
+fi
+
+# `{}` and prose are not a transcript either; a pretty-printed JSON document of a host we do not parse is UNKNOWN.
+printf '{}\n' > "$TMP/d8-braces.jsonl"
+out="$(printf '%s' "$CLAIMS_2" | python3 "$V" --claims - --transcript "$TMP/d8-braces.jsonl" 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "ERROR" && ! printf '%s' "$out" | grep -q "UNKNOWN"; then
+  pass "D8: a file holding only {} is an ERROR, not an UNKNOWN"
+else
+  bad "D8: {} transcript expected rc=2 ERROR, got rc=$rc: $out"
+fi
+printf '{\n  "session": "x",\n  "events": []\n}\n' > "$TMP/d8-pretty.json"
+out="$(printf '%s' "$CLAIMS_2" | python3 "$V" --claims - --transcript "$TMP/d8-pretty.json" 2>&1)"; rc=$?
+if printf '%s' "$out" | grep -q "UNKNOWN" && printf '%s' "$out" | grep -q "events"; then
+  pass "D8: a pretty-printed JSON transcript names its keys in the UNKNOWN verdict"
+else
+  bad "D8: pretty JSON expected UNKNOWN naming keys, got rc=$rc: $out"
+fi
+
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }
