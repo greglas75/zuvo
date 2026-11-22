@@ -7,13 +7,14 @@ tools:
   - Read
   - Grep
   - Glob
+  - Bash
 ---
 
 # Agent: Content Encoding (CC1, CC2, CC3)
 
-> Model: Sonnet | Type: Explore (read-only)
+> Model: Sonnet | Type: Explore (read-only; Bash only for read-only commands: `file -b --mime-encoding`, `head`, `xxd`)
 
-Scan content files for byte-level encoding issues, markdown formatting defects, and legacy CMS artifacts. All checks are grep/regex-based — no LLM judgment needed.
+Scan content files for byte-level encoding issues, markdown formatting defects, and legacy CMS artifacts. Checks are grep/regex-based; the scope and language rules below decide which matches are defects.
 
 ## Mandatory File Loading
 
@@ -35,7 +36,31 @@ If any file is missing, STOP.
 
 - **file_manifest:** string[] (content files to scan)
 - **detected_stack:** string (`astro` | `nextjs` | `hugo` | `gatsby` | `generic`)
+- **detected_language:** string | `unknown` (ISO 639-1; per file when the manifest spans several)
 - **codesift_repo:** string | null
+
+---
+
+## Scope and Language Rules (apply to every check below)
+
+1. **Skip code.** Report nothing inside a fenced block, an inline code span, or a frontmatter value that is
+   code (the value of a `code`/`snippet`/`command`/`example` key in any YAML scalar style, or a value in
+   backticks; a block scalar under another key is prose unless it reads as code). Grep only finds candidates:
+   before reporting one, confirm its position. A fence opens with 3+ backticks or tildes and closes only with
+   the same character, at least as many, and no info string, so a shorter fence line inside is content; an
+   unlabeled-block grep also matches closing fences, so count only openers. A fence opener is indented at most
+   3 spaces, and a backtick opener's info string has no backtick (`Use ```x``` here` is a code span). A code
+   span is closed by a run of equal length and may cross lines. Mask code first and run link, image and URL
+   extraction, word counts and duplicate comparison on the masked text; parse frontmatter from the source.
+   Template expressions (`{...}`, `{{ }}`, `<% %>`, `{#...}`) in `.astro`/`.tsx`/`.jsx`/`.mdx` text and
+   frontmatter values are masked the same way. Exempt, because they concern the code markup or the
+   whole file: `bom-present`, `encoding-mismatch`, `unclosed-code`, `unlabeled-code-block`.
+2. **Language decides what is a defect.** A rule that is wrong for the language of the text must not fire;
+   the CC1 checks name the cases. Judge by `detected_language` and by the script of the neighbouring
+   characters. With language `unknown`, treat every allowed context below as allowed.
+3. **Ambiguous means report, never fix.** When the right form depends on language or house style, report
+   the finding with `fix_type: null`, confidence LOW or MEDIUM, and the surrounding text as evidence.
+   Only findings you are certain are corruption carry a `fix_type`.
 
 ---
 
@@ -45,13 +70,13 @@ Scan all files in the manifest for invisible Unicode characters and encoding cor
 
 ### Check: `nbsp-present`
 
-Search for non-breaking spaces (U+00A0):
+Search for non-breaking spaces (U+00A0): Grep for the literal character or PCRE `\x{00A0}` (not the bytes `\xC2\xA0`, which match U+00C2 U+00A0 in Unicode mode).
 
-```
-Grep for the byte sequence \xC2\xA0 across content files
-```
-
-Alternative: search for the literal NBSP character. Report each occurrence with file:line.
+NBSP is correct typography in many languages. Do NOT report it between a digit and a unit, currency
+symbol or `%` (any language); in `fr` before `: ; ! ? » %` and after `«`; in `pl`, `cs`, `sk`, `ru`, `uk`
+after a one-letter word, either case (`a i k o s u v w z`; ru `в к с у и о а`; uk `в у з і й о а к`). Report every other NBSP with file:line.
+Czech `v Praze`, `k mostu` and digit groups (`1 000`) are the same convention. A
+reported NBSP always has `fix_type: null`: a lone NBSP line or adjacent NBSPs may be deliberate spacing.
 
 ### Check: `zero-width-present`
 
@@ -61,50 +86,36 @@ Search for zero-width characters:
 - U+200D (zero-width joiner)
 - U+FEFF (BOM / zero-width no-break space, when not at file start)
 
+A ZWJ between emoji (a ZWJ sequence; U+FE0F is optional) is required, as are ZWJ and ZWNJ in an Indic script (U+0900-U+0DFF), an Arabic-script language
+including Persian (U+0600-U+06FF, U+0750-U+077F, U+FB50-U+FDFF, U+FE70-U+FEFE), Khmer (U+1780-U+17FF)
+or Myanmar (U+1000-U+109F). U+200B is a word separator in Thai, Lao, Khmer and Myanmar. Do not report
+those. Report any other zero-width character with `fix_type: null`: a ZWNJ/ZWJ may suppress a ligature, a U+200B may
+be a deliberate break opportunity, and an interior U+FEFF means no-break.
+
 ### Check: `bom-present`
 
-Check first 3 bytes of each file for UTF-8 BOM marker (`\xEF\xBB\xBF`):
-
-```bash
-file -i <filepath> | grep -i bom
-```
-
-Or check first bytes: `head -c 3 <file> | xxd | grep 'efbb bf'`
+Check first 3 bytes of each file for UTF-8 BOM marker (`\xEF\xBB\xBF`), read-only:
+`head -c 3 <file> | xxd` (`file` does not report a BOM).
 
 ### Check: `mojibake-detected` (BLOCKING)
 
 Search for garbled multi-byte sequences that indicate encoding corruption.
 This is the most critical check — mojibake means content is corrupted.
 
-**Grep patterns for common mojibake signatures:**
-
-Latin-1 / Windows-1252 corruption:
+**Grep patterns (Latin-1/Windows-1252, ISO-8859-2, ISO-8859-9, smart quotes, general):**
 ```
-Ã©|Ã¨|Ã¡|Ã |Ã³|Ã²|Ã¼|Ã¶|Ã¤|Ã±|Ã§|Ãª|Ã®|Ã¢|Ã´|Ã»|Ã¯
-```
-
-ISO-8859-2 (Central European) corruption:
-```
-Ä…|Ä™|Å›|Å¼|Åº|Å‚|Å„|Ä‡|Å¡|Å¾|Å™|Å¯
+Ã©|Ã¨|Ã¡|Ã\x{00A0}|Ã³|Ã²|Ã¼|Ã¶|Ã¤|Ã±|Ã§|Ãª|Ã®|Ã¢|Ã´|Ã»|Ã¯
+Ä…|Ä™|Å›|Å¼|Åº|Å‚|Å„|Ä‡|Å¡|Å¾|Å™|Å¯|Ä±|ÅŸ|Ä\x{008D}|ÄŸ|Ä\x{2018}
+â€“|â€”|â€™|â€˜|â€œ|â€\x{009D}|â€¢|â€¦|Â£|Â©|Â®|Â°|Â»|Â«
 ```
 
-ISO-8859-9 (Turkish) corruption:
-```
-Ä±|ÅŸ
-```
-
-Windows-1252 smart quotes/dashes:
-```
-â€"|â€"|â€™|â€˜|â€œ|â€¢|â€¦
-```
-
-General corruption:
-```
-Â£|Â©|Â®|Â°|Â»|Â«
-```
-
-**Exclusion:** Skip matches inside fenced code blocks (between ` ``` ` markers).
-Content discussing encoding issues may contain intentional examples.
+**Not mojibake:** a lead letter (`Ã`, `Ä`, `Å`) followed by an ASCII space or ASCII letter (`IRMÃ E`, German or
+Swedish capitals). A signature is a lead character followed by the symbol or control character shown above.
+`Ã` + NBSP (`\x{00A0}`, the corruption of `à`: bytes C3 A0 read as Windows-1252) is the only `Ã` + space form.
+Every signature is a candidate: read the surrounding word and language before grading it (`IRMÃ<NBSP>E` and
+`«IRMÃ»` are Portuguese words; `LÃ<NBSP>-bas` in French is `Là-bas`). An unconfirmed candidate is reported with
+`fix_type: null`, confidence LOW, and does not trip the gate. A confirmed signature is reported once, as
+`mojibake-detected`, never also as `nbsp-present`.
 
 **Evidence format:** Include the corrupted text, what it should be, and the
 likely source encoding.
@@ -116,11 +127,8 @@ bytes that could not be decoded.
 
 ### Check: `encoding-mismatch`
 
-Run `file -i` on each file. Flag any file not detected as `utf-8` or `us-ascii`:
-
-```bash
-file -i <filepath> | grep -v 'utf-8\|us-ascii\|binary'
-```
+Run `file -b --mime-encoding -- <filepath>` (read-only; `file -i` prints `regular file` on macOS) on each file.
+Flag any file not detected as `utf-8` or `us-ascii` (skip `binary`).
 
 ### Check: `soft-hyphen-present`
 
@@ -224,8 +232,8 @@ Also catch generic WordPress shortcode pattern: `\[[a-zA-Z_-]+[^\]]*\]`
 Grep for: <\?php|<\?=
 ```
 
-PHP tags in content files are always migration artifacts. Never intentional in
-markdown/HTML content.
+PHP tags in prose or raw HTML are migration artifacts. A tag inside a code fence or code span is a
+code example (per the scope rules), never a finding.
 
 ### Check: `legacy-html`
 
@@ -316,9 +324,10 @@ passed. This is required for scoring.
 
 ## Constraints
 
-- You are **read-only**. Do not create, modify, or delete any source files.
+- You are **read-only**. Do not create, modify, or delete any source files. Use Bash only for read-only
+  commands (`file -b --mime-encoding`, `head`, `xxd`); never redirect output into a file.
 - Use CodeSift when available. Fall back to Grep/Read/Glob otherwise.
 - Every FAIL finding must have file:line evidence.
-- Skip matches inside fenced code blocks for mojibake and template checks.
+- Apply the Scope and Language Rules above to every check.
 - Report facts, not assumptions. Use `INSUFFICIENT DATA` when evidence is
   genuinely inconclusive.

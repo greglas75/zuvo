@@ -200,14 +200,14 @@ Before modifying any file:
 
 For each SAFE finding:
 
-**`encoding-strip`:**
+**`encoding-strip`:** (at the flagged position of each finding only, never a file-wide sweep: NBSP and
+ZWJ/ZWNJ are legitimate in many languages and scripts; re-check the span as the registry's "Edit only the flagged span" says)
 - Replace NBSP (U+00A0) with regular space (U+0020)
 - Remove zero-width characters (U+200B, U+200C, U+200D, U+FEFF)
 - Remove BOM marker from file start
 - Remove soft hyphens (U+00AD)
-- Remove replacement characters (U+FFFD) — flag for manual review
 - Scope: body content AND frontmatter string fields
-- Skip content inside fenced code blocks
+- Skip content inside fenced code blocks, code spans and code-valued frontmatter
 
 **`markdown-fix`:**
 - Close unclosed `*` or `_` at paragraph end (append matching marker)
@@ -215,9 +215,8 @@ For each SAFE finding:
 - Remove orphan `\` lines (stack-aware: only for Hugo/Goldmark)
 
 **`typography-fix`:**
-- Collapse 2+ spaces to 1 (outside code blocks, tables, indentation)
-- Fix `..` → `.` (preserve `...` ellipsis)
-- Fix `,,` → `,`
+- Collapse 2+ spaces to 1 at flagged findings only (outside code blocks, tables, indentation)
+- Fix `;;` → `;` and `,,` → `,` (flagged findings only). `..` is never auto-fixed (ellipsis or period)
 
 ### 2.2 MODERATE fixes (with --auto only)
 

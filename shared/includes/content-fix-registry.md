@@ -44,19 +44,27 @@ above.
 
 ## Expanded Fix Contracts
 
+**Edit only the flagged span, under the current rules.** Reclassify a finding from an older audit by the audit's
+Scope and Language Rules (`agents/content-encoding.md`) before editing: skip code, and send a language-dependent
+NBSP, ZWJ/ZWNJ, `,,` or signature to `NEEDS_REVIEW`. A finding's position is its `file:line` plus the text quoted in `evidence`.
+Re-read that line before every edit and change only the occurrence the evidence quotes; when the line has
+changed, the quoted text is absent, or the line holds several candidates the evidence does not tell apart
+(or the span is inside code), mark the finding `NEEDS_REVIEW`. This holds for every `fix_type` below, and for
+reports from older audit versions.
+
 ### `encoding-strip`
 
-- **Target characters:**
+- **Target characters** (only at the positions of findings carrying this `fix_type`; NBSP and
+  ZWJ/ZWNJ are legitimate in many languages and scripts, so never sweep a file):
   - U+00A0 (NBSP) → U+0020 (regular space)
   - U+200B (zero-width space) → remove
   - U+200C (zero-width non-joiner) → remove
   - U+200D (zero-width joiner) → remove
   - U+FEFF (BOM / zero-width no-break space) → remove
   - U+00AD (soft hyphen) → remove
-  - U+FFFD (replacement character) → remove (flag for manual review)
 - **Scope:** Body content AND frontmatter string fields
 - **Exclusions:** Do not modify content inside fenced code blocks (` ``` `)
-- **Validation:** After fix, grep for target characters — expect 0 matches
+- **Validation:** After fix, re-read each edited span and confirm the target character is gone there (other occurrences are not findings)
 
 ### `encoding-mojibake`
 
@@ -64,14 +72,14 @@ above.
   characters. Each entry maps a corrupted form to the original character and
   the source encoding that caused the corruption.
 
-  **Latin-1 / Windows-1252 → UTF-8 corruption:**
+  **UTF-8 read as Windows-1252 (Latin-1 range):**
 
   | Corrupted | Original | Char |
   |-----------|----------|------|
   | `Ã©` | `é` | e-acute |
   | `Ã¨` | `è` | e-grave |
   | `Ã¡` | `á` | a-acute |
-  | `Ã ` | `à` | a-grave |
+  | `Ã` + U+00A0 | `à` | a-grave (`Ã` + ordinary space is a Portuguese/Vietnamese capital, never a match) |
   | `Ã³` | `ó` | o-acute |
   | `Ã²` | `ò` | o-grave |
   | `Ã¼` | `ü` | u-umlaut |
@@ -91,16 +99,16 @@ above.
   | `Â°` | `°` | degree |
   | `Â»` | `»` | right guillemet |
   | `Â«` | `«` | left guillemet |
-  | `â€"` | `–` | en-dash |
-  | `â€"` | `—` | em-dash |
-  | `â€™` | `'` | right single quote |
-  | `â€˜` | `'` | left single quote |
-  | `â€œ` | `"` | left double quote |
-  | `â€` | `"` | right double quote |
+  | `â€“` | U+2013 | en-dash |
+  | `â€”` | U+2014 | em-dash |
+  | `â€™` | U+2019 | right single quote |
+  | `â€˜` | U+2018 | left single quote |
+  | `â€œ` | U+201C | left double quote |
+  | `â€` + U+009D | U+201D | right double quote |
   | `â€¢` | `•` | bullet |
   | `â€¦` | `…` | ellipsis |
 
-  **ISO-8859-2 (Central European) → UTF-8 corruption:**
+  **UTF-8 read as Windows-1252 (Central European letters; Ä + C1 control = U+008D):**
 
   | Corrupted | Original | Char | Language |
   |-----------|----------|------|----------|
@@ -114,23 +122,24 @@ above.
   | `Ä‡` | `ć` | c-acute | Polish |
   | `Å¡` | `š` | s-caron | Czech/Slovak |
   | `Å¾` | `ž` | z-caron | Czech/Slovak |
-  | `Ä` | `č` | c-caron | Czech/Slovak |
+  | `Ä` + U+008D | `č` | c-caron | Czech/Slovak |
   | `Å™` | `ř` | r-caron | Czech |
   | `Å¯` | `ů` | u-ring | Czech |
-  | `Ä'` | `đ` | d-stroke | Croatian |
+  | `Ä‘` | `đ` | d-stroke | Croatian |
 
-  **ISO-8859-9 (Turkish) → UTF-8 corruption:**
+  **UTF-8 read as Windows-1252 (Turkish letters):**
 
   | Corrupted | Original | Char |
   |-----------|----------|------|
   | `Ä±` | `ı` | dotless i |
   | `ÅŸ` | `ş` | s-cedilla |
-  | `Ä` | `ğ` | g-breve |
+  | `ÄŸ` | `ğ` | g-breve |
   | `Ã¶` | `ö` | o-umlaut |
   | `Ã¼` | `ü` | u-umlaut |
   | `Ã§` | `ç` | c-cedilla |
 
-- **Validation:** After fix, grep for all corrupted forms — expect 0 matches
+- **Longest match first.** A bare `Ä`, `Ã`, `Å` or `â€` is a real letter or a prefix, never a signature.
+- **Validation:** After fix, re-read each edited span and confirm the signature is gone there; leave signatures with no finding untouched
 - **Caveat:** Code examples or documentation about encoding issues may contain
   intentional mojibake sequences. Before fixing, check if the match is inside
   a fenced code block — if so, skip.
@@ -172,13 +181,11 @@ above.
 
 ### `typography-fix`
 
-- **Double spaces:** Replace 2+ consecutive spaces with single space in prose
-  lines. Do NOT modify inside code blocks, code spans, or markdown tables.
-- **Double punctuation:** Replace `..` with `.` (but NOT `...` which is a
-  valid ellipsis), `,,` with `,`, `;;` with `;`.
-  Do NOT modify `!!` (may be intentional emphasis) or `??` (may be intentional).
-- **Validation:** Grep for double spaces and double punctuation — expect 0
-  matches outside code blocks.
+- **Double spaces:** Replace 2+ consecutive spaces with single space inside a sentence (the audit
+  reports a double space after `.`, `!`, `?`, `:` with `fix_type: null`, which is never fixed). Do NOT modify inside code blocks, code spans, or markdown tables.
+- **Double punctuation:** Replace `;;` with `;`, and `,,` with `,` where the audit tagged it. Never touch
+  `..` (ellipsis or period), `...`, `!!` or `??`: they are ambiguous and the audit reports them without a fix.
+- **Validation:** Re-read each edited span: the double space or punctuation is gone there.
 
 ## Confidence Scale
 

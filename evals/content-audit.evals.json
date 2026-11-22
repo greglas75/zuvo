@@ -43,6 +43,36 @@
           "content": "---\ntitle: Full Guide\n---\n\n# Full Guide\n\nEverything you need to know.\n"
         }
       ]
+    },
+    {
+      "id": 3,
+      "prompt": "Run a content-quality audit on content/ (zuvo:content-audit, full mode, no --live-url) and give the verdict.",
+      "expected_output": "The audit reports exactly one blocking defect: the mojibake `cafÃ©` in content/notes.md (cited file:line), so grade D and verdict FAIL. The missing ./img/team.png is a separate scored img-path-broken finding. It reports nothing for the PHP tag, quotes, double dashes or non-breaking space inside the code fence and code spans; nothing for the French non-breaking spaces before `? : ! »` and after `«` in content/fr.md; nothing for the zero-width joiner in the Hindi conjunct and the joined emoji in content/hi.md. The image check img-404-live is N/A (CANNOT DETERMINE: no --live-url), never FAIL, and any ambiguous typography finding has fix_type null. The image ./img/team.png does not exist, so img-path-broken may fire. No content file is modified.",
+      "files": [
+        "content/notes.md",
+        "content/fr.md",
+        "content/hi.md"
+      ],
+      "assertions": [
+        "The audit records a mojibake-detected finding for `cafÃ©` in content/notes.md at its file:line, and no finding of any check (php-tag, nbsp-present, typo-*) for text inside the fenced php block or the inline code spans in that file.",
+        "The audit records no nbsp-present or encoding-strip finding for the French non-breaking spaces in content/fr.md, and no zero-width-present finding for the ZWJ in the Hindi conjunct or the joined emoji in content/hi.md.",
+        "The report shows img-404-live as N/A or CANNOT DETERMINE (not FAIL) because no --live-url was given, and any typo-double-space finding for the double space after a period in content/notes.md has fix_type null.",
+        "The report grades D with verdict FAIL because of the blocking mojibake finding, and records the missing image only as a scored img-path-broken finding."
+      ],
+      "fixtures": [
+        {
+          "path": "content/notes.md",
+          "content": "---\ntitle: Notes\nlang: en\n---\n\n# Notes\n\nCode samples are not prose:\n\n```php\n<?php echo \"quotes\"  --  here\u00a0;\n```\n\nInline `<?php` and `\"x\"\u00a0--` stay untouched.\n\nAn image: ![Team photo at the office](./img/team.png)\n\nReal corruption: we met at a cafÃ© yesterday.  Then we left.\n"
+        },
+        {
+          "path": "content/fr.md",
+          "content": "---\ntitle: Bonjour\nlang: fr\n---\n\n# Bonjour\n\nVoulez-vous venir\u00a0? Il a dit\u00a0: «\u00a0oui\u00a0»\u00a0!\n"
+        },
+        {
+          "path": "content/hi.md",
+          "content": "---\ntitle: Namaste\nlang: hi\n---\n\n# Namaste\n\nक्\u200dष क्र नमस्ते\n\nFamily emoji: 👨\u200d👩\u200d👧\n"
+        }
+      ]
     }
   ]
 }

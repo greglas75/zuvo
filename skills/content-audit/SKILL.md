@@ -93,7 +93,7 @@ This audit is read-only against source files.
 | `[path]` | Scope to specific file or directory |
 | `--content-path <dir>` | Override auto-detected content directory |
 | `--live-url <url>` | Enable live link/image checks (CC5 img-404-live, CC6 link-external-dead, CC6 link-external-redirect) |
-| `--quick` | Source-only grep checks, no agent dispatch. Runs CC1-CC3 grep patterns + CC5/CC6 path resolution. Skips CC4/CC7/CC8 entirely. Checks requiring agents or live access return `INSUFFICIENT DATA`. |
+| `--quick` | Source-only grep checks, no agent dispatch. Runs CC1-CC3 grep patterns + CC5/CC6 path resolution. Skips CC4/CC7/CC8 entirely. Checks requiring agents return `INSUFFICIENT DATA`; live-only checks return `N/A`. |
 | `--lang <code>` | Force language for spell/typography checks (ISO 639-1: `pl`, `en`, `de`, `tr`, etc.) |
 | `--check-external` | Enable external link checking (requires network access) |
 | `--persist-backlog` | Record findings through `backlog-add` (Phase 5) |
@@ -163,7 +163,7 @@ Multi-signal cascade (first definitive signal wins):
 4. **HTML lang attribute:** `<html lang="...">` in layout templates
 5. **Fallback:** `unknown` — spell/typo checks (CC8) emit `INSUFFICIENT DATA`
 
-Record detected language(s). Pass to agents for CC8 checks.
+Record detected language(s). Pass to agents A and C: CC8 and the CC1 NBSP, zero-width and mojibake rules depend on it.
 
 ### 0.4 File manifest
 
@@ -182,8 +182,8 @@ checks.
   `.pdf`, `.woff`, `.woff2`, `.ttf`, `.mp4`, `.mp3`, `.zip`, `.tar`, `.gz`,
   `.DS_Store`
 
-For each file, check encoding via `file -i` (available on Unix/macOS). Flag
-non-UTF-8 files with check `encoding-mismatch` (advisory).
+For each file, check encoding via `file -b --mime-encoding -- <file>` (`file -i` prints `regular file` on macOS). Flag
+files that are neither `utf-8` nor `us-ascii` with check `encoding-mismatch` (advisory).
 
 ### 0.5 Print discovery summary
 
@@ -208,7 +208,9 @@ Dispatch follows `../../shared/includes/execution-policy.md` through env-compat.
 authorization within that policy; session restrictions take precedence. Run each required gate
 and report its actual independence or an unmet requirement.
 
-Do NOT dispatch agents. Run source-only grep checks directly:
+Do NOT dispatch agents. Run source-only grep checks directly, under the Scope and Language Rules of
+`agents/content-encoding.md` (no matches in code; NBSP, zero-width and mojibake by language). A line grep cannot see
+fences, so mask code with a small script before grepping:
 
 1. CC1 blocking: `mojibake-detected` (grep for mojibake signatures)
 2. CC3 blocking: `php-tag` (grep for `<?php`, `<?=`)
@@ -223,7 +225,7 @@ Do NOT dispatch agents. Run source-only grep checks directly:
 - CC7 entirely (content analysis requires agent)
 - CC8 entirely (language detection + LLM judgment)
 - `fm-yaml-malformed` → `INSUFFICIENT DATA` (needs YAML parser, not grep)
-- `img-404-live` → `INSUFFICIENT DATA` (needs `--live-url`, not grep)
+- `img-404-live`, `link-external-dead`, `link-external-redirect` → `N/A` without their flag ("CANNOT DETERMINE", not a failure); `INSUFFICIENT DATA` when the flag was passed but `--quick` skipped the probe
 
 Proceed to Phase 2.
 
@@ -234,21 +236,21 @@ Dispatch three agents in **parallel** per `env-compat.md`:
 ```
 Agent A: Content Encoding
   model: sonnet
-  type: Explore (read-only)
+  type: Explore (read-only; tools Read, Grep, Glob, Bash for read-only commands)
   instructions: [read agents/content-encoding.md]
-  input: file manifest, detected stack, content-check-registry.md
+  input: file manifest, detected stack, detected language, content-check-registry.md
   dimensions: CC1, CC2, CC3
 
 Agent B: Content Links
   model: sonnet
-  type: Explore (read-only)
+  type: Explore (read-only; tools Read, Grep, Glob, Bash for read-only commands)
   instructions: [read agents/content-links.md]
   input: file manifest, detected stack, live-probe-protocol.md, --live-url if set, --check-external if set
   dimensions: CC5, CC6
 
 Agent C: Content Prose
   model: sonnet
-  type: Explore (read-only)
+  type: Explore (read-only; tools Read, Grep, Glob, Bash for read-only commands)
   instructions: [read agents/content-prose.md]
   input: file manifest, detected language, content-check-registry.md
   dimensions: CC4, CC7, CC8
@@ -266,7 +268,8 @@ Wait for all three agents to complete before proceeding to Phase 2.
 
 Each agent MUST return **two** structures:
 1. **`check_results[]`** — complete matrix of ALL owned checks with status
-   (`PASS`, `FAIL`, `PARTIAL`, `N/A`, `INSUFFICIENT DATA`). Every check from
+   (`PASS`, `FAIL`, `PARTIAL`, `N/A`, `INSUFFICIENT DATA`). A live-only check without live access
+   (`img-404-live`, `link-external-dead`, `link-external-redirect`) is `N/A`. Every check from
    the registry that the agent owns appears here, even if it passed.
 2. **`findings[]`** — details for FAIL and PARTIAL checks only (evidence,
    file:line, fix_type).
@@ -285,8 +288,10 @@ with proper dimension assignment), keep the one with higher confidence.
 Calculate per-dimension and overall scores:
 
 ```
+# N/A and INSUFFICIENT DATA checks are not applicable: out of both counts
 dimension_score = checks_passed / checks_applicable * 100
 overall_score = sum(dimension_scores) / dimensions_with_applicable_checks
+# a dimension with no applicable check shows `n/a`, not a percentage; no applicable check at all: unscored
 ```
 
 Grade mapping:
@@ -301,14 +306,16 @@ a hyphenated `75-89` would leave 74.5 ungraded.
 | **C** | `>= 50 and < 75` | Significant issues affecting quality |
 | **D** | `< 50` | Critical issues, CMS migration incomplete |
 
-**Blocking gate cap:** If ANY blocking finding exists (`mojibake-detected`,
+**Blocking gate cap:** A confirmed occurrence of a blocking check makes that check `FAIL` (never `PARTIAL`). If ANY blocking finding exists (`mojibake-detected`,
 `php-tag`, `fm-yaml-malformed`, `img-404-live`), the grade is capped at **D**
-regardless of numeric score.
+regardless of numeric score. Only a confirmed `FAIL` counts: `img-404-live` is a live check and
+without `--live-url` it is `N/A`, never a blocking failure.
 
 ### 2.4 Tag fixable findings
 
-For each finding with a non-null `fix_type` in the registry, tag it with the
-fix_type and safety classification from `content-fix-registry.md`.
+For each finding whose agent-assigned `fix_type` is non-null, add the safety classification from
+`content-fix-registry.md`. Never fill in a `fix_type` the agent left `null`: the registry column is the type for
+certain corruption only, and a null marks the finding MANUAL.
 
 ---
 
@@ -369,7 +376,7 @@ Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
   "result": "PASS | FAIL | PROVISIONAL",
   "score": {
     "overall": 75,
-    "tier": "B",
+    "tier": "D",
     "sub_scores": {
       "CC1": 85, "CC2": 71, "CC3": 100, "CC4": 83,
       "CC5": 67, "CC6": 50, "CC7": 80, "CC8": 60
@@ -379,7 +386,7 @@ Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
     { "id": "CC1-mojibake-detected", "name": "Mojibake detection", "status": "FAIL", "evidence": "12 corrupted sequences in 4 files" },
     { "id": "CC3-php-tag", "name": "PHP tag presence", "status": "PASS", "evidence": "No PHP tags found" },
     { "id": "CC4-fm-yaml-malformed", "name": "Frontmatter YAML validity", "status": "PASS", "evidence": "All 150 files parse" },
-    { "id": "CC5-img-404-live", "name": "Image live check", "status": "INSUFFICIENT DATA", "evidence": "--live-url not provided" }
+    { "id": "CC5-img-404-live", "name": "Image live check", "status": "N/A", "evidence": "CANNOT DETERMINE: --live-url not provided" }
   ],
   "findings": [
     {
@@ -407,9 +414,10 @@ Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
 }
 ```
 
-Use `result: "PROVISIONAL"` when any blocking gate returns `INSUFFICIENT DATA`
-(e.g., `img-404-live` without `--live-url`, or `fm-yaml-malformed` in `--quick`
-mode).
+Use `result: "PROVISIONAL"` when a blocking gate that applies to this run returns
+`INSUFFICIENT DATA` (e.g., `fm-yaml-malformed` in `--quick` mode) and no gate is a confirmed FAIL. A confirmed
+blocking FAIL always gives tier D and `FAIL`; list the unresolved gate in the report. `img-404-live` without
+`--live-url` is `N/A`, not PROVISIONAL.
 
 ---
 
@@ -458,7 +466,7 @@ Recording findings through `backlog-add` commits and stages nothing. This audit 
 Order per `../../shared/includes/audit-postamble.md` §2: the reports (Phase 3) and the adversarial pass (Phase 4) are done, so retro,
 Validity Gate, Run line follow. VERDICT per §1: the critical gates are the four blocking checks
 (`mojibake-detected`, `php-tag`, `fm-yaml-malformed`, `img-404-live`), and a `FAIL` on any of them is
-`FAIL`. A `PROVISIONAL` result is noted in NOTES and does not by itself change the VERDICT.
+`FAIL`; `img-404-live` can only trip under `--live-url`. A `PROVISIONAL` result is noted in NOTES and does not by itself change the VERDICT.
 
 ### Retrospective (REQUIRED)
 
@@ -499,14 +507,10 @@ Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>
 
 | Edge case | Handling |
 |-----------|---------|
-| **Mixed encoding in file** | `file -i` per file. Non-UTF-8 → `encoding-mismatch` (advisory), Unicode checks → `INSUFFICIENT DATA` |
+| **Mixed encoding in file** | `file -b --mime-encoding -- <file>` per file. Not `utf-8`/`us-ascii` → `encoding-mismatch` (advisory), Unicode checks → `INSUFFICIENT DATA` |
 | **Large files (100KB+)** | Read in 500-line chunks. Flag: "large file — chunked read" |
 | **Binary files in content dir** | Skip by extension whitelist. Log in "Skipped files" section |
-| **Template syntax** | Strip `{...}`, `{{ }}`, `<% %>` before CC2/CC8 checks on `.astro`/`.tsx`/`.jsx`/`.mdx` |
 | **CMS-backed content** | Detect CMS config. Emit `CONTENT INACCESSIBLE`. Recommend `--live-url` |
 | **Framework-relative images** | `@/`, `~/`, `../assets/` → `img-path-relative-risk` (advisory), not hard FAIL |
 | **Anchor links** | Source: extract headings → normalize → compare. Live: DOM inspection |
 | **Multilingual dirs** | Detect language per file/directory. Apply CC8 only for matching language |
-| **Standalone `\`** | Stack-aware: flag for Hugo/Goldmark, skip for GFM targets |
-| **Duplicate detection** | Cap at top 50 longest files. Declare sampling in report |
-| **Frontmatter templates** | Strip `{{...}}` and `{...}` from YAML strings before text checks |

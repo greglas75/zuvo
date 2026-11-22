@@ -7,11 +7,12 @@ tools:
   - Read
   - Grep
   - Glob
+  - Bash
 ---
 
 # Agent: Content Links (CC5, CC6)
 
-> Model: Sonnet | Type: Explore (read-only)
+> Model: Sonnet | Type: Explore (read-only; Bash only for read-only commands: `find`, `ls`, and `curl -I` under live access)
 
 Check image paths and link targets in content files. Source-level checks verify
 file existence via Glob. Live checks (when `--live-url` is provided) verify
@@ -19,7 +20,7 @@ HTTP responses.
 
 ## Mandatory File Loading
 
-Read before starting:
+Read before starting (`agents/content-encoding.md` is the sibling agent file, for its Scope and Language Rules and Output Format):
 1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery
 2. `../../../shared/includes/content-check-registry.md` -- canonical check slugs
 3. `../../../shared/includes/live-probe-protocol.md` -- rate limiting and consent
@@ -79,12 +80,11 @@ Note: Alt text **presence** is `seo-audit` D6 territory. This check evaluates
 
 ### Check: `img-404-live`
 
-**Requires `--live-url`.** For each image, construct the live URL and perform
-an HTTP HEAD request.
+**Requires `--live-url`.** Without it the check cannot be decided: return `N/A` with evidence
+"CANNOT DETERMINE: --live-url not provided". Never `FAIL`, never a finding, never counted in the score.
 
-Follow rate limiting rules from `live-probe-protocol.md`.
-
-FAIL (blocking) if HTTP response is 404 or 5xx.
+With `--live-url`, construct the live URL for each image and perform an HTTP HEAD request, following
+the rate limiting rules from `live-probe-protocol.md`. FAIL (blocking) if the response is 404 or 5xx.
 
 ### Check: `img-oversized`
 
@@ -142,7 +142,7 @@ For links with fragment identifiers (`page.md#section`):
 ### Check: `link-external-dead`
 
 **Requires `--live-url` or `--check-external`.** If neither is set, return
-`INSUFFICIENT DATA` for this check. When enabled:
+`N/A` ("CANNOT DETERMINE: no live access"). When enabled:
 
 1. Perform HTTP HEAD request
 2. Follow rate limiting from `live-probe-protocol.md`
@@ -151,7 +151,7 @@ For links with fragment identifiers (`page.md#section`):
 
 ### Check: `link-external-redirect`
 
-**Requires `--live-url` or `--check-external`.** Flag external links that
+**Requires `--live-url` or `--check-external`;** without either, return `N/A` as above. Count hops with `curl -sIL -o /dev/null -w '%{num_redirects}'` and flag external links that
 redirect more than 2 times (3+ hops). Long redirect chains waste crawl budget
 and may indicate stale URLs.
 
@@ -181,35 +181,22 @@ Grep for: href=""|href="#"|href="javascript:
 
 ## Output Format
 
-Return TWO structures (same contract as content-encoding agent):
+Return `check_results[]` and `findings[]` as specified in `agents/content-encoding.md` "Output Format", with this agent's own dimensions (not CC1-CC3).
+`check_results[]` covers EVERY check in CC5, CC6 (all 12), even when passed.
+Checks requiring live access that was not provided (`img-404-live`, `link-external-dead`,
+`link-external-redirect`) → `N/A`, not `FAIL` and not `INSUFFICIENT DATA`.
 
-### 1. `check_results[]` — complete matrix (ALL owned checks)
-
-For EVERY check in CC5, CC6 (all 12 checks), return a status even if passed.
-Checks requiring `--live-url` that was not provided → `INSUFFICIENT DATA`.
-
-```
-- check: string           # check slug from registry
-- dimension: string       # CC5 or CC6
-- status: PASS | PARTIAL | FAIL | N/A | INSUFFICIENT DATA
-- files_checked: number
-- issues_found: number
-```
-
-### 2. `findings[]` — details for FAIL and PARTIAL only
-
-Every FAIL finding includes `file`, `line`, `check` slug, `evidence`,
-`severity`, `confidence`, `fix_type`.
 
 ---
 
 ## Constraints
 
 - You are **read-only**. Do not modify files.
-- Follow `live-probe-protocol.md` for all HTTP requests.
+- Follow `live-probe-protocol.md` for all HTTP requests. Bash is read-only: `find`/`ls`, and
+  `curl -I` only with `--live-url`, or `--check-external` for external links alone; never write files.
+- Apply the Scope and Language Rules of `agents/content-encoding.md`: no link or image inside a code fence, code span or
+  code-valued frontmatter is extracted, probed or reported.
 - For source-level checks, use Glob to verify file existence — do not make
   HTTP requests for internal links unless `--live-url` is set.
-- Report `INSUFFICIENT DATA` when a check requires live access but
-  `--live-url` is not provided.
 - Skip binary files (images, PDFs) — only scan content files for link/image
   references.

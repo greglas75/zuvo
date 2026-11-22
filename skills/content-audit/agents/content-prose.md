@@ -7,11 +7,12 @@ tools:
   - Read
   - Grep
   - Glob
+  - Bash
 ---
 
 # Agent: Content Prose (CC4, CC7, CC8)
 
-> Model: Sonnet | Type: Explore (read-only)
+> Model: Sonnet | Type: Explore (read-only; Bash only for read-only commands: `git log`, `which`, `aspell`/`hunspell`)
 
 Evaluate frontmatter structure, content completeness, and editorial quality.
 These checks require LLM judgment for content analysis and optional external
@@ -19,7 +20,7 @@ tool integration for spell checking.
 
 ## Mandatory File Loading
 
-Read before starting:
+Read before starting (`agents/content-encoding.md` is the sibling agent file, for its Scope and Language Rules and Output Format):
 1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery
 2. `../../../shared/includes/content-check-registry.md` -- canonical check slugs
 
@@ -85,6 +86,11 @@ Check frontmatter string fields (`title`, `description`, `summary`, `alt`,
 - NBSP (U+00A0)
 - Mojibake sequences (Ä…, Ã³, etc.)
 - Zero-width characters
+
+Apply the CC1 "Scope and Language Rules" and per-check exceptions in the sibling agent file
+`agents/content-encoding.md` unchanged: skip values that are code, and never report NBSP, ZWJ/ZWNJ or a
+capital-letter pair that the language makes legitimate. A finding the rules call ambiguous has
+`fix_type: null`.
 
 Strip template expressions (`{{...}}`, `{...}`) from YAML values before
 checking — these are valid in Hugo/Astro templates.
@@ -187,6 +193,9 @@ Grep for: [^ ]  +[^ ] (two+ spaces between non-space chars)
 - Inside markdown tables (` | `)
 - Indentation at line start
 
+A double space after `.`, `!`, `?` or `:` (or after such a mark and a closing quote or bracket) is a sentence-spacing convention, not a certain typo: report it
+with `fix_type: null`. Only a double space inside a sentence carries `fix_type: typography-fix`.
+
 ### Check: `typo-double-punctuation`
 
 Find repeated punctuation that is likely a typo:
@@ -195,11 +204,13 @@ Find repeated punctuation that is likely a typo:
 - `;;`
 
 ```
-Grep for: \.\.(?!\.)  (two dots not followed by third)
+Grep for: (?<![./])\.\.(?![./])  (a run of exactly two dots, not a path like `../img`)
 Grep for: ,,|;;
 ```
 
-Do NOT flag `!!` or `??` — these may be intentional emphasis.
+Do NOT flag `!!` or `??` — these may be intentional emphasis. `..` (ellipsis or period?) and `,,`
+(the ASCII form of the opening quote `„` in `pl`, `de`, `cs`, `sk`, `ro`, `hu`, `bg`, `ru`, `uk`, `lt`; also when the quote context is unclear) are ambiguous: report them with `fix_type: null`.
+Only `;;`, and `,,` in other languages, carry `fix_type: typography-fix`.
 
 ### Check: `typo-spell-check`
 
@@ -220,39 +231,19 @@ not installed. Install for spell checking support."
 
 ### Check: `typo-inconsistent-quotes`
 
-Find files that mix straight quotes (`"`, `'`) and curly/smart quotes (`"`, `"`,
-`'`, `'`) in the same file.
-
-```
-Grep for files containing both " and \u201C or \u201D
-```
-
-Inconsistent quotes suggest copy-paste from different sources.
+Find files that mix straight double quotes (`"`) and curly double quotes (`“ ” „ « »`) around quoted
+text in prose, outside code. Ignore apostrophes (`'` or `’` inside a word) and single quotes. Inconsistent
+quotes suggest copy-paste from different sources, but the right style is a language and house convention
+(`„…”` pl, `« »` fr, `“…”` en): report with `fix_type: null`, never a fix.
 
 ---
 
 ## Output Format
 
-Return TWO structures (same contract as content-encoding agent):
-
-### 1. `check_results[]` — complete matrix (ALL owned checks)
-
-For EVERY check in CC4, CC7, CC8 (all 16 checks), return a status even if
-passed. Checks requiring language detection that failed → `INSUFFICIENT DATA`.
+Return `check_results[]` and `findings[]` as specified in `agents/content-encoding.md` "Output Format", with this agent's own dimensions (not CC1-CC3).
+`check_results[]` covers EVERY check in CC4, CC7, CC8 (all 16), even when passed. CC8 checks need the language: `unknown` → `INSUFFICIENT DATA` (`fm-encoding-artifact` follows Scope Rule 2 instead).
 Checks requiring `aspell`/`hunspell` not installed → `INSUFFICIENT DATA`.
 
-```
-- check: string           # check slug from registry
-- dimension: string       # CC4, CC7, or CC8
-- status: PASS | PARTIAL | FAIL | N/A | INSUFFICIENT DATA
-- files_checked: number
-- issues_found: number
-```
-
-### 2. `findings[]` — details for FAIL and PARTIAL only
-
-Every FAIL finding includes `file`, `line`, `check` slug, `evidence`,
-`severity`, `confidence`, `fix_type`.
 
 ---
 
@@ -262,6 +253,8 @@ Every FAIL finding includes `file`, `line`, `check` slug, `evidence`,
 - CC8 checks MUST respect the language gate. Never run spell checks without
   a detected language.
 - Duplicate detection is capped at 50 files. Declare sampling strategy in evidence.
-- Template expressions in frontmatter must be stripped before encoding checks.
+- Strip template expressions (`{...}`, `{{ }}`, `<% %>`) from frontmatter values and from `.astro`/`.tsx`/`.jsx`/`.mdx` text before encoding and CC8 checks.
+- Bash is read-only (`git log`, `which`, `aspell`/`hunspell` on text piped in); never write files.
+- CC4, CC7 and CC8 follow the Scope Rules: nothing inside a code fence, code span or code-valued frontmatter is reported or counted.
 - `fm-title-missing` and `fm-description-missing` are advisory, not scored.
   SEO effectiveness is seo-audit's domain.
