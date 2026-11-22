@@ -211,8 +211,8 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Autocomplete attributes on common fields | 1.3.5 | Name, email, phone, address inputs without `autocomplete` |
 | Form validation errors announced | 4.1.3 | Error summary not in `aria-live` region |
 | Related fields grouped | 1.3.1 | Radio groups, address fields without `<fieldset>`/`<legend>` |
-| No redundant entry | 3.3.7 | Multi-step form that re-asks data already entered, with no autofill or "same as" option |
-| Accessible authentication | 3.3.8 | Paste blocked (`onPaste` `preventDefault`) on login/password fields; cognitive-test CAPTCHA (not object or personal-content recognition) with no alternative |
+| No redundant entry | 3.3.7 | Multi-step form that re-asks data already entered, with no autofill or "same as" option (exceptions: re-entry required for security or because the data is no longer valid) |
+| Accessible authentication | 3.3.8 | Paste blocked (`onPaste` `preventDefault`) on login/password fields with no password-manager or copy-paste alternative; cognitive-test CAPTCHA (not object or personal-content recognition) with no alternative |
 
 ### A6: Images & Media (weight 8)
 
@@ -232,7 +232,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 |-------|------|-----------|
 | Content reflows at 320px width | 1.4.10 | Horizontal scroll triggers, fixed-width containers |
 | Text resizable to 200% | 1.4.4 | Fixed `height`/`max-height` on text containers that clip enlarged text (`px` font sizes alone pass: browser zoom scales them) |
-| Target size >= 24x24 CSS px (44x44 is AAA 2.5.5) | 2.5.8 | Click/tap targets under 24x24 with under 24 px spacing to neighbours (inline links and user-agent controls are exempt) |
+| Target size >= 24x24 CSS px (44x44 is AAA 2.5.5) | 2.5.8 | Click/tap targets under 24x24 whose centred 24 px circle intersects another target or its circle (inline links and user-agent controls are exempt) |
 | Drag has a single-pointer alternative | 2.5.7 | Drag-only interactions (`draggable`, dnd-kit, sortable lists, card sorts) with no single-pointer alternative that needs no dragging (e.g. Move up/down buttons); a keyboard alternative alone does not satisfy it |
 | No content hidden at zoom | 1.4.10 | `overflow: hidden` on containers with text |
 | Viewport no disable scaling | 1.4.4 | `maximum-scale=1` or `user-scalable=no` in viewport meta |
@@ -488,8 +488,8 @@ Read deferred files:
 
 | Gate | FAIL (proven) | PASS | Otherwise |
 |------|---------------|------|-----------|
-| A2 Keyboard | a keyboard trap (2.1.2); `outline: none`/`0` with no replacement focus style anywhere in the audited sources (global `:focus-visible`, ring utilities, `box-shadow`) (2.4.7); a click handler on a non-interactive element (not a modal backdrop, presentational wrapper or delegation container) with no `tabindex`/`role`, no key handler and no keyboard-reachable control for the same action (2.1.1) | live evidence: `audit_keyboard` or a tab-through that exercises every custom widget and modal (Enter/Space included; name any unexercised one and the gate stays `CANNOT DETERMINE`) finds none of these and no other failing A2 check | `CANNOT DETERMINE` |
-| A4 Contrast | the effective foreground/background pair of one enabled element (not an overridden rule or a disabled control) under the selected standard's ratio (AA 4.5:1, 3:1 large; AAA 7:1, 4.5:1 large), or an axe contrast violation | an axe contrast scan of the live URL over the audited states with zero violations and no `incomplete` contrast nodes | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
+| A2 Keyboard | a keyboard trap (2.1.2); `outline: none`/`0` with no replacement focus style anywhere in the audited sources (global `:focus-visible`, ring utilities, `box-shadow`) (2.4.7); live evidence that a control cannot be operated by keyboard (2.1.1); a click handler on a non-interactive element (not a modal backdrop, presentational wrapper or delegation container) with no `tabindex`/`role`, no key handler and no keyboard-reachable control for the same action (2.1.1) | live evidence: `audit_keyboard` or a tab-through that exercises every custom widget and modal (Enter/Space included; name any unexercised one and the gate stays `CANNOT DETERMINE`) finds none of these and no other failing A2 check | `CANNOT DETERMINE` |
+| A4 Contrast | the effective foreground/background pair of one enabled text element (not an overridden rule or a disabled control) under the selected standard's ratio (AA 4.5:1, 3:1 large; AAA 7:1, 4.5:1 large), or an axe contrast violation (non-text contrast, 1.4.11, is checked separately) | an axe scan of the live URL over the audited states with the contrast rule of the selected standard (`color-contrast`; AAA `color-contrast-enhanced`) run, zero violations and no `incomplete` contrast nodes | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
 
 Across components a gate is FAIL if any component fails, PASS only if all pass, else `CANNOT DETERMINE`; an undecided gate makes the checks that need the missing evidence (focus order and operability for A2, rendered contrast for A4) `CANNOT DETERMINE`. `--quick` never has live evidence: its gates end FAIL or `CANNOT DETERMINE` (INCOMPLETE).
 
@@ -502,7 +502,7 @@ A keyboard trap is **proven** when a focus lock (custom trap, `Tab` keydown `pre
 | B | >= 70% and < 85% | No gate FAIL |
 | FAIL | < 70% | OR any gate FAIL |
 
-VERDICT: `../../shared/includes/audit-postamble.md` §1 first: a failing A2/A4 gate (row 1) or ≥4 critical findings (row 2) → FAIL at any score; a grade of FAIL (< 70%) is also FAIL, and outranks row 3 (INCOMPLETE never upgrades a FAIL); a gate `CANNOT DETERMINE` is this skill's coverage-gate FAIL (row 3) and, like a validity gate FAIL, → INCOMPLETE, so the grade of such a run is provisional and never certifies PASS or WARN. Otherwise the grade decides, capped by row 4: **A → PASS, B → WARN**, and 1-3 critical findings make an A a WARN (a skill is never looser than row 4).
+VERDICT: `../../shared/includes/audit-postamble.md` §1 first: a failing A2/A4 gate (row 1) or ≥4 critical findings (row 2) → FAIL at any score; a grade of FAIL (< 70%) is also FAIL, and outranks row 3 (INCOMPLETE never upgrades a FAIL); a gate `CANNOT DETERMINE` is this skill's coverage-gate FAIL (row 3) and, like a validity gate FAIL, → INCOMPLETE, so the grade of such a run is provisional and never certifies PASS or WARN; a grade of FAIL that comes only from `CANNOT DETERMINE` checks earning 0 (the score is >= 70% counting them as earned) is INCOMPLETE, not FAIL. Otherwise the grade decides, capped by row 4: **A → PASS, B → WARN**, and 1-3 critical findings make an A a WARN (a skill is never looser than row 4).
 
 ### 5.3 Report Output
 

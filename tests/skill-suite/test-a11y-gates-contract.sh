@@ -21,6 +21,7 @@ has   "trap needs no keyboard exit of any kind" 'no keyboard exit of any kind'
 has   "undetermined check stays in possible" 'staying in `possible`'
 has   "positive tabindex is a finding, not a gate FAIL" 'A positive `tabindex` (2.4.3) is a finding, not a gate FAIL.'
 has   "gate combines across components"      'a gate is FAIL if any component fails'
+has   "grade FAIL from undecided points is INCOMPLETE" 'is INCOMPLETE, not FAIL'
 has   "2.5.8 is the 24px AA target"      'Target size >= 24x24 CSS px (44x44 is AAA 2.5.5)'
 lacks "2.5.8 not in the AAA list"        '2.4.9, 2.5.8, 3.1.5'
 for sc in 2.4.11 2.5.7 3.2.6 3.3.7 3.3.8; do has "WCAG 2.2 criterion $sc is mapped" "| $sc |"; done
