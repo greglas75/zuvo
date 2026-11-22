@@ -136,10 +136,12 @@ if grep -q 'gh pr view' "$SHIP" && grep -q 'gh pr create' "$SHIP"; then
 else
   bad "(f) 'gh pr create' is unconditional — a second ship on the same branch dies at the last step"
 fi
-if grep -qi 'MERGED' "$SHIP"; then
-  pass "(f2) the merge outcome is verified from PR state, not from an exit code"
+# Ship never merges a PR (owner rule, live test 2026-11-22: two executors squash-merged over zero
+# checks). A bash block that calls `gh pr merge` is the regression; prose may still name it.
+if _code_only "$SHIP" | grep -q 'gh pr merge'; then
+  bad "(f2) a code block in ship runs 'gh pr merge' — ship ends at an open PR; the merge is the repo's merge path or zuvo:deploy"
 else
-  bad "(f2) nothing says to verify the merge via 'gh pr view --json state' — gh pr merge can exit non-zero AFTER merging"
+  pass "(f2) no code block in ship merges a PR"
 fi
 
 # ─── (g) one BASE_REF, resolved once ────────────────────────────────────────

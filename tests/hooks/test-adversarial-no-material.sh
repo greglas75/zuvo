@@ -509,15 +509,15 @@ grep -qF 'during the review' "$ERR" && bad "an untouched tree drew a tamper warn
 grep -qF 'tree_modified_during_review=' "$S/art.txt" && bad "the artifact of an untouched tree says it was modified" \
   || ok "the artifact of an untouched tree has no tree_modified_during_review line"
 
-echo "=== ship: the merge gate reads the rollup, not --watch's exit code ==="
+echo "=== ship: the PR check gate reads the rollup, not --watch's exit code (ship never merges) ==="
 SHIP="$ROOT/skills/ship/SKILL.md"
-grep -q 'statusCheckRollup' "$SHIP"   && ok "ship decides from the check rollup" || bad "ship still merges on --watch alone"
+grep -q 'statusCheckRollup' "$SHIP"   && ok "ship decides from the check rollup" || bad "ship still reports green on --watch alone"
 grep -q 'gh pr list --head "\$BRANCH" --state open' "$SHIP"   && ok "ship resolves only OPEN prs for the head (a reused branch name cannot match a merged PR)"   || bad "ship still uses gh pr view <branch>, which can resolve to a historical merged PR"
-grep -q 'merging UNVERIFIED' "$SHIP"   && ok "zero-checks is stated, not silently treated as green" || bad "zero-checks case is not surfaced"
+grep -q 'no checks configured — not merging' "$SHIP"   && ok "zero-checks is stated, not silently treated as green" || bad "zero-checks case is not surfaced"
 # Three fail-open paths the first cut left open: no jq, a failed `gh pr view`, and classic
-# Status-API entries. Each one ended at `gh pr merge` with the gate reporting "none failed".
-grep -q 'command -v jq' "$SHIP" && ok "ship refuses to run the merge gate without jq" || bad "an absent jq still falls through to merge"
-grep -q 'refusing to merge blind' "$SHIP" && ok "a failed rollup read blocks the merge instead of reading as zero checks" || bad "a gh failure is still indistinguishable from 'no checks configured'"
+# Status-API entries. Each one ended with the gate reporting "none failed" over unread checks.
+grep -q 'command -v jq' "$SHIP" && ok "ship refuses to run the check gate without jq" || bad "an absent jq still falls through to a green report"
+grep -q 'refusing to report green blind' "$SHIP" && ok "a failed rollup read blocks the green report instead of reading as zero checks" || bad "a gh failure is still indistinguishable from 'no checks configured'"
 grep -q '[.]state' "$SHIP" && ok "the rollup filters read .state too (classic Status-API entries)" || bad "a red classic commit status is still invisible to the gate"
 grep -q 'actions/workflows' "$SHIP" && ok "an empty rollup is distinguished from a repo that truly has no CI" || bad "'no checks yet' and 'no CI' are still the same branch"
 
