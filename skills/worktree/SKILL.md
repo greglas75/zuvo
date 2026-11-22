@@ -401,7 +401,7 @@ Steps:
 6. Merge: `git merge <feature-branch>`.
 7. If merge conflict occurs: report conflicts and STOP. Do not auto-resolve. Tell the user which files conflict and wait for instructions.
 8. If merge succeeds: run tests again on the merged result. Report pass/fail.
-9. Cleanup worktree: first run the PRUNE Step 3 local-files check on `$WT_PATH` (ignored files other than install/build output, secret-looking files included; here its `continue` means "skip the removal", and a failed inspection counts as "found"). If it finds any, keep the worktree, list them, and report `Worktree kept: ignored local files`; otherwise `git worktree remove "$WT_PATH"` (no `--force`).
+9. Cleanup worktree: first run the PRUNE Step 3 local-files check on `$WT_PATH` (ignored files other than install/build output, secret-looking files included; a failed inspection counts as "found": the block's SKIPPED branches mean "keep the worktree"). If it finds any, keep the worktree, list them, and report `Worktree kept: ignored local files`; otherwise `git worktree remove "$WT_PATH"` (no `--force`).
 10. Delete the feature branch with `git branch -d <feature-branch>` only when step 9 removed the worktree (git refuses to delete a branch a worktree still has checked out).
 
 Report: "Merged <branch> into <base>. Tests: N passing. Worktree removed." or, when step 9 kept it, "... Worktree kept at <path>: ignored local files (<list>)."
@@ -426,7 +426,7 @@ Steps:
 7. Leave the worktree first, then remove it after the same local-files check as Option 1 step 9 (found any: keep the worktree and say why): `cd "$MAIN_ROOT" && git worktree remove "$WT_PATH"`.
 8. Do NOT delete the branch (it is now tracked by the PR).
 
-Report: "PR created: <url>. Worktree removed. Branch preserved on remote."
+Report: "PR created: <url>. Worktree removed (or: kept, ignored local files <list>). Branch preserved on remote."
 
 ### Option 3: Keep As-Is
 
@@ -522,18 +522,24 @@ Checking against both the local and the remote-tracking base means a stale local
 `git worktree remove` does NOT protect ignored files: a clean worktree holding an ignored `.env` is removed with exit 0 and the file is gone (live test 2026-11-22: two of three executors lost a `.env` this way). Re-run the Local files check immediately before each removal, since the tree may have changed since Step 2:
 
 ```bash
-# inside the per-worktree loop; a failed inspection skips the worktree, it never counts as "nothing found"
-OUT=$(git -C "<path>" status --porcelain --ignored) && FILES=$(git -c core.quotePath=false -C "<path>" ls-files -o -i --exclude-standard) \
-  || { echo "SKIPPED <path>: could not inspect (git failed)"; continue; }
-LOCAL=$( { printf '%s\n' "$OUT" | sed -n 's/^!! //p' \
-             | awk '$0 !~ /(^|\/)(node_modules|dist|build|\.turbo|\.next|coverage|__pycache__|\.pytest_cache|target|\.venv)\/$/'
-           printf '%s\n' "$FILES" \
-             | awk '/(^|\/)\.env[^\/]*$|\.(pem|key|p12|pfx)$|(^|\/)(id_rsa|id_ed25519|credentials[^\/]*)$/ && !/(^|\/)node_modules\/(@[^\/]+\/)?[^\/]+\//'; } )   # files INSIDE an installed package are skipped (their .env.example is not yours); a .env directly under node_modules/ still counts
-if [ -n "$LOCAL" ]; then echo "SKIPPED <path>: ignored local files: $LOCAL"
-elif git worktree remove "<path>"; then   # NEVER --force
-  git branch -d "<branch>" || echo "KEPT branch <branch>: not fully merged"   # safe delete
+# A failed inspection skips the worktree; it never counts as "nothing found". No loop and no `continue`:
+# FINISH runs the same check for one path.
+if ! { OUT=$(git -C "<path>" status --porcelain --ignored) \
+       && FILES=$(git -c core.quotePath=false -C "<path>" ls-files -o -i --exclude-standard); }; then
+  echo "SKIPPED <path>: could not inspect (git failed)"
 else
-  echo "SKIPPED <path>: worktree remove refused (locked or changed)"
+  LOCAL=$( { printf '%s\n' "$OUT" | sed -n 's/^!! //p' \
+               | awk '$0 !~ /(^|\/)(node_modules|dist|build|\.turbo|\.next|coverage|__pycache__|\.pytest_cache|target|\.venv)\/$/'
+             printf '%s\n' "$FILES" \
+               | awk '/(^|\/)\.env[^\/]*$|\.(pem|key|p12|pfx)$|(^|\/)(id_rsa|id_ed25519|credentials[^\/]*)$/ && !/(^|\/)(node_modules\/(@[^\/]+\/)?[^\/]+|\.venv\/(lib[^\/]*|Lib|include|bin|Scripts))\//'; } )
+  # Files INSIDE an installed package are skipped (a vendored cacert.pem or .env.example is not yours);
+  # a .env directly under node_modules/ or .venv/ still counts.
+  if [ -n "$LOCAL" ]; then echo "SKIPPED <path>: ignored local files: $LOCAL"
+  elif git worktree remove "<path>"; then   # NEVER --force
+    git branch -d "<branch>" || echo "KEPT branch <branch>: not fully merged"   # safe delete
+  else
+    echo "SKIPPED <path>: worktree remove refused (locked or changed)"
+  fi
 fi
 ```
 

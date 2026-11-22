@@ -118,8 +118,9 @@ WORK_FILES = <files being touched>
    `git push`, `gh pr create` or writes a file, `--dry-run` instead prints `would <action>` and does
    nothing. A read-only `git ls-remote --quiet "$PUSH_REMOTE"` replaces the fetch, so refs stay as
    they were and `BASE_REF` resolves against them (say so in the output). Run every git read of a dry run
-   with `GIT_OPTIONAL_LOCKS=0` (`export` it first): a plain `git status` otherwise refreshes and writes
-   the index. The walk-through is step 6.
+   with `GIT_OPTIONAL_LOCKS=0` (put `export GIT_OPTIONAL_LOCKS=0` at the top of EVERY shell call, or use
+   `git --no-optional-locks`: each call is a fresh shell): a plain `git status` otherwise refreshes and
+   writes the index. `gh pr edit` is one more `would <action>`. The walk-through is step 6.
 
 1. **Detect current branch, flow, and the remote everything else resolves against:**
    ```bash
@@ -308,9 +309,9 @@ WORK_FILES = <files being touched>
      - **Direct flow:** merge `$PUSH_REMOTE/$TARGET_BRANCH` into the branch NOW.
      - **PR flow:** merge only when (1) `gh pr list --head "$BRANCH" --state open` shows no PR for
        the branch (a PR that a merge queue or CI already builds must not move under it) and (2)
-       nothing indicates a merge queue: the project's `CLAUDE.md`/contributing docs name none AND the
-       forge lookup succeeded and shows none (a lookup that failed, or docs that are silent, mean
-       "unknown", and unknown is treated as present). Otherwise do not merge: print
+       nothing indicates a merge queue: the forge lookup succeeded and shows none, and the project's
+       `CLAUDE.md`/contributing docs do not mention one (a lookup that failed means "unknown", and
+       unknown is treated as present). Otherwise do not merge: print
        `[SHIP] base moved, not merged (<reason>)` and put the distance in the PR body. With
        `GH_AVAILABLE=false` condition (1) is unknown: do not merge.
      - **After a merge, re-run the suite on the merged tree** (Phase 1 runs after this, so this is
@@ -404,11 +405,12 @@ WORK_FILES = <files being touched>
    # fix is not portable either: ${PIPESTATUS[0]} is bash-only — under zsh (the macOS default
    # login shell) the array is $pipestatus and 1-indexed, so ${PIPESTATUS[0]} expands to EMPTY and
    # TEST_RC silently becomes "". Redirect to a file, read $?, then look at the file.
-   TEST_LOG=$(mktemp -t ship-tests.XXXXXX)   # not a fixed /tmp name: two ship runs on one host
+   # mktemp, not a fixed /tmp name: two ship runs on one host would clobber each other's verdict, and
+   # a symlink pre-created at a predictable path would redirect the write.
+   TEST_LOG=$(mktemp -t ship-tests.XXXXXX)
    # `<test command>` is a placeholder: substitute the command step 1 detected (`npm test`, ...).
    # The `if` keeps a failing run from aborting a `set -e` shell before TEST_RC is captured.
-   if <test command> > "$TEST_LOG" 2>&1; then TEST_RC=0; else TEST_RC=$?; fi   # would clobber each other's verdict, and a symlink
-                                             # pre-created at a predictable path redirects the write
+   if <test command> > "$TEST_LOG" 2>&1; then TEST_RC=0; else TEST_RC=$?; fi
    tail -40 "$TEST_LOG"
    echo "[SHIP] TEST_RC=$TEST_RC log=$TEST_LOG"   # print it: the next block is a different shell
 
@@ -1498,7 +1500,7 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head moved or is not the commit this run pushed — re-run the gate"; exit 1; }
   [ "$(jq -r '.state' <<<"$PR_NOW")" = "OPEN" ] \
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is not OPEN ($(jq -r '.state' <<<"$PR_NOW"))"; exit 1; }
-  jq -r '"[SHIP] PR #'"$PR_NUMBER"' state=\(.state) merge=\(.mergeStateStatus) review=\(.reviewDecision // "none")"' <<<"$PR_NOW"   # report this; never merge on it
+  jq -r '"[SHIP] PR #'"$PR_NUMBER"' state=\(.state) merge=\(.mergeStateStatus) review=\(if (.reviewDecision // "") == "" then "none" else .reviewDecision end)"' <<<"$PR_NOW"   # report this; never merge on it
   # An open PR that cannot merge as it stands is not delivered: say which, and stop.
   [ "$(jq -r '.mergeStateStatus' <<<"$PR_NOW")" != "DIRTY" ] \
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is CONFLICTING with $TARGET_BRANCH — resolve it (ship does not merge the base into an open PR)"; exit 1; }
