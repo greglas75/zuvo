@@ -468,5 +468,16 @@ then pass "Codex invocation evidence and unsupported-call boundaries"
 else bad "Codex invocation evidence and unsupported-call boundaries"
 fi
 
+# ── D8 (live review test 2026-11-21): a transcript in a format the verifier does not parse ──
+# An Antigravity transcript holds no Claude/Codex records. "Zero tool calls seen" there is missing
+# evidence, and used to print a false DISAGREEMENT (dispatches=0 although four dispatches ran).
+printf '%s\n' '{"step":1,"kind":"invoke_subagent","name":"behavior"}' '{"step":2,"kind":"run_command","cmd":"adversarial-review --multi"}' > "$TMP/agy.jsonl"
+out="$(printf '%s' "$CLAIMS_2" | python3 "$V" --claims - --transcript "$TMP/agy.jsonl" --strict 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "UNKNOWN" && ! printf '%s' "$out" | grep -q "DISAGREEMENT"; then
+  pass "D8: an unparsed (non-Claude/Codex) transcript is UNKNOWN (exit 2), never a false DISAGREEMENT"
+else
+  bad "D8: unparsed transcript expected rc=2 UNKNOWN, got rc=$rc: $out"
+fi
+
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

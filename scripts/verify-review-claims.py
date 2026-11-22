@@ -184,6 +184,28 @@ def parse_tool_calls(path: Path) -> list[tuple[str, dict]]:
     return calls
 
 
+def recognized_format(path: Path) -> bool:
+    """True when the file holds at least one record in a transcript format this verifier parses
+    (Claude `message.content` blocks, Codex `response_item` payloads). An Antigravity or other
+    host transcript holds none, so "zero tool calls seen" there is missing evidence, not proof
+    that nothing was dispatched (live review test D8: a false DISAGREEMENT with dispatches=0
+    although four dispatches ran)."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            msg = rec.get("message")
+            if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+                return True
+            if rec.get("type") == "response_item" and isinstance(rec.get("payload"), dict):
+                return True
+    return False
+
+
 def adversarial_invocations(command: str) -> list[str]:
     """Argument strings of the real `adversarial-review` invocations in one Bash command.
 
@@ -328,6 +350,12 @@ def main() -> int:
     for tp in tpaths:
         calls.extend(parse_tool_calls(tp))
     c = claims_from(text)
+    if not any(recognized_format(tp) for tp in tpaths):
+        print(f"verify-review-claims: {note}")
+        print("  VERDICT: UNKNOWN — the transcript is not in a format this verifier parses "
+              "(Claude or Codex); no tool-call evidence can be derived, so no claim is accused or confirmed.")
+        print("  Record the gate line as UNVERIFIED(unparsed-transcript), not as a failure.")
+        return 2 if args.strict else 0
     o = observed(calls)
     unknown = unsupported_dependencies(c, o)
     findings = verify(c, o, unknown)
