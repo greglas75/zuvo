@@ -127,6 +127,31 @@ out=$( cd "$FIXTURE" && python3 "$BIN" "$WM/memory/reviews/wt.md" 2>&1 ); rc=$?
   && pass "control: from ANOTHER repository's checkout the report keeps its own root, the main checkout (a different git common dir)" \
   || bad "foreign-repo control: rc=$rc out=$out"
 
+# ── D3 (live review test 2026-11-21): the SKILL's own finding example parsed to zero findings ──
+# `R-1 [MUST-FIX] title` with no `##`/`**`/`-` opener matched nothing, and a report of such findings
+# exited 0 having verified nothing.
+lines=$(wc -l < "$FIXTURE/scripts/zuvo-home/poll-cost" | tr -d ' ')
+cat > "$PROBE" <<EOF
+# Review — bare shape
+
+R-1 [MUST-FIX] bare finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: a bare 'R-1 [MUST-FIX]' finding is parsed and its citation checked" \
+  || bad "D3: bare-shape finding not verified (rc=$rc): $(echo "$out" | tail -2)"
+cat > "$PROBE" <<EOF
+# Review — unparseable
+
+1) [MUST-FIX] tenant filter dropped (see scripts/zuvo-home/poll-cost:3)
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] \
+  && pass "D3: severity-tagged findings that parse to zero sections are rejected, not passed vacuously" \
+  || bad "D3: unparseable tagged findings exited $rc (vacuous pass)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

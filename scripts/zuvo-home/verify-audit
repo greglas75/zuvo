@@ -112,8 +112,11 @@ def find_project_root(audit_path: Path) -> Path:
 # `[A-Z]{1,3}\d+` with no dash and accepted only `#`/`**` openers, so it matched NONE of them:
 # 64 of 73 reports parsed to zero findings and exited 0 having verified nothing. Widening the
 # opener set and making the dash optional is what turns those vacuous passes into real checks.
+# A bare `R-1 [MUST-FIX] title` line (no opener) is also a header: the review SKILL's own finding
+# example used exactly that shape and parsed to zero findings (live test D3, 2026-11-21).
+SEVERITY_TAG = r"\[(?:MUST-FIX|RECOMMENDED|NIT|CRITICAL|HIGH|MEDIUM|LOW|BLOCKER)\]"
 FINDING_HEADER_RE = re.compile(
-    r"^(?:#{2,4}\s+|[*_]{2}\s*|[-*]\s+|\d+\.\s+)"
+    r"^(?:(?:#{2,4}\s+|[*_]{2}\s*|[-*]\s+|\d+\.\s+)|(?=[A-Z]{1,4}-?\d+\s*" + SEVERITY_TAG + r"))"
     r"(?:[HMLC]\d+\b|(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b|[A-Z]{1,4}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b)",
     re.IGNORECASE,
 )
@@ -275,21 +278,24 @@ def main() -> None:
             text,
             re.M | re.IGNORECASE,
         ) is not None
-        if claims_findings:
+        # Severity-tagged findings (`[MUST-FIX]`) that cite file:line but parsed to zero sections are
+        # the same vacuous pass (live test D3: the SKILL's own example shape verified nothing).
+        tagged = re.search(SEVERITY_TAG, text) is not None and FILE_LINE_RE.search(text) is not None
+        if claims_findings or tagged:
             print(
                 f"REJECTED: {audit_path.name} — the report has a MUST-FIX/BLOCKER/CRITICAL "
-                f"heading but NOT ONE finding section under it could be parsed, so nothing "
-                f"was verified.",
+                f"heading or severity-tagged file:line findings but NOT ONE finding section "
+                f"could be parsed, so nothing was verified.",
                 file=sys.stderr,
             )
             print(
                 "  Findings must open with a recognised header: `## R1 — title` or "
-                "`**R1 — title**` (letter-prefixed ID, no dash before the digits), each "
+                "`**R-1 — title**` or `R-1 [MUST-FIX] title` (letter-prefixed ID, dash optional), each "
                 "carrying at least one path/to/file.ext:LINE citation.",
                 file=sys.stderr,
             )
             print(
-                "  A bullet list (`- R-1 ...`) parses to zero sections and used to exit 0.",
+                "  A line that opens with prose before the ID parses to zero sections and used to exit 0.",
                 file=sys.stderr,
             )
             sys.exit(2)
