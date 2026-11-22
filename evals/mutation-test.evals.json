@@ -3,25 +3,25 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Run zuvo:mutation-test on src/price.ts with the LLM engine (--runner llm). The suite in src/price.test.ts has a gap: it never checks the 0-item case, so a mutation of `items.length === 0` survives. Close the gap in this run and write the report, including the Stryker-schema report.json.",
+      "prompt": "Run zuvo:mutation-test on src/price.ts with the LLM engine (--runner llm). The suite in src/price.test.ts has a gap: it never tests the free-shipping boundary, so the mutation `total >= 50` to `total > 50` survives. Close the gap in this run and write the report, including the Stryker-schema report.json.",
       "expected_output": "report.json is the AS-FOUND result: the surviving mutant keeps status Survived (with a statusReason saying the test was added in-run), and the headline mutation score is the as-found score with the post-fix score shown next to it. The post-fix state lives in a separate field of the zuvo JSON, never in report.json.",
       "files": [
         "src/price.ts",
         "src/price.test.ts"
       ],
       "assertions": [
-        "The transcript writes report.json with the mutant that the missing 0-item test let survive as status Survived rather than Killed, even though a test was added afterwards.",
+        "The transcript writes report.json with the `>=` to `>` mutant as status Survived rather than Killed, even though a boundary test was added afterwards.",
         "The final report prints the as-found mutation score as the headline and shows the after-fixes score next to it as a separate figure.",
-        "The transcript records the post-fix state in a field or file other than report.json, such as score_triaged_before in the zuvo JSON."
+        "The transcript records the post-fix state in a field or file other than report.json, with the as-found score in score_triaged_before and the after-fixes score in score_triaged."
       ],
       "fixtures": [
         {
           "path": "src/price.ts",
-          "content": "export function total(items: { price: number }[]): number {\n  if (items.length === 0) return 0;\n  return items.reduce((sum, item) => sum + item.price, 0);\n}\n"
+          "content": "export function shipping(total: number): number {\n  return total >= 50 ? 0 : 5;\n}\n"
         },
         {
           "path": "src/price.test.ts",
-          "content": "import { total } from './price';\n\ntest('sums prices', () => {\n  expect(total([{ price: 2 }, { price: 3 }])).toBe(5);\n});\n"
+          "content": "import { shipping } from './price';\n\ntest('charges shipping on a small order', () => {\n  expect(shipping(10)).toBe(5);\n});\n"
         }
       ]
     },
@@ -51,7 +51,7 @@
     },
     {
       "id": 3,
-      "prompt": "Run zuvo:mutation-test on src/price.ts, LLM engine, and close any survivors in the tests. This is a git repository on a feature branch and nothing is held back: commit the result the way the skill says.",
+      "prompt": "Run zuvo:mutation-test on src/price.ts, LLM engine. The suite never tests the free-shipping boundary, so `total >= 50` to `total > 50` survives; close it in the tests. This is a git repository on a feature branch and nothing is held back: commit the result the way the skill says.",
       "expected_output": "After the test fixes the run makes exactly ONE commit that contains test files only, with the message `test: close mutation survivors in <scope>`, staged by explicit path. No production file is committed and the report records the commit sha.",
       "files": [
         "src/price.ts",
@@ -65,11 +65,11 @@
       "fixtures": [
         {
           "path": "src/price.ts",
-          "content": "export function total(items: { price: number }[]): number {\n  if (items.length === 0) return 0;\n  return items.reduce((sum, item) => sum + item.price, 0);\n}\n"
+          "content": "export function shipping(total: number): number {\n  return total >= 50 ? 0 : 5;\n}\n"
         },
         {
           "path": "src/price.test.ts",
-          "content": "import { total } from './price';\n\ntest('sums prices', () => {\n  expect(total([{ price: 2 }, { price: 3 }])).toBe(5);\n});\n"
+          "content": "import { shipping } from './price';\n\ntest('charges shipping on a small order', () => {\n  expect(shipping(10)).toBe(5);\n});\n"
         }
       ]
     },

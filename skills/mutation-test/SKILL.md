@@ -75,7 +75,7 @@ Parse `$ARGUMENTS` as: `[path | full | continue] [--whole-files] [--max N] [--ca
 | `[path]` | — | Scope to a specific directory or file — still narrowed to its CHANGED lines |
 | `--whole-files` | — | Mutate the scoped files whole, changed lines or not. **Only when the user typed the literal flag.** Prose ("whole src/", "all of x.ts") does not count; never set by the agent or by a calling skill to "add context" or "include dependencies" |
 | `continue` | — | Resume an interrupted run from its checkpoint (Phase 3.0). Re-runs nothing already resolved. |
-| `full` | — | All production files that have test coverage |
+| `full` | — | Select all production files that have test coverage; lines are still the changed lines unless `--whole-files` |
 | `--max N` | — | Max total LLM mutations to execute (default: 50). Does not bound the native runner, which mutates exhaustively by design. |
 | `--category CATEGORY` | — | Only generate LLM mutations of this category: `BOUNDARY`, `LOGIC`, `NULL`, `ERROR`, `STATE`, `ASYNC`, `SECURITY` |
 | `--runner MODE` | `ZUVO_MUTATION_RUNNER` | `auto` (default) / `native` / `llm` / `hybrid` — see 0.1d |
@@ -96,8 +96,8 @@ whole. Restricted to production files that have tests. Then
 
 **Unchanged files are never mutated by default** — not as an "unchanged dependency used by the
 regression", not as context for a changed file. A `[path]` or a caller's file list is intersected
-with the changed lines too; mutating unchanged code takes the literal `--whole-files` (or `full`)
-from the USER. Static mutants are ignored (`ignoreStatic: true`, see 3.2b; the LLM engine follows it, 2.2).
+with the changed lines too; mutating unchanged code takes the literal `--whole-files`
+from the USER (`full` widens the file list, not the lines). Static mutants are ignored (`ignoreStatic: true`, see 3.2b; the LLM engine follows it, 2.2).
 
 **A prose request for whole files runs the default scope — and says so, without asking.** "Whole
 src/", "all of pricing.ts" is not the flag. Run changed-lines and print, before executing:
@@ -112,7 +112,7 @@ or stop with the estimate — never start it unattended.
 **33,367 lines** (204 files, 97 of them untouched by the branch) for a branch that changed **2,880**,
 and ran 15+ hours; static mutants were 71–83% of it. 2026-08-28: unscoped runs reached 258 minutes to
 answer a question about one module. A default that costs hours when the user meant "check what I just
-changed" is a defect in the default. `full` still means every covered production file — on request.
+changed" is a defect in the default.
 
 **Callers must pass a scope.** `zuvo:write-tests` probes mutation per file (`--mutate <file>`,
 via `shared/includes/test-mutation-probes.md`) and is unaffected. `zuvo:refactor` does BOTH: the
@@ -467,7 +467,7 @@ test runs — a project or session rule against them wins, then stop and say so;
 the changed lines (a run over ~30 min still needs the user's go-ahead). The loop is one script:
 
     bash "$ZUVO_BASE/scripts/mutation-survivor-reprobe.sh" --plan <plan.json> --out <results.json> \
-      --test-cmd '<mapped tests>'          # per-mutant "test_cmd" in the plan overrides it
+      --test-cmd '<mapped tests>' --timeout <3*PER_RUN, min 10>   # --test-cmd wins over any "test_cmd" in the plan
 
 `plan.json` is the 2.3b plan (`{"mutants":[{"id","file","original","mutated"}]}`). One process: it
 computes the changed-lines scope itself (`--diff <base>`, `--scope-file`; `--whole-files` only on the
@@ -475,7 +475,7 @@ user's flag) and SKIPS a mutant outside it, runs the baseline once per test comm
 each mutant, runs the tests, restores and hash-verifies it, and writes verdicts plus the score to
 `--out`. Exit 3 = not every mutant got a verdict (ERROR, failed baseline, unrestored file): that is
 an incomplete plan (3.3), never a score. It is Tier 1; Tier 2 is the same call over the survivors
-only with `--test-cmd '<full suite>'`. Record `tier2_runner: local` and which of (a) held.
+only with `--test-cmd '<full suite>'` and a `--timeout` sized for the suite. Record `tier2_runner: local` and which of (a) held.
 
 **Tier 2 is the opposite case.** A Tier 2 pass is ONE long full-suite run — the shape the `rt`
 rule was written for — budgeted separately in 1.3b (`TIER2_RUNS * BASELINE_TIME`). Measured
@@ -607,13 +607,14 @@ For each file, generate 5-10 mutations across these categories:
 - Each mutation must change observable behavior (not just cosmetic)
 - Skip trivial mutations: comments, whitespace, logging-only statements, console.log
 - Skip mutations in generated code, type definitions, and pure configuration
-- **Skip static mutants** (`ignoreStatic`, as in native): no mutant in a module-level constant
-  initialiser (`const X = {…}`, a literal table evaluated once at import). Killing one takes a test
-  per table entry; a changed constant is covered through the behaviour that reads it
+- **Skip static mutants** (`ignoreStatic`, as in native): none in code that runs once at import — a
+  module-level initialiser (`const X = {…}`, eager top-level assignment, static class field). A
+  function body inside it is not static. Killing one takes a test per table entry; a changed
+  constant is covered through the behaviour that reads it
 - Each mutation targets one specific behavioral change
 - Prefer mutations at decision points (branches, guards, returns)
 - **Mutate only inside the scope's changed lines** (an added file counts whole). A mutation on an
-  unchanged line of a changed file is out of scope unless the user typed `--whole-files`/`full`
+  unchanged line of a changed file is out of scope unless the user typed `--whole-files`
 
 **If `--category` is set:** Only generate mutations of the specified category.
 
@@ -1208,8 +1209,9 @@ genuinely spans several files it is a `gap-unfixed` with that stated as the reas
 **Commit the fixes — tests only, one commit.** In a git repo, unless `--report-only` or `--dry-run`:
 once the fix loop is done and the mapped tests are green, commit the strengthened test files as ONE
 commit with the message `test: close mutation survivors in <scope>` (`<scope>` as in 4.3b's
-filename). Stage explicit paths — never `git add -A`, never a production file, a `zuvo/` artifact or
-a `.stryker-*` file. No test change, no commit. A hook failure gets a NEW commit after the fix:
+filename). Stage explicit paths and commit them with `git commit --only -- <paths>` (a plain commit also takes
+whatever else is staged) — never `git add -A`, never a production file, a `zuvo/` artifact or a
+`.stryker-*` file; check `git show --name-only` lists only those test files before recording the sha. No test change, no commit. A hook failure gets a NEW commit after the fix:
 never `--no-verify` or `--amend`. Record the sha in `commit_fix` (`null` otherwise), so a caller
 knows the tree is clean when this skill returns.
 
@@ -1590,7 +1592,7 @@ Three rules that make it honest rather than decorative:
    | killed / killed-indirect | `Killed` | — |
    | survived (`gap`), also one closed by 4.2b | `Survived` | as found; a closed one carries `statusReason` |
    | native `NoCoverage` | `NoCoverage` | kept; counts as undetected (4.1) |
-   | survived (`equivalent`) | `Ignored` | `Ignored` means excluded from scoring with a reason — which is what an equivalent-mutant triage IS. Never `Killed`. |
+   | survived (`equivalent`) | `Survived` | as found; `statusReason` names the equivalence. The exclusion lives in the zuvo JSON's triaged score, never in this file. |
    | TIMEOUT | `Timeout` | counted as killed in 4.1, but the schema keeps it distinct |
    | mutation did not compile | `CompileError` | — |
    | mutation crashed the runner at test time (ERROR) | `RuntimeError` | not killed, not measured, outside the score (4.1); distinct from `CompileError` |
@@ -1643,7 +1645,7 @@ no config file. Resolve the engine as usual (0.1d), then:
   (add `--files-from` for a path scope) and print its `scope_mode`, `diff_base`, files, line ranges,
   `mutated_lines` vs `changed_lines` and `dropped_file=` lines. The mutant count is not known without a
   Stryker run; say so (an estimate: ~2 mutants per mutated line, 3.2b.2). Never print an LLM plan.
-- **llm:** the 2.3 plan.
+- **llm:** the 2.3 plan. **hybrid:** both. A non-Stryker native runner has no read-only scope helper: print the changed file list and line ranges from `git diff -U0` instead.
 
 ```
 MUTATION TEST PLAN (DRY RUN) — nothing was written

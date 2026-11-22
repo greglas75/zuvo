@@ -37,9 +37,12 @@
 #                                [--scope-file <list> | --diff <base> | --whole-files]
 #   --plan <p>        {"test_cmd": "...", "mutants": [{"id","file","original","mutated","test_cmd"?}]}
 #                     (or a bare list). Same content-anchored rules as a single probe.
-#   --out <p>         results JSON: per-mutant verdict/test_exit/restored/baseline/reason + counts + score.
+#                     --test-cmd, when given, overrides every "test_cmd" in the plan (Tier 2 reruns).
+#   --out <p>         results JSON: per-mutant verdict/test_exit/restored/baseline/reason + counts;
+#                     `score` only for a complete run (null otherwise). Never the plan or a mutated file.
 #   --scope-file <p>  the allowed scope, one `path` or `path:start-end` per line. Default: the lines
-#                     this branch changed (merge-base diff incl. uncommitted + untracked files).
+#                     this branch changed (diff vs the merge-base with the default branch, incl.
+#                     uncommitted + untracked files). A bare path line means the whole file.
 #                     A mutant whose anchor lies outside it is SKIPPED, never run.
 #   --diff <base>     diff base for the default scope.
 #   --whole-files     no scope filter — ONLY on the user's explicit request.
@@ -203,7 +206,7 @@ while [ $# -gt 0 ]; do
     --scope-file)    need_val $# "$1"; SCOPE_FILE="$2"; shift 2 ;;
     --diff)          need_val $# "$1"; DIFF_BASE="$2"; shift 2 ;;
     --whole-files)   WHOLE_FILES=1; shift ;;
-    -h|--help)       sed -n '2,69p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)       sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)               die "unknown argument: $1" ;;
   esac
 done
@@ -245,7 +248,7 @@ if isinstance(plan, list):
 mutants = plan.get("mutants") if isinstance(plan, dict) else None
 if not isinstance(mutants, list) or not mutants:
     usage("--plan: needs a non-empty mutants list")
-plan_cmd = plan.get("test_cmd") or default_cmd
+plan_cmd = plan.get("test_cmd")
 seen = set()
 for i, m in enumerate(mutants):
     if not isinstance(m, dict):
@@ -255,12 +258,17 @@ for i, m in enumerate(mutants):
             usage("--plan: mutant %d needs a non-empty string %r" % (i, k))
     if not isinstance(m.get("mutated"), str):
         usage("--plan: mutant %d needs a string 'mutated'" % i)
-    m["_cmd"] = m.get("test_cmd") or plan_cmd
+    m["_cmd"] = default_cmd or m.get("test_cmd") or plan_cmd
     if not m["_cmd"]:
         usage("--plan: mutant %s has no test_cmd (set it per mutant, in the plan, or via --test-cmd)" % m["id"])
     if m["id"] in seen:
         usage("--plan: duplicate id %s" % m["id"])
     seen.add(m["id"])
+
+_protected = {os.path.realpath(x) for x in [plan_path, scope_file] if x}
+_protected |= {os.path.realpath(m["file"]) for m in mutants}
+if os.path.realpath(out_path) in _protected:
+    usage("--out names the plan, the scope file or a mutated file: refusing to overwrite it")
 
 
 def scope_from_file(path):
@@ -290,31 +298,35 @@ def scope_from_diff(base_arg):
         r = git("symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
         if r.returncode == 0 and r.stdout.strip():
             cands.append(r.stdout.strip())
-        cands += ["origin/develop", "origin/main", "origin/master", "develop", "main", "master"]
-    best = None
-    for c in dict.fromkeys(cands):
+        cands += ["origin/main", "origin/master", "origin/develop", "main", "master", "develop"]
+    base = None
+    for c in dict.fromkeys(cands):       # the first that resolves wins: the default branch, not the nearest
         mb = git("merge-base", "HEAD", c)
-        if mb.returncode != 0:
-            continue
-        sha = mb.stdout.strip()
-        n = int(git("rev-list", "--count", sha + "..HEAD").stdout.strip() or 0)
-        if best is None or n < best[0]:
-            best = (n, sha)
-    if best is None:
+        if mb.returncode == 0 and mb.stdout.strip():
+            base = mb.stdout.strip()
+            break
+    if base is None:
         usage("no diff base found (tried %s): pass --diff <base> or --scope-file" % ", ".join(cands))
+    names = git("diff", "--name-only", "-z", "--relative", "--diff-filter=d", base, "--")
+    if names.returncode != 0:
+        usage("git diff failed: %s" % names.stderr.strip())
     scope = {}
-    cur = None
-    for line in git("diff", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--relative",
-                    best[1], "--").stdout.splitlines():
-        if line.startswith("+++ "):
-            cur = None if line.startswith("+++ /dev/null") else os.path.normpath(line[6:])
-        elif line.startswith("@@") and cur:
-            mt = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+    for name in filter(None, names.stdout.split("\0")):
+        d = git("diff", "-U0", "--no-color", "--relative", base, "--", name)
+        if d.returncode != 0:
+            usage("git diff failed for %s: %s" % (name, d.stderr.strip()))
+        cur = os.path.normpath(name)
+        scope.setdefault(cur, [])
+        for line in d.stdout.splitlines():
+            mt = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)   # only hunk headers; no path parsing
             if mt:
                 start, count = int(mt.group(1)), int(mt.group(2) if mt.group(2) is not None else 1)
-                if count > 0 and scope.get(cur, []) is not None:
-                    scope.setdefault(cur, []).append((start, start + count - 1))
-    for p in git("ls-files", "--others", "--exclude-standard").stdout.splitlines():
+                if count > 0:
+                    scope[cur].append((start, start + count - 1))
+    others = git("ls-files", "-z", "--others", "--exclude-standard")
+    if others.returncode != 0:
+        usage("git ls-files failed: %s" % others.stderr.strip())
+    for p in filter(None, others.stdout.split("\0")):
         scope[os.path.normpath(p)] = None
     return scope
 
@@ -349,14 +361,26 @@ def out_of_scope(m):
     if src.count(m["original"]) != 1:
         return False
     first = src.count("\n", 0, src.index(m["original"])) + 1
-    return not any(a <= first <= b for a, b in ranges)
+    old, new = m["original"].split("\n"), m["mutated"].split("\n")
+    touched = [first + i for i in range(len(old)) if i >= len(new) or old[i] != new[i]] or [first]
+    return not any(a <= ln <= b for ln in touched for a, b in ranges)
 
 
 results = [{"id": m["id"], "file": m["file"], "verdict": "NOT_RUN", "test_exit": "-", "restored": "yes",
             "baseline": "not_run", "reason": "not reached"} for m in mutants]
 child = None
+active = None       # (result index, file, sha before) of the probe in flight
 state = {}          # test command -> "passed" | "failed"
 stopped = None      # why the batch stopped early, if it did
+
+
+def sha(path):
+    import hashlib
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
 
 
 def write_results(interrupted=False):
@@ -369,7 +393,8 @@ def write_results(interrupted=False):
     complete = not interrupted and not stopped and c["error"] == 0 and c["not_run"] == 0
     doc = {"version": 1, "plan": plan_path, "complete": complete, "stopped": stopped,
            "scope": "whole-files" if scope is None else "changed-lines", "counts": c,
-           "score": round(100.0 * c["killed"] / measured, 2) if measured else None, "mutants": results}
+           "measured": measured,
+           "score": round(100.0 * c["killed"] / measured, 2) if measured and complete else None, "mutants": results}
     tmp = "%s.%d.tmp" % (out_path, os.getpid())
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
@@ -393,6 +418,12 @@ def on_signal(sig, frame):
             child.wait(timeout=60)
         except subprocess.TimeoutExpired:
             child.kill()
+    if active is not None:
+        i, f, before = active
+        if sha(f) != before:
+            results[i]["restored"] = "no"
+            stopped = "interrupted; file not restored: %s" % f
+        results[i]["reason"] = "interrupted mid-probe"
     write_results(interrupted=True)
     sys.exit(3)
 
@@ -420,16 +451,19 @@ for idx, m in enumerate(mutants):
             "--test-cmd", m["_cmd"], "--label", m["id"], "--timeout", timeout]
     if state.get(m["_cmd"]) == "passed":
         argv.append("--skip-baseline")
+    active = (idx, m["file"], sha(m["file"]))
     child = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, errors="surrogateescape")
     stdout, _ = child.communicate()
     rc, child = child.returncode, None
+    probe_restored = sha(m["file"]) == active[2]
+    active = None
     sys.stdout.write(stdout)
     sys.stdout.flush()
     kv = dict(l.split("=", 1) for l in stdout.splitlines() if re.match(r"^[a-z_]+=", l))
     verdict = kv.get("verdict")
     if verdict not in ("KILLED", "SURVIVED", "ERROR"):
         verdict, kv["reason"] = "ERROR", "no verdict emitted (probe exit %d)" % rc
-    rec.update(verdict=verdict, test_exit=kv.get("test_exit", "-"), restored=kv.get("restored", "yes"),
+    rec.update(verdict=verdict, test_exit=kv.get("test_exit", "-"), restored="yes" if probe_restored and kv.get("restored") == "yes" else "no",
                baseline=kv.get("baseline", "not_run"), reason=kv.get("reason", ""))
     if rec["baseline"] in ("passed", "failed"):
         state[m["_cmd"]] = rec["baseline"]

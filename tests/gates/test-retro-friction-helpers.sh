@@ -419,6 +419,30 @@ if command -v python3 >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   [ "$brc" -eq 3 ] && [ "$RES" = "['ERROR', 'ERROR'] False" ] \
     && pass "reprobe batch: failing baseline -> every mutant ERROR, batch incomplete (exit 3)" \
     || bad "reprobe batch: failing baseline gave rc=$brc res=$RES"
+
+  # --out must never be a file the batch is mutating: the results JSON would replace the source.
+  ( cd "$BT" && bash "$REPROBE" --plan plan.json --out calc.py --test-cmd "bash t.sh" --whole-files >/dev/null 2>&1 )
+  brc=$?
+  [ "$brc" -eq 2 ] && [ "$(digest "$BT/calc.py")" = "$BT_SHA" ] \
+    && pass "reprobe batch: --out naming a mutated file is refused, file untouched" \
+    || bad "reprobe batch: --out over a production file was not refused (rc=$brc)"
+
+  # Tier 2: --test-cmd overrides a per-mutant "test_cmd" — else a survivor rerun repeats the weak suite.
+  printf '[{"id":"M1","file":"calc.py","original":"return a * b","mutated":"return a + b","test_cmd":"exit 0"}]\n' > "$BT/plan2.json"
+  ( cd "$BT" && bash "$REPROBE" --plan plan2.json --out res4.json --test-cmd "bash t.sh" >/dev/null 2>&1 )
+  RES="$(python3 -I -c 'import json;print(json.load(open("'"$BT"'/res4.json"))["mutants"][0]["verdict"])' 2>&1)"
+  [ "$RES" = "KILLED" ] \
+    && pass "reprobe batch: --test-cmd overrides the plan's per-mutant test_cmd" \
+    || bad "reprobe batch: per-mutant test_cmd beat --test-cmd (verdict=$RES)"
+
+  # A multi-line anchor that STARTS on an allowed line but edits a line outside it is out of scope.
+  printf 'calc.py:1-1\n' > "$BT/scope.txt"
+  printf '[{"id":"ML","file":"calc.py","original":"def add(a, b):\\n    return a + b","mutated":"def add(a, b):\\n    return a - b"}]\n' > "$BT/plan3.json"
+  ( cd "$BT" && bash "$REPROBE" --plan plan3.json --out res5.json --test-cmd "bash t.sh" --scope-file scope.txt >/dev/null 2>&1 )
+  RES="$(python3 -I -c 'import json;print(json.load(open("'"$BT"'/res5.json"))["mutants"][0]["verdict"])' 2>&1)"
+  [ "$RES" = "SKIPPED" ] \
+    && pass "reprobe batch: scope follows the lines the edit changes, not the anchor's first line" \
+    || bad "reprobe batch: multi-line anchor leaked past the scope (verdict=$RES)"
 else
   printf 'SKIP: reprobe cases (python3 or git missing)\n'
 fi
