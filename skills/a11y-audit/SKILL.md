@@ -173,10 +173,11 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | All interactive elements focusable | 2.1.1 | `<div onClick>` without `tabIndex` or `role="button"` |
 | Tab order matches visual order (no positive tabindex) | 2.4.3 | `tabindex` values > 0 |
 | Focus visible on all interactive elements | 2.4.7 | `:focus-visible` or `:focus` styles present for interactive elements |
-| No keyboard traps | 2.1.2 | Modal/dialog without escape handler, custom widgets without blur path |
+| No keyboard traps | 2.1.2 | Focus lock with no keyboard exit: `Tab` keydown `preventDefault`, blur-to-refocus, custom focus trap with no Escape/close control (a trap is CRITICAL, see 5.2) |
 | Skip navigation link present | 2.4.1 | First focusable element links to `#main` or `#content` |
 | Custom component keyboard handlers | 2.1.1 | Custom interactive elements missing `onKeyDown`/`onKeyUp` for Enter, Space, Escape, Arrow keys |
 | Modal/dialog focus management | 2.4.3 | Focus trapped inside modal, focus returns to trigger on close |
+| Focused element not hidden by sticky UI | 2.4.11 | `position: fixed/sticky` header or banner without `scroll-padding-top` / `scroll-margin` |
 
 ### A3: ARIA Patterns (weight 10)
 
@@ -210,6 +211,8 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Autocomplete attributes on common fields | 1.3.5 | Name, email, phone, address inputs without `autocomplete` |
 | Form validation errors announced | 4.1.3 | Error summary not in `aria-live` region |
 | Related fields grouped | 1.3.1 | Radio groups, address fields without `<fieldset>`/`<legend>` |
+| No redundant entry | 3.3.7 | Multi-step form that re-asks data already entered, with no autofill or "same as" option |
+| Accessible authentication | 3.3.8 | Paste blocked (`onPaste` `preventDefault`) or `autocomplete="off"` on login/password fields; CAPTCHA with no alternative |
 
 ### A6: Images & Media (weight 8)
 
@@ -228,8 +231,9 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Check | WCAG | Detection |
 |-------|------|-----------|
 | Content reflows at 320px width | 1.4.10 | Horizontal scroll triggers, fixed-width containers |
-| Text resizable to 200% | 1.4.4 | Font sizes in `px` instead of `rem`/`em` |
-| Touch targets minimum 44x44px | 2.5.8 | Small click/tap targets (links, buttons, icons) |
+| Text resizable to 200% | 1.4.4 | Fixed `height`/`max-height` on text containers that clip enlarged text (`px` font sizes alone pass: browser zoom scales them) |
+| Target size >= 24x24 CSS px (44x44 is AAA 2.5.5) | 2.5.8 | Small click/tap targets (links, buttons, icons) |
+| Drag has a single-pointer alternative | 2.5.7 | Drag-only interactions (`draggable`, dnd-kit, sortable lists, card sorts) with no button or keyboard alternative |
 | No content hidden at zoom | 1.4.10 | `overflow: hidden` on containers with text |
 | Viewport no disable scaling | 1.4.4 | `maximum-scale=1` or `user-scalable=no` in viewport meta |
 
@@ -237,11 +241,11 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 
 | Check | WCAG | Detection |
 |-------|------|-----------|
-| prefers-reduced-motion respected | 2.3.3 | CSS `@media (prefers-reduced-motion)` present |
+| prefers-reduced-motion respected | 2.3.3 (AAA; best practice at AA) | CSS `@media (prefers-reduced-motion)` present |
 | No content flashes > 3 times/sec | 2.3.1 | Animation durations < 333ms with repeating patterns |
 | Animations can be paused/stopped | 2.2.2 | Auto-playing animations without pause control |
 | Carousels have pause control | 2.2.2 | Auto-advancing carousels without pause button |
-| Page transitions respect reduced motion | 2.3.3 | Route transitions without motion preference check |
+| Page transitions respect reduced motion | 2.3.3 (AAA; best practice at AA) | Route transitions without motion preference check |
 
 ### A9: Reading & Content (weight 5)
 
@@ -252,6 +256,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Link text is descriptive | 2.4.4 | "click here", "read more", "learn more" without context |
 | Consistent navigation | 3.2.3 | Nav component differs across pages |
 | Page titles descriptive and unique | 2.4.2 | Missing `<title>`, duplicate titles, generic titles |
+| Help in a consistent place | 3.2.6 | Help/contact link present on some pages but moved or missing on others |
 
 ### A10: Legal Compliance Status (NOT scored — separate legal risk section)
 
@@ -354,7 +359,7 @@ Component type: [PAGE | FEATURE | SHARED]
 | A7  | [N]   | 6   | [summary] |
 | A8  | [N]   | 5   | [summary] |
 | A9  | [N]   | 5   | [summary] |
-Critical gates: A2=[N]/12 A4=[N]/10 -- [PASS/FAIL]
+Critical gates: A2=[N]/12 [PASS/FAIL/CANNOT DETERMINE] A4=[N]/10 [PASS/FAIL/CANNOT DETERMINE]
 ```
 
 **Scoring per dimension:** Each check within a dimension scores proportionally. Example: A1 has 5 checks, each worth 2 points (total 10). A check scores 0 (fail), 1 (partial), or full points (pass).
@@ -413,12 +418,12 @@ For each dimension, verify against WCAG 2.2 success criteria:
    - **PASS** -- criterion satisfied with evidence
    - **FAIL** -- criterion violated with evidence
    - **CANNOT DETERMINE** -- requires manual verification (e.g., screen reader testing, cognitive assessment)
-3. For CANNOT DETERMINE items, describe what manual test is needed
+3. For CANNOT DETERMINE items, describe what manual test is needed. A CANNOT DETERMINE check earns no points and leaves its dimension's maximum (and the total `possible`) in 5.2
 
 **WCAG Level mapping:**
-- Level A (minimum): 1.1.1, 1.2.1, 1.3.1, 1.4.1, 2.1.1, 2.1.2, 2.2.2, 2.3.1, 2.4.1, 2.4.2, 2.4.3, 2.4.4, 3.1.1, 3.2.1, 3.3.1, 3.3.2, 4.1.2
-- Level AA (standard target): Level A + 1.3.5, 1.4.3, 1.4.4, 1.4.10, 1.4.11, 2.4.7, 3.1.2, 3.2.3, 3.3.3, 4.1.3
-- Level AAA (if `--standard AAA`): Level AA + 1.4.6 (7:1 contrast), 2.3.3, 2.4.9, 2.5.8, 3.1.5, 3.1.6
+- Level A (minimum): 1.1.1, 1.2.1, 1.2.2, 1.3.1, 1.4.1, 1.4.2, 2.1.1, 2.1.2, 2.2.2, 2.3.1, 2.4.1, 2.4.2, 2.4.3, 2.4.4, 3.1.1, 3.2.1, 3.2.6, 3.3.1, 3.3.2, 3.3.7, 4.1.2
+- Level AA (standard target): Level A + 1.3.5, 1.4.3, 1.4.4, 1.4.10, 1.4.11, 2.4.7, 2.4.11, 2.5.7, 2.5.8, 3.1.2, 3.2.3, 3.3.3, 3.3.8, 4.1.3
+- Level AAA (if `--standard AAA`): Level AA + 1.4.6 (7:1 contrast), 2.3.3, 2.4.9, 2.5.5 (44x44 target), 3.1.5, 3.1.6
 
 ---
 
@@ -477,20 +482,25 @@ Read deferred files:
 
 **Per-dimension scoring:** Each dimension has a max weight. Score = sum of check scores within dimension.
 
-**Overall score:** `(total earned / total possible) * 100`, where *possible* is the sum of the maxima of the dimensions in scope: `full` = 76 (A1-A9; A10 is the legal risk section and is never scored), `--quick` = 22 (A2 12 + A4 10).
+**Overall score:** `(total earned / total possible) * 100`, where *possible* is the sum of the maxima of the dimensions in scope (`full` = 76: A1-A9; A10 is the legal risk section and is never scored; `--quick` = 22: A2 12 + A4 10), minus the points of CANNOT DETERMINE checks.
 
-**Critical gates (explicit pass thresholds):**
-- A2 (Keyboard Navigation) < 6/12 --> automatic FAIL regardless of overall score
-- A4 (Color & Contrast) < 5/10 --> automatic FAIL regardless of overall score
+**Critical gates are decided by evidence, never by a score threshold.** Static analysis cannot prove keyboard operability or rendered contrast, so it may only FAIL a gate on a proven violation; PASS needs live evidence.
+
+| Gate | FAIL (proven) | PASS | Otherwise |
+|------|---------------|------|-----------|
+| A2 Keyboard | a keyboard trap (2.1.2); positive `tabindex` (2.4.3); `outline: none`/`0` with no replacement focus style (2.4.7); a click handler on a non-interactive element with no `tabindex`/`role` and no key handler (2.1.1) | live evidence: `audit_keyboard` or a tab-through finds none of these | `CANNOT DETERMINE` |
+| A4 Contrast | a literal foreground/background pair in one rule or element under 4.5:1 (3:1 large text), or an axe contrast violation | an axe contrast scan of the live URL with zero violations | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
+
+A keyboard trap is **proven** when a focus lock (custom trap, `Tab` keydown `preventDefault`, blur-to-refocus) has no Escape or close control reachable by keyboard. A proven trap is a CRITICAL finding and fails A2. A library dialog (MUI, Radix, Headless UI) supplies Escape and focus handling: it is neither proof of a trap nor proof that none exists elsewhere.
 
 **Grade thresholds:**
 | Grade | Score | Condition |
 |-------|-------|-----------|
-| A | >= 85% | All critical gates pass |
-| B | >= 70% and < 85% | All critical gates pass |
-| FAIL | < 70% | OR any critical gate fails |
+| A | >= 85% | No gate FAIL |
+| B | >= 70% and < 85% | No gate FAIL |
+| FAIL | < 70% | OR any gate FAIL |
 
-VERDICT: `../../shared/includes/audit-postamble.md` §1 first: a failing A2/A4 gate (row 1) or ≥4 critical findings (row 2) → FAIL at any score; a grade of FAIL (< 70%) is also FAIL, and outranks row 3 (INCOMPLETE never upgrades a FAIL); validity gate FAIL (row 3) → INCOMPLETE. Otherwise the grade decides, capped by row 4: **A → PASS, B → WARN**, and 1-3 critical findings make an A a WARN (a skill is never looser than row 4).
+VERDICT: `../../shared/includes/audit-postamble.md` §1 first: a failing A2/A4 gate (row 1) or ≥4 critical findings (row 2) → FAIL at any score; a grade of FAIL (< 70%) is also FAIL, and outranks row 3 (INCOMPLETE never upgrades a FAIL); a gate `CANNOT DETERMINE` is this skill's coverage-gate FAIL (row 3) and, like a validity gate FAIL, → INCOMPLETE, so the grade of such a run is provisional and never certifies PASS or WARN. Otherwise the grade decides, capped by row 4: **A → PASS, B → WARN**, and 1-3 critical findings make an A a WARN (a skill is never looser than row 4).
 
 ### 5.3 Report Output
 
@@ -511,8 +521,8 @@ SCORE: [N]% -- Grade [A/B/C/FAIL]
 ===============================================
 
 ## Critical Gate Status
-  A2 (Keyboard Navigation): [PASS/FAIL] ([N]/12)
-  A4 (Color & Contrast):    [PASS/FAIL] ([N]/10)
+  A2 (Keyboard Navigation): [PASS/FAIL/CANNOT DETERMINE] ([N]/12)
+  A4 (Color & Contrast):    [PASS/FAIL/CANNOT DETERMINE] ([N]/10)
 
 ## Dimension Scores
 | # | Dimension | Score | Max | Key WCAG Criteria |
@@ -615,7 +625,7 @@ A11Y-AUDIT COMPLETE
 Components audited: [N]
 Standard: WCAG 2.2 [AA|AAA]
 Score: [N]% -- Grade [A/B/C/FAIL]
-Critical gates: A2=[PASS/FAIL] A4=[PASS/FAIL]
+Critical gates: A2=[PASS/FAIL/CANNOT DETERMINE] A4=[PASS/FAIL/CANNOT DETERMINE]
 Findings: [N] CRITICAL, [N] HIGH, [N] MEDIUM
 Fixes generated: [N] (if --fix)
 Legal: [status summary]

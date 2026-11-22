@@ -468,7 +468,7 @@ This agent evaluates one critical gate and must report explicit PASS | FAIL | IN
 
 **CG5 = FAIL means the overall audit result is FAIL regardless of score.**
 
-If D3.1 is FAIL (no JSON-LD found at all), CG5 is automatically FAIL.
+If D3.1 is FAIL (no JSON-LD found at all), CG5 is FAIL. Report the raw status: the dispatcher turns a gate the page profile exempts into N/A (`seo-page-profile-registry.md` "Gate applicability").
 
 Note: CG1, CG2, CG3, CG4, CG6 are evaluated by the Technical agent, not this agent.
 

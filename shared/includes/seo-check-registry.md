@@ -137,7 +137,7 @@
 
 | check_slug | Check | owner_agent | layer | enforcement | evidence_mode | CG? | fix_type |
 |------------|-------|-------------|-------|-------------|---------------|-----|----------|
-| `https-active` | HTTPS is active or deploy config proves it | `seo-technical` | core | blocking | proxy | CG3 | null |
+| `https-active` | HTTPS is enforced per deploy/host config, or an `http://` production base URL proves it is not (SKILL Phase 4.1) | `seo-technical` | core | blocking | either | CG3 | null |
 | `mixed-content` | No `http://` resource references leak into production paths | `seo-technical` | hygiene | scored | code | -- | null |
 | `security-headers` | Security headers are configured through the platform or host | `seo-technical` | hygiene | scored | either | -- | `headers-add` |
 | `canonical-present` | Canonical is present at the layout/template level | `seo-technical` | core | blocking | code | CG4 | `canonical-fix` |

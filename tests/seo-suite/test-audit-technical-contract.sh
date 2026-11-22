@@ -21,4 +21,10 @@ assert_contains "$AGENT_FILE" 'Each row must include:'
 assert_contains "$AGENT_FILE" '- `tier`'
 assert_contains "$AGENT_FILE" 'NEEDS_LIVE_CHECK'
 
+# CG3 must not PASS on the absence of http:// (the skill forbids it).
+if grep -F '| **CG3** |' "$AGENT_FILE" | grep -Fq 'No hardcoded `http://` URLs'; then
+  fail "agent CG3 PASS criterion must not be 'no hardcoded http:// URLs'"
+fi
+assert_contains "$AGENT_FILE" 'Deploy/host config enforces HTTPS'
+
 pass "seo-audit technical contract"
