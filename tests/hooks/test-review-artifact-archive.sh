@@ -279,5 +279,16 @@ if grep -q -- '--archive' "$ROOT/shared/includes/review-artifact.md"; then
   pass "the shared artifact contract carries the manual --archive fallback"
 else bad "review-artifact.md never mentions --archive — non-Claude hosts silently keep losing proofs"; fi
 
+# 7. D10 (live review test 2026-11-21): a run sandboxed with ZUVO_HOME (no ZUVO_REVIEW_ARCHIVE) wrote its
+# archive into the real ~/.zuvo — the sandbox leaked. ZUVO_HOME must relocate the archive.
+fresh c-home
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
+write_art aaa..bbb-home 'adversarial: zuvo/proofs/p-adversarial.txt'
+( unset ZUVO_REVIEW_ARCHIVE; export ZUVO_HOME="$TMP/zhome"
+  bash "$SYNC" --archive "$REPO" --slug aaa..bbb-home >/dev/null 2>&1 )
+if [ -f "$TMP/zhome/review-archive/c-home/reviews/aaa..bbb-home.md" ] && [ ! -e "$HOME/.zuvo/review-archive" ]; then
+  pass "ZUVO_HOME relocates the archive (D10: sandbox no longer leaks into ~/.zuvo)"
+else bad "D10: --archive ignored ZUVO_HOME — a sandboxed run still writes the real ~/.zuvo/review-archive"; fi
+
 [ "$fail" -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit "$fail"
