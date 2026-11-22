@@ -1,9 +1,8 @@
 # SEO Page Profile Registry
 
 > Shared page-profile heuristics for `seo-audit`.
-> Profiles tune D9/D10 content and GEO expectations without weakening the
-> blocking contract for crawlability, structured data SSR, HTTPS, or canonical
-> correctness.
+> Profiles tune D9/D10 content and GEO expectations and decide which critical
+> gates apply. A gate that applies is never weakened.
 
 ## Profile Rules
 
@@ -68,3 +67,21 @@
 - D10 enforcement: `advisory`
 - Notes: Logged-in shells, dashboards, and utility wrappers should not be
   punished like editorial pages. Structure and crawlability still matter.
+
+## Gate applicability
+
+A gate a profile exempts is `N/A`, not FAIL and not PROVISIONAL (`seo-audit` Phase 4.1). Every other cell: the gate applies in full. An exempt gate's own blocking check (its row in `seo-check-registry.md`) is `N/A`: excluded from scoring, no finding.
+
+| Gate | marketing | blog | ecommerce | docs | app-shell |
+|------|-----------|------|-----------|------|-----------|
+| CG1 sitemap | applies | applies | applies | applies | N/A |
+| CG2 Googlebot not blocked | applies | applies | applies | applies | N/A |
+| CG3 HTTPS | applies | applies | applies | applies | applies |
+| CG4 canonical | applies | applies | applies | applies | N/A |
+| CG5 JSON-LD SSR | applies | applies | applies | only when JSON-LD exists | N/A |
+| CG6 AI crawler policy | applies | applies | applies | applies | N/A |
+
+`app-shell` is a logged-in shell: nothing in it is meant to be indexed, so
+sitemap, canonical, JSON-LD and crawler policy have no subject (`robots-exists`
+stays a scored check). `docs` sites rarely carry JSON-LD; its absence is the scored
+`json-ld-present` check, while client-only JSON-LD that exists still fails CG5.

@@ -161,7 +161,7 @@ This audit is read-only against source code.
 | `--quick` | Critical gates only -- fast pass/fail (CG1-CG6) |
 | `--content-only` | Content-focused audit: D7, D9, D10 |
 | `--geo` | GEO-focused audit: D3, D5, D9, D10 |
-| `--profile <marketing|docs|blog|ecommerce|app-shell>` | Canonical flag for overriding the D9/D10 content heuristics profile |
+| `--profile <marketing|docs|blog|ecommerce|app-shell>` | Canonical flag for overriding the page profile (D9/D10 heuristics and which critical gates apply) |
 | `--content-profile auto|marketing|docs|blog|ecommerce|app-shell` | Legacy alias for `--profile`; accept for backward compatibility |
 | `--live-sample-bots <default|all|bot1,bot2>` | In live mode, probe representative bots or an explicit subset from `seo-bot-registry.md` and emit a Bot Policy Matrix |
 | `--persist-backlog` | Record prioritized findings through `backlog-add` (Phase 7) |
@@ -206,8 +206,10 @@ Store results:
 ```
 DETECTED_STACK = [astro | nextjs | hugo | wordpress | react | html]
 CONTENT_FORMAT = [markdown | database | none]
-CONTENT_PROFILE = [auto | marketing | docs | blog | ecommerce | app-shell]
+CONTENT_PROFILE = [marketing | docs | blog | ecommerce | app-shell]
 ```
+
+`CONTENT_PROFILE` is `--profile` (or its legacy alias); without it (or with `auto`), resolve it here and print the reason. A client-rendered app behind login (every route auth-guarded, no public landing or content pages, no sitemap config) is `app-shell`; a docs generator or a `docs/` tree that is the site is `docs`; a post-dominated tree is `blog`; product/cart routes are `ecommerce`; everything else is `marketing`. The profile also decides which critical gates apply (Phase 4.1); a detected profile that exempts gates prints them and the signals behind it in the header and Known Gaps.
 
 Print:
 ```
@@ -393,7 +395,7 @@ For fix_type identifiers and safety classifications, agents MUST use `../../shar
 - "Search Console setup indicators" is advisory only — cannot be confirmed from repo in most cases. Score as INSUFFICIENT DATA in code-only mode unless verification meta tag or DNS TXT record is present in config.
 
 **D11 — Security and Technical (CG3 + CG4):**
-- CG3 (HTTPS active): In code-only mode, report INSUFFICIENT DATA unless deploy config explicitly proves TLS (e.g., `vercel.json` with forceSSL, `netlify.toml` with force_ssl, Cloudflare always-HTTPS). Absence of `http://` refs is not proof of HTTPS.
+- CG3 (HTTPS active): decided by the rule in Phase 4.1 (CG3 row); never PASS from the absence of `http://` refs.
 - CG4 (Canonical present): Check for `<link rel="canonical">` or framework equivalent (Next.js `alternates.canonical`, Astro canonical in layout) at layout/template level. Must be a real check with evidence, not inferred from "no canonical issues found".
 
 ### CodeSift query patterns (when available)
@@ -434,6 +436,8 @@ Verify JSON-LD and meta tags in both:
 
 Also check that meta tags are rendered correctly and OG images are accessible.
 
+**CG3 probe:** request the `http://` and `https://` forms of the site URL and record the redirect chain; a live URL that is itself `http://` on a non-local host, or an `https://` form that fails, is live evidence for CG3.
+
 ### 3.3 Live Bot Matrix Sampling
 
 When `--live-sample-bots` is provided, or when live mode already has enough
@@ -469,7 +473,7 @@ All 6 gates MUST have explicit status:
 ```
 CG1: Sitemap exists                    -- from D4
 CG2: Googlebot not blocked             -- from D5
-CG3: HTTPS active                      -- from D11 (code-only: INSUFFICIENT DATA unless deploy config like `vercel.json`, `netlify.toml`, or force-https proves TLS)
+CG3: HTTPS active                      -- from D11 (rule below)
 CG4: Canonical tags present            -- from D11
 CG5: JSON-LD server-side rendered      -- from D3
 CG6: AI crawler policy conscious       -- from D5
@@ -479,9 +483,19 @@ CG6: AI crawler policy conscious       -- from D5
 - `PASS` -- evidence confirms gate is satisfied
 - `FAIL` -- evidence confirms gate is not satisfied
 - `INSUFFICIENT DATA` -- static analysis is inconclusive and no live verification is available
+- `N/A` -- the active page profile exempts the gate (table below); not counted as FAIL or PROVISIONAL
+
+**Profile applicability (read `CONTENT_PROFILE`, `seo-page-profile-registry.md` "Gate applicability").** Agents report raw gate statuses; this step overrides an exempt gate to `N/A`, keeps the raw status in the evidence, and applies it before Phase 4.2: the gate's own blocking check (its row in `seo-check-registry.md`) is `N/A`, excluded from scoring, with no finding and no fix. Other checks (e.g. `robots-exists`) stay scored. `docs`: a raw CG5 FAIL whose evidence says no JSON-LD exists becomes `N/A`; client-only JSON-LD that exists stays FAIL.
+
+**Gates that need a live response are decided from source when source can decide them, in the default (no `--live-url`) mode.** Without a live response a gate is never FAIL for lack of one and never PASS for lack of contrary evidence. CG3 is the one gate whose proof is a response:
+- `PASS` -- deploy/host config enforces HTTPS (`force_ssl`, an http-to-https redirect rule, Cloudflare Always-HTTPS or an HTTPS-only listener; an HSTS header alone is not proof, it is only honoured over HTTPS) and no production base URL is `http://`, or a live probe where `https://` answers and `http://` redirects to it or is closed. A CSP `upgrade-insecure-requests` only upgrades subresources and is not proof.
+- `FAIL` -- source proves the site is published over HTTP: the production (not dev or env-fallback) `site` / `baseURL` / `metadataBase` / canonical / sitemap `<loc>` is `http://` on a non-local host (`localhost`, `127.0.0.1`, `*.local`, `*.test`, `*.internal` excluded) and no HTTPS enforcement is found, or a live probe shows no HTTPS. A conclusive live probe outranks source evidence; report a contradiction in the evidence.
+- `INSUFFICIENT DATA` -- anything else, including an `http://` base URL next to HTTPS enforcement (report the stale scheme on the canonical/sitemap check, not under CG3). No `http://` refs is not proof of HTTPS.
+
+CG5 and CG6 follow the same rule: client-only JSON-LD in source is a FAIL, an edge/WAF override that only a probe can rule out is `INSUFFICIENT DATA`.
 
 **Scoring rules:**
-- Any blocking critical gate = `FAIL` -> overall result = `FAIL` regardless of score
+- Any blocking critical gate = `FAIL` (after the profile exemption) -> overall result = `FAIL` regardless of score
 - Any blocking critical gate = `INSUFFICIENT DATA` -> overall result = `PROVISIONAL` until live/source verification is completed
 - `PROVISIONAL` does not block CI gates (it is not a FAIL) but flags incomplete assurance
 - Only `blocking` checks and critical gates control `FAIL` vs `PROVISIONAL`.
@@ -510,6 +524,7 @@ Per-dimension: `score = (sum of check values / count of non-excluded checks) * 1
 | D12 (Internationalization) | Single-language site (no hreflang, no i18n config) |
 | D13 (Monitoring) | Static export with no analytics config — mark as advisory |
 | D9 (Content Quality) | No content corpus (no markdown/blog/pages directories) |
+| Any | Every check in it is excluded (INSUFFICIENT DATA, or `N/A` through an exempt gate) |
 
 ### 4.3 Overall Score
 
@@ -554,7 +569,7 @@ Before generating the report, verify:
 
 1. **Count Consistency:** Total checks = sum of all dimension checks. No check counted twice.
 2. **Score Math:** Recalculate overall from dimension scores * weights. Must match within 0.1.
-3. **Critical Gate Completeness:** All 6 gates have explicit PASS/FAIL/INSUFFICIENT DATA with evidence.
+3. **Critical Gate Completeness:** All 6 gates have explicit PASS/FAIL/INSUFFICIENT DATA/N/A with evidence (N/A names the profile).
 4. **Evidence Completeness:** Every FAIL finding has file:line or INSUFFICIENT DATA note.
 5. **Priority Math:** Verify 3D priority calculation `(SEO * 0.4) + (Business * 0.4) + ((4 - Effort) * 0.2)`.
 6. **Finding Numbering:** F-IDs are sequential (F1, F2, ...) with no gaps or duplicates.
@@ -583,7 +598,7 @@ Health scale: HEALTHY (80+), NEEDS ATTENTION (60-79), AT RISK (40-59), CRITICAL 
 ### Full Report Sections
 
 1. **Header** -- project, date, stack, mode (code / code+live), content profile
-2. **Critical Gates** -- 6 gates, PASS/FAIL/INSUFFICIENT DATA with evidence
+2. **Critical Gates** -- 6 gates, PASS/FAIL/INSUFFICIENT DATA/N/A with evidence
 3. **Dimension Scores** -- D1-D13 table with score, weight, weighted contribution
 4. **Overall Score + Tier**
 5. **Sub-Scores** -- SEO, GEO, Tech (each /100)
@@ -685,8 +700,9 @@ Serialize from Phase 4 scoring results:
     }
   },
   "critical_gates": [
-    { "id": "CG1", "name": "Sitemap exists", "status": "PASS|FAIL", "evidence": "..." },
-    { "id": "CG3", "name": "HTTPS active", "status": "INSUFFICIENT DATA", "evidence": "Code-only mode, cannot verify HTTPS" }
+    { "id": "CG1", "name": "Sitemap exists", "status": "PASS|FAIL|INSUFFICIENT DATA|N/A", "evidence": "..." },
+    { "id": "CG3", "name": "HTTPS active", "status": "INSUFFICIENT DATA", "evidence": "Code-only mode, cannot verify HTTPS" },
+    { "id": "CG5", "name": "JSON-LD server-side rendered", "status": "N/A", "evidence": "Profile app-shell exempts CG5 (raw: FAIL, json_ld_present: no)" }
   ],
   "findings": [
     {
@@ -787,7 +803,7 @@ Wait for complete output. Then:
 
 Overall: [N]/100 -- Tier [A/B/C/D] | Result: [PASS/FAIL/PROVISIONAL]
 SEO: [N]/100 | GEO: [N]/100 | Tech: [N]/100
-Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA]
+Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA] / [N N/A]
 Findings: [N critical] / [N total]
 
 ### Retrospective (REQUIRED)

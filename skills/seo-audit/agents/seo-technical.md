@@ -50,6 +50,7 @@ If any file is missing, STOP.
 - **file_paths:** string[] (config files, robots.txt, head templates, sitemap configs)
 - **codesift_repo:** string | null (repo identifier if CodeSift available)
 - **mode:** string (`full` | `quick` | `content-only` | `geo`)
+- **content_profile:** string (page profile; the dispatcher applies gate exemptions, report raw statuses)
 - **selected_dimensions:** string[] (e.g., `["D1", "D4", "D5", "D11", "D12", "D13"]`)
 
 **Mode-aware filtering:** Skip any dimension NOT in `selected_dimensions`. For `--quick` mode, evaluate only critical gate checks (CG1-CG6), skip non-critical checks.
@@ -241,7 +242,7 @@ Check for HTTPS enforcement, security headers, canonical URL patterns, and stagi
 
 **Checks:**
 
-1. **HTTPS active** -- no hardcoded `http://` URLs in templates/config (except localhost) (**Critical Gate CG3**). In code-only mode: if no deploy config proves TLS (vercel.json forceSSL, netlify.toml force_ssl, Cloudflare config), report INSUFFICIENT DATA. Absence of http:// refs alone does not prove HTTPS.
+1. **HTTPS active** (**Critical Gate CG3**) -- PASS only when deploy/host config enforces HTTPS (`force_ssl`, http-to-https redirect, Cloudflare Always-HTTPS, HTTPS-only listener; an HSTS header alone is not proof) and no production base URL is `http://`; FAIL when the production site/canonical/base URL is `http://` on a non-local host and no HTTPS enforcement is found; otherwise INSUFFICIENT DATA (also when enforcement and an `http://` base URL conflict: report the stale scheme under the canonical check). Absence of `http://` refs is not proof of HTTPS (that is the scored `mixed-content` check).
 2. **No mixed content** -- all resource URLs use HTTPS or protocol-relative paths
 3. **Security headers configured** -- check for CSP, X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security
 4. **Canonical tag present (CG4):** Check for `<link rel="canonical">` or framework equivalent at layout/template level. Next.js: `alternates.canonical` in metadata. Astro: canonical in layout head. Hugo: `.Permalink` in head partial. Must find real evidence -- "no issues found" is not evidence.
@@ -429,11 +430,11 @@ This agent evaluates these critical gates and must report explicit PASS | FAIL |
 |------|------------|--------|---------------|---------------------------|
 | **CG1** | Sitemap exists | D4 | sitemap.xml file or generation config found | -- |
 | **CG2** | Googlebot not blocked | D5 | No `Disallow: /` for Googlebot or `User-agent: *` | -- |
-| **CG3** | HTTPS active | D11 | No hardcoded `http://` URLs in templates/config (excluding localhost) | In code-only mode if no mixed content found but no live verification available to confirm HTTPS enforcement |
+| **CG3** | HTTPS active | D11 | Deploy/host config enforces HTTPS and no production base URL is `http://`, or a live probe where `https://` answers and `http://` redirects to it or is closed (FAIL: production base/canonical URL is `http://` on a non-local host and no enforcement is found) | Anything else in code-only mode, including "no `http://` refs found" |
 | **CG4** | Canonical tags present | D11 | `<link rel="canonical">` found in layout/head template | -- |
 | **CG6** | AI crawler policy conscious | D5 | Explicit, non-contradictory policy for relevant bots from `seo-bot-registry.md`, with at least 3 named bots or a documented tier-based strategy plus evidence. | When code suggests host-layer overrides or policy cannot be trusted without live probing |
 
-Note: CG5 (JSON-LD SSR) is evaluated by the Assets agent (D3), not this agent.
+Note: CG5 (JSON-LD SSR) is evaluated by the Assets agent (D3), not this agent. Report raw gate statuses: the dispatcher turns a gate the page profile exempts into N/A (`seo-page-profile-registry.md` "Gate applicability").
 
 ---
 

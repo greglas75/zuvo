@@ -176,7 +176,7 @@ Verify that JSON-LD is rendered server-side (present in initial HTML), not injec
 **Detection patterns for client-only JSON-LD (FAIL):**
 - JSON-LD created inside `useEffect`, `componentDidMount`, or similar client-only hooks
 - JSON-LD injected via `document.createElement('script')` or `innerHTML`
-- JSON-LD inside a component wrapped in `'use client'` without SSR fallback (Next.js)
+- JSON-LD inside a `'use client'` component (Next.js) whose script is created only on a client path; a client component can still prerender it, so an unresolved render path is INSUFFICIENT DATA, not FAIL
 
 **Detection patterns for server-side JSON-LD (PASS):**
 - JSON-LD in Astro component body (Astro renders server-side by default)
@@ -466,9 +466,9 @@ This agent evaluates one critical gate and must report explicit PASS | FAIL | IN
 |------|------------|--------|---------------|---------------------------|
 | **CG5** | JSON-LD server-side rendered | D3 | JSON-LD present in template source or raw response body, not only in rendered DOM | If static analysis cannot determine whether JSON-LD is server-rendered (e.g., framework uses client-side rendering and no live fetch available), report INSUFFICIENT DATA |
 
-**CG5 = FAIL means the overall audit result is FAIL regardless of score.**
+**CG5 = FAIL means the overall audit result is FAIL regardless of score** (unless the page profile makes it N/A).
 
-If D3.1 is FAIL (no JSON-LD found at all), CG5 is automatically FAIL.
+If D3.1 is FAIL (no JSON-LD found at all), CG5 is FAIL; state `json_ld_present: yes|no` in the CG5 evidence. Report the raw status: the dispatcher turns a gate the page profile exempts into N/A (`seo-page-profile-registry.md` "Gate applicability").
 
 Note: CG1, CG2, CG3, CG4, CG6 are evaluated by the Technical agent, not this agent.
 

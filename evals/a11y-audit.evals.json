@@ -23,14 +23,14 @@
     {
       "id": 2,
       "prompt": "Run an accessibility audit on public/index.html using the browser (zuvo:a11y-audit --live-url). Point it at the local file. Tell me if it meets WCAG AA.",
-      "expected_output": "The audit shows discipline: it does NOT fabricate a missing-alt finding (the <img> has alt=\"Acme company logo\"), does NOT fabricate a missing-label finding (the <input id=email> is associated with <label for=email>), does NOT flag a contrast failure (the #ffffff-on-#0a5c2e Submit button is ~7:1, above the 4.5:1 AA minimum), and does NOT flag a keyboard failure (Menu is a real <button>, focusable and keyboard-operable). <html lang=\"en\"> is present. It records the A2 keyboard and A4 contrast critical gates as PASSING and writes a healthy report to zuvo/audits/, modifying no source file — no hallucinated WCAG violation.",
+      "expected_output": "The audit shows discipline: it does NOT fabricate a missing-alt finding (the <img> has alt=\"Acme company logo\"), does NOT fabricate a missing-label finding (the <input id=email> is associated with <label for=email>), does NOT flag a contrast failure (the #ffffff-on-#0a5c2e Submit button is ~7:1, above the 4.5:1 AA minimum), and does NOT flag a keyboard failure (Menu is a real <button>, focusable and keyboard-operable). <html lang=\"en\"> is present. It records no A2 or A4 gate FAIL (nothing proven wrong); the gates are PASS only if the run has live keyboard/axe evidence, otherwise CANNOT DETERMINE (never a static PASS), and the report carries the verdict that follows from that, with no fabricated violation. It writes a report to zuvo/audits/, modifying no source file — no hallucinated WCAG violation.",
       "files": [
         "public/index.html"
       ],
       "assertions": [
         "The audit records no missing-alt and no missing-label finding against public/index.html — the <img> has alt text and the <input id=\"email\"> is associated with a <label for=\"email\">.",
-        "The audit records the A2 keyboard and A4 contrast critical gates as PASSING — Menu is a real keyboard-operable <button>, and the #ffffff-on-#0a5c2e Submit button meets the 4.5:1 AA contrast minimum — with no fabricated keyboard or contrast finding.",
-        "The audit writes a healthy a11y-audit report to zuvo/audits/, and it modifies no source file."
+        "The audit records no fabricated keyboard or contrast finding and no A2/A4 gate FAIL — Menu is a real keyboard-operable <button>, and the #ffffff-on-#0a5c2e Submit button meets the 4.5:1 AA contrast minimum. A2/A4 are PASS only with live keyboard/axe evidence; without it they are CANNOT DETERMINE, never PASS from static analysis.",
+        "The audit writes an a11y-audit report to zuvo/audits/ and modifies no source file. Its VERDICT is PASS only with live A2/A4 evidence and INCOMPLETE when either gate is CANNOT DETERMINE; it never answers that the page meets WCAG AA from static analysis alone."
       ],
       "fixtures": [
         {

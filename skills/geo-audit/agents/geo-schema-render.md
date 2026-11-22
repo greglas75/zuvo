@@ -63,7 +63,7 @@ If any file is missing, STOP.
 
 If `imported_findings` is provided:
 - If it contains **D3 JSON-LD findings**, use them as the starting point for G2 schema analysis. Note the import source in evidence.
-- If it contains **CG5 (SSR gate) status** from a prior seo-audit critical_gates block, use that result for G4 and note it as imported evidence. Do not re-derive if the source is definitive.
+- If it contains **CG5 (SSR gate) status** from a prior seo-audit critical_gates block, use that result for G4 and note it as imported evidence (an `N/A` CG5 is no evidence: derive G4 yourself). Do not re-derive if the source is definitive.
 
 ---
 
