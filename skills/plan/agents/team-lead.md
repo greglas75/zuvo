@@ -34,7 +34,7 @@ Within each layer, independent tasks should have no dependencies on each other. 
 
 ### Step 3: Size Each Task
 
-Each task should take 2-5 minutes to implement. Use these guidelines:
+Each task is a coherent milestone of roughly 20-60 minutes (SKILL.md Task Authoring Rule 1); micro-steps are an ordered checklist INSIDE a task, not tasks of their own. Use these guidelines:
 
 | Size indicator | Action |
 |----------------|--------|
