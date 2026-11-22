@@ -1335,6 +1335,21 @@ if [ "$RC53" -eq 0 ] && has "newsrc.txt" "$P53" && ! has "PROOF-DIRECTIVE" "$P53
 else
   bad "(53) rc=$RC53 — the review's own outputs leaked into the next pass's patch"
 fi
+# ...but only when nothing else is in scope: with ONLY review outputs untracked the helper must say
+# "no changes" (exit 3), and an explicitly named zuvo/ source file is still reviewed.
+R54="$(new_repo r54)" || { bad "fixture init r54"; echo "SOME FAILED"; exit 1; }
+(
+  cd "$R54" || exit 1
+  echo a > keep.txt; git add keep.txt; git commit -q -m base
+  mkdir -p zuvo/proofs; echo "PROOF" > zuvo/proofs/p.txt; echo "export const z = 1" > zuvo/new-source.ts
+)
+( cd "$R54" && bash "$HELPER" >/dev/null 2>&1 ); RC54=$?
+P54="$(cd "$R54" && bash "$HELPER" zuvo/new-source.ts 2>/dev/null)"; RC54B=$?
+if [ "$RC54" -eq 0 ] || [ "$RC54B" -ne 0 ] || ! has "export const z" "$P54"; then
+  bad "(54) only-review-outputs rc=$RC54 (want 3 or a diff of new-source.ts), explicit zuvo/ path rc=$RC54B"
+else
+  pass "(54) an explicit zuvo/ PATH is still reviewed"
+fi
 
 if [ "$fail" -eq 0 ]; then
   echo "ALL PASS"

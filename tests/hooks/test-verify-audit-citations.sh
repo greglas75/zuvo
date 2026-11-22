@@ -151,6 +151,30 @@ out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
 [ "$rc" -eq 2 ] \
   && pass "D3: severity-tagged findings that parse to zero sections are rejected, not passed vacuously" \
   || bad "D3: unparseable tagged findings exited $rc (vacuous pass)"
+# A clean report mentions a severity tag and a file:line in different places: not a finding (the first
+# D3 fix rejected it with a whole-file co-occurrence check).
+cat > "$PROBE" <<EOF
+# Review — clean
+
+0 [MUST-FIX] findings. DEPLOYMENT RISK [LOW]: none.
+QUALITY WINS: scripts/zuvo-home/poll-cost:3 reads cleanly.
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a clean report with a tag and a citation in different lines is not rejected" \
+  || bad "D3: clean report rejected (rc=$rc): $(echo "$out" | tail -2)"
+# 'R-1 — [MUST-FIX] title' (dash before the tag) is a header too, so its citation is checked.
+cat > "$PROBE" <<EOF
+# Review — dash shape
+
+R-1 — [MUST-FIX] dashed finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: 'R-1 — [MUST-FIX]' is parsed and its citation checked" \
+  || bad "D3: dash-shape finding not verified (rc=$rc): $(echo "$out" | tail -2)"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

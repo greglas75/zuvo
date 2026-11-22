@@ -284,9 +284,10 @@ else bad "review-artifact.md never mentions --archive — non-Claude hosts silen
 fresh c-home
 printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
 write_art aaa..bbb-home 'adversarial: zuvo/proofs/p-adversarial.txt'
-( unset ZUVO_REVIEW_ARCHIVE; export ZUVO_HOME="$TMP/zhome"
+mkdir -p "$TMP/fakehome"
+( unset ZUVO_REVIEW_ARCHIVE; export ZUVO_HOME="$TMP/zhome" HOME="$TMP/fakehome"
   bash "$SYNC" --archive "$REPO" --slug aaa..bbb-home >/dev/null 2>&1 )
-if [ -f "$TMP/zhome/review-archive/c-home/reviews/aaa..bbb-home.md" ] && [ ! -e "$HOME/.zuvo/review-archive" ]; then
+if [ -f "$TMP/zhome/review-archive/c-home/reviews/aaa..bbb-home.md" ] && [ ! -e "$TMP/fakehome/.zuvo/review-archive" ]; then
   pass "ZUVO_HOME relocates the archive (D10: sandbox no longer leaks into ~/.zuvo)"
 else bad "D10: --archive ignored ZUVO_HOME — a sandboxed run still writes the real ~/.zuvo/review-archive"; fi
 
@@ -295,12 +296,13 @@ else bad "D10: --archive ignored ZUVO_HOME — a sandboxed run still writes the 
 fresh c-dated
 printf '# Review report\nno marker here\n' > "$REPO/memory/reviews/2026-11-21-orders.md"
 out=$(bash "$SYNC" --check "$REPO" 2>&1); rc=$?
-if ! printf '%s' "$out" | grep -q 'FAIL 2026-11-21-orders.md'; then
-  pass "--check does not FAIL a dated narrative report for lacking the gate marker"
-else bad "--check still FAILs the dated narrative report (rc=$rc): $out"; fi
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'SKIP 2026-11-21-orders.md'; then
+  pass "--check skips a dated narrative report (exit 0) instead of failing it for lacking the gate marker"
+else bad "--check did not skip the dated narrative report (rc=$rc): $out"; fi
 printf '<!-- zuvo-review -->\nrange: aaaaaaa..bbbbbbb\n' > "$REPO/memory/reviews/2026-11-22-marked.md"
-out=$(bash "$SYNC" --check "$REPO" 2>&1) || true
-if printf '%s' "$out" | grep -q '2026-11-22-marked.md' && ! printf '%s' "$out" | grep -q 'SKIP 2026-11-22-marked.md'; then
+out=$(bash "$SYNC" --check "$REPO" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'FAIL 2026-11-22-marked.md\|FAIL memory/reviews/2026-11-22-marked.md' \
+   && ! printf '%s' "$out" | grep -q 'SKIP 2026-11-22-marked.md'; then
   pass "a dated file that carries the marker is still linted"
 else bad "a marked dated file was skipped: $out"; fi
 

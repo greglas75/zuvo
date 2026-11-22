@@ -338,11 +338,11 @@ For high-risk changes (DB migrations, security/auth, API contracts, payment/mone
 
 ### Backlog snapshot
 
-Once, at the run's original start, before any `backlog-add` call: `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout under review (a linked worktree's own root), assigned in the same shell call. Review keeps its run state in the transcript, as it does `COMMENT_BASE=<sha>`: print the output under a `backlog-snapshot:` line (`backlog-snapshot: (empty)` when it printed nothing). A resumed run reuses the printed one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**). Keep these values, with `PRE_FIX_HEAD`, the adversarial pass count and the dispatched agent ids, in `zuvo/context/review-state.json` (gitignored); after a context reset read that file instead of recomputing.
+Once, at the run's original start, before any `backlog-add` call: `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/ knowledge/`, `R` being the root of the checkout under review (a linked worktree's own root), assigned in the same shell call. Review keeps its run state in the transcript, as it does `COMMENT_BASE=<sha>`: print the output under a `backlog-snapshot:` line (`backlog-snapshot: (empty)` when it printed nothing). A resumed run reuses the printed one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**). Keep these values, with `PRE_FIX_HEAD`, the adversarial pass count and the agent ids, and the review scope in `zuvo/context/review-state.json` (gitignored); after a context reset read it instead of recomputing, only if its scope and `PRE_FIX_HEAD` match this run (a concurrent review in the same checkout overwrites it).
 
 ### Knowledge Prime
 
-Check if knowledge base exists BEFORE loading the protocol — **worktree-aware**: resolve `MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')` (fallback `--show-toplevel`) and check `Glob("$MAIN_ROOT/knowledge/*.jsonl")` (knowledge lives at the MAIN checkout per `backlog-protocol.md`; a CWD-relative glob in a linked worktree finds nothing and silently skips priming — same bug class as the old `memory/knowledge*.md` pre-check that pointed at a path NO skill writes). If no files found, skip — do NOT load `knowledge-prime.md` (saves ~140L / ~1.6K tokens). If files exist, then load and run:
+Check if knowledge base exists BEFORE loading the protocol — **worktree-aware**: resolve `MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')` (fallback `--show-toplevel`) and check `Glob("$MAIN_ROOT/knowledge/*.jsonl")` (knowledge lives at the MAIN checkout per `backlog-protocol.md`; a CWD-relative glob in a linked worktree finds nothing and silently skips priming). If no files found, skip — do NOT load `knowledge-prime.md`. If files exist, then load and run:
 ```
 WORK_TYPE = "review"
 WORK_KEYWORDS = <keywords from diff file paths and commit messages>
@@ -355,7 +355,7 @@ WORK_FILES = <changed files from the diff>
 ```
 ~/.zuvo/compute-preload review "$PWD" --lang <ts|js|py|php|kotlin>
 ```
-`--lang` is the language of the CHANGED files; without it the helper reads root manifests (a root `pyproject.toml` selects Python for a TypeScript change). Copy the printed `[CodeSift matching trace]` block verbatim and issue the printed `ToolSearch(query="select:...")` line without modification. Math gate: `[CodeSift loaded] tools=N` must equal `[Expected after load] tools=N`; a difference is `[PRELOAD MATH MISMATCH]` and aborts before Phase 1. **No `ToolSearch` in your tool list** (Codex, Antigravity): call the CodeSift tools directly; the gate then compares the `describe_tools` schema count, is reported, and never aborts.
+`--lang` is the language of the CHANGED files (`ts,py` for a mixed change); without it the helper reads root manifests (a root `pyproject.toml` selects Python for a TypeScript change). Copy the printed `[CodeSift matching trace]` block verbatim and issue the printed `ToolSearch(query="select:...")` line without modification. Math gate: `[CodeSift loaded] tools=N` must equal `[Expected after load] tools=N`; a difference is `[PRELOAD MATH MISMATCH]` and aborts before Phase 1. **No `ToolSearch` in your tool list** (Codex, Antigravity): call the CodeSift tools directly; the gate then compares the `describe_tools` schema count, is reported, and never aborts.
 
 ### MANDATORY TOOL CALLS — Review Validity Gate
 
@@ -383,7 +383,7 @@ WORK_FILES = <changed files from the diff>
 
 Tool quirks: `scan_secrets` with `file_pattern` may report "scanned 0 files" (run it unscoped, keep changed files); `impact_analysis(since=)` takes a short SHA or ref, not 40 hex. `changed_symbols`, `diff_outline` and `impact_analysis` do not see UNTRACKED files: for those use `build-review-patch` plus `get_file_outline` and record `<tool>: untracked-blind (build-review-patch+get_file_outline)`, which satisfies the gate.
 
-**Fence the substitute's output to the reviewed file set.** `audit_scan` (and the other compound substitutes) scan the **repository**, not your diff — a scoped review that scores their raw output drowns in repo-wide pre-existing findings that this change never touched, and the CQ score stops describing the diff. After each substitute call, discard findings whose file is outside the reviewed file set BEFORE CQ scoring. The reviewed file set depends on the scope: a commit range (`new`, `HEAD~N`, `A..B`) is `git diff --name-only "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`; `commits A,B,C` is the union of `git show --name-only --format= <hash>` over the named commits; `staged` is `git diff --name-only --cached`; uncommitted (no scope token) is `git diff --name-only HEAD` plus `git ls-files --others --exclude-standard`; a directory token narrows any of them with `-- <dir>`. Record whether the tool honored the requested fence: `audit_scan: fence-honored` or `audit_scan: fence-ignored (filtered <N>→<M>)`. Two exceptions to the fence, both about causality rather than file membership: a finding in an **unchanged** file that this diff *caused* — a caller broken by a changed signature, a consumer of a removed export, a now-unreachable branch — is IN scope and must be triaged normally, because the diff is what made it true (recorded with `--source review`, Backlog Persistence below). And findings outside the fence that the diff did not cause are not silently dropped knowledge: they are pre-existing debt, not scored against this diff. A pre-existing out-of-fence finding with a drive-by tag is recorded with `--source drive-by:review`; one with no tag is reported, not recorded (Backlog Persistence below; `drive-by-findings.md`).
+**Fence the substitute's output to the reviewed file set.** `audit_scan` (and the other compound substitutes) scan the **repository**, not your diff; scoring their raw output drowns the CQ score in pre-existing findings. After each substitute call, discard findings whose file is outside the reviewed file set BEFORE CQ scoring. The reviewed file set depends on the scope: a commit range (`new`, `HEAD~N`, `A..B`) is `git diff --name-only "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`; `commits A,B,C` is the union of `git show --name-only --format= <hash>` over the named commits; `staged` is `git diff --name-only --cached`; uncommitted (no scope token) is `git diff --name-only HEAD` plus `git ls-files --others --exclude-standard`; a directory token adds `-- <dir>`. Record whether the tool honored the fence: `audit_scan: fence-honored` or `audit_scan: fence-ignored (filtered <N>→<M>)`. One exception, about causality rather than file membership: a finding in an **unchanged** file that this diff *caused* — a caller broken by a changed signature, a consumer of a removed export, a now-unreachable branch — is IN scope and triaged normally (recorded with `--source review`, Backlog Persistence below). Findings outside the fence that the diff did not cause are pre-existing debt, not scored against this diff. A pre-existing out-of-fence finding with a drive-by tag is recorded with `--source drive-by:review`; one with no tag is reported, not recorded (Backlog Persistence below; `drive-by-findings.md`).
 
 ### Forbidden escape hatches
 
@@ -395,9 +395,9 @@ Tool quirks: `scan_secrets` with `file_pattern` may report "scanned 0 files" (ru
 | `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
 | `RETRO: skipped (nothing interesting)` | EVER | One of: `RETRO: skipped (trivial session, <3 findings and no fix-loop)` OR full retro appended |
 | `Adversarial: skipped (context budget)` / `(tight context)` | EVER | Chunk the diff (see section 1.6 CONTEXT BUDGET) and run adversarial per chunk, OR exit with `BLOCKED_CONTEXT_BUDGET` and ask the user to narrow scope. Skipping is never an option. |
-| `Adversarial: skipped (already mechanically detected)` / `(scanners covered it)` | EVER | This inverts the rationale. Adversarial's purpose is to find what mechanical scanners MISSED (CodeSift/audit_scan find patterns; adversarial finds semantics). Skipping because scanners ran is a category error. Run it. |
+| `Adversarial: skipped (already mechanically detected)` / `(scanners covered it)` | EVER | Adversarial finds what mechanical scanners MISSED (semantics, not patterns); skipping because scanners ran is a category error. Run it. |
 | `Adversarial: skipped (self-review, low value)` / `(I wrote this code so adversarial adds little)` | EVER | Self-review REQUIRES MORE adversarial coverage, not less. Section 1.1 + 1.6 mandate `--multi` on SELF-REVIEW. Anchoring bias is exactly why adversarial exists here. |
-| `Adversarial: skipped (small diff)` / `(<N lines so not worth)` | EVER (Tier table line 284 mandates adversarial at TIER 0) | Run it. Even <15 line diffs get the pass per the Tier table — a single-line semantic bug (e.g. inverted comparison, off-by-one, swapped args) is exactly the class adversarial catches that scanners cannot. |
+| `Adversarial: skipped (small diff)` / `(<N lines so not worth)` | EVER (Tier table line 284 mandates adversarial at TIER 0) | Run it. Even <15 line diffs get the pass (Tier table): an inverted comparison, off-by-one or swapped args is what scanners cannot catch. |
 | `Adversarial: skipped (documented honestly)` / `(noting the skip transparently)` | EVER | Honesty about a violation is still a violation. The Validity Gate evaluates whether the gate ran, not whether the skip was politely worded. Run it or exit BLOCKED. |
 | Any `Adversarial: skipped (<reason>)` where `<reason>` is not on the whitelist | EVER | Whitelist (from section 1.6): `single_provider_only` (exit 3), `timeout` (exit 124), `BLOCKED_CONTEXT_BUDGET` (after chunking attempt failed). Nothing else. |
 | `ok` / any | **4** | **Review COMPLETED but the input was TRUNCATED** — part of the change reached no provider (`input_truncated=true` in the artifact, which also lists the omitted files) | **Do NOT report the review complete.** Findings returned are real; the ABSENCE of findings says nothing about the omitted files. Re-run over the omitted set or split the input, then merge verdicts |
@@ -502,9 +502,9 @@ branch. The split is the point: frozen tree for the eyes, live tree for the hand
 
 **Uncommitted or staged scope in a FIX mode** has no commit range to freeze. Before dispatching
 auditors run `PRE_FIX_HEAD=$(git rev-parse HEAD)` and print it (no stash, no worktree); give the
-auditors `git diff HEAD` plus the untracked files from `build-review-patch`. The run's fixes become
+auditors `git diff HEAD` (`git diff --cached` for `staged`) plus the untracked files from `build-review-patch`. The run's fixes become
 the FIRST commit, so `PRE_FIX_HEAD..HEAD` exists afterwards. The content-keyed artifact and the tags
-are then REQUIRED (range `<PRE_FIX_HEAD7>..<HEAD7>`); the "skip for uncommitted" lines in Phase 3
+are then REQUIRED once the fixes' commit exists (range `<PRE_FIX_HEAD7>..<HEAD7>`; no commit, no artifact); the "skip for uncommitted" lines in Phase 3
 apply only to `--report-only`. The author's own uncommitted work goes in the fixes' commit — say so
 in the commit message.
 
@@ -602,7 +602,7 @@ and report its actual independence or an unmet requirement.
 
 ### 1.1 Self-Review Disclosure
 
-Check whether you wrote any of the code being reviewed in this session. If yes, add a `SELF-REVIEW` marker to the header. Self-review detected -> pass `--multi` to the adversarial script (forces ALL available providers, not a rotating single). **The flag is `--multi` — do NOT pass `--all-providers`** (a phantom flag): the DISPATCH-SHAPE flags are limited to `--multi/--single/--rotate/--exclude/--exclude-last` (other flags such as `--mode`, `--artifact`, `--append-artifact`, `--json` are separate and valid); an unknown flag exits 2 and silently drops you to weaker coverage. Probe once if unsure: `~/.zuvo/adversarial-review --help | grep -- --multi`. `--multi` exits 3 (`single_provider_only`) when <2 providers exist — only then fall back to `--rotate`/`--single`.
+Check whether you wrote any of the code being reviewed in this session. If yes, add a `SELF-REVIEW` marker to the header. Self-review detected -> pass `--multi` to the adversarial script (forces ALL available providers, not a rotating single). **The flag is `--multi` — there is no `--all-providers`:** the DISPATCH-SHAPE flags are only `--multi/--single/--rotate/--exclude/--exclude-last` (`--mode`, `--artifact`, `--append-artifact`, `--json` are separate and valid); an unknown flag exits 2. Probe once if unsure: `~/.zuvo/adversarial-review --help | grep -- --multi`. `--multi` exits 3 (`single_provider_only`) when <2 providers exist — only then fall back to `--rotate`/`--single`.
 
 ### 1.2 Review Header (merged banner -- single block replaces 4 separate blocks)
 
@@ -680,7 +680,7 @@ For each test file, run Q1-Q25. Format: `Q EVAL: file.spec.ts | Q1=1 Q2=1 ... | 
 
 Issues NOT introduced by the current diff: always report critical CQ gate violations (CQ3/4/5/6/8/14); briefly note CQ2, CQ10, CQ22; skip naming/magic numbers (code-audit territory).
 
-**Scope fence (severity).** A defect on lines this diff did not add or change is PRE-EXISTING: never MUST-FIX, rated RECOMMENDED at most, listed in its own "Pre-existing (outside changed lines)" block, and never fixed by the FIX loop (live test: a latent `formatCents` bug carried into an extracted function was rated MUST-FIX twice). The exception is a defect the diff CAUSED (broken caller, consumer of a removed export), which is in scope. Findings scored RECORD (confidence below the fix threshold) are recorded, never fixed.
+**Scope fence (severity).** A defect on lines this diff did not add or change (code moved or extracted verbatim counts as unchanged) is PRE-EXISTING: tier NIT whatever its gate (this overrides the CQ critical-gate MUST-FIX bypass), listed in its own "Pre-existing (outside changed lines)" block with its true severity named, recorded through `backlog-add`, never fixed by the FIX loop, and so outside the localized-deferral gate (a latent `formatCents` bug carried into an extracted function was once rated MUST-FIX). The exception is a defect the diff CAUSED (broken caller, consumer of a removed export), which is in scope. Findings scored RECORD (confidence below the fix threshold) are recorded, never fixed.
 
 ### Working-Tree Staleness Check
 
@@ -699,7 +699,7 @@ If the file changed after the reviewed range:
 
 Cross-model adversarial review using external providers. Runs **sequentially** via `--multi` — each pass fans out to every available provider, and different random provider. Text mode (no `--json`).
 
-**PROPORTIONALITY (HARD — a tiny diff gets a FAST pass, not a 20-minute grind).** Adversarial still runs at every tier (a 3-line change CAN hide an inverted comparison), but the COST must match the diff. The 2026-07-10 pathology: a 3-line icon swap ran the full multi-pass rotate with each hung provider eating the 240s `PROVIDER_TIMEOUT` × several passes ≈ **20 minutes**. That is a defect, not diligence. Scale the pass by tier:
+**PROPORTIONALITY (HARD — a tiny diff gets a FAST pass, not a 20-minute grind).** Adversarial still runs at every tier (a 3-line change CAN hide an inverted comparison), but the COST must match the diff (a 3-line icon swap once ran ≈ **20 minutes** of hung 240s provider timeouts). Scale the pass by tier:
 
 | Tier | Diff | Adversarial shape |
 |------|------|-------------------|
@@ -708,12 +708,12 @@ Cross-model adversarial review using external providers. Runs **sequentially** v
 | **TIER 2–3** | larger / risk signals | ONE full `--multi` pass, then fix-delta passes only as Step 5 allows — 3 passes in all, never more. |
 
 - **Self-review overrides tier-down for correctness, but keep the timeout tight on tiny diffs:** SELF-REVIEW still forces `--multi` (section 1.1) — but on a TIER 0 diff run it as ONE `--multi` pass with `ZUVO_REVIEW_TIMEOUT=60`, not multi-pass. One cross-model look, bounded to ~60s.
-- **A hung/timed-out provider is NEVER retried in a manual loop on a tiny diff.** If a provider times out at TIER 0/1, record `Adversarial: partial (<provider> only, others timed out)` and finalize — do NOT hand-retry the remaining providers (that hand-retry loop is exactly what turned 3 lines into 20 minutes). Chunking/retry is a TIER 2–3 concern for genuinely large diffs.
+- **A hung/timed-out provider is NEVER retried in a manual loop on a tiny diff.** If a provider times out at TIER 0/1, record `Adversarial: partial (<provider> only, others timed out)` and finalize — do NOT hand-retry the remaining providers. Chunking/retry is a TIER 2–3 concern for genuinely large diffs.
 - **Always run in the background or with a long Bash `timeout`** per `adversarial-loop.md` — never let the 120s Bash-tool default kill the pass mid-flight.
 
 If `adversarial-review` not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
-**BASE PREFLIGHT (run BEFORE piping any commit-range diff — a stale base wastes the whole pass).** A two-dot `<base>..<tip>` diff computed against a base that is no longer an ancestor of the tip shows **reverse hunks of other sessions' pushes** — code being "deleted" that was actually added elsewhere. Every provider then reports a confident CRITICAL about a revert that does not exist (observed: one full multi-provider pass burned, 5/5 providers false-CRITICAL). Before the pipe:
+**BASE PREFLIGHT (run BEFORE piping any commit-range diff — a stale base wastes the whole pass).** A two-dot `<base>..<tip>` diff against a base that is no longer an ancestor of the tip shows **reverse hunks of other sessions' pushes**, and every provider reports a confident CRITICAL about a revert that does not exist. Before the pipe:
 
 ```bash
 git remote get-url origin >/dev/null 2>&1 && git fetch -q origin   # the base may have moved; no remote: skip the fetch
@@ -722,7 +722,7 @@ git merge-base --is-ancestor "$REVIEWED_FROM" "$REVIEWED_THROUGH" || echo "STALE
 
 If it is NOT an ancestor: either merge/rebase first, or review `$(git merge-base "$REVIEWED_FROM" "$REVIEWED_THROUGH")..$REVIEWED_THROUGH` instead. Never send a known-stale range to the providers "to see what they say" — the findings are unfalsifiable noise you then have to disprove one by one.
 
-**TRUNCATED INPUT INVALIDATES THE PASS FOR THE OMITTED FILES.** The staircase above is proactive; this is the reactive backstop for when it was not applied. If the wrapper prints `input truncated` (or the piped diff exceeds the provider cap), the pass did NOT review the files that fell off the end — and the highest-risk file is as likely to be dropped as any other. Do not accept that pass as coverage: re-run per production file (staircase step 1) for the omitted files before triage, and never let a nominal "pass 1 clean" stand for a file the provider never received.
+**TRUNCATED INPUT INVALIDATES THE PASS FOR THE OMITTED FILES.** The staircase above is proactive; this is the reactive backstop. If the wrapper prints `input truncated` (or the piped diff exceeds the provider cap), the pass did NOT review the files that fell off the end. Re-run per production file (staircase step 1) for the omitted files before triage; a nominal "pass 1 clean" never stands for a file the provider never received.
 
 **Self-review escalation:** If SELF-REVIEW marker set in 1.1, pass `--multi` flag.
 
@@ -730,10 +730,10 @@ If it is NOT an ancestor: either merge/rebase first, or review `$(git merge-base
 
 - **exit 3 / `single_provider_only`** — `--multi` was requested but post-host-exclusion only 1 provider remains. Two options: re-invoke with `--single` (accept reduced consensus and note it in the review header) OR skip this pass and note `Adversarial: skipped (single_provider_only — install second provider for diversity)` in the review output.
 - **exit 124 / `status: "timeout"`** — ALL providers timed out. Record `Adversarial: skipped (timeout)` and continue to next pass (or finalize if last pass).
-- **exit 125 / `status: "suspended"`** — the HOST slept mid-run (`suspended_seconds` says how long); the providers were never given a chance. This is not reduced coverage and not a provider fault, so it is NOT a skip reason: **re-invoke the same pass once.** If the retry also returns 125, record it as `timeout` (same practical effect — no review — and the whitelist stays closed). Never report a suspended run as blocked provider infrastructure.
+- **exit 125 / `status: "suspended"`** — the HOST slept mid-run (`suspended_seconds` says how long); the providers never had a chance. Not reduced coverage, not a provider fault, NOT a skip reason: **re-invoke the same pass once.** If the retry also returns 125, record it as `timeout`. Never report it as blocked provider infrastructure.
 - **`status: "partial"` with exit 0** — some providers returned, others did not. Surface `timeout_count` in the review header (e.g. `Adversarial pass 1: cursor-agent (1 of 2 providers; gemini timed out)`) so the user sees coverage was reduced.
 
-**Provider accounting — a block is only "used" if it actually reviewed.** Count a provider toward `providers_used` only when its block contains at least one verdict or finding. A block that holds nothing but an execution error, a usage/auth message, or an empty result is `provider_failed`, NOT a used provider. Otherwise the aggregate header claims cross-provider coverage that never happened — the same fake-coverage failure the Validity Gate exists to catch. If that drops the count below the tier's minimum, treat it as reduced coverage (`Adversarial: partial (…)`), never as a satisfied gate.
+**Provider accounting — a block is only "used" if it actually reviewed.** Count a provider toward `providers_used` only when its block contains at least one verdict or finding. A block holding only an execution error, a usage/auth message or an empty result is `provider_failed`, NOT a used provider. If that drops the count below the tier's minimum, treat it as reduced coverage (`Adversarial: partial (…)`), never as a satisfied gate.
 
 **Unhealthy-provider short-circuit.** Within one review run, after a provider returns two empty/error-only blocks, mark it unhealthy and stop dispatching to it for the remaining passes (including fix-delta passes) — repeated 5–8 minute waits buy nothing. Keep dispatching to the rest, and preserve the floor of **two** independent providers; if dropping the unhealthy one would take you below two, the run is reduced-coverage and must say so rather than silently continuing.
 
@@ -805,8 +805,8 @@ fourth with exit 7).
 
 ```bash
 # Pass 1 — original scope, before any fix (creates the proof — no --append-artifact).
-git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --multi --mode <code|security> --artifact "$ADV_PROOF"
-# Uncommitted scope: ~/.zuvo/build-review-patch | ~/.zuvo/adversarial-review … instead of git diff.
+git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --multi --mode <code|security|migrate> --artifact "$ADV_PROOF"
+# Uncommitted scope: feed the patch helper's output (Pass 2 below) instead of git diff.
 git rev-parse HEAD   # PRE_FIX_HEAD — print it and paste the literal below: the next Bash call is a fresh shell
 # → ADV-1 → fix CONFIRMED CRITICALs and behaviour-changing WARNINGs together with the Phase 4 fixes (uncommitted)
 
@@ -815,13 +815,13 @@ git rev-parse HEAD   # PRE_FIX_HEAD — print it and paste the literal below: th
 # edits and NEW files included (a fix's regression test). build-review-patch, not `git diff`, which drops
 # untracked files. Exit 3 from the helper = the fixes changed nothing: do not spend the pass.
 (echo "PRIOR FINDINGS: ADV-1 [desc] fixed in this delta — validate the fix, find what it broke";
- ~/.zuvo/build-review-patch --base "<PRE_FIX_HEAD>") | ~/.zuvo/adversarial-review --multi --mode <code|security> --artifact "$ADV_PROOF" --append-artifact
+ ~/.zuvo/build-review-patch --base "<PRE_FIX_HEAD>") | ~/.zuvo/adversarial-review --multi --mode <code|security|migrate> --artifact "$ADV_PROOF" --append-artifact
 # → fix only a NEW CONFIRMED CRITICAL
 
 # Pass 3 — only for that fix. Same patch (the fixes are still uncommitted, so the delta is cumulative —
 # every later pass therefore covers the FINAL content), prompt narrowed to the new fix.
 (echo "PRIOR FINDINGS: ADV-n [desc] fixed in this delta — validate the fix only";
- ~/.zuvo/build-review-patch --base "<PRE_FIX_HEAD>") | ~/.zuvo/adversarial-review --multi --mode <code|security> --artifact "$ADV_PROOF" --append-artifact
+ ~/.zuvo/build-review-patch --base "<PRE_FIX_HEAD>") | ~/.zuvo/adversarial-review --multi --mode <code|security|migrate> --artifact "$ADV_PROOF" --append-artifact
 ```
 
 - **A re-run of pass 1 because fewer than 2 providers answered counts toward the 3** (the driver counts every
@@ -861,7 +861,7 @@ Max 2 fix attempts per provider finding.
 
 ## Phase 2: Confidence Gate
 
-**Structural-refactor findings → defer with a recipe, don't block.** A RECOMMENDED finding whose fix is a structural refactor (extract a module, split a god-file, invert a dependency, restructure a layer) is real but does NOT belong in this review's fix loop — it is multi-file work that `zuvo:refactor` owns. Do not leave it as a vague "consider refactoring": record it through `backlog-add` (Backlog Persistence below, **Generic write**; `--class` CPLX, SIZE or DUP as the finding is) with a concrete **resolution recipe** (what to extract/split, the target shape, the 2-3 ordered steps, the rule it satisfies) in `--evidence "$E"`, so it is actionable later, and keep it OUT of the MUST-FIX set so it cannot block the merge. A structural refactor surfaced as MUST-FIX on an unrelated diff is scope creep.
+**Structural-refactor findings → defer with a recipe, don't block.** A RECOMMENDED finding whose fix is a structural refactor (extract a module, split a god-file, invert a dependency, restructure a layer) is multi-file work that `zuvo:refactor` owns, not this fix loop. Record it through `backlog-add` (Backlog Persistence below, **Generic write**; `--class` CPLX, SIZE or DUP as the finding is) with a concrete **resolution recipe** (what to extract/split, the target shape, 2-3 ordered steps, the rule it satisfies) in `--evidence "$E"`, never a vague "consider refactoring", and keep it OUT of the MUST-FIX set: as MUST-FIX on an unrelated diff it is scope creep.
 
 **TIER 0-1:** Lead scores each finding inline. `Confidence: [X]/100 -- [reason]`.
 
@@ -887,15 +887,15 @@ Dispatch and READ the Re-Scorer BEFORE Phase 4 starts; a dispatch after it is `N
 
 **Adversarial CRITICAL bypass:** Findings from `adversarial-review.sh` tagged CRITICAL skip the confidence gate. Effective confidence = 100. No exceptions.
 
-**CQ/Q critical-gate bypass (same rule, added 2026-08-02):** a finding sourced from a CRITICAL gate failure — CQ3, CQ4, CQ5, CQ6, CQ8, CQ14, or Q7, Q11, Q13, Q15, Q17 — also skips the confidence gate at effective confidence 100. Without this the skill contradicted itself: "critical gate failures ALWAYS produce MUST-FIX" and "MUST-FIX blocks merge", yet a CQ4 tenant-isolation finding scored 40 by the re-scorer was excluded from the report as below the threshold and never blocked anything.
+**CQ/Q critical-gate bypass (same rule):** a finding sourced from a CRITICAL gate failure — CQ3, CQ4, CQ5, CQ6, CQ8, CQ14, or Q7, Q11, Q13, Q15, Q17 — also skips the confidence gate at effective confidence 100: critical gate failures ALWAYS produce MUST-FIX, so a re-scorer score of 40 must not exclude one from the report.
 
-**When findings are recorded:** every `backlog-add` call of Backlog Persistence happens AFTER Phase 4 Execute (or after Phase 3 if no execute), so a finding the fix loop resolved gets no call (`backlog-protocol.md` "Filing from a skill", **Closing, not removing**). The items FIX-AUTO defers (NIT, structural-refactor RECOMMENDED) are filed there too, once each, before the Validity Gate. The FIX-AUTO announcement block (`FIX-AUTO: applying …`) prints before Phase 4, so it names them by finding id (`R-<n>`) only; their B- or F-ids appear in the final report's recorded list.
+**When findings are recorded:** every `backlog-add` call of Backlog Persistence happens AFTER Phase 4 Execute (or after Phase 3 if no execute), so a finding the fix loop resolved gets no call (`backlog-protocol.md` "Filing from a skill", **Closing, not removing**). The items FIX-AUTO defers (NIT, structural-refactor RECOMMENDED) are filed there too, once each, before the Validity Gate. The FIX-AUTO announcement block prints before Phase 4 and names them by finding id (`R-<n>`); their B- or F-ids appear in the final report's recorded list.
 
 ---
 
 ## Phase 3: Report
 
-> **Phase 3 runs end-to-end with no approval pauses.** Do not ask the user to confirm before persisting the report, tagging commits, recording findings through `backlog-add`, or running the retrospective. All subsections below (Backlog Persistence → Report Persistence → Tag Reviewed Commits → Knowledge Curation → Retrospective → Completion Gate → NEXT STEPS) execute in order before any `REVIEW COMPLETE` text is emitted. The only gate is the Completion Gate Check at the end.
+> **Phase 3 runs end-to-end with no approval pauses.** Do not ask before persisting the report, tagging commits, recording findings through `backlog-add`, or running the retrospective. All subsections below (Backlog Persistence → Report Persistence → Tag Reviewed Commits → Knowledge Curation → Retrospective → Completion Gate → NEXT STEPS) execute in order before any `REVIEW COMPLETE` text is emitted. The only gate is the Completion Gate Check at the end.
 >
 > **Destructive-persistence preconditions** (verify silently before tagging or writing to shared logs):
 > - The CWD is a git repo and matches the scope being reviewed (`git rev-parse --is-inside-work-tree` true; `REVIEWED_FROM..REVIEWED_THROUGH` resolved against this repo's history).
@@ -919,7 +919,7 @@ Dispatch and READ the Re-Scorer BEFORE Phase 4 starts; a dispatch after it is `N
 **TIER 0-1 (condensed report — merge sections to save ~1.5K output tokens):**
 Combine META + SCOPE FENCE + VERDICT into the merged banner. Skip: DEPLOYMENT RISK (always LOW at TIER 0-1), SKIPPED STEPS (obvious), VERIFICATION PASSED (inline), BACKLOG IN SCOPE (check manually). Print only: banner, FINDINGS (if any), QUALITY WINS, NEXT STEPS. ~500 tok output vs ~3K for full report.
 
-Each finding (the header form is mandatory in the saved report — `verify-audit` parses `**R-<n> — …**` or `## R-<n> …`, and a report it parses to 0 findings is a gate FAIL, never a pass):
+Each finding (the header form is mandatory in the saved report — `verify-audit` parses `**R-<n> — …**` or `## R-<n> …`, and a report whose tagged findings parse to 0 is a gate FAIL, never a pass; a clean review writes `0 findings` and no tagged line):
 ```
 **R-1 — [MUST-FIX] Missing orgId filter in query -- returns all orgs' data**
   File: src/order/order.service.ts:87
@@ -990,7 +990,7 @@ In addition (or as the same file's first lines), write the content-keyed review 
 signal the pipeline-entry gates read (`pg_range_reviewed`) — the path encodes the reviewed
 `<base7>..<head7>` range and the `files:` line records the reviewed production files (or `*`).
 Write it **only on success** — a crashed/aborted review must leave no artifact, so a failed
-run never grants pipeline coverage. Skip for `staged`/`uncommitted` scope under `--report-only` (no committed range); in a FIX mode the fixes' commit makes the range `PRE_FIX_HEAD..HEAD` and the artifact is REQUIRED.
+run never grants pipeline coverage. Skip for `staged`/`uncommitted` scope under `--report-only` (no committed range); in a FIX mode the fixes' commit makes the range `PRE_FIX_HEAD..HEAD` and the artifact is REQUIRED. With no commit (nothing to fix, or the commit impossible) the range is empty and the fixes are uncommitted: write no content-keyed artifact and no tags, only the narrative report. An `INCOMPLETE` run writes none either.
 
 ### Tag Reviewed Commits (per-commit audit trail)
 
@@ -1010,7 +1010,7 @@ else
 fi
 ```
 
-If the collision is hit, record `per-commit tags: skipped: namespace-collision(<target>)` in the report and still create the non-conflicting `review-YYYY-MM-DD-<slug>` wrapper tag — the audit trail degrades to the wrapper, it does not become a licence to rewrite existing tags. (`git tag -f` above only ever force-updates the *same* `reviewed/<hash>` name, which is the intended re-review behavior.)
+If the collision is hit, record `per-commit tags: skipped: namespace-collision(<target>)` in the report and still create the non-conflicting `review-YYYY-MM-DD-<slug>` wrapper tag — the audit trail degrades to the wrapper; never rewrite existing tags (`git tag -f` above only re-targets the *same* `reviewed/<hash>` name).
 
 Skip tagging when scope is `staged` or `uncommitted` under `--report-only`; in a FIX mode tag the fixes' commit.
 
@@ -1043,7 +1043,7 @@ If the gate check skips, you MUST print one of:
 - `RETRO: skipped (trivial session, <3 findings and no fix-loop)`
 - `RETRO: skipped (<reason>)` — reason must name a specific condition, not "nothing interesting"
 
-Silently omitting the retro is a protocol violation. Track record shows ~90% of review runs skip this step without marking why, which produces no learning signal. If you are tempted to skip, print the reason explicitly so the pattern is visible in `~/.zuvo/retros.md`.
+Omitting the retro is a protocol violation; if you skip it, print the reason.
 
 ## Completion Gate Check (HARD GATE — blocks output)
 
@@ -1060,7 +1060,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran — pass 1 over the whole original scope BEFORE any fix, findings printed; passes 2-3 only on the fixes since PRE_FIX_HEAD (max 3, adversarial-loop.md Step 5); SELF-REVIEW used --multi (not --rotate)
 [ ] All findings confidence-scored
 [ ] FIX modes: [GATE: comment-pass] PASS run=<id> (ledger-verified), N/A (no files written) or N/A (run=<id> no audited source) from post-fix step 1b, AUTO-FIX included; every CHECK claim listed as CHECK settled:; re-run before step 3's git add after any later write; its comment_pass: line pasted into the retro Telemetry block
-[ ] FIX modes: zuvo:mutation-test chained on the tests covering the changed files (Phase 4 step 4), its gaps closed in-run, or the false trigger condition named
+[ ] FIX modes: zuvo:mutation-test chained on the tests covering the changed files (Phase 4 step 4), its gaps closed in-run, the false trigger condition named, or `DEFERRED(time-cap)` with its backlog entry
 [ ] Backlog Persistence ran: every unfixed finding scored 26+ recorded through backlog-add, each B- or F-id reported or named under NOT PERSISTED (<reason>), or explicitly N/A
 [ ] No localized RECOMMENDED silently deferred — every deferred RECOMMENDED, recorded through backlog-add, carries a defer-reason of [NIT], [structural-refactor (multi-file)], [out-of-repo-contract] or [post-cap-residual], or in blocking mode [out-of-mode: blocking]; any single-file fix deferred = drift, route it to Phase 4 instead
 [ ] Closing commit for backlog-add's writes made as the run's last action (standalone FIX mode; or `none: nothing to stage`), or the `Backlog writes: <paths>` line printed (invoked by another skill, or --report-only)
@@ -1121,8 +1121,8 @@ VALIDITY GATE
     # protocol, record `<tool>: call-failed(<error>) (<substitution-map fallback>:
     # <result>)` = PASS, and list the failure under SKIPPED STEPS.
     review_diff: [<N> findings across 9 checks | absent-in-build (audit_scan: <findings>) | NOT_CALLED — VIOLATES_TRIGGER]
-    changed_symbols: [<N> symbols | absent-in-build (impact_analysis+get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
-    diff_outline: [<N> files outlined | absent-in-build (get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
+    changed_symbols: [<N> symbols | absent-in-build (impact_analysis+get_file_outline: <result>) | untracked-blind (build-review-patch+get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
+    diff_outline: [<N> files outlined | absent-in-build (get_file_outline: <result>) | untracked-blind (build-review-patch+get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
     impact_analysis: [<N> affected_tests / <N> blast | untracked-blind (build-review-patch+get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
     scan_secrets: [<N> hits | absent-in-build (grep secret-scan: <count>) | NOT_CALLED — VIOLATES_TRIGGER]
     search_patterns: [<N> CQ8/CAP hits | NOT_CALLED — VIOLATES_TRIGGER]
@@ -1133,9 +1133,8 @@ VALIDITY GATE
       # nextjs_route_map is a SUBSET (routes only) and does NOT satisfy it —
       # framework_audit also covers client-boundary, data-flow, and server-actions.
   audit_tree: [readonly(<sha7>) | live(<why the read-only worktree could not be created>)]
-    # The auditors' root. `live` is an honest degraded value — the findings then race the fix loop
-    # and the Working-Tree Staleness Check carries the weight alone. Claiming `readonly` without
-    # having created the worktree is the same class as claiming a dispatch that never happened.
+    # The auditors' root. `live` is an honest degraded value (findings race the fix loop; the
+    # Working-Tree Staleness Check carries the weight). Claiming `readonly` without the worktree is a false claim.
   tier2_subagents:   # TIER 2-3 only; for TIER 0-1 print "not_required (tier<2)"
     # A host with NO sub-agent tool at all (`Agent`, `spawn_agent` and `invoke_subagent` all
     # absent) records INLINE-SINGLE-AGENT-LOCK(<marker>) for each role (carve-out below). A host
@@ -1146,8 +1145,7 @@ VALIDITY GATE
     confidence_rescorer: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NO_RETURN(<elapsed>) — VIOLATES_TIER2 | NOT_DISPATCHED — VIOLATES_TIER2]
     # `DISPATCHED(<marker>)` requires a RETURNED result you actually used. A dispatch that
     # never came back is `NO_RETURN(<elapsed>)` and counts EXACTLY as NOT_DISPATCHED for every
-    # rule below — it contributed no findings, so it bought no coverage, and the reason it is
-    # missing does not change what the verdict may claim. Before writing ANY value here, verify
+    # rule below (no findings, no coverage). Before writing ANY value here, verify
     # each agent actually returned; "I sent three" is not "three reported".
     # DEGRADED is allowed ONLY when self_review_flag=no AND you print a one-line
     # [DEGRADED: <agent> skipped because <concrete reason>] — a DELIBERATE,
@@ -1160,12 +1158,9 @@ VALIDITY GATE
     passes_run: [<N> | 0 — VIOLATES_MANDATE]
     providers_used: [<provider1,provider2,...> | none]
     skip_reason: [n/a | single_provider_only | timeout | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
-    # rate_limit is NOT a skip reason — per stall-recovery.md ("Rate-limit
-    # is a RETRY condition, NEVER a quality lever"), a rate-limited adversarial pass
-    # is RE-RUN across watchdog resumes until it completes, never recorded as a skip
-    # or a degraded verdict. The only genuine no-retry unavailability reasons are
-    # single_provider_only (only one model exists) and BLOCKED_CONTEXT_BUDGET (window
-    # full) — those keep the degraded-coverage handling below; rate_limit does not.
+    # rate_limit is NOT a skip reason (stall-recovery.md): a rate-limited pass is RE-RUN, never a skip
+    # or a degraded verdict. Only single_provider_only and BLOCKED_CONTEXT_BUDGET keep the
+    # degraded-coverage handling below.
     coverage_source: [fresh-this-run | same-session-same-commit(<artifact-paths>) | NONE — degraded]
     self_review_flag: [no | yes — used --multi | yes — DID_NOT_USE_--multi — VIOLATES_1.1]
   verification: [full(<runner or typecheck>) | syntax-only(<check>) — Phase 4 "Verification impossible" | n/a (report-only)]
@@ -1189,7 +1184,7 @@ VALIDITY GATE
 
 If `gate_status = FAIL`, override the VERDICT to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and record the process item `subject:review-incomplete` (Validity-gate process items below).
 
-**Adversarial-skip violation handling (NEW — closes the 2026-05-28 escape-hatch loophole):** If `adversarial.skip_reason` is set to anything OUTSIDE the whitelist `{n/a, single_provider_only, timeout, BLOCKED_CONTEXT_BUDGET}` — including but not limited to "context budget", "already mechanically detected", "self-review low value", "small diff", "documented honestly" — then:
+**Adversarial-skip violation handling:** If `adversarial.skip_reason` is set to anything OUTSIDE the whitelist `{n/a, single_provider_only, timeout, BLOCKED_CONTEXT_BUDGET}` — including but not limited to "context budget", "already mechanically detected", "self-review low value", "small diff", "documented honestly" — then:
 1. Set `gate_status = FAIL — adversarial skip outside whitelist (<reason>)`.
 2. Override VERDICT to `INCOMPLETE` regardless of finding count.
 3. Append `[ESCAPE-HATCH-VIOLATION:adversarial:<reason>]` to the Run line NOTES column.
@@ -1197,26 +1192,22 @@ If `gate_status = FAIL`, override the VERDICT to `INCOMPLETE` regardless of find
 
 Same handling if `self_review_flag = yes — DID_NOT_USE_--multi` (section 1.1 mandates `--multi` on self-review).
 
-**Rate-limit is NOT a degraded path — it is a RETRY (per stall-recovery.md).** If a mandatory gate (fresh adversarial `--multi`, or any TIER-2 sub-agent fan-out) cannot complete this turn because of a rate-limit / API-error, do NOT record a skip, do NOT downgrade to CONDITIONAL, do NOT cite coverage. **End the turn; the watchdog resumes; RE-RUN the exact gate.** Repeat until it actually runs. A rate-limited review is *still-running*, not *done-degraded*. The verdict is computed only once every mandatory gate has truly run (or is proven by a same-commit artifact, below). There is no `rate_limit` skip-reason and no rate-limit CONDITIONAL — that path is removed precisely because it became the universal excuse.
+**Rate-limit is a RETRY, not a degraded path (stall-recovery.md).** If a mandatory gate (fresh adversarial `--multi`, or any TIER-2 sub-agent fan-out) cannot complete this turn because of a rate-limit / API-error, do NOT record a skip, downgrade to CONDITIONAL or cite coverage. **End the turn; the watchdog resumes; RE-RUN the exact gate** until it runs. The verdict is computed only once every mandatory gate has truly run (or is proven by a same-commit artifact, below). There is no `rate_limit` skip-reason and no rate-limit CONDITIONAL.
 
 **Genuine capability-limit handling (NOT rate-limit — these do not clear by retrying).** The only honest non-retry unavailability reasons are `single_provider_only` (only one model is configured, so cross-model `--multi` truly cannot run) and `BLOCKED_CONTEXT_BUDGET` (the context window is full). For these, check `coverage_source`:
 - `same-session-same-commit(<artifacts>)` — the dimension WAS covered by a real pass on the EXACT commits under review (e.g. adversarial artifacts in `zuvo/context/adversarial-task-*.txt` returning 0 open MUST-FIX). Verify the artifacts exist on disk AND reference these commit SHAs. If so, that dimension is legitimately covered → it does NOT degrade the verdict. (The ONE honest reuse — real coverage on the same code, not a lighter substitute.)
 - `NONE` — no fresh run and no same-commit artifact, and the limit genuinely cannot be retried away. Then: verdict downgrades to **`CONDITIONAL`**; print `[DEGRADED-COVERAGE: <gate> not run — <single_provider_only|BLOCKED_CONTEXT_BUDGET>; re-validate before merge]` + append `[DEGRADED-COVERAGE:<gate>:<reason>]` to the Run line NOTES; record a re-validation obligation (the process item `subject:review-revalidate`, Validity-gate process items below, + the NEXT STEPS "run `/zuvo:review <range>` to clear the CONDITIONAL"); `gate_status` stays `PASS` with `degraded=<gate>` noted.
 
-The point: a clean `APPROVE` requires every mandatory gate to be either freshly run, proven by a same-commit artifact, or (only for a true capability limit) honestly degraded to CONDITIONAL. `timeout` (exit 124, ALL providers timed out) IS a legitimate recorded skip — it is a provider-side dead end, not a retryable rate-limit. Rate-limit is none of these — it is retried until the gate runs. `n/a` (no production logic to review) is the only no-coverage-needed path.
+A clean `APPROVE` requires every mandatory gate to be freshly run, proven by a same-commit artifact, or (only for a true capability limit) honestly degraded to CONDITIONAL. `timeout` (exit 124, ALL providers timed out) IS a legitimate recorded skip (a provider-side dead end); rate-limit is retried until the gate runs. `n/a` (no production logic to review) is the only no-coverage-needed path.
 
-**TIER 2 sub-agent skip handling (NEW — closes the silent-degradation / context-fatigue drift gap):** This is the dominant real-world failure: on a long session the lead does CQ/behavior/confidence scoring *inline as "lead"* instead of dispatching the sub-agents, then rationalizes it after the fact ("adversarial covers it", "scoped check instead"). That is **drift, not a decision**. If any `tier2_subagents.*` reads `NOT_DISPATCHED — VIOLATES_TIER2` **or `NO_RETURN(<elapsed>)`**:
+**TIER 2 sub-agent skip handling:** on a long session the lead drifts into scoring CQ/behavior/confidence *inline as "lead"* instead of dispatching the sub-agents, then rationalizes it ("adversarial covers it"). That is **drift, not a decision**. If any `tier2_subagents.*` reads `NOT_DISPATCHED — VIOLATES_TIER2` **or `NO_RETURN(<elapsed>)`**:
 1. Set `gate_status = FAIL — tier2 sub-agent(s) not dispatched (<which>)`.
 2. Override VERDICT to `INCOMPLETE` (the inline "lead" scoring does NOT substitute — sub-agents read plan+spec independently and are the second pair of eyes; on self-review they are the ONLY independent eyes).
 3. Append `[TIER2-SUBAGENT-SKIP:<which>]` to the Run line NOTES.
 4. Record the process item `subject:review-tier2-skip` (Validity-gate process items below) and put the verbatim rationalization quote in the report beside its F-id.
 A DEGRADED line (`[DEGRADED: <agent> skipped because <reason>]`) is acceptable ONLY for non-self-review AND only as a printed, deliberate choice — never the default. On self-review there is NO degraded path.
 
-**`NO_RETURN` is the same failure wearing an innocent face, and it is the one that actually
-shipped.** The drift above is a lead who *chose* not to dispatch; `NO_RETURN` is a lead who
-dispatched correctly, never noticed the agent did not come back, and wrote the verdict from
-whoever happened to reply. Same outcome — a tier claiming coverage it does not have — but no
-rationalization to catch it by, because nothing was rationalized. Use `NO_RETURN(<elapsed>)`
+**`NO_RETURN` is the same failure without a rationalization:** the lead dispatched correctly, never noticed an agent did not come back, and wrote the verdict from whoever replied. Use `NO_RETURN(<elapsed>)`
 and route it through steps 1-4 above (note `[TIER2-SUBAGENT-NO-RETURN:<which>:<elapsed>]`
 instead, and put the elapsed time in the report beside the item's F-id rather than a quote). Two practical rules:
 
@@ -1249,11 +1240,11 @@ by the lock. **This carve-out applies ONLY when no sub-agent tool exists.** If
 dispatch is available and you scored inline anyway, that is the drift above and stays
 `NOT_DISPATCHED — VIOLATES_TIER2`.
 
-**Localized-deferral drift handling (NEW — closes the "RECOMMENDED → defer" reflex that defers things that should have been fixed in-loop):** The recurring failure is the lead reflexively deferring a localized, single-file RECOMMENDED fix (add `try/catch`, add a guard, add a missing affordance) *because* it is "only RECOMMENDED" — conflating merge-severity with fix-scope. The backlog then accretes one-line fixes that the FIX-AUTO default already mandates applying. The gate applies in the FIX modes and to DEFERRED RECOMMENDED items only: a RECOMMENDED kept in the report (`REPORT`, 51-100) that the run leaves unfixed. A `RECORD` finding (26-50, excluded from the report) is recorded, is not a deferral and needs no `defer-reason`; under `--report-only` nothing is applied, every unfixed finding is recorded, and the gate does not apply. If any deferred RECOMMENDED item carries a `defer-reason` OUTSIDE the whitelist `{NIT, structural-refactor (multi-file), out-of-repo-contract, post-cap-residual, out-of-mode: blocking}` — or carries none, or carries `out-of-mode: blocking` in a run whose mode is not `blocking` — then:
+**Localized-deferral drift handling:** the failure is deferring a localized, single-file RECOMMENDED fix (a `try/catch`, a guard, a missing affordance) *because* it is "only RECOMMENDED" — conflating merge-severity with fix-scope. The gate applies in the FIX modes and to DEFERRED RECOMMENDED items only: a RECOMMENDED kept in the report (`REPORT`, 51-100) that the run leaves unfixed. A `RECORD` finding (26-50, excluded from the report) is recorded, is not a deferral and needs no `defer-reason`; under `--report-only` nothing is applied, every unfixed finding is recorded, and the gate does not apply. If any deferred RECOMMENDED item carries a `defer-reason` OUTSIDE the whitelist `{NIT, structural-refactor (multi-file), out-of-repo-contract, post-cap-residual, out-of-mode: blocking}` — or carries none, or carries `out-of-mode: blocking` in a run whose mode is not `blocking` — then:
 1. Set `gate_status = FAIL — localized RECOMMENDED deferred (<B-id or F-id>)`.
 2. Override VERDICT to `INCOMPLETE` and route the mis-deferred item(s) into Phase 4 NOW (do not emit REVIEW COMPLETE with them still unfixed). A fixed item gets no `backlog-add` call. Only if an open entry was recorded for it earlier (a `--report-only` pass, an earlier run) is that entry closed, as `backlog-protocol.md` "Filing from a skill", **Closing, not removing** says (tick it, append `[FIXED <sha7>]`; the archive helper moves it).
 3. Append `[LOCALIZED-DEFER-DRIFT:<B-id or F-id>]` to the Run line NOTES.
-A multi-file structural refactor stays deferred (recorded via `backlog-add`) with its recipe — that is correct, not drift. The test is fix-scope (one file/symbol → fix; cross-cutting restructure → defer, recorded via `backlog-add`), never severity tier.
+A multi-file structural refactor stays deferred with its recipe: that is correct, not drift. The test is fix-scope, never severity tier.
 
 **Validity-gate process items.** Each gate above that says "record the process item `subject:review-<gate>`" makes one call: `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source review --target subject:review-<gate> --title "$T"` (`backlog-protocol.md` "Filing from a skill", **Process item**). `T` is the gate's fixed title, the same words on every run, so a repeat bumps the one record:
 
@@ -1277,7 +1268,7 @@ Print this Validity Gate **AFTER** the retro append and `~/.zuvo/append-runlog` 
 | every MUST-FIX fixed (or none) and every gate green | `PASS` | `APPROVE` |
 | fixed, but a gate degraded (`degraded:*`, `syntax-only` verification, `DEFERRED(time-cap)`, `UNVERIFIED`) | `WARN` | `CONDITIONAL` |
 | a MUST-FIX or adversarial CRITICAL still open | `FAIL` | `MUST-FIX-FOUND` |
-| a required gate could not run, or the Validity Gate fails | `INCOMPLETE` | `INCOMPLETE` |
+| a required gate could not run, or the Validity Gate fails | `FAIL`, NOTES `INCOMPLETE` | none: no content-keyed artifact, the narrative report says `INCOMPLETE` |
 | `--report-only`, RECOMMENDED only | `PASS` | `RECOMMENDED-FOUND` |
 
 ### NEXT STEPS Block
@@ -1298,14 +1289,14 @@ DEFERRED, recorded via backlog-add: <K> NIT (every NIT above confidence 25) + <S
   <for each deferred RECOMMENDED> R-<n> (its defer-reason is printed in the FIX summary)
 ```
 
-**Backlog-deferral whitelist (HARD — closes the silent-deferral drift gap).** The DEFAULT for a RECOMMENDED finding is **fix it now in Phase 4**, not a deferral. A RECOMMENDED finding may be deferred (recorded via `backlog-add`) ONLY if it matches one of exactly five categories, and you MUST print its `defer-reason` tag in ONE place, the FIX summary (Phase 4 step 3), in every FIX mode; the record carries it in `--evidence "$E"`. The whitelist governs RECOMMENDED findings only: a NIT-tier finding needs no defer-reason, and every NIT above 25 is recorded (Backlog Persistence):
+**Backlog-deferral whitelist (HARD).** The DEFAULT for a RECOMMENDED finding is **fix it now in Phase 4**, not a deferral. A RECOMMENDED finding may be deferred (recorded via `backlog-add`) ONLY if it matches one of exactly five categories, and you MUST print its `defer-reason` tag in ONE place, the FIX summary (Phase 4 step 3), in every FIX mode; the record carries it in `--evidence "$E"`. The whitelist governs RECOMMENDED findings only: a NIT-tier finding needs no defer-reason, and every NIT above 25 is recorded (Backlog Persistence):
 - **NIT** — style/readability, zero functional impact (already its own tier; would only apply under explicit `fix`/FIX-ALL).
 - **structural-refactor (multi-file)** — extract a module, split a god-file, invert a dependency, restructure a layer. This is `zuvo:refactor` territory and gets a resolution recipe per Phase 2.
 - **out-of-repo-contract** — the fix needs something outside this repository (a missing schema, migration, gateway or upstream contract); name it in the evidence.
 - **post-cap-residual** — raised by the LAST permitted adversarial pass (section 1.6), so no pass remains to review a fix for it; a CRITICAL is never deferred this way.
 - **out-of-mode: blocking** — ONLY when the run's mode is `blocking` (FIX-BLOCKING): a localized RECOMMENDED the mode leaves unfixed because the user chose MUST-FIX only. In FIX-ALL and FIX-AUTO it is never a valid reason.
 
-Everything else is **localized and gets fixed in-loop, full stop.** A single-file, single-symbol reliability/correctness/affordance fix — add a missing `try/catch` around a transaction, add a null guard, tighten a WHERE clause, add a missing scope indicator on a button, reject invalid input — is **localized + high-confidence by construction** and is NEVER deferrable. "It's only RECOMMENDED so I'll backlog it" is the exact drift this gate forbids: severity tier (MUST-FIX vs RECOMMENDED) decides *merge-blocking*, it does NOT decide *fix-now vs defer*. The defer decision is made on the **scope of the fix** (localized → fix; multi-file refactor → defer, recorded via `backlog-add`), not on severity. If you cannot name the deferred item's category from the whitelist (`out-of-mode: blocking` only in `blocking` mode), it is NOT deferrable — route it to Phase 4. In FIX-ALL and FIX-AUTO a localized RECOMMENDED left unfixed is never recorded as a deferral; it fails the Localized-deferral drift gate, which routes it to Phase 4.
+Everything else is **localized and gets fixed in-loop, full stop.** A single-file, single-symbol fix — a missing `try/catch` around a transaction, a null guard, a tighter WHERE clause, a missing scope indicator, rejecting invalid input — is localized + high-confidence by construction and NEVER deferrable. Severity (MUST-FIX vs RECOMMENDED) decides *merge-blocking*, not *fix-now vs defer*; that is decided on the **scope of the fix** (localized → fix; multi-file refactor → defer via `backlog-add`). A deferred item whose category is not in the whitelist (`out-of-mode: blocking` only in `blocking` mode) is NOT deferrable: route it to Phase 4. In FIX-ALL and FIX-AUTO a localized RECOMMENDED left unfixed fails the Localized-deferral drift gate, which routes it to Phase 4.
 
 Then continue to Phase 4 immediately (no user turn). If there are ZERO MUST-FIX and ZERO applicable RECOMMENDED, print `FIX-AUTO: nothing to apply (only NIT/structural — recorded)` and finish. Only when `--report-only` was passed do you instead print the menu and stop (that pass has recorded its unfixed findings, so when the user then answers "fix", "blocking" or "auto-fix", Phase 4 closes the entries of the findings it fixes, as **Closing, not removing** says):
 
@@ -1348,11 +1339,11 @@ Input:
 
 ### Post-fix gate (MANDATORY — auto-applied fixes can over-correct)
 
-Applying fixes without re-checking is how a "fix" silently becomes a regression (2026-05-30: an auto-applied resize fix removed the width floor → the dock could collapse to 0px and `aria-valuemin > valuemax`; caught only by the next adversarial pass). After applying ANY fixes, before declaring done:
+Unverified fixes become regressions. After applying ANY fixes, before declaring done:
 
 1. **Verify** — run the project's test/typecheck/build. A fix that leaves the suite red is reverted, not shipped.
-   - **Pre-existing failure in an UNTOUCHED workspace is not your regression** (and reverting a good fix over it is the actual harm). If the full suite fails only outside the reviewed file set: re-run that workspace once to confirm it reproduces, then compare the failing files against the reviewed diff. A **reproducible** failure in files this review never touched does NOT invalidate a green targeted suite + typecheck — but the verdict MUST disclose it: `verification debt: <workspace> <N> failing (pre-existing, out-of-scope)`, with the exact files/counts. Silence here is the escape hatch: an undisclosed "the suite was already broken" is indistinguishable from a fix that broke it. If the failure touches ANY reviewed file, it is yours — revert or fix, no debt option.
-   - **Verification impossible** (no runner, missing dependencies, read-only `.git`, a farm that never answers): still apply every fix the mode requires — never leave a MUST-FIX unfixed because verification or the commit is blocked. Verify with the strongest check available (typecheck of the changed files, `node --check`, `python -m py_compile`), record `verification: syntax-only(<check>)` in the Validity Gate and the verdict `WARN`. If the commit is impossible, leave the fixes in the tree, say so, and still write the artifact for `PRE_FIX_HEAD..HEAD` as far as the sandbox allows (its absence is then a stated limit, not a skipped step).
+   - **Pre-existing failure in an UNTOUCHED workspace is not your regression** (reverting a good fix over it is the actual harm). If the full suite fails only outside the reviewed file set: re-run that workspace once to confirm it reproduces, then compare the failing files against the reviewed diff. A **reproducible** failure in files this review never touched does NOT invalidate a green targeted suite + typecheck, but the verdict MUST disclose it: `verification debt: <workspace> <N> failing (pre-existing, out-of-scope)`, with the exact files/counts (an undisclosed "the suite was already broken" is indistinguishable from a fix that broke it). If the failure touches ANY reviewed file, it is yours — revert or fix, no debt option.
+   - **Verification impossible** (no runner, missing dependencies, read-only `.git`, a farm that never answers): still apply every fix the mode requires — never leave a MUST-FIX unfixed because verification or the commit is blocked. Verify with the strongest check available (typecheck of the changed files, `node --check`, `python -m py_compile`), record `verification: syntax-only(<check>)` in the Validity Gate and the verdict `WARN`. If the commit is impossible, leave the fixes in the tree and say so; `PRE_FIX_HEAD..HEAD` is then empty, so write the narrative report only, no content-keyed artifact or tags (state that as the limit, not a skipped step).
 1b. **Comment pass** — read `../../shared/includes/comment-pass.md` and run its whole sequence — mechanical scope, `CHECK` lines, ledger check, exit valve — with `COMMENT_SCOPE` = every file the fix loop created or modified, production and test, plus every file a fix creates or edits, checked against `git status --porcelain --untracked-files=all` — a check on the record, never a source of paths (files other sessions changed stay out); and `COMMENT_BASE` = the `COMMENT_BASE=<sha>` printed at the start of Phase 4, passed as a literal — not `HEAD`, because in AUTO-FIX `zuvo:build`'s 4.6 commit would hide the fix loop's lines from a `HEAD` base. If it is missing (a resume): the same resolver (`git rev-parse -q --verify HEAD || git hash-object -t tree /dev/null`) only when the fix loop has committed nothing (AUTO-FIX: zuvo:build's 4.6 commit counts as the fix loop's), otherwise print `[GATE: comment-pass] BLOCKED rc=2 base unknown`; never `git stash create` on a resume, which would snapshot the fix loop's own edits. This step always runs, AUTO-FIX included, over every file the fix loop created or modified. One run, each path quoted, from the repository root:
     ```bash
     COMMENT_BASE=<sha printed at the start of Phase 4>
@@ -1362,7 +1353,7 @@ Applying fixes without re-checking is how a "fix" silently becomes a regression 
    - **rc 0** → settle each `CHECK` claim once by TEST-OR-GO and list it as `CHECK settled: <file:line> test|removed|softened`. A settling edit (a test added, a number removed) means one more helper run, and the marker takes that last clean run's id. Confirm the ledger with the include's `awk` lookup: a row for every path in scope (no row → `[GATE: comment-pass] BLOCKED rc=0 no ledger row for run=<id>`; a scoped path without a row → re-run over the full scope), then print `[GATE: comment-pass] PASS run=<id> files=<n> justified=<k>[ ids=<id,…>][ env=<NAMES>]` or `N/A (run=<id> no audited source)`; `N/A (no files written)` is printed only when the scope is empty (include step 1), with no run. If the pass added a test or changed code, re-run step 1.
    - **any other rc** → fix the invocation; if it cannot be fixed, print `[GATE: comment-pass] BLOCKED rc=<n> <reason>` and do not commit or print the FIX-COMPLETE block.
    - **Recheck:** if any file in scope was changed or created after the last clean run (step 2's fixes, anything), re-run this step over the grown scope before step 3's `git add`, and before the commit of any file a later step writes (step 4's gap tests); the marker carries the new run id.
-2. **Adversarial re-validation** — pass 2 of the FIX-mode flow in section 1.6: `build-review-patch --base <PRE_FIX_HEAD>` piped to `adversarial-review --multi --append-artifact`, run BEFORE the commit. It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (pass 3, then no more — section 1.6), and each residual non-CRITICAL is recorded through `backlog-add` (Backlog Persistence, **Generic write**). Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open and fixable.
+2. **Adversarial re-validation** — pass 2 of the FIX-mode flow in section 1.6: `build-review-patch --base <PRE_FIX_HEAD>` piped to `adversarial-review --multi --artifact "$ADV_PROOF" --append-artifact`, run BEFORE the commit. It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (pass 3, then no more — section 1.6), and each residual non-CRITICAL is recorded through `backlog-add` (Backlog Persistence, **Generic write**). Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open and fixable.
 3. **Commit** only after 1+1b+2 pass. Name the applied findings and the deferred ones in the FIX summary, by finding id (`R-<n>`), each deferred RECOMMENDED with its defer-reason; their B- or F-ids appear in the final report's recorded list (Backlog Persistence). This commit never stages a `wrote=` path: those go into the closing commit (Closing commit for backlog-add's writes, below).
    fix-loop.md's `## Commit` happens here, at step 3 — never before 1b and 2 have passed.
 4. **Mutation-test the tests that cover what these commits changed** — see the next section.
@@ -1460,10 +1451,10 @@ Tag: [tag name]
 
 This is the run's last action: it comes after Phase 4 (in a FIX mode), after the Validity Gate and its process items, and so after every `backlog-add` call of the run (Backlog Persistence, the drive-by step, the validity-gate process items). It follows `backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**, against the `backlog-snapshot:` Phase 0 printed:
 
-- **Standalone, in a FIX mode** (`fix`, `blocking`, `auto-fix`, the FIX-AUTO default): make the one closing commit `chore(backlog): record findings of review run` with the run's `wrote=` paths plus the paths `append-runlog` changed (its backlog auto-archive of `memory/backlog.md` / `memory/backlog-done.md` and the knowledge-prime edits of `knowledge/*.jsonl`) — find them with `git status --porcelain -- memory/ knowledge/` against the `backlog-snapshot:` line, stage those names only — whether or not Phase 4 committed anything else. With no path left, there is no commit (`none: nothing to stage`).
+- **Standalone, in a FIX mode** (`fix`, `blocking`, `auto-fix`, the FIX-AUTO default): make the one closing commit `chore(backlog): record findings of review run` with the run's `wrote=` paths plus whatever the run-log helper changed under `memory/` (its backlog auto-archive) and `knowledge/*.jsonl` (its knowledge-prime edits) — find them with `git status --porcelain -uall -- memory/ knowledge/` against the `backlog-snapshot:` line, stage those names only — whether or not Phase 4 committed anything else. With no path left, there is no commit (`none: nothing to stage`).
 - **Invoked by another skill** (`zuvo:ship`, `zuvo:execute`, `zuvo:refactor`), or under `--report-only`, which makes no commits: stage nothing and print one line in the report, `Backlog writes: <path>, …` (or `Backlog writes: none`). The outer skill's closing commit carries them.
 
-The closing commit holds only `memory/` paths, never a reviewed file, so it is the one commit allowed after Report Persistence (the ORDERING paragraph there).
+The closing commit holds only `memory/` and `knowledge/` paths, never a reviewed file, so it is the one commit allowed after Report Persistence (the ORDERING paragraph there).
 
 ### Staged Scope Stash Management (B5 fix)
 

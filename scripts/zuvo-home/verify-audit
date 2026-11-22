@@ -115,8 +115,12 @@ def find_project_root(audit_path: Path) -> Path:
 # A bare `R-1 [MUST-FIX] title` line (no opener) is also a header: the review SKILL's own finding
 # example used exactly that shape and parsed to zero findings (live test D3, 2026-11-21).
 SEVERITY_TAG = r"\[(?:MUST-FIX|RECOMMENDED|NIT|CRITICAL|HIGH|MEDIUM|LOW|BLOCKER)\]"
+FINDING_LINE_RE = re.compile(
+    r"^\s*(?:#{1,4}\s+|[*_]{2}\s*|[-*]\s+|\d+[.)]\s+)?(?:[A-Z]{1,8}-?\d+(?:\.\d+)?\s*[—–:.-]*\s*)?[*_]{0,2}"
+    + SEVERITY_TAG
+)
 FINDING_HEADER_RE = re.compile(
-    r"^(?:(?:#{2,4}\s+|[*_]{2}\s*|[-*]\s+|\d+\.\s+)|(?=[A-Z]{1,4}-?\d+\s*" + SEVERITY_TAG + r"))"
+    r"^(?:(?:#{2,4}\s+|[*_]{2}\s*|[-*]\s+|\d+\.\s+)|(?=[A-Z]{1,4}-?\d+\s*[—–:.-]*\s*" + SEVERITY_TAG + r"))"
     r"(?:[HMLC]\d+\b|(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b|[A-Z]{1,4}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b)",
     re.IGNORECASE,
 )
@@ -280,7 +284,11 @@ def main() -> None:
         ) is not None
         # Severity-tagged findings (`[MUST-FIX]`) that cite file:line but parsed to zero sections are
         # the same vacuous pass (live test D3: the SKILL's own example shape verified nothing).
-        tagged = re.search(SEVERITY_TAG, text) is not None and FILE_LINE_RE.search(text) is not None
+        # A finding LINE: opener, optional ID, then the severity tag, with the citation on the same line.
+        # (Whole-file co-occurrence rejected clean reports that merely mention `[LOW]` and a file:line.)
+        tagged = any(
+            FINDING_LINE_RE.match(ln) and FILE_LINE_RE.search(ln) for ln in text.splitlines()
+        )
         if claims_findings or tagged:
             print(
                 f"REJECTED: {audit_path.name} — the report has a MUST-FIX/BLOCKER/CRITICAL "

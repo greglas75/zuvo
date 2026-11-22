@@ -6,7 +6,7 @@
 
 | Capability | Claude Code | Kimi Code | Codex | Antigravity | Cursor |
 |-----------|-------------|-----------|-------|-------------|--------|
-| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | Native dispatch when available and authorized by execution-policy; fresh context is not proof of model independence. | Sequential (no spawning) | Sequential (no spawning) |
+| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | Native dispatch when available and authorized by execution-policy; fresh context is not proof of model independence. | `define_subagent` / `invoke_subagent` when the `agy` CLI exposes them (same model), else sequential | Sequential (no spawning) |
 | Concurrency | Unrestricted background tasks | Background tasks (`run_in_background`) | Limited | Sequential | Sequential |
 | User interaction | Native interactive prompts | Native interactive prompts (`AskUserQuestion`) | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
 | Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.kimi-code/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |

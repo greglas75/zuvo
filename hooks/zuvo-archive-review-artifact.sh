@@ -89,6 +89,8 @@ done
 # a question the log answers instead of a discovery made months later.
 alog="${ZUVO_REVIEW_ARCHIVE:-${ZUVO_HOME:-$HOME/.zuvo}/review-archive}/archive.log"
 mkdir -p "$(dirname "$alog")" 2>/dev/null || true
+# Hand the resolved archive to the helper: an older installed helper ignores ZUVO_HOME and would write to ~/.zuvo.
+export ZUVO_REVIEW_ARCHIVE="$(dirname "$alog")"
 if out=$($TO bash "$SYNC" --archive "$root" --slug "${name%.md}" 2>&1); then
   :
 else

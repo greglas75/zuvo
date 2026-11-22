@@ -164,6 +164,7 @@ def read_package_json(path: Path) -> dict:
 
 
 LANG_ALIASES = {"ts": "typescript", "js": "javascript", "py": "python", "kt": "kotlin"}
+FORCED_LANG_KEYS = {"typescript", "javascript", "python", "php", "kotlin"}
 
 
 def apply_lang(sig: dict, lang: str) -> None:
@@ -171,7 +172,11 @@ def apply_lang(sig: dict, lang: str) -> None:
     made every review preload the Python group although the changed files were TypeScript (live
     review test D6, 9 of 9 runs); the manifest-implies-language rule is suppressed once the caller
     names the language."""
-    sig["language"] = LANG_ALIASES.get(lang.lower(), lang.lower())
+    langs = [LANG_ALIASES.get(x.strip().lower(), x.strip().lower()) for x in lang.split(",") if x.strip()]
+    if not langs:
+        sys.exit("ERROR: --lang needs a language, e.g. --lang ts or --lang ts,py (mixed-language change)")
+    sig["language"] = langs[0]
+    sig["forced_langs"] = set(langs)
     sig["language_forced"] = True
 
 
@@ -276,7 +281,7 @@ def match_groups(by_stack: dict, sig: dict) -> list[tuple[str, str, list[str]]]:
     for key, tools in by_stack.items():
         evidence = None
         # rule 1: language
-        if sig["language"] == key:
+        if sig["language"] == key or key in sig.get("forced_langs", ()):
             evidence = f"rule #1 language={key}"
         # rule 2: framework
         elif sig["framework"] == key:
@@ -284,6 +289,10 @@ def match_groups(by_stack: dict, sig: dict) -> list[tuple[str, str, list[str]]]:
         # rule 3: test_runner
         elif sig["test_runner"] == key:
             evidence = f"rule #3 test_runner={key}"
+        # a forced --lang decides the language groups: a root manifest (typescript in devDependencies,
+        # pyproject.toml) must not add another language's tools
+        elif sig.get("language_forced") and key in FORCED_LANG_KEYS:
+            pass
         # rule 4: dep manifest
         elif key in deps:
             evidence = f"rule #4 deps:{key}"
@@ -296,8 +305,6 @@ def match_groups(by_stack: dict, sig: dict) -> list[tuple[str, str, list[str]]]:
         elif key == "sqlite" and any(d in SQLITE_DRIVERS for d in deps):
             evidence = "rule #5 driver:sqlite"
         # rule 6: manifest-implies-language
-        elif sig.get("language_forced") and key in ("php", "python", "kotlin"):
-            pass
         elif key == "php" and sig["files"]["composer_json"]:
             evidence = "rule #6 composer.json present"
         elif key == "python" and (sig["files"]["pyproject_toml"] or sig["files"]["requirements_txt"]):
@@ -386,10 +393,14 @@ def main():
     argv, lang, i = [], None, 1
     while i < len(sys.argv):
         a = sys.argv[i]
-        if a == "--lang" and i + 1 < len(sys.argv):
+        if a == "--lang":
+            if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
+                sys.exit("ERROR: --lang needs a value, e.g. --lang ts or --lang ts,py")
             lang, i = sys.argv[i + 1], i + 2
         elif a.startswith("--lang="):
             lang, i = a.split("=", 1)[1], i + 1
+            if not lang.strip():
+                sys.exit("ERROR: --lang needs a value, e.g. --lang ts or --lang ts,py")
         else:
             argv.append(a)
             i += 1

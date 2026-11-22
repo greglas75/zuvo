@@ -72,4 +72,14 @@ PY
 [ "$(groups_of "$TMP/lang")" = "python" ] && ok "control: without --lang a root pyproject.toml selects python" || bad "control: got [$(groups_of "$TMP/lang")]"
 [ "$(groups_of "$TMP/lang" ts)" = "typescript" ] && ok "--lang ts selects typescript and suppresses the python manifest rule" || bad "--lang ts: got [$(groups_of "$TMP/lang" ts)]"
 
+# A forced language must also beat the dependency rule: typescript in a root devDependencies made
+# `--lang py` load the TypeScript group as well. Mixed-language changes name both (--lang ts,py).
+mkdir -p "$TMP/lang2"
+printf '[project]\nname="x"\n' > "$TMP/lang2/pyproject.toml"
+printf '{"devDependencies":{"typescript":"5"}}\n' > "$TMP/lang2/package.json"
+[ "$(groups_of "$TMP/lang2" py)" = "python" ] && ok "--lang py ignores a root typescript devDependency" || bad "--lang py: got [$(groups_of "$TMP/lang2" py)]"
+[ "$(groups_of "$TMP/lang2" ts,py)" = "python,typescript" ] && ok "--lang ts,py selects both language groups" || bad "--lang ts,py: got [$(groups_of "$TMP/lang2" ts,py)]"
+# the public CLI refuses a --lang with no value instead of reading it as the project path
+if python3 "$CP" review --lang >/dev/null 2>&1; then bad "--lang without a value exited 0"; else ok "--lang without a value is an error"; fi
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
