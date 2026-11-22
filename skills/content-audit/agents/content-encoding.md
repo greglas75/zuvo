@@ -48,8 +48,12 @@ If any file is missing, STOP.
    backticks; a block scalar under another key is prose unless it reads as code). Grep only finds candidates:
    before reporting one, confirm its position. A fence opens with 3+ backticks or tildes and closes only with
    the same character, at least as many, and no info string, so a shorter fence line inside is content; an
-   unlabeled-block grep also matches closing fences, so count only openers. A code span is closed by a run of
-   equal length and may cross lines. Exempt, because they concern the code markup or the
+   unlabeled-block grep also matches closing fences, so count only openers. A fence opener is indented at most
+   3 spaces, and a backtick opener's info string has no backtick (`Use ```x``` here` is a code span). A code
+   span is closed by a run of equal length and may cross lines. Mask code first and run link, image and URL
+   extraction, word counts and duplicate comparison on the masked text; parse frontmatter from the source.
+   Template expressions (`{...}`, `{{ }}`, `<% %>`, `{#...}`) in `.astro`/`.tsx`/`.jsx`/`.mdx` text and
+   frontmatter values are masked the same way. Exempt, because they concern the code markup or the
    whole file: `bom-present`, `encoding-mismatch`, `unclosed-code`, `unlabeled-code-block`.
 2. **Language decides what is a defect.** A rule that is wrong for the language of the text must not fire;
    the CC1 checks name the cases. Judge by `detected_language` and by the script of the neighbouring
@@ -66,14 +70,13 @@ Scan all files in the manifest for invisible Unicode characters and encoding cor
 
 ### Check: `nbsp-present`
 
-Search for non-breaking spaces (U+00A0): Grep for the byte sequence `\xC2\xA0`, or the literal character.
+Search for non-breaking spaces (U+00A0): Grep for the literal character or PCRE `\x{00A0}` (not the bytes `\xC2\xA0`, which match U+00C2 U+00A0 in Unicode mode).
 
 NBSP is correct typography in many languages. Do NOT report it between a digit and a unit, currency
 symbol or `%` (any language); in `fr` before `: ; ! ? » %` and after `«`; in `pl`, `cs`, `sk`, `ru`, `uk`
 after a one-letter word (`a i k o s u v w z`; ru/uk `в к с у и о а`). Report every other NBSP with file:line.
-Czech `v Praze`, `k mostu` and digit groups (`1 000`) are the same convention. Only in Markdown, an NBSP at
-line start or end is certain junk (`fix_type: encoding-strip`); in HTML, beside another whitespace character
-(deliberate spacing), or elsewhere, a reported NBSP has `fix_type: null`.
+Czech `v Praze`, `k mostu` and digit groups (`1 000`) are the same convention. A
+reported NBSP always has `fix_type: null`: a lone NBSP line or adjacent NBSPs may be deliberate spacing.
 
 ### Check: `zero-width-present`
 
@@ -83,12 +86,11 @@ Search for zero-width characters:
 - U+200D (zero-width joiner)
 - U+FEFF (BOM / zero-width no-break space, when not at file start)
 
-A ZWJ between emoji (a ZWJ sequence, with U+FE0F) is required, as are ZWJ and ZWNJ in an Indic script (U+0900-U+0DFF), an Arabic-script language
+A ZWJ between emoji (a ZWJ sequence; U+FE0F is optional) is required, as are ZWJ and ZWNJ in an Indic script (U+0900-U+0DFF), an Arabic-script language
 including Persian (U+0600-U+06FF, U+0750-U+077F, U+FB50-U+FDFF, U+FE70-U+FEFF), Khmer (U+1780-U+17FF)
 or Myanmar (U+1000-U+109F). U+200B is a word separator in Thai, Lao, Khmer and Myanmar. Do not report
-those. Report any other zero-width character. Only U+200B between Latin, Cyrillic or Greek letters is certain junk
-(`fix_type: encoding-strip`); ZWNJ/ZWJ there may suppress a ligature and an interior U+FEFF means no-break,
-so those have `fix_type: null`.
+those. Report any other zero-width character with `fix_type: null`: a ZWNJ/ZWJ may suppress a ligature, a U+200B may
+be a deliberate break opportunity, and an interior U+FEFF means no-break.
 
 ### Check: `bom-present`
 
@@ -109,9 +111,11 @@ This is the most critical check — mojibake means content is corrupted.
 
 **Not mojibake:** a lead letter (`Ã`, `Ä`, `Å`) followed by an ASCII space or ASCII letter (`IRMÃ E`, German or
 Swedish capitals). A signature is a lead character followed by the symbol or control character shown above.
-`Ã` + NBSP (`\x{00A0}`, the corruption of `à`) counts only when the `Ã` does not follow an uppercase letter
-(`IRMÃ<NBSP>E` is a Portuguese word). A confirmed signature is reported once, as `mojibake-detected`, never
-also as `nbsp-present`.
+`Ã` + NBSP (`\x{00A0}`, the corruption of `à`: bytes C3 A0 read as Windows-1252) is the only `Ã` + space form.
+Every signature is a candidate: read the surrounding word and language before grading it (`IRMÃ<NBSP>E` and
+`«IRMÃ»` are Portuguese words; `LÃ<NBSP>-bas` in French is `Là-bas`). An unconfirmed candidate is reported with
+`fix_type: null`, confidence LOW, and does not trip the gate. A confirmed signature is reported once, as
+`mojibake-detected`, never also as `nbsp-present`.
 
 **Evidence format:** Include the corrupted text, what it should be, and the
 likely source encoding.

@@ -44,7 +44,9 @@ above.
 
 ## Expanded Fix Contracts
 
-**Edit only the flagged span.** A finding's position is its `file:line` plus the text quoted in `evidence`.
+**Edit only the flagged span, under the current rules.** Reclassify a finding from an older audit by the audit's
+Scope and Language Rules (`agents/content-encoding.md`) before editing: skip code, and send a language-dependent
+NBSP, ZWJ/ZWNJ, `,,` or signature to `NEEDS_REVIEW`. A finding's position is its `file:line` plus the text quoted in `evidence`.
 Re-read that line before every edit and change only the occurrence the evidence quotes; when the line has
 changed, the quoted text is absent, or the line holds several candidates the evidence does not tell apart
 (or the span is inside code), mark the finding `NEEDS_REVIEW`. This holds for every `fix_type` below, and for
@@ -60,7 +62,6 @@ reports from older audit versions.
   - U+200D (zero-width joiner) → remove
   - U+FEFF (BOM / zero-width no-break space) → remove
   - U+00AD (soft hyphen) → remove
-  - U+FFFD (replacement character) → remove (flag for manual review)
 - **Scope:** Body content AND frontmatter string fields
 - **Exclusions:** Do not modify content inside fenced code blocks (` ``` `)
 - **Validation:** After fix, re-read each edited span and confirm the target character is gone there (other occurrences are not findings)
@@ -71,7 +72,7 @@ reports from older audit versions.
   characters. Each entry maps a corrupted form to the original character and
   the source encoding that caused the corruption.
 
-  **Latin-1 / Windows-1252 → UTF-8 corruption:**
+  **UTF-8 read as Windows-1252 (Latin-1 range):**
 
   | Corrupted | Original | Char |
   |-----------|----------|------|
@@ -107,7 +108,7 @@ reports from older audit versions.
   | `â€¢` | `•` | bullet |
   | `â€¦` | `…` | ellipsis |
 
-  **ISO-8859-2 (Central European) → UTF-8 corruption:**
+  **UTF-8 read as Windows-1252 (Central European letters; Ä + C1 control = U+008D):**
 
   | Corrupted | Original | Char | Language |
   |-----------|----------|------|----------|
@@ -126,7 +127,7 @@ reports from older audit versions.
   | `Å¯` | `ů` | u-ring | Czech |
   | `Ä‘` | `đ` | d-stroke | Croatian |
 
-  **ISO-8859-9 (Turkish) → UTF-8 corruption:**
+  **UTF-8 read as Windows-1252 (Turkish letters):**
 
   | Corrupted | Original | Char |
   |-----------|----------|------|
@@ -181,7 +182,7 @@ reports from older audit versions.
 ### `typography-fix`
 
 - **Double spaces:** Replace 2+ consecutive spaces with single space inside a sentence (the audit
-  does not tag a double space after `.`, `!`, `?`, `:`). Do NOT modify inside code blocks, code spans, or markdown tables.
+  reports a double space after `.`, `!`, `?`, `:` with `fix_type: null`, which is never fixed). Do NOT modify inside code blocks, code spans, or markdown tables.
 - **Double punctuation:** Replace `;;` with `;`, and `,,` with `,` where the audit tagged it. Never touch
   `..` (ellipsis or period), `...`, `!!` or `??`: they are ambiguous and the audit reports them without a fix.
 - **Validation:** Re-read each edited span: the double space or punctuation is gone there.

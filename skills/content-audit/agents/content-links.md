@@ -151,7 +151,7 @@ For links with fragment identifiers (`page.md#section`):
 
 ### Check: `link-external-redirect`
 
-**Requires `--live-url` or `--check-external`;** without either, return `N/A` as above. Flag external links that
+**Requires `--live-url` or `--check-external`;** without either, return `N/A` as above. Count hops with `curl -sIL -o /dev/null -w '%{num_redirects}'` and flag external links that
 redirect more than 2 times (3+ hops). Long redirect chains waste crawl budget
 and may indicate stale URLs.
 

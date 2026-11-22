@@ -193,7 +193,7 @@ Grep for: [^ ]  +[^ ] (two+ spaces between non-space chars)
 - Inside markdown tables (` | `)
 - Indentation at line start
 
-A double space after `.`, `!`, `?` or `:` is a sentence-spacing convention, not a certain typo: report it
+A double space after `.`, `!`, `?` or `:` (or after such a mark and a closing quote or bracket) is a sentence-spacing convention, not a certain typo: report it
 with `fix_type: null`. Only a double space inside a sentence carries `fix_type: typography-fix`.
 
 ### Check: `typo-double-punctuation`
@@ -204,12 +204,12 @@ Find repeated punctuation that is likely a typo:
 - `;;`
 
 ```
-Grep for: (?<!\.)\.\.(?!\.)  (a run of exactly two dots)
+Grep for: (?<![./])\.\.(?![./])  (a run of exactly two dots, not a path like `../img`)
 Grep for: ,,|;;
 ```
 
 Do NOT flag `!!` or `??` — these may be intentional emphasis. `..` (ellipsis or period?) and `,,`
-(the ASCII form of the opening quote `„` in `pl`, `de`, `cs`, `sk`, `ro`, `hu`, `bg`, `ru`, `uk`) are ambiguous: report them with `fix_type: null`.
+(the ASCII form of the opening quote `„` in `pl`, `de`, `cs`, `sk`, `ro`, `hu`, `bg`, `ru`, `uk`, `lt`; also when the quote context is unclear) are ambiguous: report them with `fix_type: null`.
 Only `;;`, and `,,` in other languages, carry `fix_type: typography-fix`.
 
 ### Check: `typo-spell-check`
@@ -241,7 +241,7 @@ quotes suggest copy-paste from different sources, but the right style is a langu
 ## Output Format
 
 Return `check_results[]` and `findings[]` as specified in `agents/content-encoding.md` "Output Format", with this agent's own dimensions (not CC1-CC3).
-`check_results[]` covers EVERY check in CC4, CC7, CC8 (all 16), even when passed. Checks requiring language detection that failed → `INSUFFICIENT DATA`.
+`check_results[]` covers EVERY check in CC4, CC7, CC8 (all 16), even when passed. CC8 checks need the language: `unknown` → `INSUFFICIENT DATA` (`fm-encoding-artifact` follows Scope Rule 2 instead).
 Checks requiring `aspell`/`hunspell` not installed → `INSUFFICIENT DATA`.
 
 

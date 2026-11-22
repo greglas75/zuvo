@@ -32,6 +32,8 @@
   `agents/content-encoding.md`. A finding whose right form depends on language or house style carries
   `fix_type: null` even when the check row names one: the `fix_type` column is the type for findings
   the agent is certain are corruption.
+- Template expressions (`{...}`, `{{ }}`, `<% %>`) in `.astro`/`.tsx`/`.jsx`/`.mdx` and frontmatter values are masked
+  before checks run (`agents/content-encoding.md` rule 1).
 - A check that needs live access (`img-404-live`, `link-external-dead`, `link-external-redirect`)
   returns `N/A` without `--live-url`/`--check-external`: never `FAIL`, not in the score, not a gate.
 
@@ -43,7 +45,7 @@
 | `zero-width-present` | Zero-width spaces (U+200B, U+200C, U+200D, U+FEFF) | `content-encoding` | encoding | scored | code | `encoding-strip` |
 | `bom-present` | UTF-8 BOM marker at file start | `content-encoding` | encoding | advisory | code | `encoding-strip` |
 | `mojibake-detected` | Garbled multi-byte sequences from encoding mismatch | `content-encoding` | encoding | blocking | code | `encoding-mojibake` |
-| `replacement-char` | U+FFFD replacement characters present | `content-encoding` | encoding | scored | code | `encoding-strip` |
+| `replacement-char` | U+FFFD replacement characters present | `content-encoding` | encoding | scored | code | null |
 | `encoding-mismatch` | File encoding is not UTF-8 (detected via `file -b --mime-encoding`) | `content-encoding` | encoding | advisory | code | null |
 | `soft-hyphen-present` | Soft hyphens (U+00AD) in content | `content-encoding` | encoding | advisory | code | `encoding-strip` |
 

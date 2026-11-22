@@ -183,7 +183,7 @@ checks.
   `.DS_Store`
 
 For each file, check encoding via `file -b --mime-encoding -- <file>` (`file -i` prints `regular file` on macOS). Flag
-non-UTF-8 files with check `encoding-mismatch` (advisory).
+files that are neither `utf-8` nor `us-ascii` with check `encoding-mismatch` (advisory).
 
 ### 0.5 Print discovery summary
 
@@ -209,7 +209,8 @@ authorization within that policy; session restrictions take precedence. Run each
 and report its actual independence or an unmet requirement.
 
 Do NOT dispatch agents. Run source-only grep checks directly, under the Scope and Language Rules of
-`agents/content-encoding.md` (no matches in code; NBSP, zero-width and mojibake by language):
+`agents/content-encoding.md` (no matches in code; NBSP, zero-width and mojibake by language). A line grep cannot see
+fences, so mask code with a small script before grepping:
 
 1. CC1 blocking: `mojibake-detected` (grep for mojibake signatures)
 2. CC3 blocking: `php-tag` (grep for `<?php`, `<?=`)
@@ -305,7 +306,7 @@ a hyphenated `75-89` would leave 74.5 ungraded.
 | **C** | `>= 50 and < 75` | Significant issues affecting quality |
 | **D** | `< 50` | Critical issues, CMS migration incomplete |
 
-**Blocking gate cap:** If ANY blocking finding exists (`mojibake-detected`,
+**Blocking gate cap:** A confirmed occurrence of a blocking check makes that check `FAIL` (never `PARTIAL`). If ANY blocking finding exists (`mojibake-detected`,
 `php-tag`, `fm-yaml-malformed`, `img-404-live`), the grade is capped at **D**
 regardless of numeric score. Only a confirmed `FAIL` counts: `img-404-live` is a live check and
 without `--live-url` it is `N/A`, never a blocking failure.
@@ -506,7 +507,7 @@ Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>
 
 | Edge case | Handling |
 |-----------|---------|
-| **Mixed encoding in file** | `file -b --mime-encoding -- <file>` per file. Non-UTF-8 → `encoding-mismatch` (advisory), Unicode checks → `INSUFFICIENT DATA` |
+| **Mixed encoding in file** | `file -b --mime-encoding -- <file>` per file. Not `utf-8`/`us-ascii` → `encoding-mismatch` (advisory), Unicode checks → `INSUFFICIENT DATA` |
 | **Large files (100KB+)** | Read in 500-line chunks. Flag: "large file — chunked read" |
 | **Binary files in content dir** | Skip by extension whitelist. Log in "Skipped files" section |
 | **CMS-backed content** | Detect CMS config. Emit `CONTENT INACCESSIBLE`. Recommend `--live-url` |
