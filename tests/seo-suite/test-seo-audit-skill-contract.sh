@@ -28,6 +28,8 @@ assert_contains "$SKILL_FILE" 'Gates that need a live response are decided from 
 assert_contains "$SKILL_FILE" 'No `http://` refs is not proof of HTTPS.'
 assert_contains "$SKILL_FILE" 'only upgrades subresources and is not proof'
 assert_contains "$SKILL_FILE" 'applies it before Phase 4.2'
+assert_contains "$SKILL_FILE" 'and no HTTPS enforcement is found'
+assert_contains "$SKILL_FILE" '**CG3 probe:**'
 assert_contains "$SKILL_FILE" 'seo-page-profile-registry.md` "Gate applicability"'
 
 pass "seo-audit skill contract"

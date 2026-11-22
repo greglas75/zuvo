@@ -19,6 +19,7 @@ has   "proven keyboard trap is critical" 'A proven trap is a CRITICAL finding an
 has   "undecided gate feeds row 3"        'a gate `CANNOT DETERMINE` is this skill'"'"'s coverage-gate FAIL (row 3)'
 has   "trap needs no keyboard exit of any kind" 'no keyboard exit of any kind'
 has   "undetermined check subtracts its max weight" 'minus the maximum weight of every CANNOT DETERMINE check'
+has   "gate combines across components"      'a gate is FAIL if any component fails'
 has   "2.5.8 is the 24px AA target"      'Target size >= 24x24 CSS px (44x44 is AAA 2.5.5)'
 lacks "2.5.8 not in the AAA list"        '2.4.9, 2.5.8, 3.1.5'
 for sc in 2.4.11 2.5.7 3.2.6 3.3.7 3.3.8; do has "WCAG 2.2 criterion $sc is mapped" "| $sc |"; done

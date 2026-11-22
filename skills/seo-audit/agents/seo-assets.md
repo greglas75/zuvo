@@ -466,9 +466,9 @@ This agent evaluates one critical gate and must report explicit PASS | FAIL | IN
 |------|------------|--------|---------------|---------------------------|
 | **CG5** | JSON-LD server-side rendered | D3 | JSON-LD present in template source or raw response body, not only in rendered DOM | If static analysis cannot determine whether JSON-LD is server-rendered (e.g., framework uses client-side rendering and no live fetch available), report INSUFFICIENT DATA |
 
-**CG5 = FAIL means the overall audit result is FAIL regardless of score.**
+**CG5 = FAIL means the overall audit result is FAIL regardless of score** (unless the page profile makes it N/A).
 
-If D3.1 is FAIL (no JSON-LD found at all), CG5 is FAIL. Report the raw status: the dispatcher turns a gate the page profile exempts into N/A (`seo-page-profile-registry.md` "Gate applicability").
+If D3.1 is FAIL (no JSON-LD found at all), CG5 is FAIL; state `json_ld_present: yes|no` in the CG5 evidence. Report the raw status: the dispatcher turns a gate the page profile exempts into N/A (`seo-page-profile-registry.md` "Gate applicability").
 
 Note: CG1, CG2, CG3, CG4, CG6 are evaluated by the Technical agent, not this agent.
 

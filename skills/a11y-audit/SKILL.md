@@ -212,7 +212,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Form validation errors announced | 4.1.3 | Error summary not in `aria-live` region |
 | Related fields grouped | 1.3.1 | Radio groups, address fields without `<fieldset>`/`<legend>` |
 | No redundant entry | 3.3.7 | Multi-step form that re-asks data already entered, with no autofill or "same as" option |
-| Accessible authentication | 3.3.8 | Paste blocked (`onPaste` `preventDefault`) or `autocomplete="off"` on login/password fields; CAPTCHA with no alternative |
+| Accessible authentication | 3.3.8 | Paste blocked (`onPaste` `preventDefault`) on login/password fields; CAPTCHA with no alternative |
 
 ### A6: Images & Media (weight 8)
 
@@ -488,8 +488,10 @@ Read deferred files:
 
 | Gate | FAIL (proven) | PASS | Otherwise |
 |------|---------------|------|-----------|
-| A2 Keyboard | a keyboard trap (2.1.2); positive `tabindex` that overrides DOM order (2.4.3); `outline: none`/`0` with no replacement focus style (2.4.7); a click handler on a non-interactive element with no `tabindex`/`role` and no key handler (2.1.1) | live evidence: `audit_keyboard` or a tab-through (Enter/Space on custom controls included) finds none of these | `CANNOT DETERMINE` |
+| A2 Keyboard | a keyboard trap (2.1.2); positive `tabindex` that overrides DOM order (2.4.3); `outline: none`/`0` with no replacement focus style (2.4.7); a click handler on a non-interactive element (not a modal backdrop, presentational wrapper or delegation container) with no `tabindex`/`role`, no key handler and no keyboard-reachable control for the same action (2.1.1) | live evidence: `audit_keyboard` or a tab-through that exercises every custom widget and modal (Enter/Space included; name any unexercised one and the gate stays `CANNOT DETERMINE`) finds none of these | `CANNOT DETERMINE` |
 | A4 Contrast | the effective foreground/background pair of one enabled element (not an overridden rule or a disabled control) under the selected standard's ratio (AA 4.5:1, 3:1 large; AAA 7:1, 4.5:1 large), or an axe contrast violation | an axe contrast scan of the live URL over the audited states with zero violations and no `incomplete` contrast nodes | `CANNOT DETERMINE` (tokens, themes, CSS-in-JS, inherited or overlaid backgrounds) |
+
+Across components a gate is FAIL if any component fails, PASS only if all pass, else `CANNOT DETERMINE`; an undecided gate makes the checks that need the missing evidence (focus order and operability for A2, rendered contrast for A4) `CANNOT DETERMINE`. `--quick` never has live evidence: its gates end FAIL or `CANNOT DETERMINE` (INCOMPLETE).
 
 A keyboard trap is **proven** when a focus lock (custom trap, `Tab` keydown `preventDefault`, blur-to-refocus) has no keyboard exit of any kind (Escape, a close control, another documented key). A proven trap is a CRITICAL finding and fails A2. A library dialog (MUI, Radix, Headless UI) supplies Escape and focus handling: it is neither proof of a trap nor proof that none exists elsewhere.
 
@@ -593,6 +595,7 @@ Save to: `zuvo/audits/a11y-audit-YYYY-MM-DD.md` — at the **project root** (`zu
 |---------|--------|---------|
 | Critical gate A2 failure | Fix keyboard navigation | `zuvo:build fix keyboard traps in [component]` |
 | Critical gate A4 failure | Fix contrast | `zuvo:build update color tokens for WCAG contrast` |
+| Gate `CANNOT DETERMINE` | Supply the live evidence | `zuvo:a11y-audit --live-url <url>` (axe + keyboard pass) |
 | Multiple A3 ARIA issues | Fix ARIA patterns | `zuvo:build add ARIA attributes to [component]` |
 | A5 form issues | Fix form accessibility | `zuvo:build add form labels and error association` |
 | No a11y tooling | Add eslint-plugin-jsx-a11y | `zuvo:build add eslint-plugin-jsx-a11y` |
