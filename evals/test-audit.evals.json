@@ -156,7 +156,7 @@
       ],
       "assertions": [
         "The audit records the conditional gates Q20, Q22, Q23, Q24 and Q25 for sku.test.ts as N/A (no trigger in this repo), each with a short reason, and never as a 0 or a failure.",
-        "The audit's percentage for sku.test.ts is computed over the applicable gates only (the N/A gates are excluded from the denominator), and the file is Tier A or B.",
+        "The audit records the percentage for sku.test.ts as computed over the applicable gates only (the N/A gates are excluded from the denominator), and the file is Tier A or B.",
         "The audit recommends no property-based test, randomized-order run, contract file or mutation run for sku.ts and records no finding or TEST-GAP for their absence."
       ],
       "fixtures": [
@@ -207,9 +207,9 @@
         "src/components/Tag.tsx"
       ],
       "assertions": [
-        "The audit reports Tag.test.tsx as a REMOVE file with no A/B/C/D tier assigned to it (it is not graded Tier A, B, C or D and is not counted in a tier count or average).",
-        "The run's VERDICT headline carries the removal counts: 2 tests proposed for removal in 1 file and 1 REMOVE file.",
-        "The run VERDICT is decided by the gates only (REMOVE alone never trips it, so it is never FAIL merely because the file is a REMOVE file), Tag.tsx is NO-TEST-NEEDED with no TEST-GAP, and no source or test file is edited or deleted."
+        "The audit records Tag.test.tsx as a REMOVE file with no A/B/C/D tier assigned to it (it is not graded Tier A, B, C or D and is not counted in a tier count or average).",
+        "The run's VERDICT headline records the removal counts: 2 tests proposed for removal in 1 file and 1 REMOVE file.",
+        "The run VERDICT shows a result decided by the gates only (REMOVE alone never trips it, so it is never FAIL merely because the file is a REMOVE file), Tag.tsx is NO-TEST-NEEDED with no TEST-GAP, and no source or test file is edited or deleted."
       ],
       "fixtures": [
         {
@@ -231,7 +231,7 @@
         "src/services/greeter.ts"
       ],
       "assertions": [
-        "The audit scores Q3 as passing for greeter.test.ts, judging it on the state-changing mailer.send mock (positive CalledWith with arguments and a negative not.toHaveBeenCalled).",
+        "The audit records Q3 as passing for greeter.test.ts, judging it on the state-changing mailer.send mock (positive CalledWith with arguments and a negative not.toHaveBeenCalled).",
         "The audit records no finding that the store.getUser mock lacks a CalledWith or a not-called assertion (a pure-read mock is not subject to Q3), and asks for no such assertion.",
         "The audit records Tier A or B for greeter.test.ts and writes its report to zuvo/audits/ without editing any source or test file."
       ],
