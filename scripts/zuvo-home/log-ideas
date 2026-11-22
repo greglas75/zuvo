@@ -30,6 +30,9 @@ SKILL="" PROJECT="" COUNT="0"
 # So each value flag shifts the flag, then the value only if one is actually present.
 while [ $# -gt 0 ]; do
   case "$1" in
+    # An agent probing the syntax with --help must not write a receipt (an `unknown` row per probe —
+    # the same defect log-drive-by already fixed; live review test D14). The usage is the leading comment.
+    -h|--help) awk 'NR == 1 { next } !/^#/ { exit } { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     --skill)   SKILL="${2:-}";  shift; [ $# -gt 0 ] && shift ;;
     --skill=*) SKILL="${1#*=}"; shift ;;
     --count)   COUNT="${2:-0}"; shift; [ $# -gt 0 ] && shift ;;
