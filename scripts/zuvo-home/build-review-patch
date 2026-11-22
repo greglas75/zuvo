@@ -18,6 +18,7 @@
 #
 # Untracked files are INCLUDED BY DEFAULT (a review that cannot see brand-new files
 # is a review with a hole in it). Set ZUVO_REVIEW_PATCH_NO_UNTRACKED=1 to exclude them.
+# The review's own outputs — untracked files under zuvo/ and memory/reviews/ — are always left out.
 # With PATH args, only untracked files under those paths are included.
 # An untracked file that yields no diff text (binary, or empty) is NOT dropped —
 # it gets a marker block naming the path, so the reviewer sees it exists and a
@@ -441,6 +442,11 @@ if [ "${ZUVO_REVIEW_PATCH_NO_UNTRACKED:-0}" != "1" ]; then
   }
   while IFS= read -r -d '' f; do
     [ -n "$f" ] || continue
+    # The review's own outputs are never review scope: adversarial proofs under zuvo/ and artifacts
+    # under memory/reviews/ are written DURING the review. Sweeping them into the next pass fed a
+    # provider 22K chars of its own earlier output and it reported directives embedded in them
+    # (live review test, addendum 1).
+    case "$f" in zuvo/*|memory/reviews/*) continue ;; esac
     # Entries whose contents must NOT be rendered. Each gets a marker rather
     # than a stderr-only note: a stderr note leaves the patch empty, so a repo
     # whose only change is one of these exits 3 "no changes" and the caller
