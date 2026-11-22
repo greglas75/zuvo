@@ -437,12 +437,13 @@ if command -v python3 >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
 
   # A multi-line anchor that STARTS on an allowed line but edits a line outside it is out of scope.
   printf 'calc.py:1-1\n' > "$BT/scope.txt"
-  printf '[{"id":"ML","file":"calc.py","original":"def add(a, b):\\n    return a + b","mutated":"def add(a, b):\\n    return a - b"}]\n' > "$BT/plan3.json"
+  printf '[{"id":"ML","file":"calc.py","original":"def add(a, b):\\n    return a + b","mutated":"def add(a, b):\\n    return a - b"},\n' > "$BT/plan3.json"
+  printf ' {"id":"ML2","file":"calc.py","original":"def add(a, b):\\n    return a + b","mutated":"def add2(a, b):\\n    return a - b"}]\n' >> "$BT/plan3.json"
   ( cd "$BT" && bash "$REPROBE" --plan plan3.json --out res5.json --test-cmd "bash t.sh" --scope-file scope.txt >/dev/null 2>&1 )
-  RES="$(python3 -I -c 'import json;print(json.load(open("'"$BT"'/res5.json"))["mutants"][0]["verdict"])' 2>&1)"
-  [ "$RES" = "SKIPPED" ] \
+  RES="$(python3 -I -c 'import json;print([m["verdict"] for m in json.load(open("'"$BT"'/res5.json"))["mutants"]])' 2>&1)"
+  [ "$RES" = "['SKIPPED', 'SKIPPED']" ] \
     && pass "reprobe batch: scope follows the lines the edit changes, not the anchor's first line" \
-    || bad "reprobe batch: multi-line anchor leaked past the scope (verdict=$RES)"
+    || bad "reprobe batch: multi-line anchor leaked past the scope (verdicts=$RES)"
 else
   printf 'SKIP: reprobe cases (python3 or git missing)\n'
 fi

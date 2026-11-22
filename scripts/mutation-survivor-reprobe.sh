@@ -235,7 +235,7 @@ def usage(msg):
 
 
 def git(*args):
-    return subprocess.run(["git", "-c", "core.quotepath=off", *args], capture_output=True, text=True)
+    return subprocess.run(["git", "--literal-pathspecs", "-c", "core.quotepath=off", *args], capture_output=True, text=True)
 
 
 try:
@@ -362,8 +362,11 @@ def out_of_scope(m):
         return False
     first = src.count("\n", 0, src.index(m["original"])) + 1
     old, new = m["original"].split("\n"), m["mutated"].split("\n")
-    touched = [first + i for i in range(len(old)) if i >= len(new) or old[i] != new[i]] or [first]
-    return not any(a <= ln <= b for ln in touched for a, b in ranges)
+    touched = [first + i for i in range(len(old)) if i >= len(new) or old[i] != new[i]]
+    if len(new) > len(old):
+        touched.append(first + len(old) - 1)       # an appended line lands at the end of the anchor
+    touched = touched or [first]
+    return not all(any(a <= ln <= b for a, b in ranges) for ln in touched)   # EVERY edited line must be in scope
 
 
 results = [{"id": m["id"], "file": m["file"], "verdict": "NOT_RUN", "test_exit": "-", "restored": "yes",
@@ -395,10 +398,15 @@ def write_results(interrupted=False):
            "scope": "whole-files" if scope is None else "changed-lines", "counts": c,
            "measured": measured,
            "score": round(100.0 * c["killed"] / measured, 2) if measured and complete else None, "mutants": results}
-    tmp = "%s.%d.tmp" % (out_path, os.getpid())
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh, indent=2)
-    os.replace(tmp, out_path)
+    fd, tmp = tempfile.mkstemp(prefix=".reprobe-out.", dir=os.path.dirname(os.path.abspath(out_path)))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2)
+        os.replace(tmp, out_path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     print("batch: killed=%d survived=%d error=%d skipped_out_of_scope=%d not_run=%d score=%s complete=%s%s"
           % (c["killed"], c["survived"], c["error"], c["skipped_out_of_scope"], c["not_run"],
              "n/a" if doc["score"] is None else "%s%%" % doc["score"], str(complete).lower(),
@@ -418,6 +426,7 @@ def on_signal(sig, frame):
             child.wait(timeout=60)
         except subprocess.TimeoutExpired:
             child.kill()
+            child.wait()
     if active is not None:
         i, f, before = active
         if sha(f) != before:

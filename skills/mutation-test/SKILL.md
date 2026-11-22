@@ -455,14 +455,12 @@ Measured 2026-08-10 on the same single test file:
 | `npx vitest run <file>` | **1.4 s** (2.2 s cold) |
 | `rt npx vitest run <file>` | **103.4 s** |
 
-~50-75x, and a single wrapped call alone exceeds the whole run budget below. A
-10-mutant plan that would finish in ~20 s locally cannot complete a single mutant
-through the wrapper. Wrap the LOOP once instead and the same ten mutants pay one charge. Never
-report a wrapper timeout as a test-quality result.
+~50-75x: a 10-mutant plan that takes ~20 s locally cannot finish one mutant through the wrapper.
+Wrap the LOOP once instead. Never report a wrapper timeout as a test-quality result.
 
 **Off the farm** (the plugin is used by people without one). The LLM engine may run on this host
 when ALL hold: (a) `tf-ablate`/`rt` is unavailable — not on PATH, `rt` exit 21 (off the tailnet),
-or no farm config for the repo; (b) the execution policy's `local_fallback` permits workstation
+(b) the execution policy's `local_fallback` permits workstation
 test runs — a project or session rule against them wins, then stop and say so; (c) the scope is
 the changed lines (a run over ~30 min still needs the user's go-ahead). The loop is one script:
 
@@ -474,7 +472,7 @@ computes the changed-lines scope itself (`--diff <base>`, `--scope-file`; `--who
 user's flag) and SKIPS a mutant outside it, runs the baseline once per test command, then applies
 each mutant, runs the tests, restores and hash-verifies it, and writes verdicts plus the score to
 `--out`. Exit 3 = not every mutant got a verdict (ERROR, failed baseline, unrestored file): that is
-an incomplete plan (3.3), never a score. It is Tier 1; Tier 2 is the same call over the survivors
+an incomplete plan (3.3), never a score. A test timeout is ERROR there too: re-run it with a larger `--timeout`. It is Tier 1; Tier 2 is the same call over the survivors
 only with `--test-cmd '<full suite>'` and a `--timeout` sized for the suite. Record `tier2_runner: local` and which of (a) held.
 
 **Tier 2 is the opposite case.** A Tier 2 pass is ONE long full-suite run — the shape the `rt`
@@ -664,7 +662,8 @@ So each mutation carries an anchor that survives movement:
    `anchor: lost (<reason>)`. A skipped mutation is `not_run`, and per Phase 3.3 a plan that did
    not run in full is not a score — it must be reported as such, never averaged away.
 
-**If `--dry-run` and the engine is `llm`:** print the mutation plan and STOP — nothing executed,
+**If `--dry-run` and the engine is `llm`:** print the mutation plan and STOP — no test command runs
+(1.2's baseline is skipped: a suite can write caches or coverage), nothing executed,
 nothing written (4.4). The native engine never reaches 2.3: its dry run is the scope in 4.4.
 
 ---
@@ -796,7 +795,9 @@ For each mutation `MUT-NNN`:
 ```
 
 **Error recovery:** If restoration fails for any reason:
-1. Copy from temp file: `cp /tmp/zuvo-mutation-[hash]-[filename] [file]`
+1. Compare the file's current hash with the original's and the mutant's. Original: nothing to do.
+   Our mutant: copy from temp file, `cp /tmp/zuvo-mutation-[hash]-[filename] [file]`. A third value
+   is a MISMATCH (below): a concurrent edit is never overwritten.
 2. If temp file missing: `git checkout HEAD -- [file]` — the skill's OWN undo of its OWN mutant, so
    no consent is needed; it is valid only for a scoped file, which 3.1.1 required clean at start
    (HEAD is its original). Anything else — another file, or a post-run hash that differs for a
@@ -951,8 +952,8 @@ every constraint below without exception:
      exactly as before. A farm run is read-only with respect to your working tree, which makes
      that check simpler, not harder.
 
-   Record `tier2_runner: "rt (native)"`. Off the farm the 1.3 conditions apply (no `rt`, exit 21 or
-   no farm config, and `local_fallback` permits): run `run_command` as printed, record
+   Record `tier2_runner: "rt (native)"`. Off the farm the 1.3 conditions apply (no `rt`, exit 21,
+   and `local_fallback` permits): run `run_command` as printed, record
    `tier2_runner: "local (native)"` with the reason in the report. (`TF_ALLOW_LOCAL=1` is only this
    fleet's hook override for it.)
 2. **Budget it in 1.3b terms.** A native run is one long invocation, so its timeout budget is
@@ -1211,7 +1212,8 @@ once the fix loop is done and the mapped tests are green, commit the strengthene
 commit with the message `test: close mutation survivors in <scope>` (`<scope>` as in 4.3b's
 filename). Stage explicit paths and commit them with `git commit --only -- <paths>` (a plain commit also takes
 whatever else is staged) — never `git add -A`, never a production file, a `zuvo/` artifact or a
-`.stryker-*` file; check `git show --name-only` lists only those test files before recording the sha. No test change, no commit. A hook failure gets a NEW commit after the fix:
+`.stryker-*` file; check `git show --name-only` lists only those test files before recording the sha. No test change, no commit. A test file that already had uncommitted edits of its own at the start
+is not committed by this skill (3.1.1): report it and leave the strengthened file in the tree. A hook failure gets a NEW commit after the fix:
 never `--no-verify` or `--amend`. Record the sha in `commit_fix` (`null` otherwise), so a caller
 knows the tree is clean when this skill returns.
 
