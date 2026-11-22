@@ -2,7 +2,7 @@
 
 - **Aggregate review vs the pass cap (D1).** Per-task adversarial passes spend the driver's 3-pass
   cap before Phase Final-2, so the aggregate review's fresh `--multi` pass is refused with exit 7 on
-  any plan of 3+ tasks. Exit 7 there is now a defined outcome: no retry, no narrower scope, cite the
+  a plan that has run three passes (3+ tasks, or fewer with fix re-runs). Exit 7 there is now a defined outcome: no retry, no narrower scope, cite the
   per-task proofs in the artifact's `adversarial:` header, print `[ADVERSARIAL: cap-reached covered-by=…]`,
   verdict `adversarial=per-task`. `review` gained the `pass_cap` skip reason for it.
 - **Phase Final scales with the diff (D2).** `SMALL_PLAN` (≤3 tasks, ≤6 files, ≤300 added lines, no
