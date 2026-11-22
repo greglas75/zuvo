@@ -200,7 +200,8 @@ Before modifying any file:
 
 For each SAFE finding:
 
-**`encoding-strip`:**
+**`encoding-strip`:** (at the flagged position of each finding only, never a file-wide sweep: NBSP and
+ZWJ/ZWNJ are legitimate in many languages and scripts)
 - Replace NBSP (U+00A0) with regular space (U+0020)
 - Remove zero-width characters (U+200B, U+200C, U+200D, U+FEFF)
 - Remove BOM marker from file start
@@ -216,8 +217,7 @@ For each SAFE finding:
 
 **`typography-fix`:**
 - Collapse 2+ spaces to 1 (outside code blocks, tables, indentation)
-- Fix `..` → `.` (preserve `...` ellipsis)
-- Fix `,,` → `,`
+- Fix `;;` → `;` and `,,` → `,` (flagged findings only). `..` is never auto-fixed (ellipsis or period)
 
 ### 2.2 MODERATE fixes (with --auto only)
 

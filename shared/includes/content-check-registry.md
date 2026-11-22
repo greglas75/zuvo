@@ -22,13 +22,18 @@
 - `fm-title-missing` and `fm-description-missing` are advisory because SEO
   effectiveness is `seo-audit`'s domain. Content-audit checks that frontmatter
   **exists and parses**; seo-audit evaluates **SEO quality**.
-- Template expressions (`{...}`, `{{ }}`, `<% %>`) must be stripped from
-  `.astro`, `.tsx`, `.jsx`, `.mdx` files before running CC2 and CC8 checks.
-  Known patterns: Astro `{expr}`, Hugo `{{ .Var }}`, EJS `<% code %>`,
-  Svelte `{#each}`, Vue `v-bind`.
 - Language-specific checks (CC8 typo-diacritics, typo-spell-check) activate
   only when language is detected. If language is unknown, these checks emit
   `INSUFFICIENT DATA`, not false positives.
+- Code is not content: no check except `bom-present`, `encoding-mismatch`, `unclosed-code` and
+  `unlabeled-code-block` reports a match inside a code fence, code span or code-valued frontmatter.
+- NBSP, ZWJ/ZWNJ and mojibake depend on language and script (French NBSP before `:;!?`, ZWJ in Indic,
+  Arabic-script and emoji text, `Ã` before a space in Portuguese capitals); the rules are in
+  `agents/content-encoding.md`. A finding whose right form depends on language or house style carries
+  `fix_type: null` even when the check row names one: the `fix_type` column is the type for findings
+  the agent is certain are corruption.
+- A check that needs live access (`img-404-live`, `link-external-dead`, `link-external-redirect`)
+  returns `N/A` without `--live-url`/`--check-external`: never `FAIL`, not in the score, not a gate.
 
 ## CC1 — Encoding Quality
 
@@ -138,15 +143,5 @@
 
 ## Quick Mode Checks
 
-When `--quick` is active, only source-only grep checks run (no agent dispatch):
-
-- CC1: `mojibake-detected` (blocking), `nbsp-present`, `zero-width-present`
-- CC2: `broken-italic`
-- CC3: `php-tag` (blocking), `joomla-path`, `wp-shortcode`
-- CC5: `img-path-broken` (Glob path resolution)
-- CC6: `link-internal-broken` (Glob path resolution)
-
-Checks returning `INSUFFICIENT DATA` in quick mode:
-- `fm-yaml-malformed` (needs YAML parser, not grep)
-- `img-404-live` (needs `--live-url`, not grep)
-- All CC4, CC7, CC8 checks (need agent dispatch)
+`--quick` runs only the source-only grep checks listed in `SKILL.md` Phase 1 (no agent dispatch).
+CC4, CC7 and CC8 return `INSUFFICIENT DATA` there; `img-404-live` is `N/A`.

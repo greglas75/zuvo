@@ -46,7 +46,8 @@ above.
 
 ### `encoding-strip`
 
-- **Target characters:**
+- **Target characters** (only at the positions of findings carrying this `fix_type`; NBSP and
+  ZWJ/ZWNJ are legitimate in many languages and scripts, so never sweep a file):
   - U+00A0 (NBSP) → U+0020 (regular space)
   - U+200B (zero-width space) → remove
   - U+200C (zero-width non-joiner) → remove
@@ -71,7 +72,7 @@ above.
   | `Ã©` | `é` | e-acute |
   | `Ã¨` | `è` | e-grave |
   | `Ã¡` | `á` | a-acute |
-  | `Ã ` | `à` | a-grave |
+  | `Ã` + U+00A0 | `à` | a-grave (`Ã` + ordinary space is a Portuguese/Vietnamese capital, never a match) |
   | `Ã³` | `ó` | o-acute |
   | `Ã²` | `ò` | o-grave |
   | `Ã¼` | `ü` | u-umlaut |
@@ -91,12 +92,12 @@ above.
   | `Â°` | `°` | degree |
   | `Â»` | `»` | right guillemet |
   | `Â«` | `«` | left guillemet |
-  | `â€"` | `–` | en-dash |
-  | `â€"` | `—` | em-dash |
+  | `â€“` | `–` | en-dash |
+  | `â€”` | `—` | em-dash |
   | `â€™` | `'` | right single quote |
   | `â€˜` | `'` | left single quote |
   | `â€œ` | `"` | left double quote |
-  | `â€` | `"` | right double quote |
+  | `â€` + U+009D | `”` | right double quote |
   | `â€¢` | `•` | bullet |
   | `â€¦` | `…` | ellipsis |
 
@@ -114,7 +115,7 @@ above.
   | `Ä‡` | `ć` | c-acute | Polish |
   | `Å¡` | `š` | s-caron | Czech/Slovak |
   | `Å¾` | `ž` | z-caron | Czech/Slovak |
-  | `Ä` | `č` | c-caron | Czech/Slovak |
+  | `Ä` + U+008D | `č` | c-caron | Czech/Slovak |
   | `Å™` | `ř` | r-caron | Czech |
   | `Å¯` | `ů` | u-ring | Czech |
   | `Ä'` | `đ` | d-stroke | Croatian |
@@ -125,11 +126,12 @@ above.
   |-----------|----------|------|
   | `Ä±` | `ı` | dotless i |
   | `ÅŸ` | `ş` | s-cedilla |
-  | `Ä` | `ğ` | g-breve |
+  | `ÄŸ` | `ğ` | g-breve |
   | `Ã¶` | `ö` | o-umlaut |
   | `Ã¼` | `ü` | u-umlaut |
   | `Ã§` | `ç` | c-cedilla |
 
+- **Longest match first.** A bare `Ä`, `Ã`, `Å` or `â€` is a real letter or a prefix, never a signature.
 - **Validation:** After fix, grep for all corrupted forms — expect 0 matches
 - **Caveat:** Code examples or documentation about encoding issues may contain
   intentional mojibake sequences. Before fixing, check if the match is inside
@@ -172,11 +174,10 @@ above.
 
 ### `typography-fix`
 
-- **Double spaces:** Replace 2+ consecutive spaces with single space in prose
-  lines. Do NOT modify inside code blocks, code spans, or markdown tables.
-- **Double punctuation:** Replace `..` with `.` (but NOT `...` which is a
-  valid ellipsis), `,,` with `,`, `;;` with `;`.
-  Do NOT modify `!!` (may be intentional emphasis) or `??` (may be intentional).
+- **Double spaces:** Replace 2+ consecutive spaces with single space inside a sentence (the audit
+  does not tag a double space after `.`, `!`, `?`, `:`). Do NOT modify inside code blocks, code spans, or markdown tables.
+- **Double punctuation:** Replace `;;` with `;`, and `,,` with `,` where the audit tagged it. Never touch
+  `..` (ellipsis or period), `...`, `!!` or `??`: they are ambiguous and the audit reports them without a fix.
 - **Validation:** Grep for double spaces and double punctuation — expect 0
   matches outside code blocks.
 
