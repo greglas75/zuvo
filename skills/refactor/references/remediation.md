@@ -115,14 +115,13 @@ gate asked. This step asks.
 
 For each path in `modules_created`:
 
-1. Is the module's behaviour exercised? Search by import, not filename: a module covered from a
-   differently-named spec is covered, and so is one the frozen characterization suite reaches
-   through the public API (`covered-via-facade:<characterization test ids>`, the ids required).
-   Tests attach to behaviour, never to files: one module, one behaviour area, one spec; no twin
-   test file per new source file; table-driven edge cases. Test LOC above 1.5x the source it
-   covers is a smell: say so in the report.
-2. **A module with behaviour no test reaches gets tests IN THIS RUN**, written into the existing
-   spec of its behaviour area, or one new spec named by behaviour. Dispatch
+1. Is the module's behaviour exercised? Search by import, not filename. A module the frozen
+   characterization suite reaches through the public API is covered: record
+   `covered-via-facade:<characterization test ids>` and add NO spec for it. Tests attach to
+   behaviour, never to files: no `<module>.test.ts` per new source file; table-driven edge
+   cases; test LOC above 1.5x the source it covers is a smell: say so in the report.
+2. **A module with behaviour no test reaches gets tests IN THIS RUN**, in the existing spec of its
+   behaviour area (a new spec only for a new area, named by behaviour). Dispatch
    `Skill(zuvo:write-tests <module> --invoked-by refactor)` (the flag makes it list its
    `Backlog writes:` for refactor's closing commit), commit as `test(<scope>):`. A parked gap is
    deferred onto the user.
