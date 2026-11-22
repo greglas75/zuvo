@@ -488,8 +488,8 @@ CG6: AI crawler policy conscious       -- from D5
 **Profile applicability (read `CONTENT_PROFILE`, `seo-page-profile-registry.md` "Gate applicability").** Agents report raw gate statuses; this step overrides an exempt gate to `N/A`, keeps the raw status in the evidence, and applies it before Phase 4.2: the gate's own blocking check (its row in `seo-check-registry.md`) is `N/A`, excluded from scoring, with no finding and no fix. Other checks (e.g. `robots-exists`) stay scored. `docs`: a raw CG5 FAIL whose evidence says no JSON-LD exists becomes `N/A`; client-only JSON-LD that exists stays FAIL.
 
 **Gates that need a live response are decided from source when source can decide them, in the default (no `--live-url`) mode.** Without a live response a gate is never FAIL for lack of one and never PASS for lack of contrary evidence. CG3 is the one gate whose proof is a response:
-- `PASS` -- deploy/host config enforces HTTPS (`force_ssl`, an http-to-https redirect rule, Cloudflare Always-HTTPS or an HTTPS-only listener; an HSTS header alone is not proof, it is only honoured over HTTPS) and no production base URL is `http://`, or a live request where `http://` redirects to `https://`. A CSP `upgrade-insecure-requests` only upgrades subresources and is not proof.
-- `FAIL` -- source proves the site is published over HTTP: the production (not dev or env-fallback) `site` / `baseURL` / `metadataBase` / canonical / sitemap `<loc>` is `http://` on a non-local host (`localhost`, `127.0.0.1`, `*.local`, `*.test`, `*.internal` excluded) and no HTTPS enforcement is found, or a live probe shows no HTTPS.
+- `PASS` -- deploy/host config enforces HTTPS (`force_ssl`, an http-to-https redirect rule, Cloudflare Always-HTTPS or an HTTPS-only listener; an HSTS header alone is not proof, it is only honoured over HTTPS) and no production base URL is `http://`, or a live probe where `https://` answers and `http://` redirects to it or is closed. A CSP `upgrade-insecure-requests` only upgrades subresources and is not proof.
+- `FAIL` -- source proves the site is published over HTTP: the production (not dev or env-fallback) `site` / `baseURL` / `metadataBase` / canonical / sitemap `<loc>` is `http://` on a non-local host (`localhost`, `127.0.0.1`, `*.local`, `*.test`, `*.internal` excluded) and no HTTPS enforcement is found, or a live probe shows no HTTPS. A conclusive live probe outranks source evidence; report a contradiction in the evidence.
 - `INSUFFICIENT DATA` -- anything else, including an `http://` base URL next to HTTPS enforcement (report the stale scheme on the canonical/sitemap check, not under CG3). No `http://` refs is not proof of HTTPS.
 
 CG5 and CG6 follow the same rule: client-only JSON-LD in source is a FAIL, an edge/WAF override that only a probe can rule out is `INSUFFICIENT DATA`.
@@ -702,7 +702,7 @@ Serialize from Phase 4 scoring results:
   "critical_gates": [
     { "id": "CG1", "name": "Sitemap exists", "status": "PASS|FAIL|INSUFFICIENT DATA|N/A", "evidence": "..." },
     { "id": "CG3", "name": "HTTPS active", "status": "INSUFFICIENT DATA", "evidence": "Code-only mode, cannot verify HTTPS" },
-    { "id": "CG5", "name": "JSON-LD server-side rendered", "status": "N/A", "evidence": "Profile app-shell exempts CG5" }
+    { "id": "CG5", "name": "JSON-LD server-side rendered", "status": "N/A", "evidence": "Profile app-shell exempts CG5 (raw: FAIL, json_ld_present: no)" }
   ],
   "findings": [
     {
