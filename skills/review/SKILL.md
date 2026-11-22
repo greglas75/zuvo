@@ -383,7 +383,7 @@ WORK_FILES = <changed files from the diff>
 
 Tool quirks: `scan_secrets` with `file_pattern` may report "scanned 0 files" (run it unscoped, keep changed files); `impact_analysis(since=)` takes a short SHA or ref, not 40 hex. `changed_symbols`, `diff_outline` and `impact_analysis` do not see UNTRACKED files: for those use `build-review-patch` plus `get_file_outline` and record `<tool>: untracked-blind (build-review-patch+get_file_outline)`, which satisfies the gate only when every changed production file is untracked; otherwise also call the tool on the tracked ones.
 
-**Fence the substitute's output to the reviewed file set.** `audit_scan` (and the other compound substitutes) scan the **repository**, not your diff; scoring their raw output drowns the CQ score in pre-existing findings. After each substitute call, discard findings whose file is outside the reviewed file set BEFORE CQ scoring. The reviewed file set depends on the scope: a commit range (`new`, `HEAD~N`, `A..B`) is `git diff --name-only "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`; `commits A,B,C` is the union of `git show --name-only --format= <hash>` over the named commits; `staged` is `git diff --name-only --cached`; uncommitted (no scope token) is `git diff --name-only HEAD` plus `git ls-files --others --exclude-standard`; a directory token adds `-- <dir>`. Record whether the tool honored the fence: `audit_scan: fence-honored` or `audit_scan: fence-ignored (filtered <N>→<M>)`. One exception, about causality rather than file membership: a finding in an **unchanged** file that this diff *caused* — a caller broken by a changed signature, a consumer of a removed export, a now-unreachable branch — is IN scope and triaged normally (recorded with `--source review`, Backlog Persistence below). Other findings outside the fence are pre-existing debt, not scored against this diff (Backlog Persistence below records the drive-by-tagged ones).
+**Fence the substitute's output to the reviewed file set.** `audit_scan` (and the other compound substitutes) scan the **repository**, not your diff; scoring their raw output drowns the CQ score in pre-existing findings. After each substitute call, discard findings whose file is outside the reviewed file set BEFORE CQ scoring. The reviewed file set depends on the scope: a commit range (`new`, `HEAD~N`, `A..B`) is `git diff --name-only "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`; `commits A,B,C` is the union of `git show --name-only --format= <hash>` over the named commits; `staged` is `git diff --name-only --cached`; uncommitted (no scope token) is `git diff --name-only HEAD` plus `git ls-files --others --exclude-standard`; a directory token adds `-- <dir>`. Record `audit_scan: fence-honored` or `audit_scan: fence-ignored (filtered <N>→<M>)`. Exception (causality): a finding in an **unchanged** file that this diff *caused* (a caller broken by a changed signature, a consumer of a removed export, a now-unreachable branch) is IN scope and triaged normally (recorded with `--source review`, Backlog Persistence below). Other findings outside the fence are pre-existing debt, not scored (Backlog Persistence records the drive-by-tagged ones).
 
 ### Forbidden escape hatches
 
@@ -808,7 +808,7 @@ fourth with exit 7).
 _ADV_MODE=code   # or security | migrate, per Step 1; set it in EVERY Bash call that runs a pass
 git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --multi --mode "$_ADV_MODE" --artifact "$ADV_PROOF"
 # Uncommitted scope: `build-review-patch` output; `staged`: `git diff --cached` — instead of git diff above.
-git rev-parse HEAD; git stash create   # PRE_FIX_HEAD, then PRE_FIX_BASE = the snapshot commit the second prints (no stash entry; empty on a clean tree or a read-only .git: use PRE_FIX_HEAD). Print both and paste the literals below: the next Bash call is a fresh shell
+git rev-parse HEAD; git stash create   # PRE_FIX_HEAD, then PRE_FIX_BASE = the snapshot commit the second prints (no stash entry; empty on a clean tree or a read-only .git: use PRE_FIX_HEAD; `staged`: `git rev-parse <snap>^2`). Print both and paste the literals below (each Bash call is a fresh shell)
 # → ADV-1 → fix CONFIRMED CRITICALs and behaviour-changing WARNINGs together with the Phase 4 fixes (uncommitted)
 
 # Pass 2 — after the fixes (Phase 4 step 2), whenever the run applied a behaviour-changing fix (not only
@@ -1073,7 +1073,7 @@ COMPLETION GATE CHECK
 [ ] Run: TSV line printed and appended to ~/.zuvo/runs.log
 ```
 
-Enforcement: print the gate check as a checklist with actual `[x]` / `[ ]` marks so the user can audit. If any `[ ]` remains, loop back and complete it before emitting the NEXT STEPS block.
+Enforcement: print the gate check as a checklist with actual `[x]` / `[ ]` marks so the user can audit. If any `[ ]` remains, loop back and complete it before emitting the NEXT STEPS block. Write the artifact and tags right after a non-`INCOMPLETE` Validity Gate, and tick both.
 
 ### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
 
@@ -1265,10 +1265,12 @@ Print this Validity Gate **AFTER** the retro append and `~/.zuvo/append-runlog` 
 | State after the run | Run line | Artifact `verdict:` |
 |---------------------|----------|---------------------|
 | every MUST-FIX fixed (or none) and every gate green | `PASS` | `APPROVE` |
-| fixed, but a gate degraded (`degraded:*`, `syntax-only` verification, `DEFERRED(time-cap)`, `UNVERIFIED`, fixes left uncommitted) | `WARN` | `CONDITIONAL` |
+| fixed, but a gate degraded (`degraded:*`, `syntax-only` verification, `DEFERRED(time-cap)`, `UNVERIFIED`) | `WARN` | `CONDITIONAL` |
 | a MUST-FIX or adversarial CRITICAL still open | `FAIL` | `MUST-FIX-FOUND` |
 | a required gate could not run, or the Validity Gate fails | `FAIL`, NOTES `INCOMPLETE` | none: no content-keyed artifact, the narrative report says `INCOMPLETE` |
 | `--report-only`, RECOMMENDED only, every gate green | `PASS` | `RECOMMENDED-FOUND` |
+
+Uncommitted fixes: `WARN`, no artifact.
 
 ### NEXT STEPS Block
 

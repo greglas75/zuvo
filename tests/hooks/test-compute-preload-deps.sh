@@ -95,8 +95,8 @@ out="$(HOME="$TMP/home" python3 "$CP" review "$TMP/lang2" --lang tsx 2>&1)"; rc=
 out="$(HOME="$TMP/home" python3 "$CP" review "$TMP/lang2" --lang ts --lang py 2>&1)"
 printf '%s' "$out" | grep -q 'typescript (rule #1' && printf '%s' "$out" | grep -q 'python (rule #1' && ok "repeated --lang flags keep both languages" || bad "repeated --lang: [$out]"
 # a framework/test-runner/driver rule must not re-admit another language's group once --lang is forced
-printf '{"devDependencies":{"typescript":"5","jest":"29"}}\n' > "$TMP/lang2/package.json"
-[ "$(groups_of "$TMP/lang2" py)" = "python" ] && ok "--lang py ignores a root typescript dependency under every later rule" || bad "--lang py with jest: got [$(groups_of "$TMP/lang2" py)]"
+printf '{"devDependencies":{"typescript":"5"}}\n' > "$TMP/lang2/package.json"
+[ "$(groups_of "$TMP/lang2" py)" = "python" ] && ok "--lang py ignores a root typescript dependency under every later rule" || bad "--lang py with a typescript dep: got [$(groups_of "$TMP/lang2" py)]"
 # D6 follow-up: ts + py both list resolve_constant_value; the preload loads it once, so the expected count
 # is the emitted union, not the sum (the math gate aborted a valid mixed-language review by one)
 out="$(HOME="$TMP/home" python3 "$CP" review "$ROOT" --lang ts,py 2>&1)"

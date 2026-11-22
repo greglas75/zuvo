@@ -243,6 +243,34 @@ out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
   && pass "D3: an 8-letter finding prefix is parsed and its citation checked" \
   || bad "D3: CRITICAL-1 finding not verified (rc=$rc): $(echo "$out" | tail -2)"
 
+# Round-3: a prefix that is not CRITICAL/HIGH (BLOCKER-1, SECURITY-1) is a header too, and a summary line
+# that restates a parsed finding (`- [MUST-FIX] R-1 ... file:line`) is not a second unparsed finding.
+cat > "$PROBE" <<EOF
+# Review — long non-severity prefix
+
+BLOCKER-1 [MUST-FIX] long id finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: BLOCKER-1 [MUST-FIX] is parsed as a header and its citation checked" \
+  || bad "D3: BLOCKER-1 finding not verified (rc=$rc): $(echo "$out" | tail -2)"
+cat > "$PROBE" <<EOF
+# Review — summary restates a finding
+
+## R-1 [MUST-FIX] parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+Summary:
+  - [MUST-FIX] R-1 fixed in scripts/zuvo-home/poll-cost:3
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a summary line naming a parsed finding ID is not an unparsed second finding" \
+  || bad "D3: summary restatement rejected (rc=$rc): $(echo "$out" | head -6)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

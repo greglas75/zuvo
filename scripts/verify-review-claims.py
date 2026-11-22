@@ -207,17 +207,27 @@ def recognized_format(path: Path) -> bool:
 
 
 def first_record_keys(path: Path) -> list[str] | None:
-    """Sorted keys of the first JSON-object record, or None when the file holds no JSON object at all
-    (empty, binary, prose). Names the format in the UNKNOWN verdict, and tells a transcript of an
-    unparsed host from a bogus file passed to dodge the check."""
+    """Sorted keys of the first non-empty JSON object (a JSONL line, else the whole file as one JSON
+    document, whose first object may sit in a top-level list), or None when the file holds none
+    (empty, binary, prose, `{}`). Names the format in the UNKNOWN verdict, and tells the transcript of a
+    host we do not parse from a bogus file passed to dodge the check."""
     with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(rec, dict):
-                return sorted(rec)[:8]
+        text = fh.read()
+    docs = []
+    for line in text.splitlines():
+        try:
+            docs.append(json.loads(line))
+        except ValueError:
+            continue
+    if not docs:
+        try:
+            docs = [json.loads(text)]
+        except ValueError:
+            return None
+    for rec in docs:
+        for cand in (rec if isinstance(rec, list) else [rec]):
+            if isinstance(cand, dict) and cand:
+                return sorted(cand)[:8]
     return None
 
 
