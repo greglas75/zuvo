@@ -282,9 +282,9 @@ if [ -f "$cfg11" ] && python3 -c 'import json,sys; sys.exit(1 if any(k.startswit
 else
   bad "generated config carries an unknown underscore key"
 fi
-before="$(cd "$R" && git status --porcelain --ignored | sort | tr '\n' ' ')"
+before="$(cd "$R" && git status --porcelain --ignored -uall | sort | tr '\n' ' ')"
 out11="$(cd "$R" && bash "$STRYKER" --no-write 2>/dev/null)"; rc=$?
-after="$(cd "$R" && git status --porcelain --ignored | sort | tr '\n' ' ')"
+after="$(cd "$R" && git status --porcelain --ignored -uall | sort | tr '\n' ' ')"
 if [ "$rc" -eq 0 ] && [ "$(kv "$out11" mutate_count)" = "7" ] && [ "$before" = "$after" ] && [ ! -e "$(kv "$out11" config_path)" ]; then
   pass "--no-write prints the scope and creates no file (dry-run writes nothing)"
 else

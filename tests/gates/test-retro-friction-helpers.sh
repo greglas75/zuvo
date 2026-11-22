@@ -444,6 +444,29 @@ if command -v python3 >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   [ "$RES" = "['SKIPPED', 'SKIPPED']" ] \
     && pass "reprobe batch: scope follows the lines the edit changes, not the anchor's first line" \
     || bad "reprobe batch: multi-line anchor leaked past the scope (verdicts=$RES)"
+  # A renamed file with ONE edited line, run from a subdirectory: only that line is in scope (a
+  # rename read as a whole new file would measure every mutant; a cwd-relative pathspec would find none).
+  RN="$TMP/rename"
+  mkdir -p "$RN/src/sub"
+  (
+    cd "$RN" || exit 1
+    git init -q -b main .
+    printf 'def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b\n' > src/calc.py
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm base
+    git checkout -q -b feature
+    git mv src/calc.py src/calc2.py
+    sed -i.bak 's/return a - b/return a - b  # edited/' src/calc2.py && rm -f src/calc2.py.bak
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm "rename and edit sub"
+    printf 'cd "$(dirname "$0")" || exit 2\n' > t.sh
+    printf 'python3 -B -c "import sys; sys.path.insert(0, \\"src\\"); import calc2; assert calc2.add(2,3)==5 and calc2.sub(3,2)==1"\n' >> t.sh
+    printf '[{"id":"R1","file":"../calc2.py","original":"return a - b","mutated":"return a + b"},\n' > plan.json
+    printf ' {"id":"R2","file":"../calc2.py","original":"return a + b","mutated":"return a - b"}]\n' >> plan.json
+  ) || bad "reprobe rename: could not build the fixture repo"
+  ( cd "$RN/src/sub" && bash "$REPROBE" --plan ../../plan.json --out ../../res.json --test-cmd "bash ../../t.sh" >/dev/null 2>"$TMP/rename.err" )
+  RES="$(python3 -I -c 'import json;print([(m["id"],m["verdict"]) for m in json.load(open("'"$RN"'/res.json"))["mutants"]])' 2>&1)"
+  [ "$RES" = "[('R1', 'KILLED'), ('R2', 'SKIPPED')]" ] \
+    && pass "reprobe batch: a renamed file keeps only its edited line in scope, from a subdirectory" \
+    || bad "reprobe batch: rename scope wrong (verdicts=$RES; $(head -c 200 "$TMP/rename.err"))"
 else
   printf 'SKIP: reprobe cases (python3 or git missing)\n'
 fi

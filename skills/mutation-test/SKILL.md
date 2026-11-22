@@ -102,6 +102,7 @@ from the USER (`full` widens the file list, not the lines). Static mutants are i
 **A prose request for whole files runs the default scope — and says so, without asking.** "Whole
 src/", "all of pricing.ts" is not the flag. Run changed-lines and print, before executing:
 `scope: changed-lines <M> lines in <F> files — whole-files would be <N> lines in <G> files; rerun with --whole-files`.
+(`<N>`, `<G>`: one read-only `stryker-scoped-config.sh --whole-files --no-write`; counting is not mutating.)
 
 **Confirm before a long run.** A run whose estimate (1.3b `BUDGET`, or 3.2b's native estimate)
 exceeds **~30 minutes** is not started without the user's go-ahead: print the scope (files, line
@@ -467,7 +468,8 @@ the changed lines (a run over ~30 min still needs the user's go-ahead). The loop
     bash "$ZUVO_BASE/scripts/mutation-survivor-reprobe.sh" --plan <plan.json> --out <results.json> \
       --test-cmd '<mapped tests>' --timeout <3*PER_RUN, min 10>   # --test-cmd wins over any "test_cmd" in the plan
 
-`plan.json` is the 2.3b plan (`{"mutants":[{"id","file","original","mutated"}]}`). One process: it
+`plan.json` is the 2.3b plan with the replacement text under `mutated` (`{"mutants":[{"id","file","original","mutated"}]}`;
+`replacement` is accepted as its alias; a native survivor's `original` is the source text at its Stryker location). One process: it
 computes the changed-lines scope itself (`--diff <base>`, `--scope-file`; `--whole-files` only on the
 user's flag) and SKIPS a mutant outside it, runs the baseline once per test command, then applies
 each mutant, runs the tests, restores and hash-verifies it, and writes verdicts plus the score to
@@ -1052,7 +1054,7 @@ On early termination:
 score = killed / (killed + survived) * 100
 ```
 
-- TIMEOUT counts as killed.
+- TIMEOUT counts as killed (the farm's `tf-ablate`; the local `reprobe` reports a timeout as ERROR — raise `--timeout`).
 - ERROR (crash or compile error; schema `RuntimeError`/`CompileError`) is not measured: out of both
   numerator and denominator, and named in the report.
 - **`NoCoverage`** (a native mutant no test executes) counts as SURVIVED — undetected, against the
@@ -1209,8 +1211,8 @@ genuinely spans several files it is a `gap-unfixed` with that stated as the reas
 
 **Commit the fixes — tests only, one commit.** In a git repo, unless `--report-only` or `--dry-run`:
 once the fix loop is done and the mapped tests are green, commit the strengthened test files as ONE
-commit with the message `test: close mutation survivors in <scope>` (`<scope>` as in 4.3b's
-filename). Stage explicit paths and commit them with `git commit --only -- <paths>` (a plain commit also takes
+commit (none, `commit_fix: null`, when the execution policy forbids committing) with the message
+`test: close mutation survivors in <scope>` (`<scope>` is 4.3b's filename slug, so no `/`). Stage explicit paths and commit them with `git commit --only -- <paths>` (a plain commit also takes
 whatever else is staged) — never `git add -A`, never a production file, a `zuvo/` artifact or a
 `.stryker-*` file; check `git show --name-only` lists only those test files before recording the sha. No test change, no commit. A test file that already had uncommitted edits of its own at the start
 is not committed by this skill (3.1.1): report it and leave the strengthened file in the tree. A hook failure gets a NEW commit after the fix:
@@ -1289,7 +1291,7 @@ MUTATION TEST COMPLETE
 Project: [name]
 Date: [ISO-8601 date]
 Engine: [native <name> v<ver> | llm | hybrid]  ([detected <path> | installed | absent | declined | failed | unsupported_stack])
-Score:  [N]%  [under hybrid ONLY: native [N]% | llm [N]% — both graded, the verdict is the lower]
+Score:  [N]% as found, [N]% after fixes  [under hybrid ONLY: native [N]% | llm [N]% — both graded, the verdict is the lower]
 Installed this run: [none | <tool> — remove with: <uninstall command>]
 Files tested: [N]
 Mutations generated: [N]
@@ -1596,7 +1598,7 @@ Three rules that make it honest rather than decorative:
    | native `NoCoverage` | `NoCoverage` | kept; counts as undetected (4.1) |
    | survived (`equivalent`) | `Survived` | as found; `statusReason` names the equivalence. The exclusion lives in the zuvo JSON's triaged score, never in this file. |
    | TIMEOUT | `Timeout` | counted as killed in 4.1, but the schema keeps it distinct |
-   | mutation did not compile | `CompileError` | — |
+   | mutation did not compile | `CompileError` | not measured, outside the score (4.1) |
    | mutation crashed the runner at test time (ERROR) | `RuntimeError` | not killed, not measured, outside the score (4.1); distinct from `CompileError` |
    | `not_run` from a truncated plan (3.3) | `Pending` | the honest status for a mutant the budget never reached — do NOT omit it, or the report silently shrinks the denominator |
 2. **`mutatorName` is namespaced by origin.** LLM mutants carry `zuvo:<CATEGORY>`; native
@@ -1629,7 +1631,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 VERDICT: PASS (>= 80%), WARN (>= 60% and < 80%), FAIL (< 60%). A configured `--break N` that
 the run misses forces FAIL regardless of band (4.2c) — the threshold is a stricter bar someone
 chose, so it may only lower the verdict, never raise it.
-CQ_SCORE field: `<score>%` (the overall mutation score).
+CQ_SCORE field: `<score>%` (the overall mutation score — the final, after-fixes `score_triaged`, as the verdict is).
 Q_SCORE field: `<killed>/<total>` (killed count / total mutations).
 TASKS: `<N>` — the count of test files strengthened by the 4.2b fix loop; `-` under
 `--report-only` or when every survivor was equivalent. It used to be hardcoded `-`
@@ -1651,7 +1653,7 @@ no config file. Resolve the engine as usual (0.1d), then:
 
 ```
 MUTATION TEST PLAN (DRY RUN) — nothing was written
-Project: [name]   Engine: [native <name> | llm]
+Project: [name]   Engine: [native <name> | llm | hybrid]
 Scope: [changed lines vs <base> | ...]  [mutated] mutated / [changed] changed lines in [N] files
 [native: dropped files; mutant count estimate]
 [llm: each MUT-NNN with category, file:line, original -> mutated, rationale]

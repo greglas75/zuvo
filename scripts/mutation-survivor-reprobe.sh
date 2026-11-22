@@ -223,8 +223,9 @@ if [ -n "$PLAN" ]; then
   [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "--timeout must be an integer >= 1"
   [ -z "$SCOPE_FILE" ] || [ -f "$SCOPE_FILE" ] || die "--scope-file: no such file: $SCOPE_FILE"
   [ "$WHOLE_FILES" = 0 ] || [ -z "$SCOPE_FILE$DIFF_BASE" ] || die "--whole-files excludes --scope-file/--diff"
+  [ -z "$SCOPE_FILE" ] || [ -z "$DIFF_BASE" ] || die "--scope-file and --diff are alternatives"
   exec python3 -I - "$0" "$PLAN" "$OUT" "$SCOPE_FILE" "$DIFF_BASE" "$WHOLE_FILES" "$TEST_CMD" "$TIMEOUT_SECONDS" <<'PY'
-import json, os, re, signal, subprocess, sys, tempfile
+import json, os, re, shutil, signal, subprocess, sys, tempfile
 
 script, plan_path, out_path, scope_file, diff_base, whole, default_cmd, timeout = sys.argv[1:9]
 
@@ -234,8 +235,8 @@ def usage(msg):
     sys.exit(2)
 
 
-def git(*args):
-    return subprocess.run(["git", "--literal-pathspecs", "-c", "core.quotepath=off", *args], capture_output=True, text=True)
+def git(*args, cwd=None):
+    return subprocess.run(["git", "--literal-pathspecs", "-c", "core.quotepath=off", *args], capture_output=True, text=True, cwd=cwd)
 
 
 try:
@@ -256,15 +257,21 @@ for i, m in enumerate(mutants):
     for k in ("id", "file", "original"):
         if not isinstance(m.get(k), str) or not m[k]:
             usage("--plan: mutant %d needs a non-empty string %r" % (i, k))
+    if "mutated" not in m and "replacement" in m:
+        m["mutated"] = m["replacement"]
     if not isinstance(m.get("mutated"), str):
-        usage("--plan: mutant %d needs a string 'mutated'" % i)
+        usage("--plan: mutant %d needs a string 'mutated' (or 'replacement')" % i)
     m["_cmd"] = default_cmd or m.get("test_cmd") or plan_cmd
+    if m["_cmd"] and not isinstance(m["_cmd"], str):
+        usage("--plan: mutant %d: test_cmd must be a string" % i)
     if not m["_cmd"]:
         usage("--plan: mutant %s has no test_cmd (set it per mutant, in the plan, or via --test-cmd)" % m["id"])
     if m["id"] in seen:
         usage("--plan: duplicate id %s" % m["id"])
     seen.add(m["id"])
 
+if not os.path.isdir(os.path.dirname(os.path.abspath(out_path))):
+    usage("--out: directory does not exist: %s" % os.path.dirname(os.path.abspath(out_path)))
 _protected = {os.path.realpath(x) for x in [plan_path, scope_file] if x}
 _protected |= {os.path.realpath(m["file"]) for m in mutants}
 if os.path.realpath(out_path) in _protected:
@@ -282,7 +289,7 @@ def scope_from_file(path):
             head, _, tail = line.rpartition(":")
             if head and re.fullmatch(r"\d+-\d+", tail):
                 p, rng = head, tuple(int(x) for x in tail.split("-"))
-            p = os.path.normpath(p)
+            p = os.path.realpath(p)
             if rng is None:
                 scope[p] = None
             elif scope.get(p, []) is not None:
@@ -307,15 +314,24 @@ def scope_from_diff(base_arg):
             break
     if base is None:
         usage("no diff base found (tried %s): pass --diff <base> or --scope-file" % ", ".join(cands))
-    names = git("diff", "--name-only", "-z", "--relative", "--diff-filter=d", base, "--")
-    if names.returncode != 0:
-        usage("git diff failed: %s" % names.stderr.strip())
+    top = git("rev-parse", "--show-toplevel").stdout.strip()
+    ns = git("diff", "--name-status", "-z", "-M", "--no-ext-diff", "--diff-filter=d", base, "--", cwd=top)
+    if ns.returncode != 0:
+        usage("git diff failed: %s" % ns.stderr.strip())
+    toks = [t for t in ns.stdout.split("\0") if t != ""]
+    entries, k = [], 0
+    while k < len(toks):                        # R/C records carry two paths, the rest one
+        if toks[k][0] in "RC" and k + 2 < len(toks):
+            entries.append((toks[k + 1], toks[k + 2])); k += 3
+        else:
+            entries.append((None, toks[k + 1])); k += 2
     scope = {}
-    for name in filter(None, names.stdout.split("\0")):
-        d = git("diff", "-U0", "--no-color", "--relative", base, "--", name)
+    for old, name in entries:
+        # both sides of a rename in the pathspec, so git pairs them and shows only the edited lines
+        d = git("diff", "-U0", "--no-color", "--no-ext-diff", "-M", base, "--", *([old, name] if old else [name]), cwd=top)
         if d.returncode != 0:
             usage("git diff failed for %s: %s" % (name, d.stderr.strip()))
-        cur = os.path.normpath(name)
+        cur = os.path.realpath(os.path.join(top, name))
         scope.setdefault(cur, [])
         for line in d.stdout.splitlines():
             mt = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)   # only hunk headers; no path parsing
@@ -323,11 +339,11 @@ def scope_from_diff(base_arg):
                 start, count = int(mt.group(1)), int(mt.group(2) if mt.group(2) is not None else 1)
                 if count > 0:
                     scope[cur].append((start, start + count - 1))
-    others = git("ls-files", "-z", "--others", "--exclude-standard")
+    others = git("ls-files", "-z", "--others", "--exclude-standard", cwd=top)
     if others.returncode != 0:
         usage("git ls-files failed: %s" % others.stderr.strip())
     for p in filter(None, others.stdout.split("\0")):
-        scope[os.path.normpath(p)] = None
+        scope[os.path.realpath(os.path.join(top, p))] = None
     return scope
 
 
@@ -347,7 +363,7 @@ def out_of_scope(m):
     """
     if scope is None:
         return False
-    p = os.path.normpath(m["file"])
+    p = os.path.realpath(m["file"])
     if p not in scope:
         return True
     ranges = scope[p]
@@ -428,10 +444,12 @@ def on_signal(sig, frame):
             child.kill()
             child.wait()
     if active is not None:
-        i, f, before = active
+        i, f, before, bak = active
         if sha(f) != before:
-            results[i]["restored"] = "no"
-            stopped = "interrupted; file not restored: %s" % f
+            ok = recover(f, bak) and sha(f) == before
+            results[i]["restored"] = "recovered" if ok else "no"
+            if not ok:
+                stopped = "interrupted; file not restored: %s" % f
         results[i]["reason"] = "interrupted mid-probe"
     write_results(interrupted=True)
     sys.exit(3)
@@ -441,6 +459,18 @@ signal.signal(signal.SIGINT, on_signal)
 signal.signal(signal.SIGTERM, on_signal)
 
 tmpdir = tempfile.mkdtemp(prefix="reprobe-batch.")
+
+
+def recover(path, backup):
+    """Byte-exact restore of a file the probe left changed (it died without its own restore)."""
+    try:
+        with open(path, "wb") as fh:
+            fh.write(backup)
+        return True
+    except OSError:
+        return False
+
+
 for idx, m in enumerate(mutants):
     rec = results[idx]
     if out_of_scope(m):
@@ -460,11 +490,14 @@ for idx, m in enumerate(mutants):
             "--test-cmd", m["_cmd"], "--label", m["id"], "--timeout", timeout]
     if state.get(m["_cmd"]) == "passed":
         argv.append("--skip-baseline")
-    active = (idx, m["file"], sha(m["file"]))
+    with open(m["file"], "rb") as fh:
+        backup = fh.read()
+    active = (idx, m["file"], sha(m["file"]), backup)
     child = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, errors="surrogateescape")
     stdout, _ = child.communicate()
     rc, child = child.returncode, None
-    probe_restored = sha(m["file"]) == active[2]
+    changed = sha(m["file"]) != active[2]
+    recovered = changed and recover(m["file"], backup) and sha(m["file"]) == active[2]
     active = None
     sys.stdout.write(stdout)
     sys.stdout.flush()
@@ -472,7 +505,7 @@ for idx, m in enumerate(mutants):
     verdict = kv.get("verdict")
     if verdict not in ("KILLED", "SURVIVED", "ERROR"):
         verdict, kv["reason"] = "ERROR", "no verdict emitted (probe exit %d)" % rc
-    rec.update(verdict=verdict, test_exit=kv.get("test_exit", "-"), restored="yes" if probe_restored and kv.get("restored") == "yes" else "no",
+    rec.update(verdict=verdict, test_exit=kv.get("test_exit", "-"), restored="yes" if not changed and kv.get("restored") == "yes" else ("recovered" if recovered else "no"),
                baseline=kv.get("baseline", "not_run"), reason=kv.get("reason", ""))
     if rec["baseline"] in ("passed", "failed"):
         state[m["_cmd"]] = rec["baseline"]
@@ -482,9 +515,7 @@ for idx, m in enumerate(mutants):
             rest["reason"] = "batch stopped: " + stopped
         break
 
-for f in os.listdir(tmpdir):
-    os.unlink(os.path.join(tmpdir, f))
-os.rmdir(tmpdir)
+shutil.rmtree(tmpdir, ignore_errors=True)
 sys.exit(0 if write_results() else 3)
 PY
 fi
