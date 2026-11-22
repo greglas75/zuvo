@@ -52,4 +52,24 @@ printf '["react"]\n' > "$TMP/top/package.json"
 got="$(deps_of "$TMP/top")"
 [ -z "$got" ] && ok "a list package.json contributes nothing and does not crash" || bad "a list package.json: got [$got]"
 
+echo "=== --lang (D6: root pyproject.toml must not decide the language of a TypeScript change) ==="
+mkdir -p "$TMP/lang"
+printf '[project]\nname="x"\n' > "$TMP/lang/pyproject.toml"
+groups_of() { # groups_of <project> [lang] -> matched stack keys, sorted
+  python3 - "$CP" "$1" "${2:-}" <<'PY'
+import importlib.machinery, importlib.util, sys
+from pathlib import Path
+loader = importlib.machinery.SourceFileLoader("compute_preload", sys.argv[1])
+spec = importlib.util.spec_from_loader("compute_preload", loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+sig = m.collect_signals(Path(sys.argv[2]))
+if sys.argv[3]:
+    m.apply_lang(sig, sys.argv[3])
+by = {"typescript": ["a"], "python": ["b"], "php": ["c"]}
+print(",".join(sorted(k for k, _, _ in m.match_groups(by, sig))))
+PY
+}
+[ "$(groups_of "$TMP/lang")" = "python" ] && ok "control: without --lang a root pyproject.toml selects python" || bad "control: got [$(groups_of "$TMP/lang")]"
+[ "$(groups_of "$TMP/lang" ts)" = "typescript" ] && ok "--lang ts selects typescript and suppresses the python manifest rule" || bad "--lang ts: got [$(groups_of "$TMP/lang" ts)]"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

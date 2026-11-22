@@ -16,9 +16,10 @@ codesift-setup.md against the target project, and emits:
   3. The expected tool count for math gate validation.
 
 Usage:
-  ~/.zuvo/compute-preload <skill_name> [project_path]
+  ~/.zuvo/compute-preload <skill_name> [project_path] [--lang <ts|js|py|php|kotlin|...>]
   ~/.zuvo/compute-preload db-audit                       # uses CWD
   ~/.zuvo/compute-preload db-audit /Users/x/DEV/repo
+  ~/.zuvo/compute-preload review "$PWD" --lang ts        # language of the CHANGED files
 
 Why it exists: agents repeatedly faked the matching trace — invented `always`
 lists, skipped framework groups, claimed manifest "not visible" while md5
@@ -162,6 +163,18 @@ def read_package_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+LANG_ALIASES = {"ts": "typescript", "js": "javascript", "py": "python", "kt": "kotlin"}
+
+
+def apply_lang(sig: dict, lang: str) -> None:
+    """An explicit --lang beats root manifests. A root pyproject.toml in a plugin or tooling clone
+    made every review preload the Python group although the changed files were TypeScript (live
+    review test D6, 9 of 9 runs); the manifest-implies-language rule is suppressed once the caller
+    names the language."""
+    sig["language"] = LANG_ALIASES.get(lang.lower(), lang.lower())
+    sig["language_forced"] = True
+
+
 def collect_signals(project: Path) -> dict:
     sig = {
         "language": None, "framework": None, "test_runner": None,
@@ -283,6 +296,8 @@ def match_groups(by_stack: dict, sig: dict) -> list[tuple[str, str, list[str]]]:
         elif key == "sqlite" and any(d in SQLITE_DRIVERS for d in deps):
             evidence = "rule #5 driver:sqlite"
         # rule 6: manifest-implies-language
+        elif sig.get("language_forced") and key in ("php", "python", "kotlin"):
+            pass
         elif key == "php" and sig["files"]["composer_json"]:
             evidence = "rule #6 composer.json present"
         elif key == "python" and (sig["files"]["pyproject_toml"] or sig["files"]["requirements_txt"]):
@@ -368,16 +383,28 @@ def emit(skill: str, project: Path, ct: dict, sig: dict, matched: list):
 
 
 def main():
-    if len(sys.argv) < 2:
-        sys.exit(f"Usage: {sys.argv[0]} <skill_name> [project_path]")
-    skill = sys.argv[1]
-    project = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else Path.cwd().resolve()
+    argv, lang, i = [], None, 1
+    while i < len(sys.argv):
+        a = sys.argv[i]
+        if a == "--lang" and i + 1 < len(sys.argv):
+            lang, i = sys.argv[i + 1], i + 2
+        elif a.startswith("--lang="):
+            lang, i = a.split("=", 1)[1], i + 1
+        else:
+            argv.append(a)
+            i += 1
+    if not argv:
+        sys.exit(f"Usage: {sys.argv[0]} <skill_name> [project_path] [--lang <ts|py|...>]")
+    skill = argv[0]
+    project = Path(argv[1]).resolve() if len(argv) > 1 else Path.cwd().resolve()
     skill_md = find_skill_md(skill)
     fm = read_frontmatter(skill_md)
     ct = parse_codesift_tools(fm)
     if not ct["always"] and not ct["by_stack"]:
         sys.exit(f"ERROR: skill '{skill}' has no codesift_tools manifest in frontmatter")
     sig = collect_signals(project)
+    if lang:
+        apply_lang(sig, lang)
     matched = match_groups(ct["by_stack"], sig)
     emit(skill, project, ct, sig, matched)
 
