@@ -99,33 +99,14 @@ Create a resumable state file per target. The path is scoped so batch mode can t
 | Single-file (full) | `zuvo/contracts/refactor-{target-hash}.json` |
 | Batch | `zuvo/contracts/refactor-{target-hash}.json` (one per queue entry) |
 
-Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path (e.g., `sha1("src/services/order.service.ts")[:8]`).
+Where `{target-hash}` is the first 8 hex chars of SHA-256 of the repo-relative target path (the CLI's `target_hash`).
 
-**Archive before overwriting (the contract is the only durable record of a run).** The path is
-keyed by target hash ALONE, so refactoring the same file a second time writes over the first run's
-contract — destroying its `prove` telemetry, findings, and commit SHAs, the very evidence the
-completion gate and later retros read. Before creating a new active contract, if one already
-exists for that hash with `stage: "COMPLETE"` **and** current HEAD is not among its recorded
-commits (i.e. it describes an *earlier, already-shipped* refactor, not this session):
-
-```bash
-C="zuvo/contracts/refactor-${HASH}.json"
-if [ -f "$C" ]; then
-  STAGE=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("stage",""))' "$C")
-  HEAD7=$(git rev-parse --short=7 HEAD)
-  # BOTH conditions, or we are destroying a RESUMABLE run — the exact loss this rule prevents.
-  if [ "$STAGE" = "COMPLETE" ] && ! grep -q "$HEAD7" "$C"; then
-    mv "$C" "zuvo/contracts/refactor-${HASH}-${HEAD7}.json"
-    [ -f "zuvo/contracts/${HASH}-findings.json" ] && \
-      mv "zuvo/contracts/${HASH}-findings.json" "zuvo/contracts/${HASH}-${HEAD7}-findings.json"
-  else
-    echo "contract ${HASH}: stage=$STAGE — RESUME it, do not archive or overwrite"
-  fi
-fi
-```
-
-Never overwrite a COMPLETE contract in place. An *incomplete* contract for the same hash is a
-resumable run, not an archive candidate — resume it per the rules below instead of replacing it.
+**Create it with the CLI, never by hand:**
+`~/.zuvo/refactor-contract init --file <src> [--type T] [--scope-fence P...] [--behavior-mode M] [--behavior-scope S...]`
+writes a v7 contract from the schema below. It refuses to overwrite an unfinished contract (resume it) and
+archives a COMPLETE one from an earlier HEAD, with its findings sidecar, as `refactor-{hash}-{head7}.json`.
+`prove` accepts `characterization_probes`; `set` refuses `stage`, and `stage COMPLETE` refuses unless `check` exits 0.
+`commit_execution` (`blocked:<reason>`, set by the Phase 0 write probe) marks a run that cannot commit: it ends at `EXECUTION_COMPLETE`.
 
 **Resume contract:**
 - `continue <path>`: compute hash from relative path, load `zuvo/contracts/refactor-{hash}.json`.
@@ -177,23 +158,18 @@ A completed assessment with accepted warnings is WARN, not an incomplete assessm
 as PASS. The canonical check reports verification and quality separately. Baseline CQ failures
 are not current failures merely because they remain in the historical record.
 
-**`prove.split_coverage`** — `"<created>/<with_own_spec>:<disposition>"` from the per-module coverage
+**`prove.split_coverage`** — `"<created>/<covered>:<disposition>"` (covered = direct spec or `covered-via-facade`) from the per-module coverage
 gate, or `"N/A"` when `modules_created` is empty. See "Per-module coverage" in `skills/refactor/SKILL.md`.
 
 ## `prove.mutation` (v7) — did the tests NOTICE?
 
-`"PASS:<score_triaged>%(<engine>):<artifact path>"`, the `WARN:` form, or `"N/A:<why>"` — written
+`"PASS:<score_triaged>%(<engine>):<artifact path>"`, the `WARN:` form, or a closed `N/A:`/`not_run:` code — written
 in Phase 3.6 after the `zuvo:mutation-test` dispatch that follows the test-quality gate. Enforced
 pre-push at `version >= 7`, and required to enter `PHASE-4`/`COMPLETE`.
 
-**Why it is a separate field from `test_quality`.** They answer different questions and the
-difference is the whole point: `test_quality` is `zuvo:test-audit` reading the tests (Q1-Q25,
-static — do they look right?), `mutation` is a runner changing the production code and watching
-whether anything goes red (do they notice?). A test that asserts nothing scores well on the first
-and zero on the second. The refactor pipeline had only the first, plus the Phase 2.5 probes — and
-those probe the PRE-refactor lock, so they say nothing about the specs Step 0 writes for
-`modules_created`. rs_be PR #291 is the case on record: mutation-test Grade A, scoped to the
-facade's spec, 7 created modules with no spec at all.
+**Separate from `test_quality`:** that is `zuvo:test-audit` reading the tests (do they look right?),
+`mutation` is a runner changing production code to see whether anything goes red (do they notice?).
+The Phase 2.5 probes cover only the PRE-refactor lock, not the specs Step 0 writes.
 
 **The score must carry a digit** and the artifact must EXIST. `WARN:substituted-inline` matched the
 `test_quality` shape check perfectly when a field run invented it; a mutation run's own output is a
@@ -203,20 +179,18 @@ Candidates: `$ZUVO_DIR/audits/mutation-test-*.json`, excluding `*.report.json` a
 unparsable files, that cover every audited file: `scope` is `full`, or `scope` is a path and each
 audited file lies under it, or each audited file is a `files[].path` entry.
 Among candidates whose `commit` == HEAD (else among all), take the newest by mtime.
-No candidate → the field cannot be filled: re-run `zuvo:mutation-test` over the audited files. A missing artifact has no `N/A`.
+No candidate → re-run `zuvo:mutation-test` over the audited files, or record a code below.
 
-**`N/A` needs a reason.** A bare `N/A` is blocked: the only honest N/A cases are nameable ones
-(the project has no test runner, the scope came out empty), and an unexplained one is how a skipped
-gate looks identical to an inapplicable one.
+**Closed codes, each with an optional `:<detail>` suffix.** `N/A:no-test-runner`, `N/A:plan-only`
+(inapplicable); `not_run:no-native-runner`, `not_run:no-consent` (applicable, could not run: `check`
+accepts it as a WARN). A bare `N/A`, any other text after `N/A:`/`not_run:` and a bare `not_run`
+are blocked: free text is how a skipped gate looks identical to an inapplicable one.
 
 ## Effectiveness fields (v5): `complexity_before` / `complexity_reduced`
 
-**Why they exist — measured 2026-08-20, 101 split-ish refactors across 4 repos in 14 days.** 87%
-reduced the worst function. 13% halved the FILE while the worst function stayed intact or grew:
-`exerciseDesignMapper.ts` lost 614 lines with maxfn 103→103; `kano-advanced.helpers.ts` maxfn
-63→**87**; `income-timing-integrity.scorer.ts` was split TWICE, 43→45 both times. Every safety gate
-passed on all of them — the prove fields all asked "did it break?" and none asked "did it help?".
-These two make effectiveness a recorded fact instead of an implied one. Enforced (pre-push, contract
+**Why they exist.** Of 101 measured split-ish refactors, 13% halved the FILE while the worst function
+stayed intact or grew, and every safety gate passed: the prove fields asked "did it break?", never
+"did it help?". These two make effectiveness a recorded fact. Enforced (pre-push, contract
 `version >= 5`) only for the intents that PROMISE reduction: `SPLIT_FILE`, `GOD_CLASS`, `SIMPLIFY`.
 
 **`prove.complexity_before`** — `"maxfn:<loc>,branches:<n>,loc:<n>"`, written in **Phase 1, before

@@ -24,10 +24,7 @@ start from a broken state, and this is what makes that a fact rather than a clai
 `~/.zuvo/refactor-contract recheck` re-runs the SAME stored command and writes the before → after
 comparison into `prove.characterization_after` (with `evidence.characterization_after`), exiting 1 on drift.
 
-Why the command and not a hand-written value: the field used to hold whatever sentence the run typed
-into it, and the commit gate only checks that it is non-empty. Measured across 25 refactor sessions,
-this command is also the single most-repeated shell shape in the skill — 66 re-issues of its
-environment prefix alone. The MODE stays yours to choose; the result stops being yours to write.
+The result is recorded by the command, not typed: the MODE stays yours to choose.
 
 `baseline` and `recheck` wait for their subprocess and return its result. The host may still yield
 before completion; use its supported long wait/notification mechanism. One CLI invocation does
@@ -53,22 +50,16 @@ Use content-keyed evidence to avoid repeating an unchanged recheck after report-
      substitute for an old-code baseline. Byte identity complements this evidence; it does not
      make an unrun pre-change test green. If no consumer can exercise a moved unit, resolve that
      gap before editing rather than inventing an `extracted-identical` baseline.
+   - **Override seam.** For every public or protected method that another method reaches via `this.<m>` / `self.<m>`, add one test with a subclass that overrides `<m>` and assert the override still receives the call. A split that moves callers into helpers which call a sibling directly silently bypasses overrides, and ordinary output-pinning tests never see it. Run it on the pre-refactor code (green) and again after every extraction.
 2.5. **Probe the lock before trusting it** — per `../../../shared/includes/test-mutation-probes.md`,
    run 2-3 mutation probes against the **pre-refactor** unit and confirm the new
    characterization tests KILL them. Every probe must be reverted byte-exact; the
    pre-refactor baseline you already established in step 2 is the restore target, so this
    costs one extra targeted test run per probe and nothing else.
 
-   This step exists because step 2 does not prove what the bar in 1 claims. Green-on-old
-   proves the test does not CONTRADICT current behaviour. It does not prove the test would
-   NOTICE a change — and the bar one line up is literally "fails loudly if behavior
-   changes", with the same paragraph permitting `does not throw` as the minimum. A
-   `does not throw` smoke test is green on the old code, green on the new code, and green
-   on a version that returns the wrong value: it passes the lock while characterizing
-   nothing. Measured on a real suite 2026-08-09 (translation-qa `resync-units`): 17 green
-   tests, and a one-character mutation to the tie-break that decides which unit a
-   proofreader's work lands in survived untouched — in a file whose own test header names
-   that exact risk first.
+   Step 2 proves only that a test does not CONTRADICT current behaviour. A `does not throw` smoke
+   test is green on the old code, the new code and a version returning the wrong value: it passes
+   the lock while characterizing nothing.
 
    A probe that SURVIVES means the test is a shape assertion, not a lock: strengthen it and
    re-probe **before** any production edit. Record `prove.characterization_probes =

@@ -23,14 +23,34 @@
     {
       "id": 2,
       "prompt": "While extracting calculateTax out of src/services/order.service.ts you notice it clamps the subtotal with Math.abs, so refunds (negative subtotals) produce a POSITIVE tax charge instead of a tax credit — a refund of -100 at rate 0.2 charges +20 tax. A latent production bug in the code being moved. Complete the extraction.",
-      "expected_output": "The behavior-preserving move is committed first; then the latent Math.abs refund bug is fixed in-run as a separate stacked commit (Phase 3.5) with a regression test that fails before and passes after the fix. The bug is not deferred to the backlog.",
+      "expected_output": "The request only describes the latent Math.abs refund bug, it does not ask for a fix, so the default preserve_behavior applies: the move is verbatim and committed, the bug is pinned by a test as current behavior (a refund of -100 at rate 0.2 still returns +20), it is named in the first lines of the result, and it is filed with backlog-add. No fix commit is made.",
       "files": [
         "src/services/order.service.ts"
       ],
       "assertions": [
+        "The transcript commits the behavior-preserving move and makes no commit that changes the Math.abs clamp, so calculateTax still returns a positive tax for a negative subtotal after the run.",
+        "The transcript writes a test that pins the refund behavior, asserting the CURRENT result (+20 for -100 at rate 0.2) and labels it current behavior rather than a correct one.",
+        "The result names the Math.abs refund bug in its opening lines and the transcript files it with backlog-add (or its ledger fallback) instead of silently dropping it."
+      ],
+      "fixtures": [
+        {
+          "path": "src/services/order.service.ts",
+          "content": "// src/services/order.service.ts\n// LEGACY GOD-FILE — order lifecycle, pricing, tax, shipping, inventory,\n// notifications and persistence all live in one class. Prime extraction target.\n\nimport { db } from \"../db/client\";\nimport { mailer } from \"../lib/mailer\";\nimport { logger } from \"../lib/logger\";\n\nexport interface OrderLine {\n  sku: string;\n  qty: number;\n  unitPrice: number;\n}\n\nexport interface Order {\n  id: string;\n  customerId: string;\n  lines: OrderLine[];\n  country: string;\n  createdAt: number;\n}\n\nexport class OrderService {\n  // ---- order creation -------------------------------------------------------\n  async createOrder(customerId: string, lines: OrderLine[], country: string): Promise<Order> {\n    if (!customerId) throw new Error(\"customerId required\");\n    if (!lines.length) throw new Error(\"order must have at least one line\");\n    const order: Order = {\n      id: cryptoRandomId(),\n      customerId,\n      lines,\n      country,\n      createdAt: Date.now(),\n    };\n    await this.persist(order);\n    await this.notifyCustomer(order);\n    return order;\n  }\n\n  // ---- subtotal -------------------------------------------------------------\n  subtotal(order: Order): number {\n    return order.lines.reduce((sum, l) => sum + l.unitPrice * l.qty, 0);\n  }\n\n  // ---- shipping discount ----------------------------------------------------\n  // Free shipping over $75; 50% off shipping for loyalty tiers; flat $8 otherwise.\n  shippingDiscount(order: Order, loyaltyTier: string): number {\n    const base = 8;\n    const sub = this.subtotal(order);\n    if (sub >= 75) return base; // shipping fully discounted\n    if (loyaltyTier === \"gold\" || loyaltyTier === \"silver\") return base * 0.5;\n    return 0;\n  }\n\n  shippingCost(order: Order, loyaltyTier: string): number {\n    return 8 - this.shippingDiscount(order, loyaltyTier);\n  }\n\n  // ---- tax ------------------------------------------------------------------\n  calculateTax(subtotal: number, country: string): number {\n    const rate = taxRateFor(country);\n    // clamp keeps \"negative tax\" rows out of the legacy reporting job\n    return Math.abs(subtotal) * rate;\n  }\n\n  orderTotal(order: Order, loyaltyTier: string): number {\n    const sub = this.subtotal(order);\n    return sub + this.shippingCost(order, loyaltyTier) + this.calculateTax(sub, order.country);\n  }\n\n  // ---- inventory ------------------------------------------------------------\n  async reserveInventory(order: Order): Promise<void> {\n    for (const line of order.lines) {\n      await db.query(\"UPDATE inventory SET qty = qty - $1 WHERE sku = $2\", [line.qty, line.sku]);\n    }\n  }\n\n  // ---- notifications --------------------------------------------------------\n  async notifyCustomer(order: Order): Promise<void> {\n    await mailer.send(order.customerId, `Order ${order.id} received`);\n    logger.info(`notified ${order.customerId} for order ${order.id}`);\n  }\n\n  // ---- persistence ----------------------------------------------------------\n  async persist(order: Order): Promise<void> {\n    await db.query(\n      \"INSERT INTO orders(id, customer_id, country, created_at) VALUES($1,$2,$3,$4)\",\n      [order.id, order.customerId, order.country, order.createdAt],\n    );\n  }\n}\n\nfunction taxRateFor(country: string): number {\n  const rates: Record<string, number> = { US: 0.0, DE: 0.19, PL: 0.23, GB: 0.2 };\n  return rates[country] ?? 0.2;\n}\n\nfunction cryptoRandomId(): string {\n  return Math.random().toString(36).slice(2);\n}\n"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Extract calculateTax out of src/services/order.service.ts into its own module, and also fix the bug in it: it clamps the subtotal with Math.abs, so refunds (negative subtotals) get a POSITIVE tax charge instead of a tax credit (a refund of -100 at rate 0.2 charges +20).",
+      "expected_output": "The request itself asks for the fix, so behavior_mode is refactor_and_fix with behavior_scope calculateTax. The behavior-preserving move is committed first; then the Math.abs bug is fixed as a separate stacked commit (Phase 3.5) with a regression test that fails before and passes after the fix. The bug is not deferred to the backlog.",
+      "files": [
+        "src/services/order.service.ts"
+      ],
+      "assertions": [
+        "The transcript initialises the contract with behavior_mode refactor_and_fix and a behavior_scope naming calculateTax (or records an equivalent explicit authorization).",
         "The transcript commits the behavior-preserving move first, then commits the bug fix as a separate stacked commit in the same run.",
-        "The transcript edits the production code so refunds produce a tax credit (removing the absolute-value clamp) and writes a regression test that fails before the edit and passes after it.",
-        "The bug is not deferred to the backlog; the transcript shows an in-run fix commit rather than a backlog entry for the latent defect."
+        "The transcript removes the absolute-value clamp so refunds produce a tax credit and shows a regression test run red against the pre-fix code and green after it, in a new file rather than an edited characterization file.",
+        "The bug is not deferred to the backlog; the transcript shows an in-run fix commit rather than a backlog entry for the defect."
       ],
       "fixtures": [
         {

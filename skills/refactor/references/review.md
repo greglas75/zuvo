@@ -7,10 +7,7 @@ Apply `change-assessment.md` before fix/disposition decisions. Its baseline comp
 - Default: `--mode code`
 - If diff touches auth, payment, crypto, PII, or migration files: `--mode security`
 
-**Staging:** Stage ONLY files within the scope fence — not `git add -u` (which misses new files and may include unrelated changes):
-```bash
-git add [specific files from scope fence]
-```
+**Review input:** never stage it. Build the patch with `~/.zuvo/build-review-patch "<fence-file-1>" "<fence-file-2>"` (each path quoted separately; it never writes the index and includes new files), as `../../../shared/includes/adversarial-loop.md` says. Staging for a commit is Phase 3.5's, by explicit paths.
 
 **Iterative review with `--multi`:** Run adversarial passes sequentially, every available provider per pass. Each pass sees the FIXED code from previous passes — so fixes themselves get reviewed. A pass that returns 0 new findings ends the loop **only when the ledger completion scan (below) is also clean** — an empty pass alone never ends it if an open CRITICAL identity remains.
 
@@ -153,18 +150,7 @@ Pass 1 reviews the move; every later pass reviews only the fixes since the previ
 only when that pass led to a fix of a CONFIRMED CRITICAL or a behaviour-changing WARNING. The
 `> 200 lines → 4 passes` row was removed on 2026-10-15 with the rest of the per-skill caps above 3.
 
-**Remediation review passes `--multi` (changed 2026-09-02).** It used to pass `--rotate` — one
-random provider per pass — on the reasoning that diversity accumulates ACROSS the capped passes
-and the ledger carries dispositions between them. That reasoning is coherent and it is why the
-flag stood for so long. It was overruled by measurement.
-
-Measured on 20 real review diffs, every finding judged REAL / FALSE_POSITIVE by an independent
-Opus judge against the diff, with a shared defect-id vocabulary so overlapping findings collapse:
-**57% of each model's true findings are unique to that model, and no single model sees more than
-28% of the 347 distinct defects.** Diversity-over-time only works if a later pass re-examines the
-SAME code — but each pass here reviews the FIX diff, not the original, so a defect that provider A
-missed in pass 1 is never shown to provider B at all. Rotation across passes diversifies the
-reviewer, not the coverage of any given change.
+**Remediation review passes `--multi`, not `--rotate`.** Each pass reviews the FIX diff, not the original, so a defect provider A missed in pass 1 is never shown to provider B: rotation diversifies the reviewer, not the coverage of a change. Measured on 20 real review diffs, 57% of each model's true findings are unique to it and no single model sees more than 28% of the distinct defects.
 
 The cost is real and is the price of that coverage: up to 3 passes now fan out to every configured
 provider instead of one, so provider calls per refactor rise roughly 5x. Bound the spend with the
