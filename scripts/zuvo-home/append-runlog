@@ -473,7 +473,7 @@ case "$SKILL" in
       # test-audit writes test-quality-audit-<date>.md (its own SKILL.md names it so), not
       # test-audit-<date>.md; looking only for the skill name skipped the verify gate on every run.
       REPORT_STEMS="$SKILL"
-      [ "$SKILL" = "test-audit" ] && REPORT_STEMS="test-audit test-quality-audit"
+      [ "$SKILL" = "test-audit" ] && REPORT_STEMS="test-quality-audit test-audit"   # canonical name first
       for base in "$ZUVO_DIR/audits" "audits" "audit-results"; do
         for stem in $REPORT_STEMS; do
           for candidate in \

@@ -177,7 +177,7 @@
     {
       "id": 8,
       "prompt": "Audit src/lib/account.test.ts. Do its critical gates pass, and what is still missing?",
-      "expected_output": "Q7 passes: the negative path of parseAge is covered with the RangeError type asserted in one test and the exact message asserted in another test of the same rejection path, which satisfies 'error type AND message' without requiring both in a single assertion. Q11 passes: ACCOUNT_ROLES is a constant list, its members are not branches, and one in-set plus one out-of-set case cover the membership check in isAccountRole. No test per role (admin, guest) is requested and the constants are NO-TEST-NEEDED. All critical gates pass, the file is Tier A or B, and the report is written to zuvo/audits/ with no source or test file edited.",
+      "expected_output": "Q7 passes: the negative path of parseAge is covered with the RangeError type asserted in one test and the exact message asserted in another test of the same rejection path, which satisfies 'error type AND message' without requiring both in a single assertion. Q11 passes: ACCOUNT_ROLES is a constant list, its members are not branches, and one in-set plus one out-of-set case cover the membership check in isAccountRole. No test per role (admin, guest) is requested and the constants are NO-TEST-NEEDED. Neither Q7 nor Q11 scores 0, and the report is written to zuvo/audits/ with no source or test file edited.",
       "files": [
         "src/lib/account.test.ts",
         "src/lib/account.ts"
@@ -185,7 +185,7 @@
       "assertions": [
         "The audit scores Q7 as passing for account.test.ts, accepting the RangeError type assertion and the message assertion placed in separate tests of the same negative path, and records no Q7 finding that the type and message are not asserted together.",
         "The audit scores Q11 as passing for account.test.ts and records no finding that the 'admin' and 'guest' members of ACCOUNT_ROLES are untested; it requests no test per list member.",
-        "The audit records all critical gates passing and a Tier A or B for account.test.ts, with no TEST-GAP asking for tests of constants."
+        "The audit records no critical gate (Q7, Q11) at 0 for account.test.ts, with no TEST-GAP asking for tests of constants."
       ],
       "fixtures": [
         {
@@ -201,7 +201,7 @@
     {
       "id": 9,
       "prompt": "Run a test-audit on src/components/Tag.test.tsx and give me the file's tier and the run's VERDICT headline.",
-      "expected_output": "Both tests of Tag.test.tsx only check that a passed-in text appears, so every test is proposed for removal and the file is a REMOVE file: it has no A-D tier, is listed on its own REMOVE file row of the tier table and joins no tier count or average. Tag.tsx is NO-TEST-NEEDED, so nothing is missing. No gate scored 0, so the run VERDICT is PASS (REMOVE alone never trips a gate), and the headline carries the removal counts: 2 tests proposed for removal in 1 file, 1 REMOVE file. The report is written to zuvo/audits/ and no file is edited or deleted.",
+      "expected_output": "Both tests of Tag.test.tsx only check that a passed-in text appears, so every test is proposed for removal and the file is a REMOVE file: it has no A-D tier, is listed on its own REMOVE file row of the tier table and joins no tier count or average. Tag.tsx is NO-TEST-NEEDED, so nothing is missing. The run VERDICT is decided by the gates only (REMOVE alone never trips a gate), and the headline carries the removal counts: 2 tests proposed for removal in 1 file, 1 REMOVE file. The report is written to zuvo/audits/ and no file is edited or deleted.",
       "files": [
         "src/components/Tag.test.tsx",
         "src/components/Tag.tsx"
@@ -209,7 +209,7 @@
       "assertions": [
         "The audit reports Tag.test.tsx as a REMOVE file with no A/B/C/D tier assigned to it (it is not graded Tier A, B, C or D and is not counted in a tier count or average).",
         "The run's VERDICT headline carries the removal counts: 2 tests proposed for removal in 1 file and 1 REMOVE file.",
-        "The run VERDICT is PASS (no gate scored 0; REMOVE alone does not trip a gate), Tag.tsx is NO-TEST-NEEDED with no TEST-GAP, and no source or test file is edited or deleted."
+        "The run VERDICT is decided by the gates only (REMOVE alone never trips it, so it is never FAIL merely because the file is a REMOVE file), Tag.tsx is NO-TEST-NEEDED with no TEST-GAP, and no source or test file is edited or deleted."
       ],
       "fixtures": [
         {

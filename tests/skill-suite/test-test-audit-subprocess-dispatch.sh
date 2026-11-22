@@ -1514,6 +1514,15 @@ exec /bin/mkdir "$@"
   { [ "$rc" = 2 ] && err_has "--mode must be quick, standard or deep"; }
   hres "setup with an unknown MODE is a usage error (exit 2), not a silently standard run (D3)" $?
   rm -f "$B/.lock"
+  # a same-run re-run keeps the saved batch results, so it may not switch the mode under them (they would be
+  # relabelled with a depth they were not gathered at)
+  run_block "$SETUP_DEEP" 1 1 560 15
+  tk_="$(awk -F= '/^RUN_TOKEN=/ { print $2 }' "$X/log/out")"
+  SETUP_RERUN="$(printf '%s\n' "$SETUP_SH" | awk -v tk="$tk_" 'match($0, /^[ \t]*RUN_TOKEN=/) { print substr($0, 1, RLENGTH) tk; next } { print }')"
+  run_block "$SETUP_RERUN" 1 1 560 15; rc=$?
+  { [ -n "$tk_" ] && [ "$rc" = 3 ] && err_has "already used --mode deep"; }
+  hres "a same-run setup re-run with a different MODE STOPs instead of relabelling kept batch results (D3)" $?
+  rm -f "$B/.lock"
 
   # --- item 3/N8: a .lock that is a directory or a regular file (not our link) STOPs by name
   rm -f "$B/.lock"; mkdir "$B/.lock"
@@ -1862,6 +1871,7 @@ is not an install root|not an install root
 is not a positive whole number|a bad `NBATCH`
 is not a lock link|a `.lock` that is not a lock link (an older layout)
 could not be set aside|a prompt that could not be set aside
+already used --mode|same-run re-run with a different mode
 PAIRS
 n_stops="$(printf '%s\n' "$setup_stops" | awk 'NF { n++ } END { print n + 0 }')"
 if [ "$n_stops" -eq "$n_pairs" ]; then pass "every one of the setup's $n_stops STOP reasons is paired with the exit-3 list"

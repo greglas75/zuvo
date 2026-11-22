@@ -75,7 +75,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 Default with no arguments: `all --quick`, so `--commit=off` (the `--quick` row below); a non-quick run defaults to `--commit=ask`.
 
 **Audit mode** (`MODE`, passed to every batch auditor and to the run line's TIER field): `quick` for `--quick` (and the >50-file
-auto-switch), `deep` for `--deep` and for a file-list scope, else `standard`.
+auto-switch), `deep` for `--deep`, a single `[file]` and a file-list scope, else `standard` (first match wins: `--deep`, file scope, `--quick`, `standard`).
 
 **Dispatch is already authorized — do not ask, and do not substitute.** Invoking this skill IS the
 request for the gates it mandates. A session-level instruction like "do not use the Agent tool unless
@@ -273,7 +273,7 @@ The call's contract:
   call of this run;
 - exit `3` — `STOP:` on stderr with the reason (not an install root, a live foreign lock, a lock an
   earlier run of this session left, an undecidable owner, a contended lock, a `.lock` that is not a
-  lock link (an older layout), a bad `NBATCH`, a prompt that could not be set aside);
+  lock link (an older layout), a bad `NBATCH`, a prompt that could not be set aside, a same-run re-run with a different mode);
   nothing of another run was touched;
 - exit `1` — no git repository, or the batch directory cannot be made; exit `2` — a malformed call.
 
@@ -290,6 +290,7 @@ still carries a placeholder, or lacks the include's `OUTPUT LINE FORMAT` rule is
 `prompt-invalid` for that batch and it takes the fallback (1b). A prompt that cannot be set aside
 (the move fails) would stay in place for a group call to run: the setup STOPs instead (exit 3),
 naming it.
+A same-run re-run with a different mode than the run's first setup also STOPs (exit 3): the batch results it keeps were gathered at the first mode.
 
 The lock is a symbolic link created with `ln -s`, which is atomic and fails when the name exists;
 its target is the owner record `<pid> <epoch> <run token>`, so the lock and its owner appear in one
@@ -507,7 +508,7 @@ Read all batch files from `zuvo/audits/.test-audit-batch/`:
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
 5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and report them as INCOMPLETE files. A file with nothing applicable to score changes the run VERDICT only when nothing at all is scoreable (the coverage gate, `../../shared/includes/audit-postamble.md` §1 row 3). A file of a batch with no batch file is unevaluated, not unscorable: retry that batch, and if it is still missing the coverage gate FAILs (row 3: `INCOMPLETE`), unless a tripped critical gate already gives `FAIL`
-6. **REMOVE files and the headline (the one rule).** A file whose `Removals:` line is `whole file` (every test proposed for removal) is a **REMOVE file**: it has no tier — it gets its own row in the tier table and joins no tier count, average or coverage mapping. The VERDICT stays §1's (gates and critical findings): REMOVE alone never trips a gate. Whenever any test is proposed for removal, the headline carries `VERDICT: <value> (<N> tests proposed for removal in <M> files, <K> REMOVE files)`.
+6. **REMOVE files and the headline (the one rule).** A `Tier: C` file whose `Removals:` line is `whole file (<n> tests)` (every test proposed for removal) is a **REMOVE file** (a file with an AUTO TIER-D trigger stays D, never a REMOVE file; `<n>` feeds the headline count): it has no tier — it gets its own row in the tier table and joins no tier count, average or coverage mapping. The VERDICT stays §1's (gates and critical findings): REMOVE alone never trips a gate. Whenever any test is proposed for removal, the headline carries `VERDICT: <value> (<N> tests proposed for removal in <M> files, <K> REMOVE files)`.
 
 Build the summary report:
 
@@ -521,9 +522,9 @@ Files audited: [N]
 Total tests: [count from test runner]
 Checkout: [absolute branch/worktree path]
 Tree: [branch, commit, dirty-tree identity if applicable]
-Verification: [commands + cwd + run IDs/artifacts + exit/result summaries; skips and unrun checks]
+Verification: [commands + cwd + run IDs/artifacts + exit/result summaries; skips and unrun checks; `not collected (--quick)` in quick mode]
 Batch auditor: [one line per batch, as Phase 1 records it: <client>/<model> route=<lane> status=<status> batch=<N>]
-Evidence map: [per production file/symbol → test branch citations → matching coverage/mutation artifact scope]
+Evidence map: [per production file/symbol → test branch citations → matching coverage/mutation artifact scope; `not collected (--quick)` in quick mode]
 
 ## Summary by Tier
 
@@ -596,9 +597,9 @@ REPORT="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/z
 if [ -f "$REPORT" ]; then ~/.zuvo/adversarial-review --mode tests --files "$REPORT"; else echo "adversarial: report not found — write it first" >&2; fi
 ```
 
-**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr). Quote every ID: one holding `:` (such as `"${P}:unknown"`) is mangled by zsh unquoted and its disposition is silently dropped. Do not print the final summary before this call's exit code is recorded.
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr). Quote every ID (`"$id"`): zsh reads an unquoted `$P:unknown` as a `:u` modifier, mangles it, and the disposition is silently dropped. Do not print the final summary before this call's exit code is recorded.
 
-A `PASS` beside a Tier C or REMOVE file is by design (`audit-postamble.md` §1 decides by gates, Phase 2 step 6 reports REMOVE): a finding that only contests that pairing is rejected.
+A `PASS` beside a Tier C (under 53%, no critical gate = 0) or REMOVE file is by design (`audit-postamble.md` §1 decides by gates, Phase 2 step 6 reports REMOVE): a finding that only contests that pairing is rejected. A critical gate = 0 makes the verdict FAIL, so it never sits beside a PASS.
 
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
@@ -629,7 +630,8 @@ For each audited test file, find its production file row in coverage.md:
 | B (>=53% and <82% of applicable, critical gates PASS) | PARTIAL-QUALITY | Has tests but quality issues |
 | C (<53% of applicable OR any critical gate = 0) | PARTIAL-QUALITY | Major quality gaps |
 | D (AUTO TIER-D trigger) | PARTIAL | Effectively untested |
-| INCOMPLETE (no tier), REMOVE file | Leave existing row unchanged; add no row | Evaluation unavailable, or no test left that guards behaviour; never register as COVERED |
+| INCOMPLETE (no tier) | Leave existing row unchanged; add no row | Evaluation unavailable; never register as COVERED |
+| REMOVE file | PARTIAL | No test guards behaviour, so a COVERED row is downgraded (a wholly NO-TEST-NEEDED production file is left unchanged, below) |
 | ORPHAN | No row (no production file to map) | |
 
 Only downgrade coverage status, never upgrade. A production file that is wholly NO-TEST-NEEDED is not mapped by tier: leave an existing row unchanged and do not add a missing one. For a mixed file, map by the tier of its test-worthy behaviours. Any other production file not yet in coverage.md is added.
@@ -641,7 +643,7 @@ Output: `COVERAGE UPDATE: [N] rows updated ([N] downgraded, [N] confirmed, [N] n
 Every finding this audit records goes through `backlog-add`, one call per finding (`backlog-protocol.md` "Filing from a skill"; the bars, the dedupe and the confidence routing are the protocol's and are not restated here). Under `--read-only` this phase does not run: the calling skill records the findings (`test-quality-gate.md`).
 
 **What to record:**
-- **Tier C/D files:** call `backlog-add` for every finding (the protocol's bars decide where each lands), a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested behaviour; the title names the defect a test would catch), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding; a REMOVE proposal is a `CQ` "Remove: …"), and `BUG` only when it names the input and the wrong output (a BUG needs `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
+- **Tier C/D files** (REMOVE files are Tier C here; their removal proposals file as `CQ`): call `backlog-add` for every finding (the protocol's bars decide where each lands), a **Generic write**: `~/.zuvo/backlog-add --repo "$R" --class <C> --conf <N> --source test-audit --file "$F" --line <n> [--anchor "$A"] --title "$T"`. `<C>` is `TEST-GAP` (an untested behaviour; the title names the defect a test would catch), `MUTATION` (a surviving mutant) or `CQ` (a Q-gate or AP finding; a REMOVE proposal is a `CQ` "Remove: …"), and `BUG` only when it names the input and the wrong output (a BUG needs `--anchor "$A"`). A Q-gate failure with no line of its own is a whole-file finding: `--line 1`, a "Whole file: …" title, no `--anchor` ("The location rule"). When the report names the assertion the tests lack for a production line this run changed (the audit ran with `--base`), add it, with `F` and `n` that production file and line: `~/.zuvo/backlog-add --repo "$R" --class TEST-GAP --conf <N> --source test-audit --file "$F" --line <n> --anchor "$A" --missing-assertion "$M" --title "$T"`.
 - **Critical gate failures** (Q7/Q11/Q13/Q15/Q17=0, a Tier C floor; an AUTO TIER-D file stays D): one call per gate whatever the final tier, the gate named in the title. A Tier B file has none, so it files nothing.
 - **AUTO TIER-D triggers** (the batch prompt's pre-scan): always submitted, the same call with `--severity high`.
 

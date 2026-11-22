@@ -74,8 +74,8 @@ run_route() {
   # also reads: without them, the whole suite run from inside Codex Desktop turns every
   # cursor/antigravity/kimi case into platform=codex.
   # -u CLAUDE_MODEL / -u CODEX_MODEL / -u ZUVO_CODEX_MODEL: the router checks the Claude
-  # branch BEFORE the Codex writer-model hint, so an ambient CLAUDE_MODEL misroutes every Codex/
-  # Antigravity/Kimi case to platform=claude, and an ambient CODEX_MODEL/ZUVO_CODEX_MODEL
+  # branch BEFORE the Codex writer-model hint (the Codex HOST signals now win over CLAUDECODE), so an ambient
+  # CLAUDE_MODEL misroutes every ZUVO_CODEX_MODEL-hint/Antigravity/Kimi case to platform=claude, and an ambient CODEX_MODEL/ZUVO_CODEX_MODEL
   # can misroute the Codex-writer-model cases the same way — the same who-ran-it dependence
   # the header above already fixed for the other markers. PATH is pinned to what clean_env
   # (below) uses for the same reason: an ambient PATH entry (~/.kimi-code/bin) must not

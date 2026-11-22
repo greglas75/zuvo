@@ -229,6 +229,10 @@ c4_prepare() {
   { cat "$D/batch-1.prompt"; echo '[BATCH FILE LIST]'; } > "$D/neg.prompt"
   if tab_prompt_ok "$D/neg.prompt"; then chk C4.0d "the validator rejects a prompt with the placeholder left" 1 "accepted"
   else chk C4.0d "the validator rejects a prompt with the placeholder left" 0; fi
+  # A prompt from an older include has no `Audit mode:` line: accepting it would drop --quick silently.
+  awk '$0 !~ /^Audit mode: /' "$D/batch-1.prompt" > "$D/nomode.prompt"
+  if tab_prompt_ok "$D/nomode.prompt"; then chk C4.0d2 "the validator rejects a prompt with no 'Audit mode:' line" 1 "accepted"
+  else chk C4.0d2 "the validator rejects a prompt with no 'Audit mode:' line" 0; fi
   last="$(tail -n 1 "$D/batch-1.prompt")"
   if [ "$last" = 'Files to audit:' ]; then chk C4.0e "the prompt ends with 'Files to audit:' (the listing lands where the placeholder stood)" 0; else chk C4.0e "the prompt ends with 'Files to audit:' (the listing lands where the placeholder stood)" 1 "last line: $last"; fi
   cmp -s "$D/batch-1.prompt" "$inc" && same=1 || same=0

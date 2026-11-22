@@ -51,7 +51,7 @@ Q3:  Mocks of state-changing dependencies (send/write/charge/enqueue) have Calle
 Q4:  Assertions use exact matchers (toEqual/toBe, not toBeTruthy)?
 Q5:  Mocks are typed (no `as any`)?
 Q6:  Mock state fresh per test (beforeEach, no shared mutable)?
-Q7:  CRITICAL -- Every contract negative case tested: where an error is expected, its type AND message are asserted (one `toThrow(Type, /msg/)` or separate tests of the same path); filter/sentinel/fallback exact result? Derive accepted input domain from callers/validation; no invented out-of-domain throw requirements. No negative cases: pass only with exhaustive contract/branch/caller evidence.
+Q7:  CRITICAL -- Every contract negative case tested: where an error is expected, its type AND message are asserted (both in one assertion, or in separate assertions/tests of the same path); filter/sentinel/fallback exact result? Derive accepted input domain from callers/validation; no invented out-of-domain throw requirements. No negative cases: pass only with exhaustive contract/branch/caller evidence.
 Q8:  Null/empty/edge inputs tested?
 Q9:  Repeated setup (3+ tests) extracted to helper/factory?
 Q10: No magic values -- test data is self-documenting?
@@ -110,7 +110,8 @@ AP32: Flake-masking retries — per-test/per-suite `retries:`/`@Retry`/`flaky=Tr
 
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.
 Q20-Q25 are CONDITIONAL: score one only when the trigger written on its checklist line holds; otherwise it is N/A
-(`no <artifact>`), never 0. A missing CONDITIONAL practice is never a finding, an untested behaviour or a recommendation.
+(`no <artifact>`), never 0. A CONDITIONAL practice whose trigger is absent is never a finding, an untested behaviour or a
+recommendation; once the trigger holds, the gate is scored and reported like any other.
 Q3 N/A: no mock of a state-changing dependency (a mock of a pure read or calculation never makes Q3 = 0).
 Q16 N/A: score N/A when test covers single function/hook with no shared mutable state.
 Q7/Q11 count behaviour only: NO-TEST-NEEDED branches are excluded like out-of-scope ones; none left -> N/A with that reason.
@@ -147,7 +148,7 @@ No candidate → N/A (no mutation artifact covers these files).
 | JSON present, `commit` == HEAD sha7 | score from **`score_triaged`** |
 | JSON present, `commit` != HEAD | `N/A (mutation data STALE — <json sha7>, HEAD is <sha7>)` |
 | JSON present, `tier2_ran: false` | score it, and append `(--quick: survivors never checked against the full suite)` |
-| No candidate (none exists, or none covers the audited files) | `N/A (no mutation artifact covers these files)` — legitimate; Q21 is CONDITIONAL on a runner existing |
+| No candidate (none exists, or none covers the audited files) | `N/A (no mutation artifact covers these files)` — legitimate; Q21 is CONDITIONAL on an artifact covering the files (a batch auditor cannot run a mutation tool) |
 
 **Per-file evidence is mandatory.** Verify that the artifact's changed-tree identity, production
 file path, executed mutation rows and symbol scope match this audit. A current HEAD alone is
@@ -166,7 +167,7 @@ the test file — if the JSON is absent or stale, say so and score `N/A`.
 
 Audit mode: [AUDIT MODE]
 - quick: a SHORT-format file is unchanged; for a FULL-format file print only the heading `### path`, `Production file:`,
-  `Scope:` (with `--base`), `Removals:`, `Untested behaviours:`, `No-test-needed:`, `Critical gate:`, `Total:`, `Tier:` and
+  `Scope:` and `Out-of-scope gaps:` (with `--base`), `Removals:`, `Untested behaviours:`, `No-test-needed:`, `Critical gate:`, `Total:`, `Tier:` and
   `Findings:`; no `Evidence scope`, `Verification`, `Complexity`, per-Q `Score:` vector, `Top 3 gaps` or prose. Score every Q
   anyway (the tier needs it). Each `Findings:` entry is one line `path:line - what`, naming its Q or AP id.
 - standard: the formats below as written.
@@ -178,7 +179,7 @@ Production file: [path or ORPHAN]
 Red flags: [AUTO TIER-D AP ids] -> AUTO TIER-D
 Phantom mocks: [list mocked modules not called by production code, or "none"]
 Critical gate: [each of Q7 Q11 Q13 Q15 Q17 that is 0, path:line - why; or "none"]
-Removals: [whole file - reason | the tests, each path:line - reason | none]
+Removals: [whole file (<n> tests) - reason | the tests, each path:line - reason | none]
 No-test-needed: [production code classified NO-TEST-NEEDED, each path:line - kind; or "none"]
 Findings: [one line per red flag, critical-gate failure, removal, untested behaviour: path:line - what; QUICK too]
 Reason: [brief]
@@ -196,7 +197,7 @@ Red flags: ["none"]
 Phantom mocks: [list or "none"]
 Untested behaviours: [each production behaviour whose outcome no test asserts: path:line - the defect a test would catch; or "none"]
 No-test-needed: [production code classified NO-TEST-NEEDED, each path:line - kind; or "none"]
-Removals: [whole file - reason | the tests, each path:line - reason | none]
+Removals: [whole file (<n> tests) - reason | the tests, each path:line - reason | none]
 Score: Q1=[0/1] Q2=[0/1] ... Q25=[0/1]
 Anti-patterns: [AP IDs found, or "none"]
 Total: passed=[N], N/A=[N], out-of-scope=[N], applicable=[N], AP deduction=[N], adjusted=[N]/[applicable] ([%])
@@ -231,9 +232,9 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   D (an AUTO TIER-D trigger from the pre-scan): Propose removing the tests (deleted only after the user confirms); rewrite only the tests that guard behaviour (TEST WORTH). AP31 alone: drop the focus marker and re-run
 
   REMOVE share (TEST WORTH decides the tier, not the percentage alone):
-  - every test of the file is a REMOVE candidate: it guards no behaviour. Write `Removals: whole file - <reason>` and
+  - every test of the file is a REMOVE candidate: it guards no behaviour. Write `Removals: whole file (<n> tests) - <reason>` and
     `Tier: C` (the line the orchestrator's gate needs; the report lists the file as a REMOVE file, ungraded). An AUTO
-    TIER-D trigger on it still makes it D.
+    TIER-D trigger on it keeps it D (a D file is never a REMOVE file).
   - more than a third of its tests are REMOVE candidates: Tier A is capped to B.
 
   A very low score without an auto red flag remains Tier C; D is the specified red-flag classification, not a second raw-count threshold.
@@ -266,10 +267,10 @@ relevant to each file (its test command, a lint if configured), then record each
 exit/result and anything not run in that file's "Verification:" field. For ANY OTHER value —
 including "read-only reviewer, no shell", an empty value, or an unsubstituted
 `[VERIFICATION CONTEXT]` placeholder — treat this as read-only: record
-`Verification: not run (read-only reviewer)` for every FULL-format file (the SHORT/AUTO TIER-D
+`Verification: not run (read-only reviewer)` for every FULL-format file (in `Audit mode: quick` the field is not printed at all; the orchestrator writes `not collected (--quick)`) (the SHORT/AUTO TIER-D
 format has no Verification field and scores no Q; it lists the critical gates found at 0, or none); never claim a command ran if it was not run.
 
-In BOTH cases, score Q24/Q25 from an actual run, or from a cited artifact tied to this tree/HEAD
+In BOTH cases, once the Q24/Q25 trigger on its checklist line holds (else `N/A (no <artifact>)`), score it from an actual run, or from a cited artifact tied to this tree/HEAD
 (cite its path; the same freshness rule as Q21 above — commit/tree identity only, Q21's
 mutation-specific fields do not apply): a valid cited artifact scores 1 or 0 from its own content;
 no run and no valid artifact scores `N/A (no run artifact)`.

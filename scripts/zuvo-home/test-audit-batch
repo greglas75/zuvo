@@ -83,8 +83,9 @@ tab_build_prompt() {
 tab_prompt_ok() {
   awk '$0 == "[BATCH FILE LIST]" || $0 == "Audit mode: [AUDIT MODE]" || index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { bad = 1 }
        $0 == "Verification context: read-only reviewer, no shell" { vc = 1 }
+       $0 ~ /^Audit mode: (quick|standard|deep)$/ { am++ }
        index($0, "OUTPUT LINE FORMAT") == 1 { of = 1 }
-       END { exit !(NR > 0 && !bad && vc && of) }' "$1"
+       END { exit !(NR > 0 && !bad && vc && am == 1 && of) }' "$1"
 }
 
 # tab_listing_ok <files> [any] — status 0 when every line of <files> is two or three TAB fields: a test
@@ -275,6 +276,13 @@ cmd_setup() {
     || tab_stop "$TAB_DIR/.lock is not a lock link (an older layout?) - remove it if no run is active"
   tok="${opt_token:-$opt_owner-$(date +%s)-$$}"
   tab_take_lock "$opt_owner" "$tok"
+  # A re-run keeps the saved batch results; they were produced under the first run's mode, so a different
+  # mode now would label standard-depth evidence as deep (or the reverse). The lock stays held: re-run with the
+  # recorded mode, or release and start a fresh run.
+  if [ "$TAB_SAME" = 1 ] && [ -r "$TAB_DIR/mode" ] && [ "$(cat "$TAB_DIR/mode")" != "$opt_mode" ]; then
+    tab_stop "this run already used --mode $(cat "$TAB_DIR/mode"), its saved batch results were gathered at that depth - re-run setup with that mode, or release the run and start a new one"
+  fi
+  printf '%s\n' "$opt_mode" > "$TAB_DIR/mode" || exit 1
   tab_clear_batches "$TAB_SAME" "$opt_nbatch"
   n=1
   while [ "$n" -le "$opt_nbatch" ]; do
