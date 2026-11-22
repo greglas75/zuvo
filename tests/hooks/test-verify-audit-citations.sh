@@ -201,6 +201,47 @@ out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
 [ "$rc" -eq 2 ] && grep -q "not in a recognised header shape" <<< "$out" \
   && pass "D3: an unparsed tagged finding next to a parsed one is rejected, its citation never verified" \
   || bad "D3: mixed report exited $rc: $(echo "$out" | tail -2)"
+SHA=$(git -C "$FIXTURE" rev-parse --short=7 HEAD)   # earlier cases moved the fixture's HEAD
+# Round-2 review (Carbon): a subordinated NIT bullet, and the Pre-existing block's "[NIT] (true severity
+# [MUST-FIX])" line, carry a citation and no finding ID. They are not findings the gate verifies, so they
+# must not turn a good report into a rejection (exit 0 beside a parsed finding, and in a report that has none).
+cat > "$PROBE" <<EOF
+# Review — NIT bullets
+
+## R-1 — parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+Pre-existing (outside changed lines):
+  - [NIT] (true severity [MUST-FIX]) tenant filter missing, scripts/zuvo-home/poll-cost:3
+  - [NIT] rename x in scripts/zuvo-home/poll-cost:4
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: NIT bullets with a citation and no ID do not reject a report with a parsed finding" \
+  || bad "D3: NIT bullets rejected a good report (rc=$rc): $(echo "$out" | head -8)"
+cat > "$PROBE" <<EOF
+# Review — NIT only
+
+0 [MUST-FIX] findings.
+  - [NIT] rename x in scripts/zuvo-home/poll-cost:4
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "D3: a NIT-only report with a cited bullet is not rejected as unparseable" \
+  || bad "D3: NIT-only report rejected (rc=$rc): $(echo "$out" | tail -2)"
+# CRITICAL-1 (8-letter prefix) is a header, its citation is checked.
+cat > "$PROBE" <<EOF
+# Review — long prefix
+
+CRITICAL-1 [CRITICAL] long id finding
+  File: \`scripts/zuvo-home/poll-cost:$((lines + 5000))\`
+  Verified-against: $SHA
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "out of range" <<< "$out" \
+  && pass "D3: an 8-letter finding prefix is parsed and its citation checked" \
+  || bad "D3: CRITICAL-1 finding not verified (rc=$rc): $(echo "$out" | tail -2)"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

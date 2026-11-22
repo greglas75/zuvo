@@ -30,6 +30,7 @@ BASH_PATTERNS: tuple[str, ...] = (
     "zuvo/*", "*/zuvo/*",
     ".zuvo/*", "*/.zuvo/*",
     "memory/findings/*.jsonl", "*/memory/findings/*.jsonl",
+    "knowledge/*.jsonl", "*/knowledge/*.jsonl",
     "VERSION", "*/VERSION",
     "CHANGELOG", "*/CHANGELOG",
     "LICENSE", "*/LICENSE", "LICENCE", "*/LICENCE",

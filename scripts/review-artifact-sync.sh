@@ -219,7 +219,7 @@ do_check() {
     # have (live review test addendum 3). A dated file that DOES carry the marker is still linted.
     case "$(basename "$art")" in
       [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*)
-        grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null \
+        head -n 5 "$art" 2>/dev/null | grep -q '^<!-- zuvo-review -->' \
           || { echo "SKIP $(basename "$art"): dated narrative report, not a gate artifact"; continue; } ;;
     esac
     found=1

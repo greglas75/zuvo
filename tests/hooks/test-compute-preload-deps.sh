@@ -75,6 +75,9 @@ PY
 # A forced language must also beat the dependency rule: typescript in a root devDependencies made
 # `--lang py` load the TypeScript group as well. Mixed-language changes name both (--lang ts,py).
 mkdir -p "$TMP/lang2"
+# the CLI reads the skill from the plugin cache, which a clean host (the farm) does not have: give it this tree's
+mkdir -p "$TMP/home/.claude/plugins/cache/zuvo-marketplace/zuvo/9.9.9/skills/review"
+cp "$ROOT/skills/review/SKILL.md" "$TMP/home/.claude/plugins/cache/zuvo-marketplace/zuvo/9.9.9/skills/review/SKILL.md"
 printf '[project]\nname="x"\n' > "$TMP/lang2/pyproject.toml"
 printf '{"devDependencies":{"typescript":"5"}}\n' > "$TMP/lang2/package.json"
 [ "$(groups_of "$TMP/lang2" py)" = "python" ] && ok "--lang py ignores a root typescript devDependency" || bad "--lang py: got [$(groups_of "$TMP/lang2" py)]"
@@ -83,17 +86,20 @@ printf '{"devDependencies":{"typescript":"5"}}\n' > "$TMP/lang2/package.json"
 out="$(python3 "$CP" review --lang 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q -- '--lang needs a value' && ok "--lang without a value is refused with its own message" || bad "--lang without a value: rc=$rc [$out]"
 # an unknown value would force the language, match no group and preload no language tools without a word
-out="$(python3 "$CP" review "$TMP/lang2" --lang tsx 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'not a known language' && ok "--lang tsx is refused (it would silently drop every language group)" || bad "--lang tsx: rc=$rc [$out]"
+out="$(HOME="$TMP/home" python3 "$CP" review "$TMP/lang2" --lang cobol 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'not a known language' && ok "--lang cobol is refused (it would silently drop every language group)" || bad "--lang cobol: rc=$rc [$out]"
+# a file extension an agent derives from the changed files (tsx, jsx, mjs) is the same language, not an error
+out="$(HOME="$TMP/home" python3 "$CP" review "$TMP/lang2" --lang tsx 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'typescript (rule #1' && ok "--lang tsx is the typescript group (an extension alias, not a dropped language)" || bad "--lang tsx: rc=$rc [$out]"
 # repeated --lang merges (the last one used to win and silently dropped a language of a mixed change)
-out="$(python3 "$CP" review "$TMP/lang2" --lang ts --lang py 2>&1)"
+out="$(HOME="$TMP/home" python3 "$CP" review "$TMP/lang2" --lang ts --lang py 2>&1)"
 printf '%s' "$out" | grep -q 'typescript (rule #1' && printf '%s' "$out" | grep -q 'python (rule #1' && ok "repeated --lang flags keep both languages" || bad "repeated --lang: [$out]"
 # a framework/test-runner/driver rule must not re-admit another language's group once --lang is forced
 printf '{"devDependencies":{"typescript":"5","jest":"29"}}\n' > "$TMP/lang2/package.json"
 [ "$(groups_of "$TMP/lang2" py)" = "python" ] && ok "--lang py ignores a root typescript dependency under every later rule" || bad "--lang py with jest: got [$(groups_of "$TMP/lang2" py)]"
 # D6 follow-up: ts + py both list resolve_constant_value; the preload loads it once, so the expected count
 # is the emitted union, not the sum (the math gate aborted a valid mixed-language review by one)
-out="$(python3 "$CP" review "$ROOT" --lang ts,py 2>&1)"
+out="$(HOME="$TMP/home" python3 "$CP" review "$ROOT" --lang ts,py 2>&1)"
 exp="$(printf '%s\n' "$out" | sed -n 's/^\[Expected after load\] tools=\([0-9]*\).*/\1/p')"
 n="$(printf '%s\n' "$out" | sed -n 's/^ToolSearch(query="select:\(.*\)")$/\1/p' | tail -1 | tr ',' '\n' | grep -c .)"
 [ -n "$exp" ] && [ "$exp" = "$n" ] && ok "expected_tools ($exp) equals the number of tools in the emitted select: query" || bad "expected=$exp emitted=$n"

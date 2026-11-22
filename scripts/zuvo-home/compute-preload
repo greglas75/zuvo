@@ -163,7 +163,9 @@ def read_package_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-LANG_ALIASES = {"ts": "typescript", "js": "javascript", "py": "python", "kt": "kotlin"}
+LANG_ALIASES = {"ts": "typescript", "tsx": "typescript", "mts": "typescript", "cts": "typescript",
+                "js": "javascript", "jsx": "javascript", "mjs": "javascript", "cjs": "javascript",
+                "py": "python", "kt": "kotlin"}
 FORCED_LANG_KEYS = {"typescript", "javascript", "python", "php", "kotlin"}
 
 

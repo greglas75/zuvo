@@ -119,6 +119,17 @@ else
   bad "ledger exclusion wrong (segments counted as production, or any file under the findings directory exempt from review): [$out]"
 fi
 
+# Knowledge rows (knowledge/*.jsonl) are appended by the review's run-log helper AFTER the artifact is
+# written. Bug caught: they counted as production, so the closing commit carried an uncovered blob
+# and a push gate demanded a second review of machine-written rows. A code file there stays production.
+out="$(printf '%s\n' knowledge/2026-11-22_main.jsonl pkg/knowledge/x.jsonl knowledge/evil.py \
+  | pg_classify_files | tr '\n' ' ')"
+if [ "$out" = "knowledge/evil.py " ]; then
+  pass "classify drops knowledge/*.jsonl rows but keeps code under knowledge/"
+else
+  bad "knowledge ledger exclusion wrong: [$out]"
+fi
+
 # Extensionless repo-metadata files must NOT count as production: otherwise a pure
 # release commit (VERSION bump; every other file in it already excluded as *.md/*.json)
 # reads as production work and demands its own review artifact.
