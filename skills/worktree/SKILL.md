@@ -30,7 +30,9 @@ Detect mode automatically:
 
 When no user can answer (headless `-p` / `exec` runs, batch pipelines), every "ask" below resolves
 to STOP, never to a choice made for the user: end with `[WORKTREE] BLOCKED: <the question and its
-options>` and change nothing further. A user-facing question that is allowed a default:
+options>` and change nothing further. This table takes precedence over the prose of each step: a
+decision point it lists gets the default shown (some are "proceed"), and an "ask" it does not list
+stops.
 
 | Decision point | Non-interactive default |
 |---|---|
@@ -133,10 +135,16 @@ BASE_SHA=$(git rev-parse "$BASE_REF") || { echo "cannot resolve base '$BASE_REF'
 # Directory name = the branch with `/` replaced by `-` (`feat/x` -> `feat-x`): a slash would nest
 # the worktree one level deeper, where Step 4's donor scan and PRUNE's listing never look.
 WT_NAME=$(printf '%s' "<branch-name>" | tr '/' '-')
-BASE_BRANCH="${ZUVO_WORKTREE_BASE:-$(git branch --show-current)}"   # empty on a detached HEAD
-git worktree add "$WTDIR/$WT_NAME" -b "<branch-name>" "$BASE_SHA" \
-  && { [ -z "$BASE_BRANCH" ] || git config "branch.<branch-name>.zuvo-base" "${BASE_BRANCH#origin/}"; }   # FINISH Option 1 merges back into it
-echo "worktree <branch-name> based on $(git rev-parse --short=7 "$BASE_SHA") ($BASE_REF)"
+# The branch FINISH Option 1 merges back into: a LOCAL branch only. A SHA, a tag or `upstream/x`
+# is a starting point, not a destination, so nothing is recorded for it.
+BASE_BRANCH="${ZUVO_WORKTREE_BASE:-$(git branch --show-current)}"; BASE_BRANCH="${BASE_BRANCH#origin/}"
+git show-ref --verify --quiet "refs/heads/$BASE_BRANCH" || BASE_BRANCH=""
+if git worktree add "$WTDIR/$WT_NAME" -b "<branch-name>" "$BASE_SHA"; then
+  [ -z "$BASE_BRANCH" ] || git config "branch.<branch-name>.zuvo-base" "$BASE_BRANCH"
+  echo "worktree <branch-name> based on $(git rev-parse --short=7 "$BASE_SHA") ($BASE_REF)"
+else
+  echo "worktree add failed (branch or path already exists?)"; exit 1   # never `cd` into another worktree
+fi
 ```
 
 Report the base in the CREATE output. Two worktrees on the same base share a baseline (Step 5) and
@@ -144,7 +152,7 @@ their results are comparable; two on different bases share neither, and saying w
 one line.
 
 If the branch already exists (exit code non-zero), report and ask user whether to:
-- Use the existing branch: `git worktree add "$WTDIR/$WT_NAME" "<branch-name>"`
+- Use the existing branch: `git worktree add "$WTDIR/$WT_NAME" "<branch-name>"` (if that path is taken, `feat/x` and `feat-x` map to the same directory: report the collision and stop)
 - Pick a different name
 
 After creation, `cd` into the new worktree directory.
@@ -387,8 +395,8 @@ Steps:
 1. Ensure working tree is clean (`git status --porcelain` produces no output).
 2. Run tests in the worktree. If failures exist, report and ask whether to proceed.
 3. Determine the base branch: `git config branch.<feature-branch>.zuvo-base` (CREATE recorded it), else `git symbolic-ref --short refs/remotes/origin/HEAD` minus the `origin/` prefix. If neither answers, ask — never guess `main`.
-4. **Check the main checkout BEFORE touching it:** `git -C "$MAIN_ROOT" status --porcelain`. Anything printed is the user's uncommitted work, and the checkout and pull below would carry it onto the base branch or merge into it. Stop: `FINISH BLOCKED: main checkout has uncommitted changes (<files>)`, ask the user to commit or stash them, and never stash or commit them yourself.
-5. Switch to the main checkout and pull the base: `cd "$MAIN_ROOT" && git checkout <base> && git pull --ff-only` (a base with no upstream skips the pull; a pull that cannot fast-forward stops the run).
+4. **Check the main checkout BEFORE touching it:** `MAIN_STATUS=$(git -C "$MAIN_ROOT" status --porcelain) || stop` (a failed status is "cannot tell", never "clean"). Anything printed is the user's uncommitted work, and the checkout and pull below would carry it onto the base branch or merge into it. Stop: `FINISH BLOCKED: main checkout has uncommitted changes (<files>)`, ask the user to commit or stash them, and never stash or commit them yourself.
+5. Switch to the main checkout and pull the base: `cd "$MAIN_ROOT" && git checkout <base>` (stop if it fails), then `git pull --ff-only` only when `git rev-parse --abbrev-ref "<base>@{upstream}"` succeeds (a base with no upstream skips the pull); a pull that cannot fast-forward stops the run.
 6. Merge: `git merge <feature-branch>`.
 7. If merge conflict occurs: report conflicts and STOP. Do not auto-resolve. Tell the user which files conflict and wait for instructions.
 8. If merge succeeds: run tests again on the merged result. Report pass/fail.
@@ -493,9 +501,9 @@ For each entry in `git worktree list --porcelain`, excluding the main checkout a
 | Signal | Command | Meaning |
 |--------|---------|---------|
 | Dirty | `git -C <wt> status --porcelain` non-empty | uncommitted or untracked work |
-| Local files | `git -C <wt> status --porcelain --ignored` prints a `!! <path>` line that is not install/build output (`node_modules`, `dist`, `build`, `.turbo`, `.next`, `coverage`, `__pycache__`, `.pytest_cache`, `target`, `.venv`) | git-ignored files that exist only on this disk: `.env*`, local databases, keys, notes |
+| Local files | `git -C <wt> status --porcelain --ignored` prints a `!! <path>` line that is not install/build output (`node_modules`, `dist`, `build`, `.turbo`, `.next`, `coverage`, `__pycache__`, `.pytest_cache`, `target`, `.venv`), **or** `git -C <wt> ls-files -o -i --exclude-standard` lists a secret-looking file (`.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`, `id_ed25519`, `credentials*`) even inside one of those directories (git collapses an ignored directory to `!! build/`, hiding a `build/.env`). A command that fails is "cannot inspect", never "no local files" | git-ignored files that exist only on this disk: `.env*`, local databases, keys, notes |
 | Merged | `git -C <wt> merge-base --is-ancestor HEAD "$BASE"` exit 0, **or** the same against `origin/$BASE` | every commit already in base |
-| Own commits | `git -C <wt> reflog show "refs/heads/<branch>"` has more than one entry (a detached HEAD has none) | the branch moved after it was created |
+| Own commits | `git -C <wt> reflog show HEAD` has an entry whose message starts `commit`, `merge`, `rebase`, `pull`, `cherry-pick` or `am` (the worktree's own HEAD log: a fresh worktree holds only its creation entries, even when it checked out an old branch with a long history) | work was done in this worktree |
 | Created | `find "<wt>/.git" -maxdepth 0 -mtime +<N>` prints the path (`<N>` = `$ZUVO_WORKTREE_IDLE_DAYS`, default 30) | the worktree is older than N days |
 | Age | `git -C <wt> log -1 --format=%cr` | how long since last commit |
 
@@ -513,16 +521,22 @@ Checking against both the local and the remote-tracking base means a stale local
 `git worktree remove` does NOT protect ignored files: a clean worktree holding an ignored `.env` is removed with exit 0 and the file is gone (live test 2026-11-22: two of three executors lost a `.env` this way). Re-run the Local files check immediately before each removal, since the tree may have changed since Step 2:
 
 ```bash
-LOCAL=$(git -C "<path>" status --porcelain --ignored | sed -n 's/^!! //p' \
-  | awk '$0 !~ /(^|\/)(node_modules|dist|build|\.turbo|\.next|coverage|__pycache__|\.pytest_cache|target|\.venv)\/$/')
+# inside the per-worktree loop; a failed inspection skips the worktree, it never counts as "nothing found"
+OUT=$(git -C "<path>" status --porcelain --ignored) && FILES=$(git -C "<path>" ls-files -o -i --exclude-standard) \
+  || { echo "SKIPPED <path>: could not inspect (git failed)"; continue; }
+LOCAL=$( { printf '%s\n' "$OUT" | sed -n 's/^!! //p' \
+             | awk '$0 !~ /(^|\/)(node_modules|dist|build|\.turbo|\.next|coverage|__pycache__|\.pytest_cache|target|\.venv)\/$/'
+           printf '%s\n' "$FILES" \
+             | awk '/(^|\/)\.env[^\/]*$|\.(pem|key|p12|pfx)$|(^|\/)(id_rsa|id_ed25519|credentials[^\/]*)$/ && !/(^|\/)node_modules\//'; } )
 if [ -n "$LOCAL" ]; then echo "SKIPPED <path>: ignored local files: $LOCAL"
+elif git worktree remove "<path>"; then   # NEVER --force
+  git branch -d "<branch>" || echo "KEPT branch <branch>: not fully merged"   # safe delete
 else
-  git worktree remove "<path>"        # NEVER --force
-  git branch -d "<branch>"            # safe delete; refuses if unmerged
+  echo "SKIPPED <path>: worktree remove refused (locked or changed)"
 fi
 ```
 
-A refusal from either command (a locked worktree, an unmerged branch) is not an error: collect it as SKIPPED with the reason and move on.
+A refusal from either command (a locked worktree, an unmerged branch) is not an error: collect it as SKIPPED with the reason and move on. The branch is deleted only after the worktree removal succeeded.
 
 ### Step 4: Layout check -- the part that prevents recurrence
 

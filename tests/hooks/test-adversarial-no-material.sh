@@ -512,7 +512,7 @@ grep -qF 'tree_modified_during_review=' "$S/art.txt" && bad "the artifact of an 
 echo "=== ship: the PR check gate reads the rollup, not --watch's exit code (ship never merges) ==="
 SHIP="$ROOT/skills/ship/SKILL.md"
 grep -q 'statusCheckRollup' "$SHIP"   && ok "ship decides from the check rollup" || bad "ship still reports green on --watch alone"
-grep -q 'gh pr list --head "\$BRANCH" --state open' "$SHIP"   && ok "ship resolves only OPEN prs for the head (a reused branch name cannot match a merged PR)"   || bad "ship still uses gh pr view <branch>, which can resolve to a historical merged PR"
+grep -q 'PR_NUMBER=\$(gh pr list --head "\$BRANCH" --state open' "$SHIP"   && ok "ship resolves only OPEN prs for the head (a reused branch name cannot match a merged PR)"   || bad "ship still uses gh pr view <branch>, which can resolve to a historical merged PR"
 grep -q 'no checks configured — not merging' "$SHIP"   && ok "zero-checks is stated, not silently treated as green" || bad "zero-checks case is not surfaced"
 # Three fail-open paths the first cut left open: no jq, a failed `gh pr view`, and classic
 # Status-API entries. Each one ended with the gate reporting "none failed" over unread checks.

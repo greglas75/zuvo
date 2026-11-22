@@ -117,7 +117,9 @@ WORK_FILES = <files being touched>
    writes no file. Everywhere below that says `git fetch`, `git tag`, `git merge`, `git commit`,
    `git push`, `gh pr create` or writes a file, `--dry-run` instead prints `would <action>` and does
    nothing. A read-only `git ls-remote --quiet "$PUSH_REMOTE"` replaces the fetch, so refs stay as
-   they were and `BASE_REF` resolves against them (say so in the output). The walk-through is step 6.
+   they were and `BASE_REF` resolves against them (say so in the output). Run every git read of a dry run
+   with `GIT_OPTIONAL_LOCKS=0` (`export` it first): a plain `git status` otherwise refreshes and writes
+   the index. The walk-through is step 6.
 
 1. **Detect current branch, flow, and the remote everything else resolves against:**
    ```bash
@@ -305,15 +307,16 @@ WORK_FILES = <files being touched>
      into $BRANCH` here and repeat it in SHIP COMPLETE and the PR body.
      - **Direct flow:** merge `$PUSH_REMOTE/$TARGET_BRANCH` into the branch NOW.
      - **PR flow:** merge only when (1) `gh pr list --head "$BRANCH" --state open` shows no PR for
-       the branch (a PR that a merge queue or CI already builds must not move under it) and (2) the
-       project's `CLAUDE.md`/contributing docs name no merge queue. Otherwise do not merge: print
+       the branch (a PR that a merge queue or CI already builds must not move under it) and (2)
+       nothing indicates a merge queue: the project's `CLAUDE.md`/contributing docs name none AND the
+       forge lookup succeeded and shows none (a lookup that failed, or docs that are silent, mean
+       "unknown", and unknown is treated as present). Otherwise do not merge: print
        `[SHIP] base moved, not merged (<reason>)` and put the distance in the PR body. With
        `GH_AVAILABLE=false` condition (1) is unknown: do not merge.
      - **After a merge, re-run the suite on the merged tree** (Phase 1 runs after this, so this is
        free). A textual merge accepts semantic conflicts silently; the merged tree is the only tree
        the test result is about. Merging later — after review — invalidates the review scope and,
-       past ~100 commits of distance, GitHub stops computing mergeability at all (see the four
-       failure modes in Phase 4 Step 4).
+       past ~100 commits of distance, GitHub stops computing mergeability at all.
 
 5. **Backlog snapshot.** Once, at the run's original start, before any `backlog-add` call (this run's or the review's it dispatches): `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout being shipped, assigned in the same shell call. Ship keeps its run state in the transcript: print the output under a `[SHIP] backlog-snapshot:` line (`(empty)` when it printed nothing). A resumed run (Phase 0 step 3's resume at Phase 4 included) reuses the printed one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
@@ -402,8 +405,10 @@ WORK_FILES = <files being touched>
    # login shell) the array is $pipestatus and 1-indexed, so ${PIPESTATUS[0]} expands to EMPTY and
    # TEST_RC silently becomes "". Redirect to a file, read $?, then look at the file.
    TEST_LOG=$(mktemp -t ship-tests.XXXXXX)   # not a fixed /tmp name: two ship runs on one host
-   <test command> > "$TEST_LOG" 2>&1         # would clobber each other's verdict, and a symlink
-   TEST_RC=$?                                # pre-created at a predictable path redirects the write
+   # `<test command>` is a placeholder: substitute the command step 1 detected (`npm test`, ...).
+   # The `if` keeps a failing run from aborting a `set -e` shell before TEST_RC is captured.
+   if <test command> > "$TEST_LOG" 2>&1; then TEST_RC=0; else TEST_RC=$?; fi   # would clobber each other's verdict, and a symlink
+                                             # pre-created at a predictable path redirects the write
    tail -40 "$TEST_LOG"
    echo "[SHIP] TEST_RC=$TEST_RC log=$TEST_LOG"   # print it: the next block is a different shell
 
@@ -551,7 +556,7 @@ bailing, a missing binary) prints nothing, which reads exactly like a clean resu
 with no findings = the scan did not run — fall back to another scanner or `git diff | grep` for the
 high-signal patterns, and record which one produced the verdict. Never carry an errored scan as a
 pass. `scan_secrets` needs an indexed repo; without one the fallback is `gitleaks git
---log-opts="${DIFF_BASE}..HEAD"` plus a literal `git diff "$DIFF_BASE" HEAD | grep -E 'AKIA[0-9A-Z]{16}'`.
+--log-opts="${DIFF_BASE}..HEAD"` plus `git diff "$DIFF_BASE" HEAD | grep -c -E 'AKIA[0-9A-Z]{16}'` (a count: a match is never echoed into the transcript; a non-zero `git diff` status is an errored scan, not a clean one).
 A hit the scanner allow-lists (the AWS documentation key) is still a hit when the diff or commit
 says "credentials", "key" or "secret": report it, never wave it through on the allow-list.
 
@@ -708,7 +713,8 @@ LIST
    ```
 
    **Independent of the band** (also on the fast path and on `reused`): if the diff contains a
-   frontend file (`.tsx`, `.jsx`, `.vue`, `.svelte`, `.css`, `.scss`, `.html`), invoke
+   frontend file (`.tsx`, `.jsx`, `.vue`, `.svelte`, `.css`, `.scss`, `.html`; look at the whole range,
+   `git diff --name-only "$DIFF_BASE" HEAD`, not only `REVIEW_SCOPE`), invoke
    `Skill(skill="zuvo:design-review")`. A 29-LOC `.tsx` change dispatches it exactly as a 900-LOC
    one does; the band below never decides it (live test 2026-11-22: two of three executors read
    only the table and skipped it on a small frontend diff).
@@ -718,10 +724,10 @@ LIST
 
    | REVIEW_LOC | Review actions |
    |----------|----------------|
-   | **`reused`** (`UNC_RC=0`, nothing uncovered) | **Skip** `review-light`, `zuvo:review`, the cross-provider adversarial pass (step 4) and `coverage-check` — the per-file artifact evidence from step 1b is printed instead. Everything else in Phase 2 still runs: the step-0 secret scan is unconditional and NEVER reused. |
-   | < 20 | **Fast path** — skip review entirely |
-   | 20 - 100 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
-   | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`) — runs adversarial pass at TIER 2+ |
+   | **`reused`** (`UNC_RC=0`, nothing uncovered) | **Skip** `review-light`, `zuvo:review`, the cross-provider adversarial pass (step 4) and `coverage-check` (never `zuvo:design-review` for a frontend file) — the per-file artifact evidence from step 1b is printed instead. Everything else in Phase 2 still runs: the step-0 secret scan is unconditional and NEVER reused. |
+   | < 20 | **Fast path** — skip review entirely (`zuvo:design-review` still runs for a frontend file: line above the table) |
+   | 20 - 99 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
+   | 100 - 299 | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`) — runs adversarial pass at TIER 2+ |
    | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")` runs at TIER 3 with automatic adversarial pass. |
 
    **First release only:** `${BASE_REF}..HEAD` excludes everything the root commit introduced, and
@@ -1324,8 +1330,10 @@ git add <version-file>
 # Only if CHANGELOG.md was created or updated in Phase 3 (never on PR flow):
 git add CHANGELOG.md
 
-# A PR that carries its own release note stages that one NEW file (Phase 3 skip gate b):
-git add changelog.d/<branch-slug>.md
+# Only when Phase 3 skip gate (b) created `changelog.d/<branch-slug>.md` in this run (the user asked
+# for a bump or an entry, or the repo already keeps a changelog.d/ directory): stage that one NEW
+# file by its quoted path. A default PR-flow run creates no such file and stages nothing here.
+[ -f "changelog.d/<branch-slug>.md" ] && git add -- "changelog.d/<branch-slug>.md"
 
 # On PR flow neither of the first two lines above runs. If `git status` shows the version
 # file or CHANGELOG.md modified while you are on a feature branch, Phase 3's skip
@@ -1408,6 +1416,9 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   else
     PR_NUMBER=$(gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" --fill | sed -n 's#.*/pull/\([0-9]*\).*#\1#p')
   fi
+  # `--fill` writes the commit messages only. When Phase 0 step 4(b) did not merge a moved base, or
+  # did, append that one line to the body (read the current body first; keep the author's text):
+  #   gh pr edit "$PR_NUMBER" --body "$(gh pr view "$PR_NUMBER" --json body -q .body)"$'\n\n'"<base distance / base merged line>"
 
   # DO NOT read the verdict from the exit code of `--watch`. It returns IMMEDIATELY when no check
   # has been dispatched yet — which is the normal state of a PR created a second earlier — so a
@@ -1423,6 +1434,8 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   # The rollup is the ground truth. A FAILED CALL is not an empty rollup: capture the exit status
   # so an auth error or a network blip cannot present itself as "no checks configured".
   _rollup() { gh pr view "$PR_NUMBER" --json statusCheckRollup -q '.statusCheckRollup' 2>/dev/null; }
+  HEAD_BEFORE=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid' 2>/dev/null) \
+    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER head SHA — refusing to report green blind"; exit 1; }
   ROLLUP=$(_rollup) || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER check rollup (gh failed) — refusing to report green blind"; exit 1; }
   jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ROLLUP" \
     || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER rollup did not parse as JSON — refusing to report green blind"; exit 1; }
@@ -1442,10 +1455,10 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   # pending, and a green verdict is reported over it. The failed-check printer already knew about `.context`.
   TOTAL=$(jq 'length' <<<"$ROLLUP")
   PENDING=$(jq '[.[] | select(((.status // "COMPLETED") != "COMPLETED") or ((.state // "") == "PENDING" or (.state // "") == "EXPECTED"))] | length' <<<"$ROLLUP")
-  FAILED=$(jq '[.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR")))] | length' <<<"$ROLLUP")
+  FAILED=$(jq '[.[] | select(((.conclusion // "") as $c | $c != "" and ($c | IN("SUCCESS","NEUTRAL","SKIPPED") | not)) or ((.state // "") | IN("FAILURE","ERROR")))] | length' <<<"$ROLLUP")
 
   if [ "$FAILED" -gt 0 ]; then
-    jq -r '.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR"))) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
+    jq -r '.[] | select(((.conclusion // "") as $c | $c != "" and ($c | IN("SUCCESS","NEUTRAL","SKIPPED") | not)) or ((.state // "") | IN("FAILURE","ERROR"))) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
     echo "SHIP INCOMPLETE: $FAILED check(s) failed on PR #$PR_NUMBER — fix and re-run"; exit 1
   elif [ "$PENDING" -gt 0 ]; then
     echo "SHIP INCOMPLETE: $PENDING check(s) still running on PR #$PR_NUMBER — wait, do not report green"; exit 1
@@ -1464,14 +1477,17 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
     echo "[SHIP] $TOTAL check(s) concluded, none failed"
   fi
 
-  # The rollup describes ONE commit: bind the verdict to the SHA it was computed for, so a push
-  # from a sibling agent or a late fixup between the read and the report cannot pass on old checks.
-  HEAD_AT_CHECK=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid' 2>/dev/null) \
-    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER head SHA — refusing to report green blind"; exit 1; }
-  [ "$HEAD_AT_CHECK" = "$(git rev-parse "$BRANCH")" ] \
-    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head ($HEAD_AT_CHECK) is not the commit whose checks were read — re-run the gate"; exit 1; }
-
-  gh pr view "$PR_NUMBER" --json state,mergeStateStatus,reviewDecision   # report this; never merge on it
+  # The rollup describes ONE commit: the head was read BEFORE the rollup (HEAD_BEFORE) and again
+  # now, and both must be the commit this run pushed, so a push from a sibling agent or a late
+  # fixup between the two reads cannot pass on old checks.
+  PR_NOW=$(gh pr view "$PR_NUMBER" --json headRefOid,state,mergeStateStatus,reviewDecision 2>/dev/null) \
+    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER state — refusing to report green blind"; exit 1; }
+  HEAD_AFTER=$(jq -r '.headRefOid' <<<"$PR_NOW")
+  { [ "$HEAD_BEFORE" = "$HEAD_AFTER" ] && [ "$HEAD_AFTER" = "$(git rev-parse "$BRANCH")" ]; } \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head moved or is not the commit this run pushed — re-run the gate"; exit 1; }
+  [ "$(jq -r '.state' <<<"$PR_NOW")" = "OPEN" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is not OPEN ($(jq -r '.state' <<<"$PR_NOW"))"; exit 1; }
+  jq -r '"[SHIP] PR #'"$PR_NUMBER"' state=\(.state) merge=\(.mergeStateStatus) review=\(.reviewDecision // "none")"' <<<"$PR_NOW"   # report this; a CHANGES_REQUESTED review is stated in the completion block, never merged over
   ```
 
   **Read PR state, not exit codes.** Two shapes that are not what they look like:
@@ -1480,10 +1496,9 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
     and stop at the open PR; checks pending/queued → keep waiting; a check FAILED → fix it or
     print `SHIP INCOMPLETE` with the failing check name. The distinction is made by the rollup
     query in the runnable block, not by the exit code.
-  - The PR can be `CONFLICTING`/`DIRTY` (`gh pr view --json mergeStateStatus`). Report it. Merge
-    `$PUSH_REMOTE/$TARGET_BRANCH` into the branch only under the Phase 0 step 4(b) conditions (no
-    merge queue, announced, suite re-run on the merged tree), then push and read the checks
-    again. Do not report an unmergeable PR as delivered.
+  - The PR can be `CONFLICTING`/`DIRTY` (`gh pr view --json mergeStateStatus`). Report it and stop:
+    a PR now exists, so the Phase 0 step 4(b) condition "no open PR" no longer holds and ship does
+    not move the base under it. Do not report an unmergeable PR as delivered.
 
   **No `gh`, or a forge that is not GitHub** (`GH_AVAILABLE=false` from Phase 0 step 2): the branch
   push still happens — that part is forge-agnostic. What cannot happen is the PR, so the run ends
@@ -1604,7 +1619,7 @@ COMPLETION GATE CHECK
     under `## [Unreleased]` committed as `docs(changelog)`), PR flow, or a release script owning it
 [ ] PR flow only: no version bump, no CHANGELOG.md edit, no tag created — even when the user asked
     for the bump (a `changelog.d/<slug>.md` note instead, with the reason said)
-[ ] Only version files staged (never git add -A); the closing commit for backlog-add's writes, if
+[ ] Only the files this run produced staged (version files, or the one changelog.d note) (never git add -A); the closing commit for backlog-add's writes, if
     any, holds the run's wrote= paths plus the review's Backlog writes: line, and lands before the
     release commit (on PR flow, before the branch push)
 [ ] memory/last-ship.json written
