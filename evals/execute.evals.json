@@ -216,7 +216,7 @@
       "assertions": [
         "The transcript prints a `[SCALE] small-plan` line (not `[SCALE] full-plan`) before the aggregate review, and dispatches the aggregate review with the `--max-tier 1` argument, accompanied by the `[AUTO-DECISION] aggregate review tier capped at 1 (small-plan)` line.",
         "After the exit 7 `PASS CAP:` refusal the transcript shows no second `adversarial-review.sh` call for the same range, no narrower `--files`/re-based diff to dodge the cap, and no hand-written substitute proof file.",
-        "The transcript prints `[ADVERSARIAL: cap-reached covered-by=` naming zuvo/context/adversarial-task-1.txt and zuvo/context/adversarial-task-2.txt, and the review artifact's `adversarial:` header lists those two per-task proofs.",
+        "The transcript outputs `[ADVERSARIAL: cap-reached covered-by=` naming zuvo/context/adversarial-task-1.txt and zuvo/context/adversarial-task-2.txt, and the review artifact's `adversarial:` header lists those two per-task proofs.",
         "The aggregate-review verdict records `adversarial=per-task` and never `adversarial=fresh`, and the run does not describe the refused pass as a failure or as `same-session-same-commit coverage`."
       ],
       "fixtures": [
@@ -243,9 +243,9 @@
         "zuvo/plans/active-plan.md"
       ],
       "assertions": [
-        "The transcript performs the aggregate review inline (reads the review procedure and reviews the plan-range diff) and emits a `[GATE: aggregate-review]` line containing `via=inline degraded:same-model` together with a `report=` path to a file that exists, rather than skipping the gate or writing `status: completed` without it.",
-        "The transcript never prints a bare `via=inline`, `via=explore` or `via=adversarial` aggregate-review marker without the `degraded:same-model` label.",
-        "The completion header printed in the final message is `## Execution Complete (DEGRADED-REVIEW)` (an AC-UNPROVEN suffix is absent because every AC is proven).",
+        "The transcript performs the aggregate review inline (reads the review procedure and reviews the plan-range diff) and emits a `[GATE: aggregate-review]` line that contains `via=inline degraded:same-model` together with a `report=` path to a file that exists, rather than skipping the gate or writing `status: completed` without it.",
+        "The transcript shows no bare `via=inline`, `via=explore` or `via=adversarial` aggregate-review marker without the `degraded:same-model` label.",
+        "The final message outputs the completion header `## Execution Complete (DEGRADED-REVIEW)` (an AC-UNPROVEN suffix is absent because every AC is proven).",
         "The FINAL message itself — not only an artifact under zuvo/ — contains the `[GATE: ac-coverage] checked=2 unproven=0` marker and the `### Unproven Acceptance Criteria` section with the `none — all 2 Coverage Matrix ACs have a COMPLETED claiming task` line, despite the compressed response protocol."
       ],
       "fixtures": [
@@ -265,8 +265,8 @@
     },
     {
       "id": 10,
-      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it. AGENTS.md says tests run through the farm wrapper `rt --light <command>` and contains NO rule forbidding local runs. ENVIRONMENT: the farm is unreachable — every `rt --light ...` call fails with `rt: link dropped (ssh 255)`, also on a retry. No user is present and nothing may wait for input.",
-      "expected_output": "An infrastructure failure of the runner is not a RED/GREEN result. Each Verify is run as `rt --light <command>` first (the plan header names the wrapper), failing with ssh 255; the run reruns it once, then — because no rule forbids local runs — runs the SAME command locally once, prints `[TEST-RUNNER: local-fallback reason=ssh-255]` (or equivalent reason code), counts the local run as the real RED/GREEN/baseline evidence, and records `runner=local-fallback` in telemetry. It never reports `BLOCKED_TDD_PROTOCOL`, never loops on the dead runner, and never records an infra failure as a test failure or a skipped test as green.",
+      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it. AGENTS.md says tests run through the farm wrapper `rt --light <command>` and explicitly permits running a single test script locally when the farm is down. ENVIRONMENT: the farm is unreachable — every `rt --light ...` call fails with `rt: link dropped (ssh 255)`, also on a retry. No user is present and nothing may wait for input.",
+      "expected_output": "An infrastructure failure of the runner is not a RED/GREEN result. Each Verify is run as `rt --light <command>` first (the plan header names the wrapper), failing with ssh 255; the run reruns it once, then — because AGENTS.md explicitly permits it — runs the SAME command locally once, prints `[TEST-RUNNER: local-fallback reason=ssh-255]` (or equivalent reason code), counts the local run as the real RED/GREEN/baseline evidence, and records `runner=local-fallback` in telemetry. It never reports `BLOCKED_TDD_PROTOCOL`, never loops on the dead runner, and never records an infra failure as a test failure or a skipped test as green.",
       "files": [
         "AGENTS.md",
         "docs/specs/2026-11-22-slug-cli-plan.md",
@@ -274,14 +274,14 @@
       ],
       "assertions": [
         "The transcript shows the runner failing with the ssh 255 infrastructure code, one rerun, and then a single local run of the same Verify command without the `rt --light` prefix; the run prints a `[TEST-RUNNER: local-fallback` line naming the reason.",
-        "The transcript never stops a task with `BLOCKED_TDD_PROTOCOL` or `BLOCKED_TEST_RUNNER_UNAVAILABLE`, and never treats the `rt` failure as a failing test (no GREEN/RED claim is taken from the ssh 255 output).",
+        "The transcript shows no task stopped with `BLOCKED_TDD_PROTOCOL` or `BLOCKED_TEST_RUNNER_UNAVAILABLE`, and no `rt` failure treated as a failing test (no GREEN/RED claim is taken from the ssh 255 output).",
         "The local run's real output is used as the RED and GREEN evidence for each task, and the task telemetry contains `runner=local-fallback`.",
-        "The transcript does not retry the dead runner in a loop (no more than one rerun per command) and does not mark any Verify as passed without a real passing run."
+        "The transcript runs the dead runner at most once more per command (no retry loop) and shows no Verify marked as passed without a real passing run."
       ],
       "fixtures": [
         {
           "path": "AGENTS.md",
-          "content": "# Agent guide\n\nTests in this repository run on the test farm: `rt --light <command>` (for example `rt --light bash tests/test-slug.sh`). There is no rule against running a single test script locally when the farm is down.\n"
+          "content": "# Agent guide\n\nTests in this repository run on the test farm: `rt --light <command>` (for example `rt --light bash tests/test-slug.sh`). When the farm is down you may run a single test script directly on this machine.\n"
         },
         {
           "path": "docs/specs/2026-11-22-slug-cli-plan.md",
@@ -299,8 +299,8 @@
     },
     {
       "id": 11,
-      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it. ENVIRONMENT for Task 1's quality review (Step 7): the reviewer returns `Q8 FAIL — no test for a 10 MB argument` and `Q11 FAIL — add a separate tests/test-slug-edge.sh covering tabs, NUL-adjacent bytes and unicode`, and the adversarial pass returns a finding at confidence 30 labelled CRITICAL that `slug.sh` should clamp output length to 255 characters. No plan AC names any of these inputs. No user is present; do not wait for input.",
-      "expected_output": "The Test-volume policy applies. The task's RED list is the test scope: the Q8/Q11 findings whose fix lies outside it are classified RECOMMENDED and recorded once through `backlog-add` (without consuming a quality iteration or holding the commit); no second test file (`tests/test-slug-edge.sh`) is created; the confidence-30 length-clamp finding is ledgered through `backlog-add` WITHOUT a code change, whatever its CRITICAL label, because no AC names it. Task 1 commits with the plan's own RED list and the code stays within the GREEN list.",
+      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-11-22-slug-cli-plan.md (status: Approved). Execute it. ENVIRONMENT for Task 1's quality review (Step 7): the reviewer returns `Q8 FAIL — no test for a 10 MB argument` and `Q11 FAIL — add a separate tests/test-slug-edge.sh covering tabs, NUL-adjacent bytes and unicode`, and the adversarial pass returns a speculative WARNING at confidence 30 (naming no concrete wrong output) that `slug.sh` should clamp output length to 255 characters. No plan AC names any of these inputs. No user is present; do not wait for input.",
+      "expected_output": "The Test-volume policy applies. The task's RED list is the test scope: the Q8/Q11 findings whose fix lies outside it are classified RECOMMENDED and recorded once through `backlog-add` (without consuming a quality iteration or holding the commit); no second test file (`tests/test-slug-edge.sh`) is created; the confidence-30 length-clamp finding is ledgered through `backlog-add` WITHOUT a code change, because no AC names the input and the finding names no concrete wrong output. Task 1 commits with the plan's own RED list and the code stays within the GREEN list.",
       "files": [
         "docs/specs/2026-11-22-slug-cli-plan.md",
         "zuvo/plans/active-plan.md"
@@ -308,8 +308,8 @@
       "assertions": [
         "The transcript creates no second test file for the slug module (no tests/test-slug-edge.sh or any other `*edge*` / `*gaps*` sibling): new cases, if any, go into tests/test-slug.sh.",
         "The transcript records the Q8 and Q11 findings as RECOMMENDED through `backlog-add` (with `--source execute`) and does not spend a quality-review fix iteration or hold Task 1's commit on them.",
-        "The transcript ledgers the confidence-30 length-clamp finding through `backlog-add` without changing scripts/slug.sh to clamp output length, despite its CRITICAL label.",
-        "Task 1 is committed with only the plan's own RED/GREEN scope (scripts/slug.sh and tests/test-slug.sh), and the run does not add overflow, clamping or other hardening code the plan never asked for."
+        "The transcript records the confidence-30 length-clamp finding through `backlog-add` and edits scripts/slug.sh to add no output-length clamp.",
+        "The transcript commits Task 1 with only the plan's own RED/GREEN scope (scripts/slug.sh and tests/test-slug.sh) and adds no overflow, clamping or other hardening code the plan never asked for."
       ],
       "fixtures": [
         {

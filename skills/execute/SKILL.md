@@ -353,7 +353,7 @@ Minimum fields:
 - `quality-review`: `PASS` or `FAIL` — **with per-file scores; aggregate forbidden** (e.g. `cq=34/37@codec.ts,35/37@parser.ts; q=21/23@codec.test.ts,20/23@parser.test.ts` not `cq=27/29 q=18/19 aggregate`)
 - `adversarial`: verdict plus mode (`code`, `security`, `migrate`)
 - `verify`: command(s) and exit code(s) — implementation-detail check
-- `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-report.md,AC3@zuvo/proofs/task-4-report.md`) — behavior check. The canonical artifact is the ONE per-task `task-<N>-report.md`; if the plan's `Artifact:` line names a per-AC file (`task-4-AC1.txt`), ALSO write that file and list both paths in `acceptance-verified`
+- `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-report.md,AC3@zuvo/proofs/task-4-report.md`) — behavior check. The canonical artifact is the ONE per-task `task-<N>-report.md` (`acceptance-proof-protocol.md`: never one file per AC); a plan whose `Artifact:` line still names a per-AC file (`task-4-AC1.txt`) is satisfied by the report, and `acceptance-verified` lists the report path
 - `codesift`: `available`, `unavailable`, or `index-failed`
 - `backlog-adds`: integer, the `backlog-add` calls this task made that kept a finding: any verdict but REFUSED and DISCARDED (ACCEPTED, BUMPED, REOPENED, LEDGER, LEDGER-BUMPED), process items included; the Final Summary's `backlog: a, ledger: b` split is a breakdown of the same calls
 - `failure-strategy`: `halt`, `skip-and-continue`, or `degraded:<one-line description>` — the value the task's `**Failure:**` line declares in the approved plan, copied verbatim (the `degraded:` description is opaque text: never tokenised, never split). **Defaults to `halt` when the plan line is absent**, which is byte-identical to pre-rule-20 behavior. Never inferred, upgraded, or invented at run time — it is read from the plan or it is `halt`.
@@ -389,7 +389,7 @@ failure-strategy=halt
 - **Backlog snapshot (before the baseline below, which may call `backlog-add`).** Once, at the run's original start: `R='<repo_root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the `repo_root` the pre-flight above resolved, assigned in the same shell call. Save the output in `execution-state.md` under `backlog-snapshot:`, verbatim as a fenced block (an empty snapshot is an empty block, never one line). Every `wrote=` path a later `backlog-add` call prints is appended at once under `backlog-writes:` in the same file, so the closing commit of a resumed run still holds the paths of the tasks before it; a resumed run reuses the saved snapshot and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 - **Baseline test snapshot.** Run the suite ONCE at session start and record which tests are already red (`baseline-failures: [...]` in `execution-state.md`). Per-task verification then compares against this baseline — a test that was red before your change is a pre-existing failure, NOT a regression to re-investigate every task. If the baseline is red, it is recorded ONCE, here, before the loop, as a process item with a gate subject (a green baseline makes no call): `~/.zuvo/backlog-add --repo "$R" --class PROCESS --conf 90 --source execute --target subject:execute-baseline-red --title "$T" --evidence "$E"` (`backlog-protocol.md` "Filing from a skill", **Process item**; `T` is the fixed title "test suite red before the run", the same words on every run, and `E` lists the failing tests; assign `"$R"`, `"$T"` and `"$E"` before the call, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`)). Name its F-id in the Final Summary under "Recorded Findings".
 - **Per-task verification is TARGETED, full suite runs ONCE at Phase Final. (HARD — measured sink.)** A task's Verify step runs the tests/type-check for the TOUCHED package/files (`turbo run test --filter=<pkg>`, the package's own script, or the specific test files) — NEVER the whole monorepo suite. The FULL suite + build runs exactly twice per plan: the baseline snapshot above and once at Phase Final (smoke). The 2026-07-17 timing forensics measured execute/plan sessions re-running the full turbo-test suite on EVERY task and every plan revision — pure multiplication of a fixed cost by N tasks with near-zero added signal (the baseline already isolates pre-existing reds). A reviewer or fix-loop iteration re-verifies with the SAME targeted scope, not an escalated one.
-- **Test runner resolution and fallback (HARD — a plan's Verify command is the repo's own command; the runner is the environment's).** Resolve the runner ONCE and record it in `project-context.md` (`test-runner:`) and `execution_policy.json` (`runner`, `local_fallback`): the plan header's `**Test runner:**` prefix if it names one, else the project's documented wrapper (`AGENTS.md`/`CLAUDE.md`, e.g. a remote test farm), else none. Every Verify, baseline and acceptance command runs as `<prefix> <command>`; a Verify that already begins with the wrapper is run as written. When the runner itself fails with an INFRASTRUCTURE code — ssh 255/22, "runner lost", farm queue timeout, host unreachable, OOM-killed step — that is NOT a RED/GREEN result and NOT `BLOCKED_TDD_PROTOCOL`: rerun it once; if it fails the same way, then (a) if `local_fallback` allows it (no project rule, session instruction or hook forbids local test runs — elapsed queue time is no consent), run the SAME command without the prefix once, locally, and print `[TEST-RUNNER: local-fallback reason=<code>]`; the local run is real evidence and counts as the RED/GREEN/baseline proof; record `verify="<cmd>" runner=local-fallback` in the telemetry; (b) if a rule forbids local runs, stop the task with `BLOCKED_TEST_RUNNER_UNAVAILABLE` (reason code, the exact command, no commit, no fabricated pass) — never loop on the dead runner, and never report an infra failure as a test failure or a skipped test as green. A command that fails with a real assertion or exit code is a test result and takes the normal path.
+- **Test runner resolution and fallback (HARD — a plan's Verify command is the repo's own command; the runner is the environment's).** Resolve the runner ONCE and record it in `project-context.md` (`test-runner:`) and `execution_policy.json` (`runner`, `local_fallback`): the plan header's `**Test runner:**` prefix if it names one, else the project's documented wrapper (`AGENTS.md`/`CLAUDE.md`, e.g. a remote test farm), else none. Test, type-check and build commands (the baseline, every Verify, RED/GREEN runs) run as `<prefix> <command>`; a Verify that already begins with the wrapper is normalised to prefix + repo command, so the fallback below can drop the prefix; acceptance proofs that exercise local services or write `zuvo/proofs/*` run locally and are never wrapped. `local_fallback` follows `execution-policy.md`: it is true only when the project docs or the session explicitly permit local test runs (a rule saying "never run tests locally" or a farm-only hook makes it false; silence is not permission, and elapsed queue time is no consent). When the runner itself fails with an INFRASTRUCTURE code — ssh 255/22, "runner lost", farm queue timeout, host unreachable, or the prefix binary itself missing on this host (exit 127 / "command not found" on the wrapper — never accept that as RED evidence) (an OOM-killed step counts only when the runner host, not the tested workload, ran out of memory) — that is NOT a RED/GREEN result and NOT `BLOCKED_TDD_PROTOCOL`: rerun it once; if it fails the same way, then (a) if `local_fallback` is true, run the SAME command without the prefix once, locally, and print `[TEST-RUNNER: local-fallback reason=<code>]`; the local run is real evidence and counts as the RED/GREEN proof (a baseline taken earlier on the runner is re-taken locally once, so RED/GREEN and baseline share a runner); record it inside the task telemetry's `verify` field (`verify="<cmd> exit=<n> runner=local-fallback"`, no new key); (b) otherwise stop the task with `BLOCKED_TEST_RUNNER_UNAVAILABLE` (reason code, the exact command, no commit, no fabricated pass) — never loop on the dead runner, and never report an infra failure as a test failure or a skipped test as green. A command that fails with a real assertion or exit code is a test result and takes the normal path.
 - **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME file concurrently — **production OR test** (a shared test file loses edits exactly like a shared service; the rule said "production" until 2026-08-02) (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
 - **DB integration tasks.** For a task that changes schema, generate the migration via `migrate diff` / hand-written SQL applied with `psql` against a clean DB — NEVER `migrate dev` against a drifted local DB (it silently rewrites history / drops data). Verify the migration applies forward AND the rollback is present.
 
@@ -736,10 +736,15 @@ So:
 - **The task's RED list is the test scope.** A Q8 / Q11 / Q12 finding whose fix is a test OUTSIDE that RED
   list is **RECOMMENDED, not a required fix**, unless an AC of the plan names that input or branch (then it
   is in scope and blocking as before). Record it once through `backlog-add` (`--source execute`); it does
-  not consume one of the 3 quality iterations and does not hold the commit.
+  not consume one of the 3 quality iterations and does not hold the commit. **Exception — a critical gate:**
+  Q11 (and any Q gate the quality protocol marks critical) stays blocking for a branch the task's own GREEN
+  code implements and no RED case exercises: close it by adding the case to the module's existing test file
+  or by removing the branch (never by a new test file), not by downgrading it.
 - **Code beyond the GREEN list is scope creep, not a coverage gap.** An extra guard, input hardening or
   behaviour the plan never asked for (an overflow check, clamping, a second output mode) is REMOVED by the
-  implementer, not tested. Never grow the code to satisfy a reviewer's hypothetical input.
+  implementer, not tested. Never grow the code to satisfy a reviewer's hypothetical input. A guard that
+  implements a CQ critical gate (input validation at a trust boundary, error handling, tenant scope,
+  auth) is never scope creep and is never removed under this rule.
 - **No second test file for the same module** (not a `*.smoke.test.*`, `*.edge.test.*`, `*.gaps.*`): new cases
   go into the module's existing test file. A Verify that freezes an exact test count is a floor when a review
   or adversarial fix adds a regression test; record the new count, do not delete the test.
@@ -834,7 +839,7 @@ Wait for complete output. Then:
 - **Plan-accepted risk** → if a CRITICAL maps to a risk the plan EXPLICITLY accepts (match the plan's `## Review Trail` entries and any per-task `> **Accepted risk note**` block), do NOT auto-fix AND do NOT pause to ask — the plan already made this decision at the approved entry gate. Confirm-accept-as-planned automatically: record `[POST-CAP: DEFERRED] adversarial CRITICAL <X> — accepted per plan Review Trail` in the Final Summary, proceed. (Per `no-pause-protocol.md`: re-litigating a plan-accepted risk mid-run is the waste; the user reviews the disposition in the Final Summary.) Only if the CRITICAL is a NEW risk the plan did NOT anticipate does it route to the normal CRITICAL fix path below.
 - **CRITICAL** → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial on the updated staged diff.
 - **WARNING** (< 10 lines, localized) → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial.
-- **Low-confidence or input-hardening finding** → a finding with confidence < 50, or one that asks to harden an input no plan AC names (an overflow, a pathological encoding, a flag the task does not implement), goes to the ledger through `backlog-add` WITHOUT a fix, whatever its severity label, per the Test-volume policy above. A CRITICAL that names a concrete wrong output for an input an AC covers is not in this class.
+- **Speculative input-hardening WARNING / INFO** → a WARNING or INFO (never a CRITICAL: the CRITICAL bullets above win) that asks to harden an input no plan AC names (an overflow, a pathological encoding, a flag the task does not implement) and names no concrete wrong output, or that carries a confidence < 50 from the review's own re-scorer (the adversarial output has no numeric confidence, so you never assign one yourself), goes to the ledger through `backlog-add` WITHOUT a fix, per the Test-volume policy above. A finding about security, tenant isolation, authorisation, injection or data loss is never in this class, whatever its label and whether or not an AC names the input.
 - **WARNING** (large/cross-file) or **INFO** → proceed only if logged as known concerns (max 3, one line each) and each recorded through `backlog-add`: `--source execute` in a file this task edits, `--source drive-by:execute` otherwise ("Backlog Persistence" below; `backlog-protocol.md` "Filing from a skill", **Adversarial review**).
 
 **Re-run ECONOMY (HARD caps — the loop multiplier measured 2026-07-18: ~10 full 4-min adversarial
@@ -1200,14 +1205,16 @@ inside it. The gates are not optional, but their DEPTH scales with the work. Com
 smoke proofs, with `BASE_SHA` derived as Phase Final-2 step 1 does:
 
 ```bash
-git -C "$repo_root" diff --numstat ${BASE_SHA}..HEAD   # added lines + file count; ignore lockfiles/generated
+git -C "$repo_root" diff --numstat ${BASE_SHA}..HEAD   # added+deleted lines and file count; ignore lockfiles/generated
 ```
 
 `SMALL_PLAN` = the plan has **at most 3 tasks**, **at most 6 changed files** (tests included),
-**at most 300 added lines**, and the diff carries no auth/tenant/payment/crypto/PII, DB-migration or
-API-contract signal. Print `[SCALE] small-plan tasks=<n> files=<n> added=<n>` or
-`[SCALE] full-plan <reason>` and record it in the telemetry. A plan that is not `SMALL_PLAN` runs
-every closing gate at full depth exactly as written below.
+**at most 300 changed lines (added + deleted; a binary or otherwise uncountable change disqualifies)**,
+and the diff carries no auth/tenant/payment/crypto/PII, DB-migration or API-contract signal. Print
+`[SCALE] small-plan tasks=<n> files=<n> added=<n>` or `[SCALE] full-plan <reason>` and record it in the
+telemetry. A plan that is not `SMALL_PLAN` runs every closing gate at full depth exactly as written
+below. Final-1b's own fix commits grow the range, so Final-2 step 1 recomputes the same numstat after
+them and switches to `[SCALE] full-plan (grew past the small-plan bounds)` when a bound is now exceeded.
 
 ### Phase Final-1b: Test Quality Gate (zuvo:test-audit → tier A)
 
@@ -1218,9 +1225,11 @@ Dispatch follows `../../shared/includes/execution-policy.md` through env-compat.
 authorization within that policy; session restrictions take precedence. Run each required gate
 and report its actual independence or an unmet requirement.
 
-**`SMALL_PLAN` carve-out.** When `SMALL_PLAN` holds AND every test file in the range is in some
-task's `Files:` list (so the per-task quality review already scored each one per file), the
-cross-vendor test-audit is skipped: print
+**`SMALL_PLAN` carve-out.** When `SMALL_PLAN` holds AND every file of the `TEST_SCOPE` defined below
+(the range's test files plus the pre-existing tests covering touched production files) is in some
+task's `Files:` list, AND each of those files ended its task's quality review with no open Q critical
+gate (so the per-task review scored each one per file and passed it), the cross-vendor test-audit is
+skipped: print
 `[GATE: test-quality] N/A (small-plan: every test file was scored per-file by its task's quality review) tests=<n>`
 and go to Phase Final-2. A test file added OUTSIDE the plan's Files lists, or any non-`SMALL_PLAN`
 plan, runs the gate in full.
@@ -1239,7 +1248,9 @@ tier A in-run (separate `test:` commit, targeted suites re-run green vs the sess
 re-audits (max 2 iterations), and emits
 `[GATE: test-quality] PASS|WARN|N/A worst=<tier> report=<zuvo/audits/…>` — the on-disk test-audit
 report path is the proof of dispatch (same NO-SUBSTITUTION rule as Phase Final-2: an inline
-Q-rescoring pass reported as this gate is INVALID). Below-A after the cap → WARN, each below-A
+Q-rescoring pass reported as this gate is INVALID). Where nested skill dispatch is unavailable, Phase
+Final-2's "Nested `Skill` dispatch unavailable" handling applies here too: run the test-audit procedure inline, write
+its report under `zuvo/audits/`, and mark the gate `via=inline degraded:same-model`. Below-A after the cap → WARN, each below-A
 file recorded once through `backlog-add` as the include's step 5 prints it (whole-file), with
 `--source execute` when a task's Files list or diff touched that test file, else
 `--source drive-by:execute`, never silence. Raising a file to tier A obeys the owner's test policy
@@ -1273,11 +1284,15 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    ```
    `${BASE_SHA}..${HEAD_SHA}` are content-addressed SHAs: the range resolves to the SAME diff from the main checkout OR any worktree of this repo (one shared object store). So passing the explicit range to `zuvo:review` is **worktree-portable** — a CWD reset to the main checkout does NOT make review diff the wrong branch. That is why worktree isolation is never a reason to skip this gate (see step 4).
    If the range is empty (`git -C "$repo_root" log "${BASE_SHA}..${HEAD_SHA}" --oneline` returns nothing), emit `[GATE: aggregate-review] NO-OP (empty range)` and proceed to Session State Close.
+   Re-run the "Phase Final scale" numstat on this range now: Final-1b's fix commits are in it, and a bound exceeded since the earlier `[SCALE]` line turns it into `[SCALE] full-plan (grew past the small-plan bounds)` for step 2.
 
 2. **Dispatch `zuvo:review` on the full plan range — default (FIX-AUTO) mode.**
+   Dispatch exactly ONE of these two calls (never both):
    ```
-   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA}")                  # full plan
-   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA} --max-tier 1")     # SMALL_PLAN only
+   # not SMALL_PLAN:
+   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA}")
+   # SMALL_PLAN:
+   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA} --max-tier 1")
    ```
    **Depth scales with the plan (`SMALL_PLAN`, computed before Final-1b).** A plan that is not
    `SMALL_PLAN` takes the first form: tier auto-selection lands on TIER 2-3 (a 10–20 task plan clears the
@@ -1299,13 +1314,14 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    wrote `status: completed`, or substituted a lighter pass without saying so — this rule had no
    outcome for them. It has one now, consistent with `execution-policy.md` ("an inline run is
    explicitly `degraded:same-model`"):
-   - Detect it ONCE: no `Skill` tool in the toolset, or the dispatch returns "unavailable". Record
-     `delegation: unavailable` in `zuvo/context/execution_policy.json`.
+   - Detect it ONCE: no `Skill` tool in the toolset, or the dispatch returns "unavailable". A transient dispatch
+     error on a host that does have the tool is retried once and then takes the `BLOCKED (dispatch-failed)`
+     path of step 4, not this one. Record `delegation: unavailable` in `zuvo/context/execution_policy.json`.
    - Read `../review/SKILL.md` and run it yourself over `${BASE_SHA}..${HEAD_SHA}` exactly as written
      (same tier table, same FIX-AUTO loop, same artifact in `memory/reviews/`). It is a separate pass:
      re-read the diff as if you had not written it.
    - Emit `[GATE: aggregate-review] <verdict> must=<N> rec=<N> nit=<N> risk=<…> artifact=<path> via=inline degraded:same-model report=<memory/reviews/…path>` — the `report=` path must still exist on disk, and
-     the cross-model adversarial script (step 7 / the review's own pass) still runs; it needs no skill dispatch.
+     the cross-model adversarial script (the review's own pass, step 1.6 of its Phase 1) still runs; it needs no skill dispatch.
    - Add the suffix to the completion header, AFTER any AC suffix and as its own parenthesis:
      `## Execution Complete (DEGRADED-REVIEW)` or `## Execution Complete (AC-UNPROVEN: <k>) (DEGRADED-REVIEW)`
      (the AC suffix keeps its exact form), and list the gate under `### Aggregate Review` as
@@ -1329,8 +1345,9 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 
 5. **Emit telemetry line — with dispatch proof:**
    ```
-   [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND must=<N> rec=<N> nit=<N> risk=<LOW|MEDIUM|HIGH> artifact=<path> via=zuvo:review report=<memory/reviews/...path>
+   [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND must=<N> rec=<N> nit=<N> risk=<LOW|MEDIUM|HIGH> artifact=<path> via=zuvo:review report=<memory/reviews/...path> [adversarial=fresh|per-task]
    ```
+   (`adversarial=per-task` only on the PASS CAP path of step 7; omit the field otherwise.)
    Verdict mapping: `must>0` → `MUST-FIX-FOUND`; else `rec>0` → `RECOMMENDED-FOUND`; else `PASS`. The `via=zuvo:review` token + the `report=<path>` to the review skill's own saved artifact (`memory/reviews/<date>-<scope>.md`, which only the review skill writes) are the **proof of dispatch**. A PASS without a real `report=` path that exists on disk is a substituted gate → it is INVALID; re-emit as `[GATE: aggregate-review] BLOCKED (substituted — no zuvo:review artifact)` and actually dispatch the skill. Never print `via=explore`/`via=adversarial`, and never a bare `via=inline` — those are the substitution markers this gate forbids. The one legal inline form is the labelled `via=inline degraded:same-model` of the unavailable-dispatch rule above, and only when dispatch really was unavailable.
 
 6. **Carry the verdict into Final Summary.** Add an `### Aggregate Review` block (see Final Summary template) listing must/rec/nit counts, deployment risk, and the artifact path. The user reads ONE place to know what `/zuvo:review` would have said.
@@ -1347,17 +1364,26 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    - Do NOT retry, do NOT pass a narrower scope or a re-based diff to dodge the cap, and do NOT write a
      substitute proof. Let the review skill finish (its fresh pass is the one the cap refused; every other review
      dimension still ran).
-   - Cite the per-task proofs: `adversarial:` = the comma list of `zuvo/context/adversarial-task-<N>.txt` for every
-     COMPLETED task (the stderr `PASS CAP:` line lists the same files). Each must exist and hold >= 2 `REVIEW BY:`
-     lines (`review-artifact-sync.sh --check` verifies); a task whose proof is missing is a task whose per-task
-     gate did not run — that is `BLOCKED_MISSING_GATE`, not a reason to cite something else. The header takes
-     at most 16 refs.
+   - Cite the proofs the driver's stderr `PASS CAP:` line lists (the counted passes, at most 3, each a
+     `zuvo/context/adversarial-task-<N>.txt` or an earlier `zuvo/proofs/*` file). Each must exist and hold >= 2
+     `REVIEW BY:` lines (`review-artifact-sync.sh --check` verifies). You may add the proofs of other COMPLETED
+     tasks up to the header's 16-ref limit (`review-artifact.md`), preferring the tasks that changed the most
+     files. A task that required a per-task adversarial gate and has no proof file is a task whose gate did not
+     run — `BLOCKED_MISSING_GATE`, not a reason to cite something else — unless that task's own telemetry records
+     why no proof exists (its own Step 7b hit `PASS CAP`, `single_provider_only`, `timeout`, or the task changed
+     no code); such a task is simply not citable and is left out of the list. If the stderr lists no proof file, the
+     cap cannot be proven: treat it as `[GATE: aggregate-review] BLOCKED (cap-reached without proofs)`.
    - Print `[ADVERSARIAL: cap-reached covered-by=<proof files>]` and put it in the Final Summary's
      `### Aggregate Review` block. The aggregate verdict then carries `adversarial=per-task` (the cross-task
-     fresh pass was not possible), never `adversarial=fresh`.
-   - The post-fix gate of the review (fix diff after the cap) is likewise not another pass: run the regression
-     test that fails before the fix and passes after it (`adversarial-loop.md` Step 5), and name the fix in the
-     output. An artifact without it grants ZERO pipeline coverage, so following this step without the header re-blocks the very push it exists to unblock. Use `BASE_SHA` from step 1, but the range END is `CODE_HEAD=$(git -C "$repo_root" rev-parse HEAD)` recomputed immediately after review's last FIX-AUTO fix commit and BEFORE committing any report/backlog artifacts — step 1's `HEAD_SHA` predates review's fix commits (they would fall outside the artifact and re-block push), while a post-report HEAD makes the range self-referential; a later report commit must not rewrite this machine-readable range. Write `range: ${BASE_SHA}..${CODE_HEAD}` and list the production files the plan touched in `files:` (or `*`). This is the signal the pre-push + CI gates read (`pg_range_reviewed`) so the just-completed, reviewed work can be pushed without re-blocking. Write it **only on success** — if Phase Final-2 ended `BLOCKED`, write nothing, so an unreviewed plan never grants itself pipeline coverage. (The `zuvo:review` dispatch in step 2 already emits a `memory/reviews/` report; this step guarantees that artifact carries the `range:`/`files:` header for the full plan range.)
+     fresh pass was not possible), never `adversarial=fresh`. Per-task proofs cover each task's own diff, not
+     the cross-task integration: say so in the block instead of calling it a fresh review.
+   - A fix review applies at this gate (after the cap) gets no pass either, and its coverage is NOT the per-task
+     proofs (they predate the fix). Run the regression test that fails before the fix and passes after it
+     (`adversarial-loop.md` Step 5) and name the fix in the output; a fix with no testable behaviour is printed
+     `[ADVERSARIAL: cap-reached UNCOVERED-FIX <R-n>]` under `### Aggregate Review` and left for the user to
+     review, never reported as covered.
+
+   **Artifact header (applies to both the fresh-pass and the cap-reached path).** An artifact without the `adversarial:` header grants ZERO pipeline coverage, so following this step without it re-blocks the very push it exists to unblock. Use `BASE_SHA` from step 1, but the range END is `CODE_HEAD=$(git -C "$repo_root" rev-parse HEAD)` recomputed immediately after review's last FIX-AUTO fix commit and BEFORE committing any report/backlog artifacts — step 1's `HEAD_SHA` predates review's fix commits (they would fall outside the artifact and re-block push), while a post-report HEAD makes the range self-referential; a later report commit must not rewrite this machine-readable range. Write `range: ${BASE_SHA}..${CODE_HEAD}` and list the production files the plan touched in `files:` (or `*`). This is the signal the pre-push + CI gates read (`pg_range_reviewed`) so the just-completed, reviewed work can be pushed without re-blocking. Write it **only on success** — if Phase Final-2 ended `BLOCKED`, write nothing, so an unreviewed plan never grants itself pipeline coverage. (The `zuvo:review` dispatch in step 2 already emits a `memory/reviews/` report; this step guarantees that artifact carries the `range:`/`files:` header for the full plan range.)
 
 > **Ordering matters — CI parity runs BEFORE Session State Close (fixed 2026-08-02).**
 > Close writes `status: completed` and DISARMS the stall watchdog. When it ran first, a crash
@@ -1421,15 +1447,15 @@ The files remain on disk — they serve as a record of what was done. `zuvo:exec
 
 Print it after the drive-by step and the closing commit below, so it can name every B- or F-id and that commit. Print a completion report.
 
-**Contract output, printed in the FINAL message verbatim (HARD — overrides the response-surface policy).** The `## Execution Complete` header (with its `(AC-UNPROVEN: <k>)` / `(DEGRADED-REVIEW)` suffixes), every `[GATE: …]` marker line including `[GATE: ac-coverage] checked=<N> unproven=<k>`, every `[AC-UNPROVEN: …]` line, and the `### Unproven Acceptance Criteria` section with its `none — all <N> …` line when `k=0`, are machine-checked contract lines. The router's Response Surface Policy ("formal blocks go to artifacts; finals state the outcome") compresses the prose AROUND them and never them: write the full block to the artifact AND print these lines in the final message. Measured 2026-11-22: a Codex executor that weighed the surface policy dropped the `### Unproven Acceptance Criteria` section and the `none —` line while another printed them, so the same assertions passed or failed by which policy the model weighed. The rest of the summary (task table, file list, verification evidence) may be terse. **The header is conditional:** `<k>` IS the number of
+**Contract output, printed in the FINAL message verbatim (HARD — overrides the response-surface policy).** The `## Execution Complete` header (with its `(AC-UNPROVEN: <k>)` / `(DEGRADED-REVIEW)` suffixes), every `[GATE: …]` marker line including `[GATE: ac-coverage] checked=<N> unproven=<k>`, every `[AC-UNPROVEN: …]` line, and the `### Unproven Acceptance Criteria` section with its `none — all <N> …` line when `k=0`, are the contract lines that evals, graders and downstream readers match on. The router's Response Surface Policy ("formal blocks go to artifacts; finals state the outcome") compresses the prose AROUND them and never them: the full block goes to the artifacts the run already writes, and these lines are printed in the final message. The same holds for every `[ADVERSARIAL: …]`, `[POST-CAP: …]` and `[TEST-RUNNER: …]` marker line and the `### Aggregate Review` verdict and independence lines. Measured 2026-11-22: a Codex executor that weighed the surface policy dropped the `### Unproven Acceptance Criteria` section and the `none —` line while another printed them, so the same assertions passed or failed by which policy the model weighed. The rest of the summary (task table, file list, verification evidence) may be terse. **The header is conditional:** `<k>` IS the number of
 `[AC-UNPROVEN: …]` lines the AC-coverage item of the final Completion Gate emitted (one per
 unproven AC — see that item for the single definition of PROVEN), so if it emitted `k > 0` of
-them, the header MUST read `## Execution Complete (AC-UNPROVEN: <k>)` — a bare
+them, the header MUST read `## Execution Complete (AC-UNPROVEN: <k>)` (followed by ` (DEGRADED-REVIEW)` when that suffix also applies) — a bare
 `## Execution Complete` is a contract violation whenever `k > 0`, because it hides that the plan
 landed with an AC nothing verified.
 
 ```
-## Execution Complete [(AC-UNPROVEN: <k>) — suffix present iff k > 0]
+## Execution Complete [(AC-UNPROVEN: <k>) — iff k > 0] [(DEGRADED-REVIEW) — iff the aggregate review ran inline]
 
 **Plan:** [plan document path]
 **Tasks:** N completed, M skipped, K blocked
@@ -1583,10 +1609,10 @@ COMPLETION GATE CHECK (per task):
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
 [ ] AC COVERAGE: every AC in the plan's Coverage Matrix has been CLASSIFIED as PROVEN or UNPROVEN and the result REPORTED. This item is satisfied by emitting the gate honestly, **not** by every AC being PROVEN — `k>0` is a legitimate terminal outcome (it surfaces as the `(AC-UNPROVEN: k)` header below), never a reason to withhold `## Execution Complete`, retry, or halt. What fails this item is not reporting: a missing `[GATE: ac-coverage]` line, a `<k>` that disagrees with the emitted `[AC-UNPROVEN: …]` lines, or an unenumerated Coverage Matrix row. **PROVEN is defined HERE, once, and every other mention of it in this skill points back to this line: an AC is PROVEN iff at least ONE of its claiming tasks ended COMPLETED *and* that task's `acceptance-verified=` value names that AC's OWN id.** Everything else is UNPROVEN — including (a) a claiming task that ended COMPLETED with a missing or empty `acceptance-verified=`, (b) a claiming task that ended COMPLETED with an `acceptance-verified=` naming only OTHER ACs, (c) all claiming tasks ending SKIPPED / SKIPPED_BY_DEPENDENCY / BLOCKED / BLOCKED_BY_DEPENDENCY, and (d) a Coverage Matrix row with NO claiming task at all. A task's overall COMPLETED status alone NEVER proves an AC. This is the SAME per-AC rule the per-task `[GATE: acceptance-verified]` gate applies to the ACs one task claims — this item is that gate's whole-plan backstop, re-asked over every Coverage Matrix row, and it is therefore never weaker than it. Enumerate every Coverage Matrix row and emit `[GATE: ac-coverage] checked=<N> unproven=<k>` on EVERY run — never silently omitted, even when `k=0` — where `<N>` is the number of Coverage Matrix rows actually enumerated (the AC count, NOT the task count: a plan may have more or fewer ACs than tasks, so deriving `<N>` from the task count is a contract violation). Print EXACTLY ONE `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]` line per UNPROVEN AC — no more, no fewer — and `<k>` **is defined as the number of those lines**, so the suffix count and the emitted lines cannot drift apart; if they differ, the gate output is wrong. `<states>` reports each claiming task's ACTUAL final state so the line reads truthfully: use `COMPLETED (no proof for this AC)` for case (a)/(b) rather than any state implying the task was skipped or blocked, and for case (d) the line reads `[AC-UNPROVEN: <AC-id> — claimed by task(s) none; final states UNMAPPED]` — an unmapped Coverage Matrix row is REPORTED, never silently skipped by a vacuously-true "all claiming tasks failed" test over an empty set. ZERO such lines = closed; one or more = the Final Summary header reads `## Execution Complete (AC-UNPROVEN: <k>)`, NEVER a bare `## Execution Complete`, and each line is repeated verbatim in `### Unproven Acceptance Criteria`
-[ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN with each one recorded through backlog-add
+[ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN with a REAL zuvo/audits test-audit report path, or the one report-less form `N/A (small-plan: …)` of the SMALL_PLAN carve-out — inline Q-rescoring is a substituted gate = INVALID (except the labelled `degraded:same-model` inline test-audit of an unavailable `Skill` dispatch, which still writes its report); below-A files fixed in-run or WARN with each one recorded through backlog-add
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/**adversarial:** header for the plan range (the adversarial proof path is REQUIRED — pg_artifact_proven rejects an artifact whose proof does not resolve or holds <2 `REVIEW BY:` lines, so an artifact without it grants ZERO coverage) (on success only — pipeline-entry signal read by pre-push/CI gates)
-[ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION)
+[ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION); the one legal inline form is `via=inline degraded:same-model` with `delegation: unavailable` recorded and the review's own report on disk
 [ ] If `[GATE: aggregate-review] BLOCKED`: the reason is a GENUINE skill-missing/dispatch error — NOT "worktree"/"CWD reset"/"isolation" (those are solved with `git -C $repo_root` + the explicit content-SHA range and must be dispatched, never punted to the user)
 [ ] Every finding the run did not fix and every process item recorded through backlog-add, each B- or F-id in the Final Summary, or named under NOT PERSISTED (<reason>); the closing commit made, or none: nothing to stage ("Committing what backlog-add wrote")
 [ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block

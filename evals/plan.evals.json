@@ -59,8 +59,8 @@
       "assertions": [
         "The transcript dispatches the Architect, Tech Lead and QA analysis sub-agents via Task or Agent tool calls before the plan document is written, despite the user's request to skip or shorten Phase 1; the new public enqueue/drain API means Light mode does not apply.",
         "The plan document's Review Trail contains no line recording Phase 1 as condensed, shortened, skipped or done at the user's request.",
-        "The plan's GREEN steps contain no complete function body for enqueue or drain (at most a signature scaffold of 20 lines or fewer), and the plan header carries a `**Scope note:**` line stating that pasting the full implementation was declined.",
-        "No file under src/ is created or edited, and the plan status is Reviewed or Draft, never Approved."
+        "The plan's GREEN steps hold no complete function body for enqueue or drain (at most a signature scaffold of 20 lines or fewer), and the plan header contains a `**Scope note:**` line stating that pasting the full implementation was declined.",
+        "The transcript creates or edits no file under src/, and the plan header shows status Reviewed or Draft, never Approved."
       ],
       "fixtures": [
         {
@@ -79,8 +79,8 @@
         "tests/test-report.sh"
       ],
       "assertions": [
-        "The plan header carries a `**Test runner:**` line naming the `rt --light` wrapper from AGENTS.md, and no task's Verify command begins with `rt`.",
-        "Each task's Verify step is the repository's own command (`bash tests/test-report.sh` or equivalent) with an exit-status assertion, not a bare print and not wrapped in the farm runner.",
+        "The plan header contains a `**Test runner:**` line naming the `rt --light` wrapper from AGENTS.md, and no task's Verify command begins with `rt`.",
+        "The plan shows, for each task, a Verify step that runs the repository's own command (`bash tests/test-report.sh` or equivalent) with an exit-status assertion, not a bare print and not wrapped in the farm runner.",
         "The plan has exactly 2 tasks (no padding to reach 3), and its Review Trail records the cross-model validation as skipped with the reason `below-min-tasks` (driver exit 5), never as a completed or passed validation.",
         "The transcript does not set any `ZUVO_*` override environment variable to force the cross-model review, and writes no `zuvo/plans/active-plan.md` pointer unless the plan status is Approved."
       ],
