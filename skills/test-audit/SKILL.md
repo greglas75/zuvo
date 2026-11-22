@@ -68,11 +68,14 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 | `--quick` | Binary Q verdicts, no prose or fixes; every finding is one line `path:line - what` (an untested behaviour names its defect) |
 | `--include-e2e` | Include E2E test files in scope |
 | `--details` | Save per-file reports to `zuvo/audits/test-audit-details/` |
-| `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`) |
+| `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`; `--quick` implies `off`) |
 | `--base <ref>` | Score Q7/Q11 against the production lines changed since `<ref>` (the Test Quality Gate passes the run's base); branches outside are listed as `Out-of-scope gaps`, not scored. Without it, the whole production file |
 | `--read-only` | Report only: skip Phases 4-6 (coverage.md/backlog.md writes) and Phase 7; no repo mutation beyond the `zuvo/audits/` report |
 
-Default: `all --quick --commit=ask`
+Default with no arguments: `all --quick`, so `--commit=off` (the `--quick` row below); a non-quick run defaults to `--commit=ask`.
+
+**Audit mode** (`MODE`, passed to every batch auditor and to the run line's TIER field): `quick` for `--quick` (and the >50-file
+auto-switch), `deep` for `--deep` and for a file-list scope, else `standard`.
 
 **Dispatch is already authorized — do not ask, and do not substitute.** Invoking this skill IS the
 request for the gates it mandates. A session-level instruction like "do not use the Agent tool unless
@@ -138,7 +141,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 | `scan_secrets` | Always | **NO** — hardcoded credentials in fixtures (security, not an AP) |
 | Stack-specific tools | Framework/language detected | **NO** when matches |
 
-Forbidden: `find_dead_code: skipped`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
+Forbidden: `find_dead_code: skipped`, `codesift: unavailable` (when the tool is available/deferred), `retrospective: skipped` — all REJECTED. An unreachable CodeSift is allowed as `codesift: degraded <reason>` (Degraded Mode below); skipping an available tool is not.
 
 POSTAMBLE: closing order: `../../shared/includes/audit-postamble.md` §2. Every Q-fail/AP finding needs `path/to/file.ext:LINE` (verify-audit gate).
 
@@ -150,7 +153,7 @@ Mandatory-tools-acknowledgment: I will run find_dead_code + find_clones + find_r
 
 ## CodeSift Integration
 
-**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload test-audit "$PWD"` before any ToolSearch. Copy `[CodeSift matching trace]` verbatim, issue printed `ToolSearch(query="select:...")`. Math gate enforced.
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload test-audit "$PWD"` before any ToolSearch. Copy `[CodeSift matching trace]` verbatim, issue printed `ToolSearch(query="select:...")` (on a host without ToolSearch, call the listed tools directly). Math gate enforced.
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
@@ -233,10 +236,11 @@ file there is the orchestrator's.
 **Agent Prompt (provided to each batch auditor):** the orchestrator passes the FENCED BODY ONLY from
 `../../shared/includes/test-audit-batch-prompt.md` (loaded above under Mandatory File Loading) —
 the text between that include's opening and closing ``` fences, never the `### Agent Prompt`
-heading or the fences themselves. Before dispatch, the orchestrator substitutes BOTH placeholders:
-`[BATCH FILE LIST]` with this batch's file list, and `[VERIFICATION CONTEXT]` with the value of the
-route the batch runs on — `read-only reviewer, no shell` for a `model-run` subprocess (1a), `shell
-available` for an in-harness Agent (1b, 1c).
+heading or the fences themselves. Before dispatch, the orchestrator substitutes ALL THREE placeholders:
+`[BATCH FILE LIST]` with this batch's file list, `[AUDIT MODE]` with the run's `MODE` (quick, standard or
+deep: the batch auditor shortens or deepens its report by it; on 1a the setup call below writes it), and
+`[VERIFICATION CONTEXT]` with the value of the route the batch runs on — `read-only reviewer, no shell`
+for a `model-run` subprocess (1a), `shell available` for an in-harness Agent (1b, 1c).
 
 ### 1a. Claude and Codex hosts (`platform=claude` or `platform=codex`) — batches through `model-run`
 
@@ -257,8 +261,9 @@ batch its own process group.
 
 ```bash
 NBATCH=3   # the number of batches of this run
+MODE=quick # the run's MODE: quick, standard or deep (see Argument Parsing)
 RUN_TOKEN= # empty for a new run; the run's token when this setup is re-run inside the same run
-~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --token "$RUN_TOKEN"
+~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --mode "$MODE" --token "$RUN_TOKEN"
 ```
 
 The call's contract:
@@ -277,9 +282,10 @@ What the call does: it checks that `ZUVO_BASE` is an install root (an existing d
 this skill's batch files (no file of an earlier run may be read as this run's result; a re-run
 inside the same run keeps its own, below), then writes and validates
 `zuvo/audits/.test-audit-batch/batch-N.prompt` for every batch: the include's fenced body with the
-`Verification context: [VERIFICATION CONTEXT]` field set to `read-only reviewer, no shell` and the
+`Verification context: [VERIFICATION CONTEXT]` field set to `read-only reviewer, no shell`, the
+`Audit mode: [AUDIT MODE]` line set to `--mode` and the
 `[BATCH FILE LIST]` placeholder line removed. A prompt whose write fails, that comes out empty,
-still carries either placeholder, or lacks the include's `OUTPUT LINE FORMAT` rule is set aside as
+still carries a placeholder, or lacks the include's `OUTPUT LINE FORMAT` rule is set aside as
 `batch-N.prompt.invalid` (with a `prompt-invalid:` line on stderr); the group call then records
 `prompt-invalid` for that batch and it takes the fallback (1b). A prompt that cannot be set aside
 (the move fails) would stay in place for a group call to run: the setup STOPs instead (exit 3),
@@ -413,7 +419,8 @@ fallback.
 them in its header, right under `Verification:`:
 `Batch auditor: <client>/<model> route=<lane> status=<status> batch=<N>` — on this route taken from
 the batch's `model-run: status=` line (e.g. `Batch auditor: codex/gpt-6-sol route=cross-vendor status=ok batch=1`),
-from 1b's labels on a fallback, or `status=INCOMPLETE` for a batch neither produced.
+from 1b's labels on a fallback, or `status=INCOMPLETE` for a batch neither produced. When every batch fails with the
+same `rc=4` client error, print `[BATCH ROUTE: broken <error>]` once under the header instead of a per-batch cause.
 
 ### 1b. Fallback for a failed batch — in-harness Agent, labelled degraded
 
@@ -433,7 +440,7 @@ never reported as cross-vendor or as `status=ok`. Its header line is
 Agent: Test Quality Auditor — fallback (per failed batch)
   model: <reviewer_model from reviewer-model-route.sh --fallback>
   type: "general-purpose"  # read-only: no Edit/Write; may run read-only verification commands (tests, lint) — never modifies the repo (Explore lacks mcp__codesift__*)
-  instructions: the fenced-body prompt, [VERIFICATION CONTEXT] = shell available, [BATCH FILE LIST] = batch-N.files rendered one line per file as "<test path> (production: <production path>)", the scope inside the parentheses as in 1a
+  instructions: the fenced-body prompt, [AUDIT MODE] = MODE, [VERIFICATION CONTEXT] = shell available, [BATCH FILE LIST] = batch-N.files rendered one line per file as "<test path> (production: <production path>)", the scope inside the parentheses as in 1a
   input: batch file list with paired production files, CODESIFT_AVAILABLE
 ```
 
@@ -459,8 +466,8 @@ Agent: Test Quality Auditor (per batch)
   input: batch file list with paired production files, CODESIFT_AVAILABLE
 ```
 
-This path substitutes `[VERIFICATION CONTEXT]` with `shell available` and `[BATCH FILE LIST]` with
-the batch's file list. Its header line is `Batch auditor: <host>/<model> route=in-harness status=in-harness batch=<N>`
+This path substitutes `[AUDIT MODE]` with `MODE`, `[VERIFICATION CONTEXT]` with `shell available` and
+`[BATCH FILE LIST]` with the batch's file list. Its header line is `Batch auditor: <host>/<model> route=in-harness status=in-harness batch=<N>`
 (`status=INCOMPLETE` for a batch the 1d gate did not save).
 
 ### 1d. Saving an in-harness report (1b, 1c)
@@ -500,6 +507,7 @@ Read all batch files from `zuvo/audits/.test-audit-batch/`:
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
 5. Count INCOMPLETE files separately — every file whose tier line is `Tier: INCOMPLETE` (nothing applicable to score), and every file of a batch that has no batch file; exclude them from numeric tier averages and passing totals, and report them as INCOMPLETE files. A file with nothing applicable to score changes the run VERDICT only when nothing at all is scoreable (the coverage gate, `../../shared/includes/audit-postamble.md` §1 row 3). A file of a batch with no batch file is unevaluated, not unscorable: retry that batch, and if it is still missing the coverage gate FAILs (row 3: `INCOMPLETE`), unless a tripped critical gate already gives `FAIL`
+6. **REMOVE files and the headline (the one rule).** A file whose `Removals:` line is `whole file` (every test proposed for removal) is a **REMOVE file**: it has no tier — it gets its own row in the tier table and joins no tier count, average or coverage mapping. The VERDICT stays §1's (gates and critical findings): REMOVE alone never trips a gate. Whenever any test is proposed for removal, the headline carries `VERDICT: <value> (<N> tests proposed for removal in <M> files, <K> REMOVE files)`.
 
 Build the summary report:
 
@@ -507,6 +515,7 @@ Build the summary report:
 # Test Quality Audit Report
 
 Date: [date]
+VERDICT: [PASS|WARN|FAIL|INCOMPLETE] ([N] tests proposed for removal in [M] files, [K] REMOVE files — omit the bracket when 0)
 Project: [name]
 Files audited: [N]
 Total tests: [count from test runner]
@@ -522,8 +531,9 @@ Evidence map: [per production file/symbol → test branch citations → matching
 |------|-------|---|--------|
 | A (>=82% of applicable) | [N] | [%] | No action |
 | B (>= 53% and < 82% of applicable) | [N] | [%] | Fix gaps |
-| C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite (a file whose every test is REMOVE: removal proposal) |
+| C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite |
 | D (AUTO TIER-D trigger) | [N] | [%] | Propose removal (user confirms); rewrite only tests that guard behaviour |
+| REMOVE file (every test REMOVE, ungraded) | [N] | [%] | Removal proposal (user confirms) |
 | INCOMPLETE (no tier) | [N] | [%] | Finish missing evaluation |
 | ORPHAN | [N] | [%] | Verify; propose removal (user confirms) |
 
@@ -586,7 +596,9 @@ REPORT="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/z
 if [ -f "$REPORT" ]; then ~/.zuvo/adversarial-review --mode tests --files "$REPORT"; else echo "adversarial: report not found — write it first" >&2; fi
 ```
 
-**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr).
+**Record the verdicts** after triage: every finding is fixed, rejected (a false positive) or deferred — record each by its `ID:` in ONE call, `~/.zuvo/adversarial-review --record-disposition ID-1 fixed --record-disposition ID-2 rejected …`, per `../../shared/includes/adversarial-loop.md` Step 4.9 (the review lists its IDs on stderr). Quote every ID: one holding `:` (such as `"${P}:unknown"`) is mangled by zsh unquoted and its disposition is silently dropped. Do not print the final summary before this call's exit code is recorded.
+
+A `PASS` beside a Tier C or REMOVE file is by design (`audit-postamble.md` §1 decides by gates, Phase 2 step 6 reports REMOVE): a finding that only contests that pairing is rejected.
 
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
@@ -617,7 +629,8 @@ For each audited test file, find its production file row in coverage.md:
 | B (>=53% and <82% of applicable, critical gates PASS) | PARTIAL-QUALITY | Has tests but quality issues |
 | C (<53% of applicable OR any critical gate = 0) | PARTIAL-QUALITY | Major quality gaps |
 | D (AUTO TIER-D trigger) | PARTIAL | Effectively untested |
-| INCOMPLETE (no tier) | Leave existing row unchanged; add no row | Evaluation unavailable; never register as COVERED |
+| INCOMPLETE (no tier), REMOVE file | Leave existing row unchanged; add no row | Evaluation unavailable, or no test left that guards behaviour; never register as COVERED |
+| ORPHAN | No row (no production file to map) | |
 
 Only downgrade coverage status, never upgrade. A production file that is wholly NO-TEST-NEEDED is not mapped by tier: leave an existing row unchanged and do not add a missing one. For a mixed file, map by the tier of its test-worthy behaviours. Any other production file not yet in coverage.md is added.
 
@@ -632,7 +645,7 @@ Every finding this audit records goes through `backlog-add`, one call per findin
 - **Critical gate failures** (Q7/Q11/Q13/Q15/Q17=0, a Tier C floor; an AUTO TIER-D file stays D): one call per gate whatever the final tier, the gate named in the title. A Tier B file has none, so it files nothing.
 - **AUTO TIER-D triggers** (the batch prompt's pre-scan): always submitted, the same call with `--severity high`.
 
-Assign `"$R"`, `"$F"` and `"$T"` before each call, `"$A"` only when you pass `--anchor`, and `"$M"` only when you pass `--missing-assertion`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
+Assign `"$R"`, `"$F"` and `"$T"` before each call, `"$A"` only when you pass `--anchor`, and `"$M"` only when you pass `--missing-assertion`, as "Free text goes through a variable" in that section says; an empty value you pass is a bug, and `backlog-add` refuses a missing required field (`REFUSED missing-field:<f>`). Report the B- or F-id each call prints. Where each lands is the protocol's bar table (`backlog-protocol.md`): on a plain audit (no `--base`) only a `BUG` reaches the backlog (a B-id); `CQ`, `MUTATION` and every `TEST-GAP` without `--missing-assertion` print an F-id and stay in the findings ledger (`class-report-only`). That is a recorded finding, not a `NOT PERSISTED` case: list those F-ids in the report. On a non-zero exit act on the protocol's exit table; a finding still not persisted is listed under `NOT PERSISTED (<reason>)`, never appended by hand.
 
 **Resolved entries** (**Closing, not removing**): a finding fixed before Phase 5 gets no call. Phase 5 files before Phase 7 fixes anything, so a finding Phase 5 recorded and Phase 7 then fixes is closed there (Phase 7, Verify), never left open and never removed. An open entry from an earlier audit is closed, never removed, only when this run re-read its cited test lines and found the defect fixed: a Tier A score does not prove any one defect is gone.
 
@@ -672,7 +685,9 @@ The closing commit is the last action of whichever comes last. With no fix workf
 
 | Finding | Action | Command |
 |---------|--------|---------|
-| Tier D file (AUTO TIER-D trigger) or Tier C file (critical Q gate = 0, or < 53%) | Rewrite the tests that guard behaviour; the REMOVE list goes to the user, deleted only on confirmation (Phase 7) | `zuvo:write-tests [path]` |
+| Tier D file with AP31 only (committed `.only`/`fit`) | Remove the focus marker, re-run the suite, re-audit: not a rewrite | the file itself |
+| Tier D file (AP13/AP16 trigger) or Tier C file (critical Q gate = 0, or < 53%) | Rewrite the tests that guard behaviour; the REMOVE list goes to the user, deleted only on confirmation (Phase 7) | `zuvo:write-tests [path]` |
+| REMOVE file (every test REMOVE) | Removal proposal only, deleted on confirmation (Phase 7) | none |
 | Same AP across 10+ files | Batch fix | `zuvo:fix-tests --pattern [AP-ID]` |
 | Q7=0 (a contract negative case untested) | Add that negative-case test | `zuvo:write-tests [path]` |
 | Untested behaviour (named defect) | Write that test only | `zuvo:write-tests [path]` |
@@ -688,9 +703,10 @@ COMPLETION GATE CHECK
 [ ] Phantom mock detection ran: unused mocks listed
 [ ] Untested behaviours (with the defect), Removals and No-test-needed listed per file
 [ ] Adversarial review ran on audit report
-[ ] Coverage registry updated: memory/coverage.md rows written
+[ ] Coverage registry updated: memory/coverage.md rows written, or N/A under --read-only
 [ ] Findings recorded through backlog-add (Phase 5), each B- or F-id reported or named under NOT PERSISTED (<reason>), or N/A under --read-only; the closing commit made, or none: nothing to stage, or not committed with the paths listed, or the `Backlog writes:` line printed (run by another skill)
 [ ] Report saved to zuvo/audits/
+[ ] Final summary prints the commit line: `closing commit: …`, or under --read-only `Backlog commit: none: nothing to stage (read-only)`
 [ ] Run: line printed and appended to log
 ```
 
@@ -734,8 +750,13 @@ Append via the retro-gated wrapper, never `>> runs.log`:
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
-Run: <ISO-8601-Z>\ttest-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
+The 13 TAB fields are `run-logger.md` "Format"; test-audit writes them in ONE form (never bare numbers, never a file count in field 8):
 
+```
+Run: 2026-11-22T15:32:55Z\ttest-audit\tshop-core\t2-critical\t7-total\tFAIL\t-\t25-dimensions\t<NOTES>\tmain\ta3f7b2c\tAUTO\tQUICK
+```
+
+Field 4 = `<N>-critical` (tripped critical gates, per Run line rule above), 5 = `<N>-total` (all findings), 8 = always `25-dimensions` (the Q1-Q25 count), 12 = `AUTO` (the wrapper fills INCLUDES), 13 = `MODE` upper-cased (`QUICK`, `STANDARD` or `DEEP`).
 ---
 
 ## Execution Notes

@@ -42,9 +42,9 @@ critical)` is the bug this file replaces — it omits row 1.
 2. **Report on disk** — `zuvo/audits/<skill>-<YYYY-MM-DD>.md` (+ `.json` where the skill emits one),
    per `report-output-location.md`, carrying the provisional VERDICT. From here on use the real date
    and the real saved path — never a literal `[date]` placeholder. A skill that saves its report
-   under another name (pentest, infra-audit, test-audit) uses its own path; `append-runlog` looks only
-   for `<skill>-<date>*.md` and then skips its own `verify-audit` with a WARN, so step 5's run on the
-   saved path is the only verification that report gets.
+   under another name (pentest, infra-audit) uses its own path; `append-runlog` looks for
+   `<skill>-<date>*.md` (test-audit: also `test-quality-audit-<date>*.md`) and otherwise skips its own
+   `verify-audit` with a WARN, so step 5's run on the saved path is the only verification that report gets.
 3. **Cross-model review** (skills that run one) — on the SAVED path from step 2. Findings it
    confirms or adds go into the report, and step 1 is recomputed.
 4. **Retrospective** — `retrospective.md`: `RETRO:` line to `~/.zuvo/retros.log`, long form to

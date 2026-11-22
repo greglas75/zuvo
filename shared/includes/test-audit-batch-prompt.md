@@ -47,15 +47,15 @@ CHECKLIST (score 1=YES, 0=NO):
 <!-- GATES:BEGIN kind=q-prompt -->
 Q1:  Every test name describes expected behavior?
 Q2:  Tests grouped in logical describe blocks?
-Q3:  Every mock has CalledWith + not.toHaveBeenCalled?
+Q3:  Mocks of state-changing dependencies (send/write/charge/enqueue) have CalledWith + not.toHaveBeenCalled? Pure-read mocks: N/A, assert the output instead.
 Q4:  Assertions use exact matchers (toEqual/toBe, not toBeTruthy)?
 Q5:  Mocks are typed (no `as any`)?
 Q6:  Mock state fresh per test (beforeEach, no shared mutable)?
-Q7:  CRITICAL -- Every contract negative case tested: throws/rejections type+message; filter/sentinel/fallback exact result? Derive accepted input domain from callers/validation; no invented out-of-domain throw requirements. No negative cases: pass only with exhaustive contract/branch/caller evidence.
+Q7:  CRITICAL -- Every contract negative case tested: where an error is expected, its type AND message are asserted (one `toThrow(Type, /msg/)` or separate tests of the same path); filter/sentinel/fallback exact result? Derive accepted input domain from callers/validation; no invented out-of-domain throw requirements. No negative cases: pass only with exhaustive contract/branch/caller evidence.
 Q8:  Null/empty/edge inputs tested?
 Q9:  Repeated setup (3+ tests) extracted to helper/factory?
 Q10: No magic values -- test data is self-documenting?
-Q11: CRITICAL -- All code branches exercised?
+Q11: CRITICAL -- All code branches exercised? Constant/enum/list members are not branches: one in-set + one out-of-set case suffice.
 Q12: Symmetric: "does X when Y" has "does NOT do X when not-Y"?
 Q13: CRITICAL -- Tests import actual production function?
 Q14: Behavioral assertions (not just mock-was-called)?
@@ -64,12 +64,12 @@ Q16: Cross-cutting isolation: change to A verified not to affect B?
 Q17: CRITICAL -- Assertions verify COMPUTED output, not input echo?
 Q18: No flaky signals? No Date.now() without fake timers, no setTimeout for timing, no Math.random(), no real network?
 Q19: Tests fully isolated? No shared mutable state between tests; each runs independently in any order?
-Q20: CONDITIONAL -- Test level declared (small/medium/large) and not mixed?
-Q21: CONDITIONAL -- Mutation score >= 70% on changed files, or every survivor triaged?
-Q22: CONDITIONAL -- Pure/validator unit has a property test with a recorded seed?
-Q23: CONDITIONAL -- Cross-service contract verified against a shared artifact, not a hand-written mock?
-Q24: CONDITIONAL -- Suite green under randomized order, seed logged?
-Q25: CONDITIONAL -- Patch coverage >= 90% on changed lines, enforced in CI?
+Q20: CONDITIONAL -- Test level declared (small/medium/large) and not mixed? Applies only when the repo separates test levels (separate unit/integration/e2e config, script or directory); else N/A.
+Q21: CONDITIONAL -- Mutation score >= 70% on changed files, or every survivor triaged? Applies only when a mutation artifact covers the files (Scoring Q21); else N/A.
+Q22: CONDITIONAL -- Pure/validator unit has a property test with a recorded seed? Applies only when the repo already depends on a property-testing library; else N/A, and never a gap or recommendation.
+Q23: CONDITIONAL -- Cross-service contract verified against a shared artifact, not a hand-written mock? Applies only when the repo holds a shared contract artifact (Pact/OpenAPI/JSON-Schema); else N/A.
+Q24: CONDITIONAL -- Suite green under randomized order, seed logged? Applies only when randomized order is configured or a run artifact exists; else N/A.
+Q25: CONDITIONAL -- Patch coverage >= 90% on changed lines, enforced in CI? Applies only when CI reports coverage; else N/A.
 <!-- GATES:END kind=q-prompt -->
 
 ANTI-PATTERNS (each unique AP = -1 from score, max -5):
@@ -109,6 +109,9 @@ AP32: Flake-masking retries — per-test/per-suite `retries:`/`@Retry`/`flaky=Tr
 <!-- GATES:END kind=ap-list -->
 
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.
+Q20-Q25 are CONDITIONAL: score one only when the trigger written on its checklist line holds; otherwise it is N/A
+(`no <artifact>`), never 0. A missing CONDITIONAL practice is never a finding, an untested behaviour or a recommendation.
+Q3 N/A: no mock of a state-changing dependency (a mock of a pure read or calculation never makes Q3 = 0).
 Q16 N/A: score N/A when test covers single function/hook with no shared mutable state.
 Q7/Q11 count behaviour only: NO-TEST-NEEDED branches are excluded like out-of-scope ones; none left -> N/A with that reason.
 A critical gate that is N/A is not a failure: Tier A and B need every APPLICABLE critical gate = 1.
@@ -160,6 +163,14 @@ Use `score_triaged`, never `score_raw`: an *equivalent mutant* cannot be killed 
 `plan_completed` is checked first: a truncated run (3 of 10 mutants) scores like a complete one,
 and a sample scored as the whole plan is worse than no data. Never estimate Q21 from the look of
 the test file — if the JSON is absent or stale, say so and score `N/A`.
+
+Audit mode: [AUDIT MODE]
+- quick: a SHORT-format file is unchanged; for a FULL-format file print only the heading `### path`, `Production file:`,
+  `Scope:` (with `--base`), `Removals:`, `Untested behaviours:`, `No-test-needed:`, `Critical gate:`, `Total:`, `Tier:` and
+  `Findings:`; no `Evidence scope`, `Verification`, `Complexity`, per-Q `Score:` vector, `Top 3 gaps` or prose. Score every Q
+  anyway (the tier needs it). Each `Findings:` entry is one line `path:line - what`, naming its Q or AP id.
+- standard: the formats below as written.
+- deep: standard, plus the evidence for each Q = 0 and a fix recommendation for each finding.
 
 FOR AUTO TIER-D FILES, use SHORT format:
 ### [filename]
@@ -219,8 +230,11 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   C (< 53%, OR any critical gate = 0): Major rewrite needed
   D (an AUTO TIER-D trigger from the pre-scan): Propose removing the tests (deleted only after the user confirms); rewrite only the tests that guard behaviour (TEST WORTH). AP31 alone: drop the focus marker and re-run
 
-  A file whose every test is a REMOVE candidate guards no behaviour: Tier C at best, whatever its percentage
-  (its action is the removal proposal, not a rewrite; an AUTO TIER-D trigger on it still makes it D).
+  REMOVE share (TEST WORTH decides the tier, not the percentage alone):
+  - every test of the file is a REMOVE candidate: it guards no behaviour. Write `Removals: whole file - <reason>` and
+    `Tier: C` (the line the orchestrator's gate needs; the report lists the file as a REMOVE file, ungraded). An AUTO
+    TIER-D trigger on it still makes it D.
+  - more than a third of its tests are REMOVE candidates: Tier A is capped to B.
 
   A very low score without an auto red flag remains Tier C; D is the specified red-flag classification, not a second raw-count threshold.
 

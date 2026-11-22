@@ -74,7 +74,7 @@ run_route() {
   # also reads: without them, the whole suite run from inside Codex Desktop turns every
   # cursor/antigravity/kimi case into platform=codex.
   # -u CLAUDE_MODEL / -u CODEX_MODEL / -u ZUVO_CODEX_MODEL: the router checks the Claude
-  # branch BEFORE the Codex branch, so an ambient CLAUDE_MODEL misroutes every Codex/
+  # branch BEFORE the Codex writer-model hint, so an ambient CLAUDE_MODEL misroutes every Codex/
   # Antigravity/Kimi case to platform=claude, and an ambient CODEX_MODEL/ZUVO_CODEX_MODEL
   # can misroute the Codex-writer-model cases the same way — the same who-ran-it dependence
   # the header above already fixed for the other markers. PATH is pinned to what clean_env
@@ -484,6 +484,14 @@ routing_failed_sentinel() {
   run_captured __CFBundleIdentifier=com.openai.codex "$SCRIPT"
   [ "$status" -eq 0 ]
   assert_row codex unknown unknown review-alt "$R_REVIEW_ALT" unknown-writer-model
+}
+
+@test "Codex host: a Codex child that inherited CLAUDECODE=1 and CLAUDE_MODEL is still platform=codex" {
+  # Bug caught (live test 2026-11-22): Claude markers were tested first, so a Codex child launched from a
+  # Claude Code session routed as a Claude writer and was handed a Codex reviewer (itself).
+  run_captured CODEX_SHELL=1 CLAUDECODE=1 CLAUDE_MODEL=claude-sonnet-5-5 "$SCRIPT"
+  [ "$status" -eq 0 ]
+  assert_line "platform=codex"
 }
 
 @test "Codex host: look-alike values are not a Codex host (the four-signal cases are not vacuous)" {

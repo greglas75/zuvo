@@ -5,7 +5,7 @@
 # in bash and zsh alike.
 #
 # Usage:
-#   test-audit-batch setup   --owner <pid> --nbatch <N> [--token <run token>]
+#   test-audit-batch setup   --owner <pid> --nbatch <N> [--mode quick|standard|deep] [--token <run token>]
 #   test-audit-batch group   --owner <pid> --nbatch <N> --first <F> --token <run token> [--bound <s>] [--grace <s>]
 #   test-audit-batch save    --batch <N>
 #   test-audit-batch release --owner <pid> --token <run token>
@@ -19,7 +19,8 @@
 # process that lives as long as the run.
 #
 # setup    Checks the install root, takes the run lock, clears batch files (a re-run inside the same run
-#          keeps the results of batches 1..N), writes and validates batch-N.prompt for every batch.
+#          keeps the results of batches 1..N), writes and validates batch-N.prompt for every batch, with
+#          the run's audit mode (--mode, default standard) written into each prompt's `Audit mode:` line.
 #          stdout, last line: RUN_TOKEN=<token>.
 #          Exit 0 | 1 no repository, or the batch directory cannot be made | 2 usage | 3 STOP (the
 #          reason is on stderr, as `STOP: ...`).
@@ -61,24 +62,26 @@ TAB_VERDICT_RE='^Tier: ([ABCD]|INCOMPLETE)( |$)|^Red flags: .*-> AUTO TIER-D'
 TAB_REQUIRE="$TAB_VERDICT_RE"
 TAB_REJECT='Tier: \[A/B/C/D\]|Red flags: \[AUTO TIER-D AP ids\]'
 
-# tab_build_prompt <include> <out> — the include's fenced body, written to <out> with the verification
-# context set to the read-only value and the file-list placeholder line removed. Status 0 when <out> is a
-# valid prompt; 1 when the write failed, it came out empty, a placeholder is left, or the OUTPUT LINE
-# FORMAT rule is missing (<out> may then hold the invalid text).
+# tab_build_prompt <include> <out> [<mode>] — the include's fenced body, written to <out> with the verification
+# context set to the read-only value, the audit mode line set to <mode> (quick|standard|deep; default
+# standard) and the file-list placeholder line removed. Status 0 when <out> is a valid prompt; 1 when the
+# write failed, it came out empty, a placeholder is left, or the OUTPUT LINE FORMAT rule is missing (<out>
+# may then hold the invalid text).
 tab_build_prompt() {
-  awk 'index($0, "### Agent Prompt") == 1 { h = 1; next }
+  awk -v mode="${3:-standard}" 'index($0, "### Agent Prompt") == 1 { h = 1; next }
        h && !o && /^```/ { o = 1; next }
        o && /^```/ { exit }
        o && $0 == "[BATCH FILE LIST]" { next }
        o && index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { print "Verification context: read-only reviewer, no shell"; next }
+       o && $0 == "Audit mode: [AUDIT MODE]" { print "Audit mode: " mode; next }
        o { print }' "$1" > "$2" || return 1
   tab_prompt_ok "$2"
 }
 
 # tab_prompt_ok <prompt> — status 0 when <prompt> is non-empty, carries no placeholder, has the read-only
-# verification context and the OUTPUT LINE FORMAT rule.
+# verification context, a resolved audit mode and the OUTPUT LINE FORMAT rule.
 tab_prompt_ok() {
-  awk '$0 == "[BATCH FILE LIST]" || index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { bad = 1 }
+  awk '$0 == "[BATCH FILE LIST]" || $0 == "Audit mode: [AUDIT MODE]" || index($0, "Verification context: [VERIFICATION CONTEXT]") == 1 { bad = 1 }
        $0 == "Verification context: read-only reviewer, no shell" { vc = 1 }
        index($0, "OUTPUT LINE FORMAT") == 1 { of = 1 }
        END { exit !(NR > 0 && !bad && vc && of) }' "$1"
@@ -258,9 +261,10 @@ tab_clear_batches() {
 }
 
 cmd_setup() {
-  local opt_owner="" opt_nbatch="" opt_token="" base tok n
-  tab_args owner nbatch token -- "$@"
+  local opt_owner="" opt_nbatch="" opt_token="" opt_mode="standard" base tok n
+  tab_args owner nbatch token mode -- "$@"
   tab_is_count "$opt_owner" || tab_usage "--owner must be the harness pid (pass \"\$PPID\")"
+  case "$opt_mode" in quick|standard|deep) ;; *) tab_usage "--mode must be quick, standard or deep" ;; esac
   base="$("$TAB_HOME/zuvo-base")" || true
   { [ -n "$base" ] && [ -d "$base" ] && [ -f "$base/scripts/reviewer-model-route.sh" ]; } \
     || tab_stop "ZUVO_BASE='$base' is not an install root (no scripts/reviewer-model-route.sh) - run '~/.zuvo/zuvo-base --why'"
@@ -274,7 +278,7 @@ cmd_setup() {
   tab_clear_batches "$TAB_SAME" "$opt_nbatch"
   n=1
   while [ "$n" -le "$opt_nbatch" ]; do
-    if ! tab_build_prompt "$base/shared/includes/test-audit-batch-prompt.md" "$TAB_DIR/batch-$n.prompt"; then
+    if ! tab_build_prompt "$base/shared/includes/test-audit-batch-prompt.md" "$TAB_DIR/batch-$n.prompt" "$opt_mode"; then
       mv -f "$TAB_DIR/batch-$n.prompt" "$TAB_DIR/batch-$n.prompt.invalid" 2>/dev/null \
         || tab_stop "batch-$n.prompt is invalid and could not be set aside as batch-$n.prompt.invalid - a group call would run it; fix the permissions of $TAB_DIR and re-run the setup"
       echo "prompt-invalid: batch-$n (write failed, empty, placeholder left, or no OUTPUT LINE FORMAT rule)" >&2

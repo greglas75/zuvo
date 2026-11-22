@@ -1462,7 +1462,7 @@ function fstep(line,    l, s) {
   return 0
 }
 '
-TA_SETUP_CALL='~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --token "$RUN_TOKEN"'
+TA_SETUP_CALL='~/.zuvo/test-audit-batch setup --owner "$PPID" --nbatch "$NBATCH" --mode "$MODE" --token "$RUN_TOKEN"'
 TA_GROUP_CALL='~/.zuvo/test-audit-batch group --owner "$PPID" --nbatch "$NBATCH" --first "$FIRST" --token "$RUN_TOKEN"'
 TA_SAVE_CALL='~/.zuvo/test-audit-batch save --batch "$N"'
 # The release call is INLINE prose in 1a (the orchestrator runs it on every non-lock STOP), not a fenced
