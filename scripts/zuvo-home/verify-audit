@@ -176,6 +176,28 @@ def split_findings(text: str) -> list[tuple[str, str]]:
     return [(h, "".join(body)) for h, body in findings]
 
 
+def unparsed_tagged_lines(text: str) -> list[str]:
+    """Severity-tagged finding lines (`- [MUST-FIX] title`, `R-1 [MUST-FIX] title`) that
+    split_findings does not treat as a header, with a file:line citation on the line itself or in the
+    lines below it up to the next blank line (max 6). A clean report that merely mentions `[LOW]`
+    without a citation is not matched; neither is a parsed header."""
+    lines = text.splitlines()
+    out = []
+    for idx, ln in enumerate(lines):
+        if not FINDING_LINE_RE.match(ln):
+            continue
+        if FINDING_HEADER_RE.match(ln.strip()) and looks_like_finding(ln.strip()):
+            continue
+        window = [ln]
+        for nxt in lines[idx + 1: idx + 7]:
+            if not nxt.strip() or FINDING_LINE_RE.match(nxt) or FINDING_HEADER_RE.match(nxt.strip()):
+                break
+            window.append(nxt)
+        if any(FILE_LINE_RE.search(w) for w in window):
+            out.append(ln.strip())
+    return out
+
+
 def looks_like_finding(header: str) -> bool:
     """Heuristic: any of these patterns are findings:
        - H/M/L/C<digit>  (generic severity)
@@ -258,6 +280,23 @@ def main() -> None:
 
     text = audit_path.read_text()
     findings = [(h, b) for h, b in split_findings(text) if looks_like_finding(h)]
+    unparsed = unparsed_tagged_lines(text)
+
+    if findings and unparsed:
+        # One parsed finding must not vouch for a second one the parser skipped (a bullet with no ID,
+        # or an ID the header grammar rejects): its citation was never looked at.
+        print(
+            f"REJECTED: {audit_path.name} — {len(unparsed)} severity-tagged finding line(s) are not in a "
+            f"recognised header shape, so their file:line citations were never verified: "
+            + "; ".join(u[:80] for u in unparsed[:3]),
+            file=sys.stderr,
+        )
+        print(
+            "  Open each finding with `## R-1 — title`, `**R-1 — title**` or `R-1 [MUST-FIX] title` "
+            "(letter-prefixed ID).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     if not findings:
         # A report with no finding sections is genuinely informational — nothing to verify.
@@ -286,9 +325,7 @@ def main() -> None:
         # the same vacuous pass (live test D3: the SKILL's own example shape verified nothing).
         # A finding LINE: opener, optional ID, then the severity tag, with the citation on the same line.
         # (Whole-file co-occurrence rejected clean reports that merely mention `[LOW]` and a file:line.)
-        tagged = any(
-            FINDING_LINE_RE.match(ln) and FILE_LINE_RE.search(ln) for ln in text.splitlines()
-        )
+        tagged = bool(unparsed)
         if claims_findings or tagged:
             print(
                 f"REJECTED: {audit_path.name} — the report has a MUST-FIX/BLOCKER/CRITICAL "

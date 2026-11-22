@@ -19,7 +19,16 @@ pass() { echo "PASS: $1"; }
 bad()  { echo "FAIL: $1"; fail=1; }
 
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: verify-review-claims (no python3)"; exit 0; }
-[ -f "$V" ] || { bad "scripts/verify-review-claims.py missing"; echo "=== RESULT ==="; echo "SOME FAILED"; exit 1; }
+[ -f "$V" ] || { bad "scripts/verify-review-claims.py missing"; # Round-2 review: UNVERIFIED must not be reachable by passing an empty or non-transcript file.
+: > "$TMP/empty.jsonl"
+out="$(printf '%s' "$CLAIMS_2" | python3 "$V" --claims - --transcript "$TMP/empty.jsonl" 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "ERROR" && ! printf '%s' "$out" | grep -q "UNKNOWN"; then
+  pass "D8: an empty transcript is an ERROR (exit 2), not an UNKNOWN that downgrades the gate to UNVERIFIED"
+else
+  bad "D8: empty transcript expected rc=2 ERROR, got rc=$rc: $out"
+fi
+
+echo "=== RESULT ==="; echo "SOME FAILED"; exit 1; }
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 # empty transcript: a session where nothing at all was dispatched

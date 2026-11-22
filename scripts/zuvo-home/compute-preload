@@ -175,6 +175,12 @@ def apply_lang(sig: dict, lang: str) -> None:
     langs = [LANG_ALIASES.get(x.strip().lower(), x.strip().lower()) for x in lang.split(",") if x.strip()]
     if not langs:
         sys.exit("ERROR: --lang needs a language, e.g. --lang ts or --lang ts,py (mixed-language change)")
+    unknown = [x for x in langs if x not in FORCED_LANG_KEYS]
+    if unknown:
+        # an unknown value would force the language, match no group and silently preload no language tools
+        sys.exit(f"ERROR: --lang {','.join(unknown)} is not a known language; use one of "
+                 f"{', '.join(sorted(FORCED_LANG_KEYS | set(LANG_ALIASES)))}. For a change in none of these "
+                 f"(shell, markdown, yaml) omit --lang.")
     sig["language"] = langs[0]
     sig["forced_langs"] = set(langs)
     sig["language_forced"] = True
@@ -283,16 +289,16 @@ def match_groups(by_stack: dict, sig: dict) -> list[tuple[str, str, list[str]]]:
         # rule 1: language
         if sig["language"] == key or key in sig.get("forced_langs", ()):
             evidence = f"rule #1 language={key}"
+        # a forced --lang decides the language groups: a root manifest (typescript in devDependencies,
+        # pyproject.toml) must not add another language's tools through ANY later rule
+        elif sig.get("language_forced") and key in FORCED_LANG_KEYS:
+            pass
         # rule 2: framework
         elif sig["framework"] == key:
             evidence = f"rule #2 framework={key}"
         # rule 3: test_runner
         elif sig["test_runner"] == key:
             evidence = f"rule #3 test_runner={key}"
-        # a forced --lang decides the language groups: a root manifest (typescript in devDependencies,
-        # pyproject.toml) must not add another language's tools
-        elif sig.get("language_forced") and key in FORCED_LANG_KEYS:
-            pass
         # rule 4: dep manifest
         elif key in deps:
             evidence = f"rule #4 deps:{key}"
@@ -356,10 +362,8 @@ def emit(skill: str, project: Path, ct: dict, sig: dict, matched: list):
     print(f"    always.length = {len(always)}")
     parts = " + ".join(f"{key}={len(tools)}" for key, _, tools in matched)
     print(f"    matched: {parts} = {sum_m}" if matched else "    matched: 0")
-    expected = len(always) + sum_m
-    print(f"    expected_tools = {len(always)} + {sum_m} = {expected}")
-    print()
-    # build the select query
+    # build the select query; a tool listed by two groups (resolve_constant_value in typescript AND python)
+    # is loaded once, so the expected count is the size of the emitted union, not the sum of the groups
     all_tools = list(always)
     seen = set(always)
     for _, _, tools in matched:
@@ -367,6 +371,11 @@ def emit(skill: str, project: Path, ct: dict, sig: dict, matched: list):
             if t not in seen:
                 all_tools.append(t)
                 seen.add(t)
+    expected = len(all_tools)
+    dup = len(always) + sum_m - expected
+    suffix = f" - {dup} listed by more than one group" if dup else ""
+    print(f"    expected_tools = {len(always)} + {sum_m}{suffix} = {expected}")
+    print()
     select_str = ",".join(f"mcp__codesift__{t}" for t in all_tools)
     names_json = "[" + ",".join(f'"{t}"' for t in all_tools) + "]"
     print("[CodeSift preload — copy verbatim, issue in order]")
@@ -396,11 +405,12 @@ def main():
         if a == "--lang":
             if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
                 sys.exit("ERROR: --lang needs a value, e.g. --lang ts or --lang ts,py")
-            lang, i = sys.argv[i + 1], i + 2
+            lang, i = (lang + "," if lang else "") + sys.argv[i + 1], i + 2
         elif a.startswith("--lang="):
-            lang, i = a.split("=", 1)[1], i + 1
-            if not lang.strip():
+            value, i = a.split("=", 1)[1], i + 1
+            if not value.strip():
                 sys.exit("ERROR: --lang needs a value, e.g. --lang ts or --lang ts,py")
+            lang = (lang + "," if lang else "") + value
         else:
             argv.append(a)
             i += 1

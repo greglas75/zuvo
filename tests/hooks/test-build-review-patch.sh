@@ -1343,12 +1343,24 @@ R54="$(new_repo r54)" || { bad "fixture init r54"; echo "SOME FAILED"; exit 1; }
   echo a > keep.txt; git add keep.txt; git commit -q -m base
   mkdir -p zuvo/proofs; echo "PROOF" > zuvo/proofs/p.txt; echo "export const z = 1" > zuvo/new-source.ts
 )
-( cd "$R54" && bash "$HELPER" >/dev/null 2>&1 ); RC54=$?
-P54="$(cd "$R54" && bash "$HELPER" zuvo/new-source.ts 2>/dev/null)"; RC54B=$?
-if [ "$RC54" -eq 0 ] || [ "$RC54B" -ne 0 ] || ! has "export const z" "$P54"; then
-  bad "(54) only-review-outputs rc=$RC54 (want 3 or a diff of new-source.ts), explicit zuvo/ path rc=$RC54B"
+P54A="$(cd "$R54" && bash "$HELPER" 2>"$TMP/e54a")"; RC54=$?
+P54B="$(cd "$R54" && bash "$HELPER" zuvo/new-source.ts 2>/dev/null)"; RC54B=$?
+P54C="$(cd "$R54" && bash "$HELPER" . 2>/dev/null)"; RC54C=$?
+if [ "$RC54" -eq 3 ] && ! has "new-source" "$P54A" && grep -q 'left out 2 untracked review output' "$TMP/e54a"; then
+  pass "(54) with only review outputs untracked the helper says no changes (exit 3) and names what it left out"
 else
-  pass "(54) an explicit zuvo/ PATH is still reviewed"
+  bad "(54) no-PATH rc=$RC54 (want 3), stderr=$(tr '\n' '|' < "$TMP/e54a")"
+fi
+if [ "$RC54B" -eq 0 ] && has "export const z" "$P54B" && ! has "PROOF" "$P54B"; then
+  pass "(54) a PATH naming a zuvo/ source file is still reviewed"
+else
+  bad "(54) explicit zuvo/ file rc=$RC54B"
+fi
+# a PATH of "." names the whole repo, not the review outputs: it must not re-admit the proofs
+if [ "$RC54C" -eq 3 ] && ! has "PROOF" "$P54C"; then
+  pass "(54) PATH . does not re-admit the review's own outputs"
+else
+  bad "(54) PATH . rc=$RC54C (want 3, proofs stay out)"
 fi
 
 if [ "$fail" -eq 0 ]; then

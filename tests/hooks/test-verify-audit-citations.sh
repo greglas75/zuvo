@@ -176,6 +176,32 @@ out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
   && pass "D3: 'R-1 — [MUST-FIX]' is parsed and its citation checked" \
   || bad "D3: dash-shape finding not verified (rc=$rc): $(echo "$out" | tail -2)"
 
+# Round-2 review: a tag-only line with the citation on the NEXT line was passed as "0 findings".
+cat > "$PROBE" <<EOF
+# Review — tag then citation
+
+- [MUST-FIX] tenant filter dropped in the list query
+  scripts/zuvo-home/poll-cost:3
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] \
+  && pass "D3: a tagged line whose citation is on the next line is rejected, not passed vacuously" \
+  || bad "D3: tag-then-citation report exited $rc"
+# One parsed finding must not vouch for a second, unparsed one in the same report.
+cat > "$PROBE" <<EOF
+# Review — mixed
+
+## R-1 — parsed finding
+  File: \`scripts/zuvo-home/poll-cost:3\`
+  Verified-against: $SHA
+
+1) [MUST-FIX] second finding the header grammar skips (scripts/zuvo-home/poll-cost:$((lines + 5000)))
+EOF
+out=$( cd "$TMP" && python3 "$BIN" "$PROBE" 2>&1 ); rc=$?
+[ "$rc" -eq 2 ] && grep -q "not in a recognised header shape" <<< "$out" \
+  && pass "D3: an unparsed tagged finding next to a parsed one is rejected, its citation never verified" \
+  || bad "D3: mixed report exited $rc: $(echo "$out" | tail -2)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

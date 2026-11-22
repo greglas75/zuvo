@@ -80,6 +80,22 @@ printf '{"devDependencies":{"typescript":"5"}}\n' > "$TMP/lang2/package.json"
 [ "$(groups_of "$TMP/lang2" py)" = "python" ] && ok "--lang py ignores a root typescript devDependency" || bad "--lang py: got [$(groups_of "$TMP/lang2" py)]"
 [ "$(groups_of "$TMP/lang2" ts,py)" = "python,typescript" ] && ok "--lang ts,py selects both language groups" || bad "--lang ts,py: got [$(groups_of "$TMP/lang2" ts,py)]"
 # the public CLI refuses a --lang with no value instead of reading it as the project path
-if python3 "$CP" review --lang >/dev/null 2>&1; then bad "--lang without a value exited 0"; else ok "--lang without a value is an error"; fi
+out="$(python3 "$CP" review --lang 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q -- '--lang needs a value' && ok "--lang without a value is refused with its own message" || bad "--lang without a value: rc=$rc [$out]"
+# an unknown value would force the language, match no group and preload no language tools without a word
+out="$(python3 "$CP" review "$TMP/lang2" --lang tsx 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'not a known language' && ok "--lang tsx is refused (it would silently drop every language group)" || bad "--lang tsx: rc=$rc [$out]"
+# repeated --lang merges (the last one used to win and silently dropped a language of a mixed change)
+out="$(python3 "$CP" review "$TMP/lang2" --lang ts --lang py 2>&1)"
+printf '%s' "$out" | grep -q 'typescript (rule #1' && printf '%s' "$out" | grep -q 'python (rule #1' && ok "repeated --lang flags keep both languages" || bad "repeated --lang: [$out]"
+# a framework/test-runner/driver rule must not re-admit another language's group once --lang is forced
+printf '{"devDependencies":{"typescript":"5","jest":"29"}}\n' > "$TMP/lang2/package.json"
+[ "$(groups_of "$TMP/lang2" py)" = "python" ] && ok "--lang py ignores a root typescript dependency under every later rule" || bad "--lang py with jest: got [$(groups_of "$TMP/lang2" py)]"
+# D6 follow-up: ts + py both list resolve_constant_value; the preload loads it once, so the expected count
+# is the emitted union, not the sum (the math gate aborted a valid mixed-language review by one)
+out="$(python3 "$CP" review "$ROOT" --lang ts,py 2>&1)"
+exp="$(printf '%s\n' "$out" | sed -n 's/^\[Expected after load\] tools=\([0-9]*\).*/\1/p')"
+n="$(printf '%s\n' "$out" | sed -n 's/^ToolSearch(query="select:\(.*\)")$/\1/p' | tail -1 | tr ',' '\n' | grep -c .)"
+[ -n "$exp" ] && [ "$exp" = "$n" ] && ok "expected_tools ($exp) equals the number of tools in the emitted select: query" || bad "expected=$exp emitted=$n"
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

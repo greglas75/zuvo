@@ -306,5 +306,18 @@ if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'FAIL 2026-11-22-marked.md\|F
   pass "a dated file that carries the marker is still linted"
 else bad "a marked dated file was skipped: $out"; fi
 
+# 9. D10 at the HOOK level (round-2 review): the hook, not only the helper, must follow ZUVO_HOME. Its own
+# archive.log path and the archive it hands the helper are both resolved from it. Exact exit code asserted.
+fresh c-hookhome
+printf 'REVIEW BY: a\nREVIEW BY: b\n' > "$REPO/zuvo/proofs/p-adversarial.txt"
+write_art aaa..bbb-hookhome 'adversarial: zuvo/proofs/p-adversarial.txt'
+mkdir -p "$TMP/fakehome2"
+rc=$( unset ZUVO_REVIEW_ARCHIVE; export ZUVO_HOME="$TMP/zhome2" HOME="$TMP/fakehome2"
+  jq -cn --arg p "$REPO/memory/reviews/aaa..bbb-hookhome.md" '{tool_input:{file_path:$p}}' | bash "$HOOK" >/dev/null 2>&1; printf '%s' "$?" )
+if [ "$rc" = "0" ] && [ -f "$TMP/zhome2/review-archive/c-hookhome/reviews/aaa..bbb-hookhome.md" ] \
+   && [ ! -e "$TMP/fakehome2/.zuvo" ]; then
+  pass "the hook archives under ZUVO_HOME and leaves ~/.zuvo untouched (D10, exit 0)"
+else bad "D10: hook ignored ZUVO_HOME (rc=$rc) — a sandboxed run still leaks into ~/.zuvo"; fi
+
 [ "$fail" -eq 0 ] && echo "ALL PASS" || echo "FAILURES"
 exit "$fail"

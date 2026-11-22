@@ -206,6 +206,21 @@ def recognized_format(path: Path) -> bool:
     return False
 
 
+def first_record_keys(path: Path) -> list[str] | None:
+    """Sorted keys of the first JSON-object record, or None when the file holds no JSON object at all
+    (empty, binary, prose). Names the format in the UNKNOWN verdict, and tells a transcript of an
+    unparsed host from a bogus file passed to dodge the check."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                return sorted(rec)[:8]
+    return None
+
+
 def adversarial_invocations(command: str) -> list[str]:
     """Argument strings of the real `adversarial-review` invocations in one Bash command.
 
@@ -352,6 +367,14 @@ def main() -> int:
     c = claims_from(text)
     if not any(recognized_format(tp) for tp in tpaths):
         print(f"verify-review-claims: {note}")
+        shapes = [first_record_keys(tp) for tp in tpaths]
+        if all(k is None for k in shapes):
+            # No JSON record in any file: an empty or copied non-transcript file. That is not a host whose
+            # format we do not parse, and "UNVERIFIED" must not be reachable by passing a bogus path.
+            print("  ERROR: the transcript holds no JSON records at all (empty or not a session log); "
+                  "pass the real session transcript.")
+            return 2
+        print(f"  first record keys: {next(k for k in shapes if k is not None)}")
         print("  VERDICT: UNKNOWN — the transcript is not in a format this verifier parses "
               "(Claude or Codex); no tool-call evidence can be derived, so no claim is accused or confirmed.")
         print("  Record the gate line as UNVERIFIED(unparsed-transcript), not as a failure.")
