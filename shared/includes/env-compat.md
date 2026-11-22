@@ -290,7 +290,7 @@ No agent spawning capability. When a skill references an agent:
 <!-- PLATFORM:ANTIGRAVITY -->
 ### Antigravity
 
-Google Antigravity is an agent-first IDE (VS Code fork, released Nov 2025 with Gemini 3). No sub-agent spawning via API — execute sequentially like Cursor.
+Google Antigravity is an agent-first IDE (VS Code fork, released Nov 2025 with Gemini 3). The `agy` CLI agent exposes `define_subagent` / `invoke_subagent` (same model, so `degraded:same-model`): when that tool is in your tool list, dispatch the skill's agents with it. Only when it is absent, execute sequentially like Cursor.
 
 **Install paths:** `~/.gemini/antigravity/` (skills, shared, rules, scripts)
 
@@ -302,7 +302,7 @@ Google Antigravity is an agent-first IDE (VS Code fork, released Nov 2025 with G
 
 **Adversarial review:** Host auto-excluded (`gemini` provider skipped). Cross-review uses codex, claude, codestral, or cursor-agent. Script at `~/.gemini/antigravity/scripts/adversarial-review.sh`.
 
-When a skill references an agent:
+With no sub-agent tool, when a skill references an agent:
 1. Read the agent's instruction file (e.g., `agents/blast-radius.md`)
 2. Perform that analysis yourself in the current context
 3. Maintain identical output format and quality standards

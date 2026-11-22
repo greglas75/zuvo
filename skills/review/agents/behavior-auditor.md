@@ -49,7 +49,7 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 
 1. Production code diff (excluding test files, config, locks)
 2. Detected tech stack and change intent (BUGFIX / REFACTOR / FEATURE / INFRA)
-3. `PRECOMPUTED_DATA` — call chains, pattern matches, complexity scores from Phase 0.5
+3. `PRECOMPUTED_DATA` — call chains, pattern matches, complexity scores from Phase 0.6
 4. `PROJECT_CONTEXT` — global error handlers, middleware, decorators (if detected)
 5. CODESIFT_AVAILABLE flag and optional repo identifier
 6. Tier and risk signals

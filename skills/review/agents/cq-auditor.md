@@ -48,7 +48,7 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 1. Full source of each changed production file (not just diff — you need complete context)
 2. CQ checklist reference (`rules/cq-checklist.md`)
 3. CQ patterns reference (`rules/cq-patterns.md` or `cq-patterns-core.md` per tier)
-4. `PRECOMPUTED_DATA` — pattern matches, test references, and file outlines from Phase 0.5
+4. `PRECOMPUTED_DATA` — pattern matches, test references, and file outlines from Phase 0.6
 5. `PROJECT_CONTEXT` — global error handlers, middleware, decorators, DI container details
 6. Detected tech stack
 7. CODESIFT_AVAILABLE flag and optional repo identifier

@@ -52,7 +52,7 @@ art="$reviews/${base7}..${head7}-<slug>.md"
 range: <base_sha>..<head_sha>
 files: path/one.ts, path/two.ts        # union of reviewed production files (or `*` = whole range)
 adversarial: zuvo/proofs/<slug>-adversarial.txt   # REQUIRED (see Proof-of-work) — real cross-model run
-verdict: APPROVE|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS
+verdict: APPROVE|CONDITIONAL|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|INCOMPLETE|PASS   # review: table in review/SKILL.md "Verdict values"
 -->
 ```
 

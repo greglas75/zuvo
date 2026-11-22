@@ -51,7 +51,7 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 
 1. Production code diff
 2. Detected tech stack and change intent
-3. `PRECOMPUTED_DATA` — file outlines, complexity scores, and impact data from Phase 0.5
+3. `PRECOMPUTED_DATA` — file outlines, complexity scores, and impact data from Phase 0.6
 4. Blast radius data from Phase 0
 5. CODESIFT_AVAILABLE flag and optional repo identifier
 6. Content of `rules/file-limits.md` (provided by orchestrator)
