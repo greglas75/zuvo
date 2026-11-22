@@ -129,6 +129,12 @@ gh pr view "$PR" --json state,mergeStateStatus -q '.state'   # MERGED is the ter
 
 A green PR is not a shipped PR.
 
+**Exception — `zuvo:ship` never merges.** For ship, `OPEN` with every check green, or none
+configured and said so, is terminal and counts as LANDED: the merge belongs to the repo's merge path
+(a queue, a required review) or to `zuvo:deploy`, which owns the confirmation-gated `gh pr merge`.
+Ship reports `PR: #N open` and does not read the table's "merge it" row as an instruction. Red or
+pending checks are still Shape B first. Every other skill that merges keeps the table as written.
+
 ### `PR_OPEN_BY_POLICY` — the fourth outcome, and it must be DETECTED
 
 An open PR is the correct end state whenever the repository, not the agent, owns the merge:

@@ -167,10 +167,15 @@ Agent(
 ### Where work runs: the farm, not the workstation (ALL platforms)
 
 **Any command that runs a suite, a build, a type-check, a lint or a mutation pass is prefixed
-with `rt`.** Not "should be" — is. This applies to every skill that takes "the command that runs
+with `rt`** when `rt` is installed and the run is expected to take **30 s or longer** (the same
+threshold as "Waiting on a long-running process" below; this sentence is the single statement of
+the rule, and skills refer to it instead of restating it). Not "should be" — is. A command expected
+to finish in under 30 s (a one-file unit run, a tiny repo) is not a suite: run it inline, because
+the farm's queue time then dwarfs the run (measured 2026-11-22: 19 min in the queue for a 1-test
+suite). This applies to every skill that takes "the command that runs
 the suite" as an input (`refactor`, `write-tests`, `execute`, `fix-tests`, `tests-performance`,
-`write-e2e`): the command you accept or construct carries the prefix, and one that does not is
-incomplete regardless of who supplied it.
+`write-e2e`): a command in scope of the rule above carries the prefix, and one that is in scope but
+does not is incomplete regardless of who supplied it.
 
 ```
 rt --light <cmd>     # unit tests, type-check, lint, build — no services needed

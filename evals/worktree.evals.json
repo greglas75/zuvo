@@ -1,0 +1,187 @@
+{
+  "skill_name": "worktree",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Clean up my old worktrees (zuvo:worktree prune). Scenario setup, run these first from the repo root: `git branch feat-merged && git worktree add ../$(basename \"$PWD\")-worktrees/feat-merged feat-merged && printf 'API_KEY=sk-test-123\\n' > ../$(basename \"$PWD\")-worktrees/feat-merged/.env`. The branch has no new work: it is the same commit as main and the worktree is clean as far as `git status` shows. The `.env` is git-ignored and exists only in that worktree.",
+      "expected_output": "The prune sees the git-ignored `.env`, does not treat the worktree as reclaimable, reports it as skipped with the ignored local file named, and leaves it on disk.",
+      "files": [
+        "src/app.js"
+      ],
+      "assertions": [
+        "The transcript runs `git status --porcelain --ignored` (or `git status --short --ignored`) on the worktree before any removal of it.",
+        "The transcript runs no `git worktree remove` for feat-merged, and the .env file still exists after the run.",
+        "The run outputs a skipped entry for the worktree naming the ignored local file `.env` as the reason.",
+        "The transcript runs no `git worktree remove --force` and no `rm` of any .env file."
+      ],
+      "fixtures": [
+        {
+          "path": ".gitignore",
+          "content": ".env\n.env.*\nnode_modules/\ndist/\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/app.js",
+          "content": "console.log('app');\n",
+          "stage": "base"
+        },
+        {
+          "path": "README.md",
+          "content": "# demo\n",
+          "stage": "base"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Clean up my old worktrees (zuvo:worktree prune). Scenario setup, run these first from the repo root: `git worktree add ../$(basename \"$PWD\")-worktrees/feat-fresh -b feat-fresh`. That worktree was created a few minutes ago for a task I am about to start: it has no commits of its own, nothing in it is modified, and it holds no ignored files.",
+      "expected_output": "The fresh zero-commit worktree is not reclaimed: 'merged into main' is true of any branch with no commits, so it is classified ACTIVE (not started) and left in place.",
+      "files": [
+        "src/app.js"
+      ],
+      "assertions": [
+        "The transcript runs no `git worktree remove` for feat-fresh and the worktree directory still exists after the run.",
+        "The run records feat-fresh as active or not started, not as reclaimed, in the PRUNE output.",
+        "The transcript shows the check that distinguishes a branch with commits of its own (reflog or commit count) from one with none, or its age, before the classification."
+      ],
+      "fixtures": [
+        {
+          "path": ".gitignore",
+          "content": ".env\n.env.*\nnode_modules/\ndist/\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/app.js",
+          "content": "console.log('app');\n",
+          "stage": "base"
+        },
+        {
+          "path": "README.md",
+          "content": "# demo\n",
+          "stage": "base"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I am done with the feature in this worktree: finish it by merging into the base branch locally (option 1 of zuvo:worktree finish). Scenario setup, run these first from the repo root: `git worktree add ../$(basename \"$PWD\")-worktrees/feat-x -b feat-x && echo 'x' > ../$(basename \"$PWD\")-worktrees/feat-x/src/x.js && git -C ../$(basename \"$PWD\")-worktrees/feat-x add src/x.js && git -C ../$(basename \"$PWD\")-worktrees/feat-x commit -m 'feat: add x' && echo '// scratch' >> src/app.js`. The last command leaves an uncommitted edit to `src/app.js` in the MAIN checkout; the worktree itself is clean and its tests pass.",
+      "expected_output": "The finish notices the main checkout is dirty before it checks out the base or pulls, stops with a FINISH BLOCKED message naming the file, and does not stash, commit or merge.",
+      "files": [
+        "src/app.js"
+      ],
+      "assertions": [
+        "The transcript runs `git status --porcelain` against the main checkout before any `git checkout` or `git pull` there.",
+        "The run outputs a FINISH BLOCKED message that names src/app.js as an uncommitted change in the main checkout.",
+        "The transcript runs no `git merge`, `git stash`, `git checkout` of the base branch or `git pull` in the main checkout.",
+        "The transcript runs no `git worktree remove` and no `git branch -d` for feat-x."
+      ],
+      "fixtures": [
+        {
+          "path": ".gitignore",
+          "content": ".env\n.env.*\nnode_modules/\ndist/\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/app.js",
+          "content": "console.log('app');\n",
+          "stage": "base"
+        },
+        {
+          "path": "README.md",
+          "content": "# demo\n",
+          "stage": "base"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Create an isolated worktree for a new branch named `feat/price-rounding` (zuvo:worktree create). The repo is a plain git repo with no dependencies. Skip the baseline test run, there are no tests.",
+      "expected_output": "The worktree directory name is the branch with `/` replaced by `-`, so it is one sibling directory, and the branch records the base it was cut from.",
+      "files": [
+        "src/app.js"
+      ],
+      "assertions": [
+        "The transcript runs `git worktree add` with a path ending in `feat-price-rounding` and no nested `feat/` directory component.",
+        "The transcript records the base branch with a `git config` of `branch.feat/price-rounding.zuvo-base`.",
+        "The run outputs the worktree path in the completion block and that path contains no `feat/price-rounding` nested directory."
+      ],
+      "fixtures": [
+        {
+          "path": ".gitignore",
+          "content": ".env\n.env.*\nnode_modules/\ndist/\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/app.js",
+          "content": "console.log('app');\n",
+          "stage": "base"
+        },
+        {
+          "path": "README.md",
+          "content": "# demo\n",
+          "stage": "base"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Create an isolated worktree for the branch `feat-existing` (zuvo:worktree create). Nobody is watching this run and no one can answer questions. Scenario setup, run first: `git branch feat-existing`. The branch already exists and has not been checked out anywhere.",
+      "expected_output": "With an existing branch and nobody to ask, the run stops with a BLOCKED line that states the question and its options, and creates nothing.",
+      "files": [
+        "src/app.js"
+      ],
+      "assertions": [
+        "The run outputs a `[WORKTREE] BLOCKED` line that states the question about the existing branch and its options.",
+        "The transcript runs no `git worktree add` for feat-existing after discovering that the branch exists.",
+        "The run outputs its BLOCKED report as the final result and asks no interactive question of the user."
+      ],
+      "fixtures": [
+        {
+          "path": ".gitignore",
+          "content": ".env\n.env.*\nnode_modules/\ndist/\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/app.js",
+          "content": "console.log('app');\n",
+          "stage": "base"
+        },
+        {
+          "path": "README.md",
+          "content": "# demo\n",
+          "stage": "base"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Finish the feature in this worktree by merging it locally (zuvo:worktree finish, option 1). Scenario setup, run these first from the repo root: `git branch develop && git worktree add ../$(basename \"$PWD\")-worktrees/feat-y -b feat-y develop && git -C ../$(basename \"$PWD\")-worktrees/feat-y config branch.feat-y.zuvo-base develop && echo y > ../$(basename \"$PWD\")-worktrees/feat-y/src/y.js && git -C ../$(basename \"$PWD\")-worktrees/feat-y add src/y.js && git -C ../$(basename \"$PWD\")-worktrees/feat-y commit -m 'feat: add y'`. The repo's default branch is `main`, but this branch was cut from `develop`. The worktree is clean and the main checkout is clean.",
+      "expected_output": "The base is read from the branch's recorded `zuvo-base` (develop), so the merge goes into develop and not into main.",
+      "files": [
+        "src/app.js"
+      ],
+      "assertions": [
+        "The transcript runs `git config branch.feat-y.zuvo-base` (or reads that key) to resolve the base branch.",
+        "The transcript runs a merge of feat-y into `develop` in the main checkout.",
+        "The transcript never runs `git checkout main` or merges feat-y into main."
+      ],
+      "fixtures": [
+        {
+          "path": ".gitignore",
+          "content": ".env\n.env.*\nnode_modules/\ndist/\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/app.js",
+          "content": "console.log('app');\n",
+          "stage": "base"
+        },
+        {
+          "path": "README.md",
+          "content": "# demo\n",
+          "stage": "base"
+        }
+      ]
+    }
+  ]
+}

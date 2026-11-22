@@ -26,6 +26,26 @@ Detect mode automatically:
 - If the current directory IS inside a worktree (check `git worktree list`), default to FINISH.
 - If the current directory is the main checkout, default to CREATE.
 
+## Non-interactive runs
+
+When no user can answer (headless `-p` / `exec` runs, batch pipelines), every "ask" below resolves
+to STOP, never to a choice made for the user: end with `[WORKTREE] BLOCKED: <the question and its
+options>` and change nothing further. This table takes precedence over the prose of each step: a
+decision point it lists gets the default shown (some are "proceed"), and an "ask" it does not list
+stops.
+
+| Decision point | Non-interactive default |
+|---|---|
+| branch name not given, no spec/plan topic | stop |
+| branch already exists | stop; never reuse it |
+| baseline has failing tests | proceed; report `baseline red (<n> failing)` |
+| PR title/body (Option 2) | derive from the commits; no edit prompt |
+| FINISH without a chosen option | stop; print the four options |
+| tests fail before a merge or push (Options 1-2) | stop |
+| base branch not determinable (Option 1) | stop |
+| `discard` confirmation (Option 4), a worktree on `main`/`master` | refuse: both need typed words from a user |
+| delete the remote branch (Option 4) | do not delete; report that it exists |
+
 ---
 
 ## CREATE Mode
@@ -112,8 +132,20 @@ Resolve the base once, name it in the command, and report it:
 BASE_REF="${ZUVO_WORKTREE_BASE:-HEAD}"
 BASE_SHA=$(git rev-parse "$BASE_REF") || { echo "cannot resolve base '$BASE_REF'"; exit 1; }
 
-git worktree add "$WTDIR/<branch-name>" -b "<branch-name>" "$BASE_SHA"
-echo "worktree <branch-name> based on $(git rev-parse --short=7 "$BASE_SHA") ($BASE_REF)"
+# Directory name = the branch with `/` replaced by `-` (`feat/x` -> `feat-x`): a slash would nest
+# the worktree one level deeper, where Step 4's donor scan and PRUNE's listing never look.
+WT_NAME=$(printf '%s' "<branch-name>" | tr '/' '-')
+# The branch FINISH Option 1 merges back into: a LOCAL branch only. A SHA, a tag or `upstream/x`
+# is a starting point, not a destination, so nothing is recorded for it.
+BASE_BRANCH="${ZUVO_WORKTREE_BASE:-$(git branch --show-current)}"; BASE_BRANCH="${BASE_BRANCH#origin/}"
+git show-ref --verify --quiet "refs/heads/$BASE_BRANCH" || BASE_BRANCH=""
+if git worktree add "$WTDIR/$WT_NAME" -b "<branch-name>" "$BASE_SHA"; then
+  [ -z "$BASE_BRANCH" ] || git config "branch.<branch-name>.zuvo-base" "$BASE_BRANCH" \
+    || { echo "worktree created but zuvo-base was not recorded — FINISH would guess its base; stop"; exit 1; }
+  echo "worktree <branch-name> based on $(git rev-parse --short=7 "$BASE_SHA") ($BASE_REF)"
+else
+  echo "worktree add failed (branch or path already exists?)"; exit 1   # never `cd` into another worktree
+fi
 ```
 
 Report the base in the CREATE output. Two worktrees on the same base share a baseline (Step 5) and
@@ -121,7 +153,7 @@ their results are comparable; two on different bases share neither, and saying w
 one line.
 
 If the branch already exists (exit code non-zero), report and ask user whether to:
-- Use the existing branch: `git worktree add "$WTDIR/<branch-name>" "<branch-name>"`
+- Use the existing branch: `git worktree add "$WTDIR/$WT_NAME" "<branch-name>"` (if that path is taken, `feat/x` and `feat-x` map to the same directory: report the collision and stop)
 - Pick a different name
 
 After creation, `cd` into the new worktree directory.
@@ -353,7 +385,8 @@ Before presenting options, summarize the current state:
 - Number of commits ahead of base
 - Uncommitted changes (if any -- warn that these must be committed or stashed first)
 
-If uncommitted changes exist, do NOT proceed until they are resolved. Ask the user to commit or stash.
+If uncommitted changes exist, Options 1-3 do NOT proceed until they are resolved: ask the user to
+commit or stash. (Option 4 exists to discard them and lists them in its confirmation.)
 
 ### Option 1: Merge Locally
 
@@ -362,16 +395,16 @@ Merge the feature branch into its base branch on this machine.
 Steps:
 1. Ensure working tree is clean (`git status --porcelain` produces no output).
 2. Run tests in the worktree. If failures exist, report and ask whether to proceed.
-3. Determine base branch: `git log --oneline --merges --first-parent -1` or parse from worktree creation context. If unclear, ask.
-4. Switch to the main checkout: `cd "$MAIN_ROOT"`.
-5. Pull latest base: `git checkout <base> && git pull`.
+3. Determine the base branch: `git config branch.<feature-branch>.zuvo-base` (CREATE recorded it), else `git symbolic-ref --short refs/remotes/origin/HEAD` minus the `origin/` prefix. If neither answers, ask — never guess `main`.
+4. **Check the main checkout BEFORE touching it:** `MAIN_STATUS=$(git -C "$MAIN_ROOT" status --porcelain) || { echo "FINISH BLOCKED: cannot read the main checkout status"; exit 1; }` (a failed status is "cannot tell", never "clean"), then stop when `[ -n "$MAIN_STATUS" ]`. Anything printed is the user's uncommitted work, and the checkout and pull below would carry it onto the base branch or merge into it. Stop: `FINISH BLOCKED: main checkout has uncommitted changes (<files>)`, ask the user to commit or stash them, and never stash or commit them yourself.
+5. Switch to the main checkout and pull the base: `cd "$MAIN_ROOT" && git checkout --no-overwrite-ignore <base>` (stop if it fails), then `git pull --ff-only` only when `git rev-parse --abbrev-ref "<base>@{upstream}"` succeeds (a base with no upstream skips the pull); a pull that cannot fast-forward stops the run.
 6. Merge: `git merge <feature-branch>`.
 7. If merge conflict occurs: report conflicts and STOP. Do not auto-resolve. Tell the user which files conflict and wait for instructions.
 8. If merge succeeds: run tests again on the merged result. Report pass/fail.
-9. Cleanup worktree: `git worktree remove "$WT_PATH"`.
-10. Delete feature branch: `git branch -d <feature-branch>`.
+9. Cleanup worktree: first run the PRUNE Step 3 local-files check on `$WT_PATH` (ignored files other than install/build output, secret-looking files included; a failed inspection counts as "found": the block's SKIPPED branches mean "keep the worktree"). If it finds any, keep the worktree, list them, and report `Worktree kept: ignored local files`; otherwise `git worktree remove "$WT_PATH"` (no `--force`).
+10. Delete the feature branch with `git branch -d <feature-branch>` only when step 9 removed the worktree (git refuses to delete a branch a worktree still has checked out).
 
-Report: "Merged <branch> into <base>. Tests: N passing. Worktree removed."
+Report: "Merged <branch> into <base>. Tests: N passing. Worktree removed." or, when step 9 kept it, "... Worktree kept at <path>: ignored local files (<list>)."
 
 ### Option 2: Push + Pull Request
 
@@ -390,10 +423,10 @@ Steps:
    gh pr create --title "<title>" --body "<body>" --base "<base-branch>"
    ```
 6. Report the PR URL.
-7. Leave the worktree first, then remove it: `cd "$MAIN_ROOT" && git worktree remove "$WT_PATH"`.
+7. Leave the worktree first, then remove it after the same local-files check as Option 1 step 9 (found any: keep the worktree and say why): `cd "$MAIN_ROOT" && git worktree remove "$WT_PATH"`.
 8. Do NOT delete the branch (it is now tracked by the PR).
 
-Report: "PR created: <url>. Worktree removed. Branch preserved on remote."
+Report: "PR created: <url>. Worktree removed (or: kept, ignored local files <list>). Branch preserved on remote."
 
 ### Option 3: Keep As-Is
 
@@ -417,7 +450,7 @@ Report: "Worktree kept at <path>. Resume anytime by opening that directory."
 Destroy the worktree and all uncommitted work. This is irreversible.
 
 Steps:
-1. Require explicit confirmation. Ask the user to type the word `discard` (case-insensitive).
+1. List what will be lost (`git -C "$WT_PATH" status --short --ignored` plus the commits on no other branch), then require explicit confirmation: the user types the word `discard` (case-insensitive).
 2. If the user types anything else, abort and return to option selection.
 3. After confirmation:
    - `cd "$MAIN_ROOT"`.
@@ -435,7 +468,7 @@ Worktrees accumulate. CREATE makes them, FINISH removes only the one you are sta
 
 Run it when the user asks to clean up worktrees, and as a report-only precheck at the start of CREATE (steps 1-2 only; never remove anything during CREATE).
 
-PRUNE never uses `--force`, never touches a worktree with uncommitted or unmerged work, and never runs `git fetch`. It removes only what is provably reclaimable.
+PRUNE never uses `--force`, never touches a worktree with uncommitted or unmerged work, never deletes a git-ignored local file, never commits, and never runs `git fetch`. It removes only what is provably reclaimable.
 
 ### Step 0: Resolve paths (PRUNE is a standalone entry point)
 
@@ -468,28 +501,49 @@ For each entry in `git worktree list --porcelain`, excluding the main checkout a
 
 | Signal | Command | Meaning |
 |--------|---------|---------|
-| Dirty | `git -C <wt> status --porcelain` non-empty | uncommitted work |
+| Dirty | `git -C <wt> status --porcelain` non-empty | uncommitted or untracked work |
+| Local files | `git -C <wt> status --porcelain --ignored` prints a `!! <path>` line that is not install/build output (`node_modules`, `dist`, `build`, `.turbo`, `.next`, `coverage`, `__pycache__`, `.pytest_cache`, `target`, `.venv`), **or** `git -C <wt> ls-files -o -i --exclude-standard` lists a secret-looking file (`.env*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`, `id_ed25519`, `credentials*`) even inside one of those directories (git collapses an ignored directory to `!! build/`, hiding a `build/.env`). A command that fails is "cannot inspect", never "no local files" | git-ignored files that exist only on this disk: `.env*`, local databases, keys, notes |
 | Merged | `git -C <wt> merge-base --is-ancestor HEAD "$BASE"` exit 0, **or** the same against `origin/$BASE` | every commit already in base |
+| Own commits | `git -C <wt> reflog show HEAD` has an entry whose message starts `commit`, `cherry-pick` or `am` (the worktree's own HEAD log; a fast-forward or a branch rename adds entries without any work: a fresh worktree holds only its creation entries, even when it checked out an old branch with a long history) | work was done in this worktree |
+| Created | `find "<wt>/.git" -maxdepth 0 -mtime +<N>` prints the path (`<N>` = `$ZUVO_WORKTREE_IDLE_DAYS`, default 30) | the worktree is older than N days |
 | Age | `git -C <wt> log -1 --format=%cr` | how long since last commit |
 
 Classify:
 
-- **RECLAIMABLE** -- clean AND merged. Zero data at risk: the commits exist in the base branch and nothing is uncommitted.
-- **IDLE** -- clean, not merged, last commit older than `$ZUVO_WORKTREE_IDLE_DAYS` (default 30). Report only. Never removed automatically -- unmerged commits are work.
-- **ACTIVE** -- everything else. Not listed as a candidate.
+- **RECLAIMABLE** -- clean AND no Local files AND merged AND (Own commits OR Created more than N days ago). Zero data at risk: the work exists in the base branch, nothing is uncommitted, nothing exists only on this disk. A branch with no commits of its own is an ancestor of base by definition, so "merged" alone cannot tell landed work from work not started: a zero-commit worktree is someone's freshly prepared workspace and is RECLAIMABLE only once older than N days.
+- **SKIPPED** -- would be RECLAIMABLE but has Local files. Report `ignored local files: <list>`; never remove it, never delete `.env*`.
+- **IDLE** -- clean, not merged, last commit older than N days. Report only. Never removed automatically -- unmerged commits are work.
+- **ACTIVE** -- everything else (including a zero-commit worktree younger than N days). Not listed as a candidate.
 
 Checking against both the local and the remote-tracking base means a stale local `main` produces false ACTIVE/IDLE, never a false RECLAIMABLE.
 
 ### Step 3: Remove RECLAIMABLE only
 
-For each RECLAIMABLE worktree:
+`git worktree remove` does NOT protect ignored files: a clean worktree holding an ignored `.env` is removed with exit 0 and the file is gone (live test 2026-11-22: two of three executors lost a `.env` this way). Re-run the Local files check immediately before each removal, since the tree may have changed since Step 2:
 
 ```bash
-git worktree remove "<path>"        # NEVER --force
-git branch -d "<branch>"            # safe delete; refuses if unmerged
+# A failed inspection skips the worktree; it never counts as "nothing found". No loop and no `continue`:
+# FINISH runs the same check for one path.
+if ! { OUT=$(git -C "<path>" status --porcelain --ignored) \
+       && FILES=$(git -c core.quotePath=false -C "<path>" ls-files -o -i --exclude-standard); }; then
+  echo "SKIPPED <path>: could not inspect (git failed)"
+else
+  LOCAL=$( { printf '%s\n' "$OUT" | sed -n 's/^!! //p' \
+               | awk '$0 !~ /(^|\/)(node_modules|dist|build|\.turbo|\.next|coverage|__pycache__|\.pytest_cache|target|\.venv)\/$/'
+             printf '%s\n' "$FILES" \
+               | awk '/(^|\/)\.env[^\/]*$|\.(pem|key|p12|pfx)$|(^|\/)(id_rsa|id_ed25519|credentials[^\/]*)$/ && !/(^|\/)(node_modules\/(@[^\/]+\/)?[^\/]+|\.venv\/(lib[^\/]*|Lib|include|bin|Scripts))\//'; } )
+  # Files INSIDE an installed package are skipped (a vendored cacert.pem or .env.example is not yours);
+  # a .env directly under node_modules/ or .venv/ still counts.
+  if [ -n "$LOCAL" ]; then echo "SKIPPED <path>: ignored local files: $LOCAL"
+  elif git worktree remove "<path>"; then   # NEVER --force
+    git branch -d "<branch>" || echo "KEPT branch <branch>: not fully merged"   # safe delete
+  else
+    echo "SKIPPED <path>: worktree remove refused (locked or changed)"
+  fi
+fi
 ```
 
-Both commands are safe by construction. `git worktree remove` without `--force` refuses when untracked files are present (a local `.env`, a build artifact, an uncommitted scratch file) -- that refusal is the intended backstop, not an error. Collect those as SKIPPED with the reason and move on.
+A refusal from either command (a locked worktree, an unmerged branch) is not an error: collect it as SKIPPED with the reason and move on. The branch is deleted only after the worktree removal succeeded.
 
 ### Step 4: Layout check -- the part that prevents recurrence
 
@@ -501,7 +555,7 @@ git worktree move "<repo>/.worktrees/<name>" "$DEFAULT_WTDIR/<name>"
 
 `git worktree move` relocates the checkout and rewrites its gitdir pointers, so no work is lost and no branch changes. It fails on a locked worktree, one containing submodules, or one with a dirty index -- report those individually and leave them in place rather than forcing.
 
-Once the nested directory is empty, remove it and drop its now-dead `.gitignore` entry.
+Once the nested directory is empty, remove it. Do not edit or commit `.gitignore`: PRUNE never writes tracked files. If a dead entry remains, report it for the user.
 
 ### Step 5: Index hygiene
 
@@ -513,7 +567,7 @@ Removing a directory does not remove what it already put in a code index -- stal
 WORKTREE PRUNE COMPLETE
   Records cleared:  <n> (directories already gone)
   Reclaimed:        <n>  <branch list>
-  Skipped:          <n>  <path -- reason>
+  Skipped:          <n>  <path -- reason, e.g. ignored local files: .env>
   Idle (>30d):      <n>  <branch -- last commit age>
   Active:           <n>
   Layout:           <sibling, clean | migrated <n> out of <nested dir> | NESTED, <n> not migrated>
@@ -557,7 +611,7 @@ These apply across all three modes:
 3. **Never delete `main` or `master`.** If a deletion command would target these branches, refuse and explain why.
 4. **Always verify tests before merge.** Options 1 and 2 run tests before the destructive step. If tests fail, the user must explicitly choose to proceed.
 5. **Always confirm before discard.** Option 4 requires typed confirmation. No shortcuts.
-6. **Uncommitted changes block FINISH.** All four finish options require a clean working tree. Prompt the user to commit or stash first.
+6. **Uncommitted changes block FINISH Options 1-2** (a clean worktree), and **Option 1 also needs a clean main checkout** (it checks out and pulls there); Option 3 keeps everything in place and is never blocked. Report it and stop; never stash or commit for the user. Option 4 lists what it will lose before the typed `discard`.
 7. **Report, do not assume.** When detecting base branches, test runners, or setup commands, report what was detected and what will run before running it.
 8. **Never default a worktree inside the repo.** New worktrees go to `../<repo>-worktrees/`. A nested directory is honored only when it already exists or a project instruction declares it, and only alongside the nested-layout warning.
-9. **PRUNE removes only provably reclaimable worktrees.** Clean AND merged into base, verified against both the local and remote-tracking base. No `--force` in any prune command, ever. Dirty, unmerged, locked, or current-directory worktrees are reported, never touched.
+9. **PRUNE removes only provably reclaimable worktrees.** Clean, no git-ignored local files besides install/build output (`git worktree remove` deletes them silently), merged into base (verified against both the local and remote-tracking base), and not freshly created. No `--force` in any prune command, ever. Dirty, unmerged, locked, current-directory or ignored-file worktrees are reported, never touched.

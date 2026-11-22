@@ -2,7 +2,7 @@
 name: ship
 description: >
   Pre-merge release pipeline: run tests, auto-scaled code review, version bump,
-  changelog generation, git tag, push or PR. Auto-detects branch context (direct
+  changelog generation, git tag, push or PR (never merges the PR). Auto-detects branch context (direct
   push on main, PR on feature branch). Scales review depth by diff size.
   Flags: --full, --no-bump, --no-tag, --dry-run, patch/minor/major.
 category: Release
@@ -31,10 +31,10 @@ Parse `$ARGUMENTS` for these flags:
 | Argument | Effect |
 |----------|--------|
 | _(no flags)_ | Auto-scaled pipeline based on diff size |
-| `--full` | Force full pipeline: tests + review + design-review + coverage + bump + push |
+| `--full` | Force full pipeline: tests + review + design-review + coverage + bump (direct flow; a feature branch never bumps) + push |
 | `--no-bump` | Skip version bumping (hotfixes, chores) |
 | `--no-tag` | Skip git tag creation |
-| `--dry-run` | Show what would happen without executing |
+| `--dry-run` | Show what would happen. Changes nothing: no fetch, no ref, tag, commit, push or file write (see Phase 0 step 0) |
 | `patch` / `minor` / `major` | Explicit bump type (overrides auto-detection) |
 
 Flags can be combined: `zuvo:ship --full --no-tag`, `zuvo:ship minor --no-tag`
@@ -94,6 +94,9 @@ Dispatch follows the resolved execution policy. Record actual independence and a
 4. **Default to `patch`** bump with `[AUTO-DECISION]` annotation in non-interactive environments when the user cannot be asked for bump type.
 5. **NEVER** propose skipping, downgrading, or shortcutting the review threshold from Phase 2. The threshold table is MANDATORY — the agent does not get to override it based on effort estimates ("this would take hours"), prior pipeline claims ("execute already reviewed"), or diff complexity ("most of this is boilerplate"). There is NO flag that skips review — `--fast` was removed 2026-08-02 after an agent self-applied it (see Argument Parsing). If you catch yourself thinking "this is too much review for this release" — that is exactly when the review is most needed.
 6. **NEVER** claim that prior pipeline steps (zuvo:execute, zuvo:plan) substitute for ship review. Execute reviews individual tasks during implementation. Ship reviews the integrated whole. These are different scopes — one does not replace the other.
+7. **NEVER** merge a PR — with no flag, over green checks, over none. PR flow ends at an open PR
+   (Phase 4 Step 4); the merge belongs to the repo's merge path or `zuvo:deploy`. Likewise a feature
+   branch never bumps the version, even when the user asks (Phase 3 skip gate b).
 
 ---
 
@@ -109,6 +112,15 @@ WORK_FILES = <files being touched>
 ---
 
 ## Phase 0: Pre-flight
+
+0. **`--dry-run` is read-only from the first command.** It makes no ref change, local or remote, and
+   writes no file. Everywhere below that says `git fetch`, `git tag`, `git merge`, `git commit`,
+   `git push`, `gh pr create` or writes a file, `--dry-run` instead prints `would <action>` and does
+   nothing. A read-only `git ls-remote --quiet "$PUSH_REMOTE"` replaces the fetch, so refs stay as
+   they were and `BASE_REF` resolves against them (say so in the output). Run every git read of a dry run
+   with `GIT_OPTIONAL_LOCKS=0` (put `export GIT_OPTIONAL_LOCKS=0` at the top of EVERY shell call, or use
+   `git --no-optional-locks`: each call is a fresh shell): a plain `git status` otherwise refreshes and
+   writes the index. `gh pr edit` is one more `would <action>`. The walk-through is step 6.
 
 1. **Detect current branch, flow, and the remote everything else resolves against:**
    ```bash
@@ -141,8 +153,8 @@ WORK_FILES = <files being touched>
    gh auth status
    ```
    - If the command fails or `gh` is not installed: set `GH_AVAILABLE=false`. Continue — Phase 4
-     Step 4 pushes the branch and ends `SHIP INCOMPLETE: PR not created`, because an unmerged
-     branch is not a shipped release (see E3 handling).
+     Step 4 pushes the branch and ends `SHIP INCOMPLETE: PR not created`, because a branch
+     with no PR has not been delivered to anyone (see E3 handling).
    - **`gh` present does not mean this remote is a GitHub it can talk to.** Ask `gh` which hosts it
      is authenticated against and compare with the remote's host —
      `gh auth status` lists them, `git remote get-url "$PUSH_REMOTE"` gives the host. A match
@@ -161,6 +173,7 @@ WORK_FILES = <files being touched>
    # Fetch FIRST — step 4's base preflight runs after this, but `merge-base` against
    # $PUSH_REMOTE/$TARGET_BRANCH is only as correct as the last fetch, and a stale remote ref makes
    # the PR base older than reality: the review then covers commits that are already merged.
+   # (--dry-run: `git ls-remote --quiet "$PUSH_REMOTE"` instead, step 0.)
    git fetch --quiet "$PUSH_REMOTE" || echo "[SHIP] fetch failed — BASE_REF resolves against stale refs"
 
    if [ "$FLOW" = "pr" ]; then
@@ -248,7 +261,8 @@ WORK_FILES = <files being touched>
    ```
    For each hit that is NOT HEAD: create the missing tag at ITS commit
    (`git tag -a "v$_ver" "$_sha" -m "release: v$_ver (tag reconstructed)"`), push it with this
-   run's tag push, and report it in SHIP COMPLETE. Do **not** re-bump and do **not** move the tag
+   run's tag push, and report it in SHIP COMPLETE. Under `--dry-run` print
+   `would create tag v$_ver at $_sha` and create nothing. Do **not** re-bump and do **not** move the tag
    to HEAD — the tag names the commit that carried that version, and a tag pointing at later code
    silently misstates what shipped.
 
@@ -257,7 +271,7 @@ WORK_FILES = <files being touched>
    bump have already been paid for. Ten+ ship retros between 2026-08-05 and 2026-08-11 hit one of
    them; the review skill has this check and ship did not.
    ```bash
-   git fetch --quiet "$PUSH_REMOTE" || echo "[SHIP] fetch failed — the base checks below ran on stale refs"
+   git fetch --quiet "$PUSH_REMOTE" || echo "[SHIP] fetch failed — the base checks below ran on stale refs"   # --dry-run: skip, step 0
 
    # (a) PR FLOW ONLY — unpublished commits on the TARGET branch. The PR silently carries work
    #     the user never pushed, and the review scope question then has no honest answer.
@@ -289,15 +303,25 @@ WORK_FILES = <files being touched>
      nothing at all. The one case where continuing is legitimate is a re-tag/re-release of the same
      tree — proceed only if the user says so, and print `[SHIP] re-release of an already-merged
      tree, per user` so the run log does not read as a fresh release.
-   - **(b) fired → merge `$PUSH_REMOTE/$TARGET_BRANCH` into the branch NOW, and re-run the suite on
-     the merged tree** (Phase 1 runs after this, so this is free). A textual merge accepts semantic
-     conflicts silently; the merged tree is the only tree the test result is about. Merging later —
-     after review — invalidates the review scope and, past ~100 commits of distance, GitHub stops
-     computing mergeability at all (see the four failure modes in Phase 4 Step 4).
+   - **(b) fired → say so, then decide whether to merge the base in.** Merging the base changes the
+     tree the PR carries, so it is never silent: announce `[SHIP] merged $PUSH_REMOTE/$TARGET_BRANCH
+     into $BRANCH` here and repeat it in SHIP COMPLETE and the PR body.
+     - **Direct flow:** merge `$PUSH_REMOTE/$TARGET_BRANCH` into the branch NOW.
+     - **PR flow:** merge only when (1) `gh pr list --head "$BRANCH" --state open` shows no PR for
+       the branch (a PR that a merge queue or CI already builds must not move under it) and (2)
+       nothing indicates a merge queue: the forge lookup succeeded and shows none, and the project's
+       `CLAUDE.md`/contributing docs do not mention one (a lookup that failed means "unknown", and
+       unknown is treated as present). Otherwise do not merge: print
+       `[SHIP] base moved, not merged (<reason>)` and put the distance in the PR body. With
+       `GH_AVAILABLE=false` condition (1) is unknown: do not merge.
+     - **After a merge, re-run the suite on the merged tree** (Phase 1 runs after this, so this is
+       free). A textual merge accepts semantic conflicts silently; the merged tree is the only tree
+       the test result is about. Merging later — after review — invalidates the review scope and,
+       past ~100 commits of distance, GitHub stops computing mergeability at all.
 
 5. **Backlog snapshot.** Once, at the run's original start, before any `backlog-add` call (this run's or the review's it dispatches): `R='<absolute repo root>'; git -C "$R" status --porcelain -uall -- memory/`, `R` being the root of the checkout being shipped, assigned in the same shell call. Ship keeps its run state in the transcript: print the output under a `[SHIP] backlog-snapshot:` line (`(empty)` when it printed nothing). A resumed run (Phase 0 step 3's resume at Phase 4 included) reuses the printed one and never takes it again (`backlog-protocol.md` "Filing from a skill", **Committing what backlog-add wrote**).
 
-6. **Dry-run gate:** If `--dry-run` was passed, walk through each subsequent phase printing what would happen at each step (branch, flow, diff LOC, review depth, bump type, files staged, tag name, push target). Then exit without executing anything.
+6. **Dry-run gate:** If `--dry-run` was passed, walk through each subsequent phase printing what would happen at each step (branch, flow, diff LOC, review depth, bump type, files staged, tag name, push target). Then exit without executing anything (step 0 has already kept steps 1-5 read-only).
 
 ---
 
@@ -381,9 +405,12 @@ WORK_FILES = <files being touched>
    # fix is not portable either: ${PIPESTATUS[0]} is bash-only — under zsh (the macOS default
    # login shell) the array is $pipestatus and 1-indexed, so ${PIPESTATUS[0]} expands to EMPTY and
    # TEST_RC silently becomes "". Redirect to a file, read $?, then look at the file.
-   TEST_LOG=$(mktemp -t ship-tests.XXXXXX)   # not a fixed /tmp name: two ship runs on one host
-   npm test > "$TEST_LOG" 2>&1               # would clobber each other's verdict, and a symlink
-   TEST_RC=$?                                # pre-created at a predictable path redirects the write
+   # mktemp, not a fixed /tmp name: two ship runs on one host would clobber each other's verdict, and
+   # a symlink pre-created at a predictable path would redirect the write.
+   TEST_LOG=$(mktemp -t ship-tests.XXXXXX)
+   # `<test command>` is a placeholder: substitute the command step 1 detected (`npm test`, ...).
+   # The `if` keeps a failing run from aborting a `set -e` shell before TEST_RC is captured.
+   if <test command> > "$TEST_LOG" 2>&1; then TEST_RC=0; else TEST_RC=$?; fi
    tail -40 "$TEST_LOG"
    echo "[SHIP] TEST_RC=$TEST_RC log=$TEST_LOG"   # print it: the next block is a different shell
 
@@ -398,6 +425,12 @@ WORK_FILES = <files being touched>
    fi
    echo "[SHIP] TEST_RAN=$RAN"
    ```
+
+   `<test command>` is the command step 1 detected, prefixed with `rt` exactly as `env-compat.md`
+   "Where work runs" says (`rt` when installed and the run is expected to exceed 30 s, otherwise the
+   command itself). If the environment rejects the redirect form (a local-test hook does), run the
+   command bare and take `TEST_RC` from the tool result's exit status and the counts from its
+   output; under `rt`, from `rt --log <runid>`.
 
    Two ways a green result is not one, both observed on this fleet:
    - **The status came from a pipe or a wrapper.** Every agent pipes a noisy runner through
@@ -524,7 +557,10 @@ tool that dies on its own limits (`ugrep: error ... exceeds complexity limits`, 
 bailing, a missing binary) prints nothing, which reads exactly like a clean result. Non-zero exit
 with no findings = the scan did not run — fall back to another scanner or `git diff | grep` for the
 high-signal patterns, and record which one produced the verdict. Never carry an errored scan as a
-pass.
+pass. `scan_secrets` needs an indexed repo; without one the fallback is `gitleaks git
+--log-opts="${DIFF_BASE}..HEAD"` plus `SCAN_DIFF=$(git diff "$DIFF_BASE" HEAD) || { echo "[SHIP] secret scan errored"; exit 1; }; HITS=$(printf '%s\n' "$SCAN_DIFF" | grep -c -E 'AKIA[0-9A-Z]{16}' || true)` (capture first so a failed `git diff` is an errored scan, not a clean one; `grep -c` exits 1 on zero matches, which is not an error; a count, so a match is never echoed into the transcript). On a first release `DIFF_BASE` is the empty-tree SHA, which `git log` rejects: run `gitleaks git` with no `--log-opts` there.
+A hit the scanner allow-lists (the AWS documentation key) is still a hit when the diff or commit
+says "credentials", "key" or "secret": report it, never wave it through on the allow-list.
 
 1. **Compute diff LOC over `${BASE_REF}..HEAD`** — the base Phase 0 step 3 already resolved for
    this flow (and re-resolved if step 4(b) merged the moved base in). Do NOT resolve it again here:
@@ -678,12 +714,22 @@ LIST
    echo "[SHIP] REVIEW_LOC=$REVIEW_LOC (band input) DIFF_LOC=$DIFF_LOC (integration scope) UNC_RC=$UNC_RC"
    ```
 
-   | Review LOC | Review actions |
+   **Independent of the band** (also on the fast path and on `reused`): if the diff contains a
+   frontend file (`.tsx`, `.jsx`, `.vue`, `.svelte`, `.css`, `.scss`, `.html`; look at the whole range,
+   `git diff --no-renames --name-only "$DIFF_BASE" HEAD`, so a `view.tsx` -> `view.ts` rename still shows the frontend path; not only `REVIEW_SCOPE`), invoke
+   `Skill(skill="zuvo:design-review")`. A 29-LOC `.tsx` change dispatches it exactly as a 900-LOC
+   one does; the band below never decides it (live test 2026-11-22: two of three executors read
+   only the table and skipped it on a small frontend diff).
+
+   The table's input is **`REVIEW_LOC`** (the uncovered subset), never `DIFF_LOC`. `coverage-check`
+   keys off the same number.
+
+   | REVIEW_LOC | Review actions |
    |----------|----------------|
-   | **`reused`** (`UNC_RC=0`, nothing uncovered) | **Skip** `review-light`, `zuvo:review`, the cross-provider adversarial pass (step 4) and `coverage-check` — the per-file artifact evidence from step 1b is printed instead. Everything else in Phase 2 still runs: the step-0 secret scan is unconditional and NEVER reused. |
-   | < 20 | **Fast path** — skip review entirely |
-   | 20 - 100 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
-   | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
+   | **`reused`** (`UNC_RC=0`, nothing uncovered) | **Skip** `review-light`, `zuvo:review`, the cross-provider adversarial pass (step 4) and `coverage-check` (never `zuvo:design-review` for a frontend file) — the per-file artifact evidence from step 1b is printed instead. Everything else in Phase 2 still runs: the step-0 secret scan is unconditional and NEVER reused. |
+   | < 20 | **Fast path** — skip review entirely (`zuvo:design-review` still runs for a frontend file: line above the table) |
+   | 20 - 99 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
+   | 100 - 299 | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`) — runs adversarial pass at TIER 2+ |
    | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")` runs at TIER 3 with automatic adversarial pass. |
 
    **First release only:** `${BASE_REF}..HEAD` excludes everything the root commit introduced, and
@@ -710,7 +756,7 @@ LIST
    wearing a new hat.
 
    **There is no zero-visual-delta exemption from `zuvo:design-review`.** A frontend file in the
-   diff dispatches it, full stop — even when you can show the rendered class strings are identical
+   diff dispatches it (the line above the table), full stop — even when you can show the rendered class strings are identical
    before and after. That demonstration is the agent's own reasoning about its own change, which is
    precisely what the gate exists to distrust, and "provably no visual change" is one rephrasing
    away from "this refactor is obviously safe". If the run genuinely has no visual delta,
@@ -775,8 +821,8 @@ LIST
 3. **Agent dispatch — review-light:** (skipped on the `reused` row; scoped by `$REVIEW_SCOPE` on `partial`)
    - Read `skills/ship/agents/review-light.md` for the agent's instructions.
    - Provide **`git diff "$DIFF_BASE" HEAD`** as input — byte-for-byte the diff step 1 measured.
-     On `partial`, add `--pathspec-from-file="$REVIEW_SCOPE"` so the agent sees exactly the
-     unreviewed files; state in the prompt which files were carried on prior artifacts and why,
+     On `partial`, append `-- <the paths of $REVIEW_SCOPE>` (positional, re-expanded as in step 2;
+     `git diff` has no `--pathspec-from-file`) so the agent sees exactly the unreviewed files; state in the prompt which files were carried on prior artifacts and why,
      so it does not report the covered ones as "missing from the diff".
      Not `git diff --cached` (empty here: ship runs after the work is committed), not `HEAD~1` (one
      commit of a range that is usually many), and not `${BASE_REF}..HEAD` (identical to `$DIFF_BASE`
@@ -990,12 +1036,25 @@ This step runs regardless of flags and diff size (fast path included). It does N
 
 2. **Skip gate — THREE conditions, and only the first is a flag:**
 
-   a. `--no-bump` was passed.
+   a. `--no-bump` was passed. No version change and no tag. On direct flow, if `CHANGELOG.md`
+      exists, add the entry under `## [Unreleased]` and leave it for Phase 4 Step 1-2, which stages it
+      and commits it as `docs(changelog): <summary>` (not `release:`) with the push: Phase 3 itself
+      commits and pushes nothing. If the file does not exist, create nothing. In PR flow (b) governs
+      the changelog.
 
    b. **The flow is PR flow** (Phase 0 put you on a non-default branch). On a feature branch,
       **do not bump the version and do not touch `CHANGELOG.md` at all.** Print
       `[AUTO-DECISION] PR flow → version + changelog deferred to the release on <TARGET_BRANCH>`
       and go straight to Phase 4 with the version unchanged.
+
+      **A user's request does not lift this.** "Bump the patch version and add the CHANGELOG entry
+      so the PR is self-contained" is exactly the case the rule exists for (live test 2026-11-22:
+      one executor treated it as an exception and committed `release: v1.4.3` on the feature
+      branch). Do not bump. Print the `[AUTO-DECISION]` line, add `changelog.d/<branch-slug>.md`
+      (`mkdir -p changelog.d`; the slug is the branch name with `/` replaced by `-`; record the path
+      as `CHANGELOG_NOTE` for Phase 4 Step 1) instead, and tell the user why: the version is set on `<TARGET_BRANCH>` after the merge
+      (by `zuvo:ship` there or the project's release script), because two PRs bumping the same line
+      collide and the second declares a number that is already taken.
 
    c. **The repo's own release script owns the version — and then it owns the TAG and the PUSH
       too.** If the project documents a release path (`scripts/release.sh`, `npm version`, a CI
@@ -1077,7 +1136,8 @@ This step runs regardless of flags and diff size (fast path included). It does N
    # Follow the repo's own convention instead of forcing `v`: on a bare-semver repo, checking and
    # creating `v1.2.4` probes a namespace nobody uses — the collision check always passes and the
    # tag lands in a second, parallel scheme.
-   case "$NEWEST_TAG" in v*) TAG_PREFIX=v ;; *) TAG_PREFIX="${NEWEST_TAG:+}" ;; esac
+   # No tag at all → `v`, the convention the rest of this file (and the half-done sweep) assumes.
+   case "$NEWEST_TAG" in ""|v*) TAG_PREFIX=v ;; *) TAG_PREFIX="" ;; esac
    NEXT="${TAG_PREFIX}${CANDIDATE_VERSION}"
 
    COLLIDES=false
@@ -1219,14 +1279,16 @@ names only ONE reason at a time, so a run with two problems needs two more attem
 ```
 
 Then dry-run the gate itself against the range you are about to push. **Resolve the hook, do not
-assume its path** — it lives at `core.hooksPath` when one is configured (this fleet sets a GLOBAL
-one), otherwise `.git/hooks/`, and repos vary (`.githooks/pre-push`, `hooks/pre-push-gate.sh`):
+assume its path** — it lives in the configured hooks directory when one is set (this fleet sets a
+GLOBAL one), otherwise `.git/hooks/`, and repos vary (`.githooks/pre-push`, `hooks/pre-push-gate.sh`):
 
 ```bash
-# --git-common-dir, not --git-dir: in a LINKED WORKTREE (this skill creates them in Phase 1, and
-# agents routinely work from one) --git-dir returns the worktree's private dir, which has no hooks,
-# so the preflight would silently report "no hook installed" in exactly the setup that needs it.
-HOOK_DIR=$(git config --get core.hooksPath || echo "$(git rev-parse --git-common-dir)/hooks")
+# `--git-path hooks` resolves the configured hooks directory itself, and in a LINKED WORKTREE
+# (agents routinely work from one) it returns the shared one: `--git-dir` would return the
+# worktree's private dir, which has no hooks, and the preflight would silently report "no hook
+# installed" in exactly the setup that needs it. It also never names the config key, which the
+# owner's no-verify guard blocks in any command.
+HOOK_DIR=$(git rev-parse --git-path hooks)
 PP_HOOK="$HOOK_DIR/pre-push"
 ZERO=0000000000000000000000000000000000000000
 # git supplies the REMOTE SIDE as 40 zeros when the branch does not exist there yet. Substituting
@@ -1272,7 +1334,12 @@ git add <version-file>
 # Only if CHANGELOG.md was created or updated in Phase 3 (never on PR flow):
 git add CHANGELOG.md
 
-# On PR flow neither of the two lines above runs. If `git status` shows the version
+# Only when Phase 3 skip gate (b) created `changelog.d/<branch-slug>.md` in this run (the user asked
+# for a bump or an entry, or the repo already keeps a changelog.d/ directory): stage that one NEW
+# file by its quoted path. A default PR-flow run creates no such file and stages nothing here.
+[ -n "${CHANGELOG_NOTE:-}" ] && git add -- "$CHANGELOG_NOTE"   # CHANGELOG_NOTE=changelog.d/<branch-slug>.md, set only by the step that created it
+
+# On PR flow neither of the first two lines above runs. If `git status` shows the version
 # file or CHANGELOG.md modified while you are on a feature branch, Phase 3's skip
 # gate did not fire — stop and fix that rather than staging them, or this PR will
 # conflict with every other open PR and claim a version number that is already taken.
@@ -1283,7 +1350,17 @@ git add CHANGELOG.md
 ### Step 2: Commit
 
 ```bash
-git commit -m "release: v<version>"
+# Commit only what Step 1 staged: `git diff --cached --quiet` (exit 0) means nothing is staged
+# (a PR-flow run with no changelog.d note, `--no-bump` without a CHANGELOG.md, a release script that
+# owns the version) — skip the commit, do not let `git commit` fail on "nothing to commit".
+git diff --cached --quiet; _staged=$?        # 0 nothing staged, 1 something staged, >1 error
+if [ "$_staged" -gt 1 ]; then echo "SHIP INCOMPLETE: cannot read the index"; exit 1
+elif [ "$_staged" -eq 0 ]; then echo "[SHIP] nothing staged — no commit"
+elif [ "$FLOW" != "pr" ] && [ -n "${NEW_VERSION:-}" ] && [ -z "${VERSION_OWNER:-}" ]; then
+  git commit -m "release: v$NEW_VERSION"     # a version bump was performed
+else
+  git commit -m "docs(changelog): <summary>" # no bump: the subject never names a release that did not happen
+fi
 RELEASE_SHA=$(git rev-parse HEAD)
 ```
 
@@ -1325,11 +1402,17 @@ authorization; the mandatory tests + review + `scan_secrets` upstream are what m
 Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`.
 
 - **Direct flow:** `git push "$PUSH_REMOTE" <branch>`, then `git push "$PUSH_REMOTE" v<version>` if a tag was created.
-- **PR flow:** push the branch, then ensure a PR EXISTS (create or reuse), then
-  **WAIT FOR CI AND MERGE IT.** Creating the PR is not shipping; the change is shipped when it is
-  on the target branch.
+- **PR flow:** push the branch, then ensure a PR EXISTS (create or reuse), read its checks, and
+  **STOP. Ship never merges.** Not with a flag, not when every check is green, not when none is
+  configured. The merge is the repo's merge path (a merge queue, a required human review, branch
+  protection) or `zuvo:deploy`, which owns the confirmation-gated `gh pr merge`; a PR that ship
+  merged on its own is the destructive remote action the owner's rules forbid, and "no checks
+  configured" is also the exact state of a mirror whose CI lives on another forge (live test
+  2026-11-22: two of three executors ran `gh pr merge --squash` over zero checks). The PR is the
+  deliverable; ship ends with `PR: #N open`.
 
   ```sh
+  SHIPPED_SHA=$(git rev-parse "$BRANCH")   # the commit THIS run pushes; every later head check compares to it, not to the mutable branch
   git push -u "$PUSH_REMOTE" "$BRANCH"
 
   # Reuse an existing PR — `gh pr create` exits non-zero when one is already open for this head,
@@ -1345,25 +1428,30 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   else
     PR_NUMBER=$(gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" --fill | sed -n 's#.*/pull/\([0-9]*\).*#\1#p')
   fi
+  # `--fill` writes the commit messages only. When Phase 0 step 4(b) did not merge a moved base, or
+  # did, append that one line to the body (read the current body first; keep the author's text):
+  #   BODY=$(gh pr view "$PR_NUMBER" --json body -q .body) || stop   # never edit from a failed read
+  #   case "$BODY" in *"<line>"*) ;; *) gh pr edit "$PR_NUMBER" --body "$BODY"$'\n\n'"<line>" ;; esac
 
-  # DO NOT merge on the exit code of `--watch`. It returns IMMEDIATELY when no check has been
-  # dispatched yet — which is the normal state of a PR created a second earlier — so a bare
-  # `--watch && merge` squashes an unverified branch and prints SHIP COMPLETE. (The three shapes
-  # below say this in prose; the shape that merges is this block, so the check belongs HERE.)
+  # DO NOT read the verdict from the exit code of `--watch`. It returns IMMEDIATELY when no check
+  # has been dispatched yet — which is the normal state of a PR created a second earlier — so a
+  # bare `--watch` followed by "green" reports an unverified branch as passing.
   gh pr checks "$PR_NUMBER" --watch --fail-fast || true   # blocks WHILE checks run; verdict below
 
   # `jq` is not optional here — every branch below is a numeric test on its output. Without this
   # guard an absent jq makes TOTAL/PENDING/FAILED empty, every `[ ]` test errors (exit 2, which
-  # `if`/`elif` reads as false), and control falls through to the merge: the gate reports
-  # "none failed" and squashes an unverified PR. Phase 0 checks `gh` and never checked `jq`.
-  command -v jq >/dev/null 2>&1 || { echo "SHIP INCOMPLETE: jq is required by the merge gate and is not on PATH"; exit 1; }
+  # `if`/`elif` reads as false), and control falls through to "none failed". Phase 0 checks `gh`
+  # and never checked `jq`.
+  command -v jq >/dev/null 2>&1 || { echo "SHIP INCOMPLETE: jq is required by the check gate and is not on PATH"; exit 1; }
 
   # The rollup is the ground truth. A FAILED CALL is not an empty rollup: capture the exit status
-  # so an auth error or a network blip cannot present itself as "no checks configured" and merge.
+  # so an auth error or a network blip cannot present itself as "no checks configured".
   _rollup() { gh pr view "$PR_NUMBER" --json statusCheckRollup -q '.statusCheckRollup' 2>/dev/null; }
-  ROLLUP=$(_rollup) || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER check rollup (gh failed) — refusing to merge blind"; exit 1; }
+  HEAD_BEFORE=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid' 2>/dev/null) \
+    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER head SHA — refusing to report green blind"; exit 1; }
+  ROLLUP=$(_rollup) || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER check rollup (gh failed) — refusing to report green blind"; exit 1; }
   jq -e 'type == "array"' >/dev/null 2>&1 <<<"$ROLLUP" \
-    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER rollup did not parse as JSON — refusing to merge blind"; exit 1; }
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER rollup did not parse as JSON — refusing to report green blind"; exit 1; }
 
   # An empty rollup means "not dispatched yet" far more often than "none configured", and the two
   # need opposite actions. One fixed 20s sleep was not a distinction, just a shorter guess — poll,
@@ -1377,138 +1465,76 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   # Both API shapes. Checks-API entries carry .status/.conclusion; classic Status-API entries
   # (a third-party integration posting a commit status) carry .state/.context and NO .status, so
   # a filter reading only the Checks fields counts a red external check as neither failed nor
-  # pending — and merges over it. The failed-check printer already knew about `.context`.
+  # pending, and a green verdict is reported over it. The failed-check printer already knew about `.context`.
   TOTAL=$(jq 'length' <<<"$ROLLUP")
   PENDING=$(jq '[.[] | select(((.status // "COMPLETED") != "COMPLETED") or ((.state // "") == "PENDING" or (.state // "") == "EXPECTED"))] | length' <<<"$ROLLUP")
-  FAILED=$(jq '[.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR")))] | length' <<<"$ROLLUP")
+  FAILED=$(jq '[.[] | select(((.conclusion // "") as $c | $c != "" and ($c | IN("SUCCESS","NEUTRAL","SKIPPED") | not)) or ((.state // "") | IN("FAILURE","ERROR")))] | length' <<<"$ROLLUP")
 
   if [ "$FAILED" -gt 0 ]; then
-    jq -r '.[] | select((.conclusion // "" | IN("FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")) or ((.state // "") | IN("FAILURE","ERROR"))) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
+    jq -r '.[] | select(((.conclusion // "") as $c | $c != "" and ($c | IN("SUCCESS","NEUTRAL","SKIPPED") | not)) or ((.state // "") | IN("FAILURE","ERROR"))) | "  FAILED: \(.name // .context)"' <<<"$ROLLUP"
     echo "SHIP INCOMPLETE: $FAILED check(s) failed on PR #$PR_NUMBER — fix and re-run"; exit 1
   elif [ "$PENDING" -gt 0 ]; then
-    echo "SHIP INCOMPLETE: $PENDING check(s) still running on PR #$PR_NUMBER — wait, do not merge"; exit 1
+    echo "SHIP INCOMPLETE: $PENDING check(s) still running on PR #$PR_NUMBER — wait, do not report green"; exit 1
   elif [ "$TOTAL" -eq 0 ]; then
     # Still nothing after 3 polls. Distinguish "this repo has no CI" from "CI exists and has not
     # dispatched": a repo WITH workflows and no checks is a pending state, not a green one.
     # `|| echo 0` would turn an API error into "no CI configured" — the same fail-open one line
     # further out. Capture the call, and treat a FAILED query as unknown, never as zero.
     WF_COUNT=$(gh api "repos/{owner}/{repo}/actions/workflows" -q '.total_count' 2>/dev/null) \
-      || { echo "SHIP INCOMPLETE: cannot tell whether this repo defines workflows (gh api failed) — refusing to merge blind"; exit 1; }
+      || { echo "SHIP INCOMPLETE: cannot tell whether this repo defines workflows (gh api failed) — refusing to report green blind"; exit 1; }
     if [ "${WF_COUNT:-0}" -gt 0 ]; then
-      echo "SHIP INCOMPLETE: PR #$PR_NUMBER has workflows defined but no check has been dispatched after 60s — do not merge"; exit 1
+      echo "SHIP INCOMPLETE: PR #$PR_NUMBER has workflows defined but no check has been dispatched after 60s — do not report green"; exit 1
     fi
-    echo "[SHIP] no checks configured on PR #$PR_NUMBER — merging UNVERIFIED (state this in the completion block)"
+    echo "[SHIP] PR #$PR_NUMBER opened; no checks configured — not merging (say so in the completion block)"
   else
     echo "[SHIP] $TOTAL check(s) concluded, none failed"
   fi
 
-  # The rollup describes ONE commit. If anything pushed to the branch between the check read and
-  # the merge — a sibling agent, a late fixup, a rebase — the squash lands code whose checks were
-  # never read. Bind the verdict to the SHA it was computed for.
-  HEAD_AT_CHECK=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid' 2>/dev/null) \
-    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER head SHA — refusing to merge blind"; exit 1; }
-  [ "$HEAD_AT_CHECK" = "$(git rev-parse "$BRANCH")" ] \
-    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head ($HEAD_AT_CHECK) is not the commit whose checks were read — re-run the gate"; exit 1; }
-
-  gh pr merge "$PR_NUMBER" --squash
-  gh pr view "$PR_NUMBER" --json state,mergedAt -q '.state'   # VERIFY: MERGED, not the exit code
+  # The rollup describes ONE commit: the head was read BEFORE the rollup (HEAD_BEFORE) and again
+  # now, and both must be the commit this run pushed, so a push from a sibling agent or a late
+  # fixup between the two reads cannot pass on old checks.
+  PR_NOW=$(gh pr view "$PR_NUMBER" --json headRefOid,state,mergeStateStatus,reviewDecision 2>/dev/null) \
+    || { echo "SHIP INCOMPLETE: cannot read PR #$PR_NUMBER state — refusing to report green blind"; exit 1; }
+  HEAD_AFTER=$(jq -r '.headRefOid' <<<"$PR_NOW")
+  { [ "$HEAD_BEFORE" = "$HEAD_AFTER" ] && [ "$HEAD_AFTER" = "$SHIPPED_SHA" ]; } \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER head moved or is not the commit this run pushed — re-run the gate"; exit 1; }
+  [ "$(jq -r '.state' <<<"$PR_NOW")" = "OPEN" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is not OPEN ($(jq -r '.state' <<<"$PR_NOW"))"; exit 1; }
+  jq -r '"[SHIP] PR #'"$PR_NUMBER"' state=\(.state) merge=\(.mergeStateStatus) review=\(if (.reviewDecision // "") == "" then "none" else .reviewDecision end)"' <<<"$PR_NOW"   # report this; never merge on it
+  # An open PR that cannot merge as it stands is not delivered: say which, and stop.
+  [ "$(jq -r '.mergeStateStatus' <<<"$PR_NOW")" != "DIRTY" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER is CONFLICTING with $TARGET_BRANCH — resolve it (ship does not merge the base into an open PR)"; exit 1; }
+  [ "$(jq -r '.reviewDecision // ""' <<<"$PR_NOW")" != "CHANGES_REQUESTED" ] \
+    || { echo "SHIP INCOMPLETE: PR #$PR_NUMBER has changes requested — address the review"; exit 1; }
   ```
 
-  **MERGED is not the terminal state — a green target branch is.** Post-merge workflows (CI on the
-  target branch, deploy gates, scheduled scans) are dispatched BY the merge, so by construction none
-  of them has concluded when `gh pr merge` returns. Watch them:
-
-  ```sh
-  git fetch "$PUSH_REMOTE" "$TARGET_BRANCH"
-  MERGE_SHA=$(git rev-parse "$PUSH_REMOTE/$TARGET_BRANCH")
-
-  # Runs appear a few seconds after the merge. An EMPTY list means "not dispatched yet", not
-  # "none configured" — re-read once after a short wait before concluding there is nothing.
-  gh run list --commit "$MERGE_SHA" --json databaseId,name,status,conclusion
-
-  # One blocking call per run — never a model-loop poll (see terminal-state.md: 399 polling calls
-  # were measured on one profiled run, for information --watch delivers in a single call).
-  gh run watch "$RUN_ID" --exit-status
-  ```
-
-  Then read `conclusion`, not the exit code:
-
-  - every run `success` → the release is shipped; proceed to Step 5.
-  - any run `failure` / `timed_out` → `SHIP INCOMPLETE` with the run URL and the failing job. Fix it
-    if it is fixable here (a transient `setup-node` 503/429 is a re-run: `gh run rerun <id> --failed`,
-    then watch again — twice, then stop and report it as infrastructure).
-  - any run `cancelled` → **not a pass.** A job cancelled by a timeout ignores `continue-on-error`
-    and reds the check anyway; reading cancellation as "inconclusive, proceed" converts a real block
-    into a green banner.
-  - no runs after the second read → say `no post-merge checks configured` and proceed. Absence
-    stated is fine; absence assumed is not.
-
-  **Why this is a phase and not a nicety.** Measured 2026-08-17 on `rs_be`: ship merged the PR and
-  printed its completion block. The post-merge CI on `main` then failed (`setup-node` 503 → 502 →
-  429) and the production gate was `CANCELED`. The release was reported shipped over a broken target
-  branch — and the failure became visible ~3.6 minutes *after* the banner, so nothing in the run
-  could have caught it. Shipping means the target branch works, not that the merge button worked.
-
-  **Read PR state, not exit codes.** Three shapes that are not what they look like:
-  - `gh pr merge` can exit non-zero *after* the merge landed (it also deletes the branch and
-    updates the local ref; a failure in that tail is not a failed merge). Confirm with
-    `gh pr view --json state` — `MERGED` is the ground truth, and a false `SHIP INCOMPLETE` over a
-    merged PR sends the next run to re-ship work that is already on the target branch.
+  **Read PR state, not exit codes.** Two shapes that are not what they look like:
   - `gh pr checks --watch` exits non-zero when there are NO checks configured, and returns
-    immediately when none have been dispatched yet. Distinguish: zero checks configured → proceed
-    (nothing to wait for, say so); checks pending/queued → keep waiting; a check FAILED → fix it or
-    print `SHIP INCOMPLETE` with the failing check name. **This paragraph existed while the block
-    above merged on `--watch`'s exit code anyway** — knowing the race in prose is not a gate, so the
-    distinction is now made by the rollup query in the runnable block.
-  - The PR can be `CONFLICTING`/`DIRTY` (`gh pr view --json mergeable`). Merge
-    `$PUSH_REMOTE/$TARGET_BRANCH` into the branch, re-run the suite on the merged tree (Phase 0
-    step 4(b) rule — a textual merge accepts semantic conflicts), push, and wait again. Do not
-    leave an unmergeable PR behind as "shipped".
+    immediately when none have been dispatched yet. Distinguish: zero checks configured → say so
+    and stop at the open PR; checks pending/queued → keep waiting; a check FAILED → fix it or
+    print `SHIP INCOMPLETE` with the failing check name. The distinction is made by the rollup
+    query in the runnable block, not by the exit code.
+  - The PR can be `CONFLICTING`/`DIRTY` (`gh pr view --json mergeStateStatus`). Report it and stop:
+    a PR now exists, so the Phase 0 step 4(b) condition "no open PR" no longer holds and ship does
+    not move the base under it. Do not report an unmergeable PR as delivered.
 
   **No `gh`, or a forge that is not GitHub** (`GH_AVAILABLE=false` from Phase 0 step 2): the branch
-  push still happens — that part is forge-agnostic. What cannot happen is the PR and the merge, so
-  the run ends `SHIP INCOMPLETE: branch pushed, PR not created (<no gh | non-GitHub forge>)` with
-  the compare URL for the human to open it. `GH_AVAILABLE` existed as a variable that nothing read;
-  a "skipped (gh unavailable)" line under a SHIP COMPLETE banner claims a shipped release that is
-  sitting on a branch nobody has been asked to merge.
+  push still happens — that part is forge-agnostic. What cannot happen is the PR, so the run ends
+  `SHIP INCOMPLETE: branch pushed, PR not created (<no gh | non-GitHub forge>)` with the compare
+  URL for the human to open it. A "skipped (gh unavailable)" line under a SHIP COMPLETE banner
+  claims a delivery that is sitting on a branch nobody has been asked to review.
 
-  **Why merging is part of ship, not a separate human step.** On this fleet nobody reviews the
-  queue — an open PR buys ZERO additional safety and costs a compounding one. Measured on
-  2026-08-10, sixteen green PRs had accumulated and every one of the four failure modes below had
-  fired at least once:
+  **A PR left open is a cost that grows with distance from the target branch** (2026-08-10:
+  sixteen green PRs accumulated; a branch cut before another change silently reverted it on merge,
+  PRs on the same shared file blocked each other, and past ~124 commits of distance GitHub stopped
+  computing mergeability). Ship cannot cure it by merging; it reports the distance
+  (`git rev-list --count HEAD..$PUSH_REMOTE/$TARGET_BRANCH`) in the PR body and the completion
+  block so the person who owns the merge sees it.
 
-  - a branch cut before someone else's change **silently reverted it** on merge, with no conflict
-    (a manifest fix removed on Aug 3 was back on Aug 5, and the build started emitting dev bundles
-    again)
-  - PRs touching the same shared file **blocked each other**, so the queue could only shrink one
-    PR at a time
-  - after the target branch moved ~124 commits, **GitHub stopped computing mergeability at all**
-    and refused merges that were provably clean locally
-  - rebasing a branch that far behind puts the ENTIRE target branch in the push range, so the
-    review gate blocks it
-
-  Every one of those disappears when the branch is a handful of commits behind. The cost is not
-  linear in waiting time — it is the distance from the target branch at the moment you merge.
-
-  **If a check is RED: fix it or say so. Never leave the PR open and walk away** — that is the
-  state that produced all four. If it genuinely cannot be fixed here, print `SHIP INCOMPLETE` with
-  the failing check, exactly as for a blocked push.
-
-  **The one exception is a repository that OWNS the merge** — a required human approval or branch
-  protection — and only once every check has CONCLUDED GREEN (a red or pending check is still the
-  RED-check case above, not this exception). There the merge is not the agent's to perform, and
-  re-attempting it produces the same rejection forever. Classify that as `PR_OPEN_BY_POLICY`
-  (`terminal-state.md` Shape C), name the blocker quoted from the forge field that carried it, and
-  stop — do not ask the user what to do, do not retry.
-
-  Two near-misses that are NOT this exception: a reviewer who requested changes has given this run
-  work to do, and a forge this skill cannot merge on keeps its own `SHIP INCOMPLETE` outcome from
-  the paragraph above. Neither becomes a completion banner.
-
-  This is not a softening of the argument above: every one of those four failure modes still
-  fires while such a PR waits. It changes WHO is accountable for the wait, not whether the wait is
-  costly — so the run still reports the distance from the target branch, and a repo that keeps
-  accumulating policy-blocked PRs has a queue problem the skill can measure but not fix.
+  **If a check is RED: fix it or say so. Never leave the PR open on red and walk away.** If it
+  genuinely cannot be fixed here, print `SHIP INCOMPLETE` with the failing check, exactly as for a
+  blocked push. Green or no checks, `OPEN` is the terminal state for ship (`terminal-state.md`,
+  ship exception): the merge is not this run's to perform and is never retried here.
 
 There is deliberately no non-interactive carve-out. It used to skip the push on Codex App and
 Cursor and print the commands for the user to run by hand — which is the single step they invoked
@@ -1519,6 +1545,8 @@ ship to get, so "shipped" meant "not shipped" on two of four platforms.
 artifact → produce it; a stale `zuvo/plans/active-plan.md` still saying `in-progress` on a finished
 plan → set it to `completed`), and push again. If it genuinely cannot be resolved here, the block is
 `SHIP INCOMPLETE` with the verbatim gate output — never a success banner over an unpushed release.
+When Step 3 already created a local tag, name it in that block: `local tag v<X> left unpushed; delete
+with git tag -d v<X> or re-run ship` (the half-completed-run detection in Phase 0 resumes it).
 
 Track final local state in variables:
 ```
@@ -1558,7 +1586,7 @@ Write the artifact **after** commit/tag/push decisions are complete:
   "advProof": "<zuvo/proofs/... or null>",
   "versionFile": "<path or null>",                    // null = tag-only versioning
   "diffLOC": <number>,
-  "prState": "<MERGED|OPEN|null>",                    // from gh pr view, not from an exit code
+  "prState": "<OPEN|null>",                           // from gh pr view, not from an exit code; ship never merges
   "tagPushed": true or false,
   "pushed": true or false
 }
@@ -1605,9 +1633,11 @@ COMPLETION GATE CHECK
     the count, fail-then-fixed, or `n/a (no such script)`. A check the project defines and the run
     did not execute is an unfinished item, not an omission
 [ ] Version bumped with CHANGELOG section added — after the tag-collision preflight (no reuse of a
-    published version, no `git tag -f`)
-[ ] PR flow only: no version bump, no CHANGELOG edit, no tag created
-[ ] Only version files staged (never git add -A); the closing commit for backlog-add's writes, if
+    published version, no `git tag -f`) — or recorded as not bumped: `--no-bump` (changelog entry
+    under `## [Unreleased]` committed as `docs(changelog)`), PR flow, or a release script owning it
+[ ] PR flow only: no version bump, no CHANGELOG.md edit, no tag created — even when the user asked
+    for the bump (a `changelog.d/<slug>.md` note instead, with the reason said)
+[ ] Only the files this run produced staged (version files, or the one changelog.d note) (never git add -A); the closing commit for backlog-add's writes, if
     any, holds the run's wrote= paths plus the review's Backlog writes: line, and lands before the
     release commit (on PR flow, before the branch push)
 [ ] memory/last-ship.json written
@@ -1615,42 +1645,18 @@ COMPLETION GATE CHECK
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
 [ ] PR flow only: PR state read from `gh pr view --json state,mergeStateStatus,reviewDecision` is
-    MERGED, or the run qualifies for `PR_OPEN_BY_POLICY` per `terminal-state.md` Shape C, or
-    SHIP INCOMPLETE is printed with the failing check / conflict / missing-forge reason. An open
-    PR left behind for any OTHER reason is an unfinished ship — nobody on this fleet reviews the
-    queue, so it buys no safety and starts accruing the four failure modes documented in the push
-    section. A non-zero `gh pr merge` exit over a PR whose state is MERGED is NOT a failure.
-    `PR_OPEN_BY_POLICY` requires ALL of: state OPEN; every check read from `statusCheckRollup`
-    COMPLETED with conclusion SUCCESS/NEUTRAL/SKIPPED (or no checks at all) — read, never
-    assumed; and a POLICY block evidenced by `reviewDecision` = REVIEW_REQUIRED or
-    `mergeStateStatus` = BLOCKED over green checks WITH `reviewDecision` != CHANGES_REQUESTED
-    (GitHub reports BLOCKED for a changes-requested PR too, so without that clause the exclusion
-    below is defeated by this one) — with the blocker QUOTED in the output. It is
-    read from the forge and never declared: there is no `--no-merge` flag, for the same reason
-    there is no review-skip flag. THREE things do NOT qualify, each of them work or an honest
-    failure rather than a policy: `mergeStateStatus` DIRTY/BEHIND (resolve or update the branch);
-    `reviewDecision` CHANGES_REQUESTED (a reviewer handed this run concrete work — address it,
-    by the same logic that excludes DIRTY); and a missing/non-GitHub forge, which keeps its own
-    `SHIP INCOMPLETE: branch pushed, PR not created` outcome from the push section and must never
-    be collapsed into a completion banner. Do not re-attempt a merge that policy will never
-    allow, and do not ask the user what to do: classify, name the blocker, stop.
+    `OPEN` with every check read from `statusCheckRollup` COMPLETED SUCCESS/NEUTRAL/SKIPPED or
+    none configured (said so) — read, never assumed; or SHIP INCOMPLETE is printed with the failing
+    check / conflict / missing-forge reason. No `gh pr merge` ran: ship never merges (`terminal-state.md`,
+    ship exception). A missing/non-GitHub forge keeps its own `SHIP INCOMPLETE: branch pushed, PR not
+    created` outcome and is never collapsed into a completion banner. If the base moved and was merged
+    in (Phase 0 step 4(b)), the merge is named in the block and the PR body.
 [ ] Terminal state A: processes launched = N, still alive = 0   (PIDs + how each ended)
 [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
-    For ship this means the POST-MERGE runs specifically: enumerate them with
-    `gh run list --commit <merge sha> --limit 100` and watch each to a conclusion — listed by id
-    with its conclusion, or `no post-merge checks configured` only after the discovery window
-    below has expired. That window is load-bearing: immediately after a merge the API returns
-    zero rows until GitHub registers the run, so an empty read means "not dispatched yet", not
-    "none exist" — and two back-to-back empty reads with no delay certify nothing, because both
-    can land inside the same registration lag. Re-read with backoff for at least ~60s, and keep
-    re-reading for the WHOLE window even once runs appear, deduplicating by run id: a workflow
-    dispatched a few seconds after the first one is otherwise never discovered, and watching the
-    run you happened to see first is not watching the post-merge surface. `--limit` is explicit
-    because the default page can hide in-flight runs on a repo that dispatches many workflows —
-    and a result set that comes back at exactly the limit is a truncation signal, not a complete
-    answer: raise it or paginate rather than letting a visible passing subset stand for the
-    whole. `cancelled` is not a pass. A SHIP COMPLETE printed while a post-merge run is
-    still in flight is the exact failure this line exists to prevent
+    For ship this means the PR's own checks, read from the rollup after one blocking `gh pr checks
+    --watch`. Ship merges nothing, so no post-merge run exists for it to watch. `cancelled` is not a
+    pass. A SHIP COMPLETE printed while a PR check is still in flight is the exact failure this line
+    exists to prevent
 [ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
 ```
 
@@ -1695,14 +1701,14 @@ SHIP COMPLETE
   Coverage:    <PASS|WARN|FAIL — from coverage-check (% of changed files, not of code), or 'not dispatched (<300 LOC)'>
   Cross-model: <providers (N findings) | single_provider_only | NOT RUN (rc=<N>)> proof: <zuvo/proofs/... | none>
   Review:      <depth> (<details>) via <Skill tool|env-compat dispatch> [escalated-from <table-depth> due to attestation: <reason>]
-  Changelog:   CHANGELOG.md updated / skipped
+  Changelog:   CHANGELOG.md updated / [Unreleased] entry (--no-bump) / changelog.d/<slug>.md (PR flow; version set on <TARGET_BRANCH> after merge) / skipped
   Recorded:    <N (backlog: a, ledger: b) | none> [plus each NOT PERSISTED (<reason>) by name]; backlog commit <hash | none> [paths left out: <path> (<reason>)]
   Push:        pushed to <remote>/<branch> / BLOCKED (<gate + cause>)
-  PR:          #<N> created + merged / #<N> updated + merged / #<N> open — PR_OPEN_BY_POLICY (<quoted blocker: reviewDecision=REVIEW_REQUIRED | mergeStateStatus=BLOCKED over green checks>) / #<N> open (SHIP INCOMPLETE — <failing check|CONFLICTING|CHANGES_REQUESTED>) / — (direct flow) / not created (SHIP INCOMPLETE — <no gh|non-GitHub forge>)
+  PR:          #<N> open (created|updated) — checks <green | none configured — not merging>; ship does not merge, base distance <n> commits [base merged in: <yes|no (<reason>)>] / #<N> open (SHIP INCOMPLETE — <failing check|CONFLICTING|CHANGES_REQUESTED>) / — (direct flow) / not created (SHIP INCOMPLETE — <no gh|non-GitHub forge>)
   Artifact:    memory/last-ship.json written locally
   Logs:        retros.log=ok retros.md=ok(<count> entries) runs.log=ok  [paste tails from step 3]
 
-  Next: zuvo:deploy (when ready)
+  Next: direct flow: zuvo:deploy (when ready) / PR flow: merge through the repo's merge path, then ship/deploy on <TARGET_BRANCH>
 ```
 
 Render each line conditionally based on actual outcomes (`pushed`, `tagPushed`, `--no-tag` flag). Do not show success indicators for actions that were skipped. A repo with no version file renders
