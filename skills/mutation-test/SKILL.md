@@ -475,7 +475,7 @@ user's flag) and SKIPS a mutant outside it, runs the baseline once per test comm
 each mutant, runs the tests, restores and hash-verifies it, and writes verdicts plus the score to
 `--out`. Exit 3 = not every mutant got a verdict (ERROR, failed baseline, unrestored file): that is
 an incomplete plan (3.3), never a score. A test timeout is ERROR there too: re-run it with a larger `--timeout`. It is Tier 1; Tier 2 is the same call over the survivors
-only with `--test-cmd '<full suite>'` and a `--timeout` sized for the suite. Record `tier2_runner: local` and which of (a) held.
+only with `--test-cmd '<full suite>'` and a `--timeout` sized for the suite. Record `tier2_runner` as `local`, and which of (a) held.
 
 **Tier 2 is the opposite case.** A Tier 2 pass is ONE long full-suite run — the shape the `rt`
 rule was written for — budgeted separately in 1.3b (`TIER2_RUNS * BASELINE_TIME`). Measured
