@@ -73,17 +73,17 @@ Parse `$ARGUMENTS` as: `[path | full | continue] [--whole-files] [--max N] [--ca
 | Flag | Env equivalent | Effect |
 |------|----------------|--------|
 | `[path]` | — | Scope to a specific directory or file — still narrowed to its CHANGED lines |
-| `--whole-files` | — | Mutate the scoped files whole, changed lines or not. **Only on the user's explicit request** — never set by the agent or by a calling skill to "add context" or "include dependencies" |
+| `--whole-files` | — | Mutate the scoped files whole, changed lines or not. **Only when the user typed the literal flag.** Prose ("whole src/", "all of x.ts") does not count; never set by the agent or by a calling skill to "add context" or "include dependencies" |
 | `continue` | — | Resume an interrupted run from its checkpoint (Phase 3.0). Re-runs nothing already resolved. |
-| `full` | — | All production files that have test coverage |
+| `full` | — | Select all production files that have test coverage; lines are still the changed lines unless `--whole-files` |
 | `--max N` | — | Max total LLM mutations to execute (default: 50). Does not bound the native runner, which mutates exhaustively by design. |
 | `--category CATEGORY` | — | Only generate LLM mutations of this category: `BOUNDARY`, `LOGIC`, `NULL`, `ERROR`, `STATE`, `ASYNC`, `SECURITY` |
 | `--runner MODE` | `ZUVO_MUTATION_RUNNER` | `auto` (default) / `native` / `llm` / `hybrid` — see 0.1d |
 | `--break N` | `ZUVO_MUTATION_BREAK` | Fail the run when the final `score_triaged` is below N% (4.2c — evaluated after the 4.2b fix loop, not at 4.1). The flag overrides the env value; both are recorded with their source. |
 | `--no-install` | `ZUVO_MUTATION_NO_INSTALL=1` or `ZUVO_NO_INSTALL=1` | Never offer to install a mutation runner (disables the 0.1c consent gate). Detection still runs. |
-| `--dry-run` | — | Generate mutations and show the plan, but do not execute any. Also suppresses 0.1c entirely. |
+| `--dry-run` | — | Print the plan and **write NOTHING**: no `zuvo/` file (no `execution_policy.json`, state, report), no retro, no run-log line. Suppresses 0.1c. Native engine: the scope only (4.4), never an LLM plan. LLM engine: the 2.3 plan. |
 | `--quick` | — | Max 3 LLM mutations per file, max 20 total |
-| `--report-only` | — | Report the score; do NOT fix surviving gaps (skips 4.2b). The only way to skip the fix loop. |
+| `--report-only` | — | Report the score; do NOT fix surviving gaps (skips 4.2b) and do not commit. The only way to skip the fix loop. |
 
 Flags can be combined: `zuvo:mutation-test src/services/ --max 30 --category SECURITY`
 
@@ -96,29 +96,24 @@ whole. Restricted to production files that have tests. Then
 
 **Unchanged files are never mutated by default** — not as an "unchanged dependency used by the
 regression", not as context for a changed file. A `[path]` or a caller's file list is intersected
-with the changed lines too; mutating unchanged code takes `--whole-files` or `full`, and only when
-the USER asked for it. Static mutants are ignored (`ignoreStatic: true`, see 3.2b).
+with the changed lines too; mutating unchanged code takes the literal `--whole-files`
+from the USER (`full` widens the file list, not the lines). Static mutants are ignored (`ignoreStatic: true`, see 3.2b; the LLM engine follows it, 2.2).
+
+**A prose request for whole files runs the default scope — and says so, without asking.** "Whole
+src/", "all of pricing.ts" is not the flag. Run changed-lines and print, before executing:
+`scope: changed-lines <M> lines in <F> files — whole-files would be <N> lines in <G> files; rerun with --whole-files`.
+(`<N>`, `<G>`: one read-only `stryker-scoped-config.sh --whole-files --no-write`; counting is not mutating.)
 
 **Confirm before a long run.** A run whose estimate (1.3b `BUDGET`, or 3.2b's native estimate)
 exceeds **~30 minutes** is not started without the user's go-ahead: print the scope (files, line
 ranges, mutated vs changed lines) and the estimate, and ask. With no one to ask, shrink the scope
 or stop with the estimate — never start it unattended.
 
-**Why changed LINES, not changed files (2026-10-02).** A farm campaign built its Stryker config from
-a whole-file `--files-from` list: 204 files = **33,367 lines** mutated for a branch that had added
-or changed **2,880** of them (8%), and **97 of the 204 files were not changed by the branch at all**.
-With `ignoreStatic: false`, Stryker itself warned that static mutants took 71–83% of the run time.
-It ran for 15+ hours to measure what a changed-lines run measures in a fraction of that.
-
-`full` still exists and still means every covered production file — it just has to be asked for.
-
-**Why the default moved.** Measured 2026-08-28 across the local fleet: the median mutation run is
-**1 minute** and normal scoped runs top out around **31 minutes**, but 32 runs exceeded an hour and
-the longest reached **258 minutes** — all from a main checkout, all unscoped, mutating a 2,784-file
-test suite to answer a question about one module. Nothing was learned in those four hours that the
-scoped one-minute run would not have said, and each one occupied a farm slot. A default that costs
-four hours when the user meant "check what I just changed" is a defect in the default, not in the
-farm that ran it.
+**Why changed LINES, not changed files.** 2026-10-02: a whole-file `--files-from` campaign mutated
+**33,367 lines** (204 files, 97 of them untouched by the branch) for a branch that changed **2,880**,
+and ran 15+ hours; static mutants were 71–83% of it. 2026-08-28: unscoped runs reached 258 minutes to
+answer a question about one module. A default that costs hours when the user meant "check what I just
+changed" is a defect in the default.
 
 **Callers must pass a scope.** `zuvo:write-tests` probes mutation per file (`--mutate <file>`,
 via `shared/includes/test-mutation-probes.md`) and is unaffected. `zuvo:refactor` does BOTH: the
@@ -190,7 +185,7 @@ Detect the test framework and runner from config files:
 | `*_spec.rb` files | RSpec | `bundle exec rspec` |
 | `*.test.rs` or `#[cfg(test)]` | Rust | `cargo test` |
 
-If framework cannot be detected: ask the user for the test runner command.
+If the framework cannot be detected: ask the user for the test runner command; with no one to ask, stop with `BLOCKED_NO_TEST_RUNNER`.
 
 ### 0.1b Native mutation runner — DETECTION (read-only)
 
@@ -375,8 +370,8 @@ DISCOVERY
   Production files with tests: [N]
   Files excluded (no tests): [N]
   Priority order: [top 5 files listed]
-  Scope: [changed lines vs <base> | path ∩ changed lines | whole files (user-requested) | full]
-  Lines: [N] files, [N] line ranges, [mutated] mutated / [changed] changed
+  Scope: [changed lines vs <base> | path ∩ changed lines | whole files (--whole-files) | full]
+  Lines: [N] files, [N] line ranges, [mutated] mutated / [changed] changed; whole-files would be [N] lines in [N] files
   Max mutations: [N]
 ```
 
@@ -413,9 +408,10 @@ BASELINE FAILED
   Suggestion: run zuvo:fix-tests to repair failing tests first.
 ```
 
-### 1.3 The mutant loop is `tf-ablate` on the farm — never hand-rolled, never per-mutant, never local
+### 1.3 The mutant loop: `tf-ablate` on the farm, `mutation-survivor-reprobe.sh --plan` off it — never hand-rolled
 
-**Do not write the loop. The farm ships it.** `tf-ablate` is on the PATH of every farm job:
+**Do not write the loop. Two executors ship it** — pick by availability (record it in `tier2_runner`),
+never a third of your own. **On the farm** `tf-ablate` is on the PATH of every farm job:
 it takes the plan from 2.3 (a JSON list of `{file, line, col, length, original, replacement}`
 — the content-anchored shape 2.3b already produces — or a Stryker report), builds N sandboxes
 (one per farm worker; the working tree is never mutated), applies one mutant per sandbox at a
@@ -450,12 +446,8 @@ wrong loop. The old costing paragraph below is kept for the numbers it measured:
 (mirror sync + queue), and Tier 1 makes N short invocations — so wrapping each one multiplies
 the charge by N, while wrapping the loop pays it once. `tf-ablate` IS that single wrapped loop.
 
-An earlier version of this section concluded "therefore run Tier 1 locally". That was the
-wrong lesson from a correct measurement, and 2026-08-29 measured what it costs: 109 local test
-processes at 421% CPU, load 34, macOS suspending the workstation with `Dark Wake Thermal
-Emergency`, and a native mutation run dying ten minutes in when a concurrent worktree pulled
-shared `node_modules` out from under it — while the farm sat idle with ~18 free slots. Nothing
-runs on the workstation.
+Per-mutant `rt` calls are the wrong lesson, and so is a free-for-all on the workstation
+(2026-08-29: 109 local test processes, load 34, laptop suspended). Hence one executor per environment, below.
 
 Measured 2026-08-10 on the same single test file:
 
@@ -464,23 +456,30 @@ Measured 2026-08-10 on the same single test file:
 | `npx vitest run <file>` | **1.4 s** (2.2 s cold) |
 | `rt npx vitest run <file>` | **103.4 s** |
 
-~50-75x, and a single wrapped call alone exceeds the whole run budget below. A
-10-mutant plan that would finish in ~20 s locally cannot complete a single mutant
-through the wrapper. Wrap the LOOP once instead and the same ten mutants pay one charge.
-If the farm is unreachable (`rt` exits 21), this skill is not usable for that run — say so
-and stop; never move the loop to the workstation, and never report a wrapper timeout as a
-test-quality result.
+~50-75x: a 10-mutant plan that takes ~20 s locally cannot finish one mutant through the wrapper.
+Wrap the LOOP once instead. Never report a wrapper timeout as a test-quality result.
 
-**Tier 2 is the opposite case, and the ban used to swallow it.** A Tier 2 pass is ONE
-long full-suite run — exactly the shape the global `rt` rule was written for — and the
-budget formula in 1.3b already accounts for it separately (`TIER2_RUNS * BASELINE_TIME`,
-never `PER_RUN`). The routing rule simply did not follow its own split. Measured
-2026-08-17 on `rs_be`, same suite, same commit:
+**Off the farm** (the plugin is used by people without one). The LLM engine may run on this host
+when ALL hold: (a) `tf-ablate`/`rt` is unavailable — not on PATH, `rt` exit 21 (off the tailnet),
+(b) the execution policy's `local_fallback` permits workstation
+test runs — a project or session rule against them wins, then stop and say so; (c) the scope is
+the changed lines (a run over ~30 min still needs the user's go-ahead). The loop is one script:
 
-| Tier 2 full suite | Wall clock |
-|---|---|
-| local, 4 passes in one run | 673 s + 270 s + 323 s + 312 s = **1578 s** |
-| farm, warm mirror + cache hit | **142–264 s** per pass (deps 2–4 s, setup < 0.8 s) |
+    bash "$ZUVO_BASE/scripts/mutation-survivor-reprobe.sh" --plan <plan.json> --out <results.json> \
+      --test-cmd '<mapped tests>' --timeout <3*PER_RUN, min 10>   # --test-cmd wins over any "test_cmd" in the plan
+
+`plan.json` is the 2.3b plan with the replacement text under `mutated` (`{"mutants":[{"id","file","original","mutated"}]}`;
+`replacement` is accepted as its alias; a native survivor's `original` is the source text at its Stryker location). One process: it
+computes the changed-lines scope itself (`--diff <base>`, `--scope-file`; `--whole-files` only on the
+user's flag) and SKIPS a mutant outside it, runs the baseline once per test command, then applies
+each mutant, runs the tests, restores and hash-verifies it, and writes verdicts plus the score to
+`--out`. Exit 3 = not every mutant got a verdict (ERROR, failed baseline, unrestored file): that is
+an incomplete plan (3.3), never a score. A test timeout is ERROR there too: re-run it with a larger `--timeout`. It is Tier 1; Tier 2 is the same call over the survivors
+only with `--test-cmd '<full suite>'` and a `--timeout` sized for the suite. Record `tier2_runner` as `local`, and which of (a) held.
+
+**Tier 2 is the opposite case.** A Tier 2 pass is ONE long full-suite run — the shape the `rt`
+rule was written for — budgeted separately in 1.3b (`TIER2_RUNS * BASELINE_TIME`). Measured
+2026-08-17 on `rs_be`: 4 local passes **1578 s** vs **142–264 s** per pass on the farm.
 
 **Route Tier 2 by `BASELINE_TIME`, measured in 1.2, not by habit:**
 
@@ -510,8 +509,8 @@ compared against the next run's.
    a summary line proving the suite executed before recording any Tier 2 verdict.
 
 **Off-tailnet, `rt` refuses with exit 21** rather than running locally. That is a routing
-failure, not a test result. Follow `execution-policy.md`; a project restriction on workstation execution requires
-waiting/reconnecting to the authorized runner. Never infer permission from a timeout.
+failure, not a test result: take the off-farm path above only when its conditions hold, otherwise
+wait/reconnect per `execution-policy.md`. Never infer permission from a timeout.
 
 ### 1.3b Calculate Timeouts — budget per-invocation cost, not suite time
 
@@ -552,11 +551,8 @@ BUDGET         = MUTATION_COUNT * PER_RUN * 1.5          # tier 1, +50% slack
 Per-file timeout = max(10s, 3 * PER_RUN)
 ```
 
-The old formula was `3 * baseline, minimum 60s` — it budgeted three suite runs while
-the loop actually spends `N * (startup + short run)`. With a 5 s suite the budget was
-60 s regardless of whether the plan had 5 mutants or 50, so a plan was aborted
-mid-way on a limit that had nothing to do with its size. Reported by a user on
-2026-08-10: 7 of 10 mutants dropped, budget consumed by invocation overhead.
+The loop spends `N * (startup + short run)`, not three suite runs, so the budget scales with
+the plan size (a flat 60 s floor once dropped 7 of 10 mutants on invocation overhead).
 
 **`BUDGET` over ~30 minutes → ask the user before starting** (see Argument Parsing). Report the
 estimate with the scope, not after the run.
@@ -572,7 +568,7 @@ BASELINE
   Baseline time: [N]s        (full suite, once)
   Per-run cost:  [N]s        (one targeted run — what each mutation actually costs)
   Runner time:   [N]s        (the runner's OWN printed duration — if wall >> this, see above)
-  Runner:        rt (farm)   (the whole loop in ONE invocation — see 1.3)
+  Runner:        rt (farm) | local (reprobe --plan)   (the whole loop in ONE invocation — see 1.3)
   Plan:          [N] mutations -> budget [N]s
 ```
 
@@ -611,10 +607,14 @@ For each file, generate 5-10 mutations across these categories:
 - Each mutation must change observable behavior (not just cosmetic)
 - Skip trivial mutations: comments, whitespace, logging-only statements, console.log
 - Skip mutations in generated code, type definitions, and pure configuration
+- **Skip static mutants** (`ignoreStatic`, as in native): none in code that runs once at import — a
+  module-level initialiser (`const X = {…}`, eager top-level assignment, static class field). A
+  function body inside it is not static. Killing one takes a test per table entry; a changed
+  constant is covered through the behaviour that reads it
 - Each mutation targets one specific behavioral change
 - Prefer mutations at decision points (branches, guards, returns)
 - **Mutate only inside the scope's changed lines** (an added file counts whole). A mutation on an
-  unchanged line of a changed file is out of scope unless the user asked for `--whole-files`/`full`
+  unchanged line of a changed file is out of scope unless the user typed `--whole-files`
 
 **If `--category` is set:** Only generate mutations of the specified category.
 
@@ -664,16 +664,9 @@ So each mutation carries an anchor that survives movement:
    `anchor: lost (<reason>)`. A skipped mutation is `not_run`, and per Phase 3.3 a plan that did
    not run in full is not a score — it must be reported as such, never averaged away.
 
-**If `--dry-run`:** Print the mutation plan and STOP. Do not execute.
-
-```
-MUTATION PLAN (--dry-run)
-  Files: [N]
-  Mutations: [N] total
-  [list each mutation with ID, file, line, category, original, mutated, rationale]
-  
-  To execute: zuvo:mutation-test [same args without --dry-run]
-```
+**If `--dry-run` and the engine is `llm`:** print the mutation plan and STOP — no test command runs
+(1.2's baseline is skipped: a suite can write caches or coverage), nothing executed,
+nothing written (4.4). The native engine never reaches 2.3: its dry run is the scope in 4.4.
 
 ---
 
@@ -761,18 +754,18 @@ Before starting execution:
    - **Do NOT use `git stash`** (pop consumes the stash on first iteration)
    - **Do NOT use `git checkout -- [file]`** (destructive to local changes)
 3. NEVER commit a mutated file. NEVER leave a mutation in place after execution.
+4. **Logs and scratch** (runner output, per-mutant logs, a batch `--out`) go under `$ZUVO_DIR/context/`
+   or a temp dir — never the repo root. Delete per-mutant logs once the report is written.
 
 ### 3.2 Execution Loop
 
-**On the farm this loop is executed by `tf-ablate`, not by you** (1.3). Your job is the plan
-in (2.3 → a JSON list, content-anchored) and reading the two reports back:
+**This loop is executed by `tf-ablate` on the farm or `reprobe --plan` off it, not by you**
+(1.3). Your job is the plan in (2.3 → a JSON list, content-anchored) and reading the reports back:
 `verdict` ∈ `KILLED | SURVIVED | TIMEOUT | NO_COVERAGE | ERROR` maps onto the RECORD table
 below (`TIMEOUT` counts as killed; `ERROR` is *not measured* — a crash is never a survivor;
-`NO_COVERAGE` means the mapped tests from 0.2 do not import the file — fix the map, do not
-score it). The steps are spelled out so the report can be audited, and for the one case
-where the farm is unreachable and the run is therefore NOT possible (exit 21 — stop, per
-`execution-policy.md`). Never reimplement them as a shell loop: that is the 9-hour,
-4-GB-heap failure 1.3 describes.
+tf-ablate's `NO_COVERAGE` means the mapped tests from 0.2 do not import the file — fix the map
+and re-run it). The steps are spelled out so the report can be audited. Never reimplement them
+as a shell loop of your own: that is the 9-hour, 4-GB-heap failure 1.3 describes.
 
 For each mutation `MUT-NNN`:
 
@@ -798,14 +791,19 @@ For each mutation `MUT-NNN`:
    - Test FAILED (tier 2) -> mutation KILLED-INDIRECT (good: integration test caught it)
    - Test PASSED (both tiers) -> mutation SURVIVED (bad: no test caught it)
    - Test TIMEOUT (>per-file timeout) -> mutation TIMEOUT (counts as killed)
-   - Test ERROR (crash/compile error) -> mutation KILLED (counts as killed)
+   - Test ERROR (crash/compile error) -> mutation ERROR (not killed, not measured, outside the score)
 4. RESTORE: Copy original from temp location back to production file
 5. VERIFY: Diff check to confirm restoration is clean
 ```
 
 **Error recovery:** If restoration fails for any reason:
-1. Copy from temp file: `cp /tmp/zuvo-mutation-[hash]-[filename] [file]`
-2. If temp file missing: `git checkout HEAD -- [file]` (safe: working dir was clean at start)
+1. Compare the file's current hash with the original's and the mutant's. Original: nothing to do.
+   Our mutant: copy from temp file, `cp /tmp/zuvo-mutation-[hash]-[filename] [file]`. A third value
+   is a MISMATCH (below): a concurrent edit is never overwritten.
+2. If temp file missing: `git checkout HEAD -- [file]` — the skill's OWN undo of its OWN mutant, so
+   no consent is needed; it is valid only for a scoped file, which 3.1.1 required clean at start
+   (HEAD is its original). Anything else — another file, or a post-run hash that differs for a
+   reason other than our mutant — is a MISMATCH: stop and report, never restore blind (3.2b.4).
 3. If both fail, STOP execution and alert the user
 
 **Progress tracking:** After every 10 mutations, print a progress line:
@@ -847,7 +845,7 @@ every constraint below without exception:
    The default emits one Stryker line range (`file:start-end`) per diff hunk and takes an added
    file whole. A `--file`/`--files-from` list is intersected with the diff: unchanged files are
    DROPPED and named on stderr, changed ones narrowed to their hunks. `--whole-files` is the
-   opt-out and is passed only when the user asked for it. Copy the helper's one-line stderr
+   opt-out and is passed only when the user typed that flag. Copy the helper's one-line stderr
    summary (files, line ranges, mutated vs changed lines) into the report, and every
    `dropped_file=<reason>:<path>` stdout line: a `glob-path` drop is a CHANGED file the native run
    cannot reach, so its changed lines go to the LLM engine (`hybrid`) — never silently uncovered.
@@ -915,8 +913,9 @@ every constraint below without exception:
    or `--out` OUTSIDE the repo stays absolute and works only on this machine) — the watchdog, the config and the
    generated Vitest config are
    copied into the repo for exactly that reason, so do not `.gitignore` `.stryker-scoped-*`. These
-   `.stryker-scoped-<tag>.*` files are run artifacts: never stage them (commit explicit paths only)
-   and delete them once the report is read.
+   `.stryker-scoped-<tag>.*` files (`<tag>` is generated per run; use the paths the helper prints —
+   there is no `--tag`) are run artifacts: never stage them (commit explicit paths only) and delete
+   them once the report is read.
 
    "Scoped Stryker config" is the most re-invented artifact in this fleet's retro log (~30 names
    for one thing), because it is six decisions that each fail SILENTLY:
@@ -955,9 +954,10 @@ every constraint below without exception:
      exactly as before. A farm run is read-only with respect to your working tree, which makes
      that check simpler, not harder.
 
-   Record `tier2_runner: "rt (native)"`. The only local escape is `TF_ALLOW_LOCAL=1` with a
-   stated reason — the farm unreachable, or debugging the farm itself — and it must appear in
-   the report, because a local native run is what this rule exists to prevent.
+   Record `tier2_runner: "rt (native)"`. Off the farm the 1.3 conditions apply (no `rt`, exit 21,
+   and `local_fallback` permits): run `run_command` as printed, record
+   `tier2_runner: "local (native)"` with the reason in the report. (`TF_ALLOW_LOCAL=1` is only this
+   fleet's hook override for it.)
 2. **Budget it in 1.3b terms.** A native run is one long invocation, so its timeout budget is
    `BASELINE_TIME`-scaled like a Tier 2 pass, never `MUTATION_COUNT * PER_RUN`. The
    confirmation gate is a separate, wall-clock question: estimate the run as the LARGER of that
@@ -1054,7 +1054,11 @@ On early termination:
 score = killed / (killed + survived) * 100
 ```
 
-Note: TIMEOUT and ERROR count as killed (the mutation was detected).
+- TIMEOUT counts as killed (the farm's `tf-ablate`; the local `reprobe` reports a timeout as ERROR — raise `--timeout`).
+- ERROR (crash or compile error; schema `RuntimeError`/`CompileError`) is not measured: out of both
+  numerator and denominator, and named in the report.
+- **`NoCoverage`** (a native mutant no test executes) counts as SURVIVED — undetected, against the
+  score, exactly as in Stryker's own `mutationScore` — and enters 4.2 triage like any survivor.
 
 **Overall mutation score:** Sum of all killed / sum of all (killed + survived).
 
@@ -1107,7 +1111,8 @@ For each SURVIVED mutation, analyze:
 1. **What changed:** The specific mutation applied
 2. **Why it matters:** What behavioral gap this reveals
 3. **Which test file:** The test file(s) that should have caught it
-4. **Suggested test:** A 1-3 line description of the test to add (not full code)
+4. **Suggested test:** under `--report-only` only: a 1-3 line description of the test to add (not
+   full code). Otherwise 4.2b writes the test in this run, so the report names the fix, not a suggestion
 
 **A NATIVE runner's survivor is a candidate, not a finding — re-probe it physically first.**
 A survivor from the LLM engine was already produced by executing the mutation, so it needs no
@@ -1173,14 +1178,9 @@ gate people learn to ignore.
 **For every survivor triaged `gap`, strengthen the test here and prove the fix.** Do not
 end the run by naming the gap and pointing at another skill.
 
-Until 2026-08-09 this skill finished with "Recommended Next Steps: `zuvo:write-tests`
-[file]". That is the drift `no-silent-backlog-deferral` names: the finding is already
-localized to one assertion in one test file, the fix is two lines, and handing it to
-another skill means re-running discovery, re-reading the file, and hoping the next run
-targets the same mutation. `write-tests` closes its own probe gaps in-run
-(`test-mutation-probes.md`: "add the missing behavioral assertion, re-run, and
-re-probe — do not close the file with a surviving probe"). Standalone mutation-test
-was the one path that surfaced a gap and walked away.
+The finding is already localized to one assertion in one test file; handing it to another
+skill means re-running discovery and hoping the next run targets the same mutation
+(`no-silent-backlog-deferral`). `write-tests` closes its own probe gaps in-run the same way.
 
 **Ordering is a safety property, not a preference.** Phase 3 must be fully complete
 first: every mutation reverted, every production file verified byte-identical against
@@ -1209,9 +1209,21 @@ Record per survivor: `fixed` (killed on re-probe), `gap-unfixed` (cap reached), 
 else. It is the ONLY way to skip it; "the fix looked big" is not one, and if a fix
 genuinely spans several files it is a `gap-unfixed` with that stated as the reason.
 
-Re-run the score after this step. The report and JSON below carry the POST-fix numbers,
-with `score_triaged_before` kept alongside so the run's own effect is visible rather
-than hidden by improving the thing being measured.
+**Commit the fixes — tests only, one commit.** In a git repo, unless `--report-only` or `--dry-run`:
+once the fix loop is done and the mapped tests are green, commit the strengthened test files as ONE
+commit (none, `commit_fix: null`, when the execution policy forbids committing) with the message
+`test: close mutation survivors in <scope>` (`<scope>` is 4.3b's filename slug, so no `/`). Stage explicit paths and commit them with `git commit --only -- <paths>` (a plain commit also takes
+whatever else is staged) — never `git add -A`, never a production file, a `zuvo/` artifact or a
+`.stryker-*` file; check `git show --name-only` lists only those test files before recording the sha. No test change, no commit. A test file that already had uncommitted edits of its own at the start
+is not committed by this skill (3.1.1): report it and leave the strengthened file in the tree. A hook failure gets a NEW commit after the fix:
+never `--no-verify` or `--amend`. Record the sha in `commit_fix` (`null` otherwise), so a caller
+knows the tree is clean when this skill returns.
+
+**Two states, never mixed.** Re-run the score after this step. The AS-FOUND result is the headline:
+the 4.3c `report.json` keeps every mutant's measured status (a survivor stays `Survived`) and notes
+a closed one in `statusReason` (`closed in this run by <test name>`). The post-fix state lives in
+the zuvo JSON (`score_triaged`, with `score_triaged_before` beside it) and is printed next to the
+as-found score, never instead of it. Gates and `--break` read the final `score_triaged` (4.2c).
 
 ### 4.2c Break threshold (`--break N` / `ZUVO_MUTATION_BREAK`)
 
@@ -1279,21 +1291,21 @@ MUTATION TEST COMPLETE
 Project: [name]
 Date: [ISO-8601 date]
 Engine: [native <name> v<ver> | llm | hybrid]  ([detected <path> | installed | absent | declined | failed | unsupported_stack])
-Score:  [N]%  [under hybrid ONLY: native [N]% (graded) | llm [N]% (reported, not graded)]
+Score:  [N]% as found, [N]% after fixes  [under hybrid ONLY: native [N]% | llm [N]% — both graded, the verdict is the lower]
 Installed this run: [none | <tool> — remove with: <uninstall command>]
 Files tested: [N]
 Mutations generated: [N]
-Mutations killed: [N] ([X]%)
-Mutations survived: [N] ([Y]%)
+Mutations killed: [N] ([X]%) as found
+Mutations survived: [N] ([Y]%) as found
 
-MUTATION SCORE: [N]% -- Grade [A/B/C/D]
+MUTATION SCORE (as found): [N]% -- Grade [A/B/C/D]   | after this run's fixes: [N]% -- Grade [A-D] ([+D] pts)
 ===============================================
 
 ## Per-File Scores
 
-| File | Mutations | Killed | Survived | Score | Grade |
-|------|-----------|--------|----------|-------|-------|
-| [path] | [N] | [N] | [N] | [N]% | [A-D] |
+| File | Mutations | Killed found/final | Survived found/final | Score found/final | Grade (final) |
+|------|-----------|--------------------|----------------------|-------------------|---------------|
+| [path] | [N] | [N]/[N] | [N]/[N] | [N]%/[N]% | [A-D] |
 
 ## Survived Mutations (tests need strengthening)
 
@@ -1325,7 +1337,7 @@ MUTATION SCORE: [N]% -- Grade [A/B/C/D]
 - [only if score is still low AFTER 4.2b] zuvo:fix-tests -- systematic anti-patterns, not
   single missing assertions (those were already fixed in this run)
 - zuvo:mutation-test [file] --category [weakest] -- widen coverage to a category not sampled
-Print NOTHING here when every gap was fixed and nothing is left — an empty next-steps list
+Omit this whole heading when every gap was fixed and nothing is left — an empty next-steps list
 is the honest output of a run that finished its own work.
 
 Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	<N>-files	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
@@ -1412,16 +1424,9 @@ name, so a second same-day run — or a parallel one — never overwrites the fi
   or an unusable dir), STOP: print the report in chat, say the artifacts were not written and why.
   A hand-picked name is the overwrite this helper exists to prevent.
 
-**This exists because Q21 had no input.** `gate-registry.md` Q21 asks whether changed
-production files reach a mutation score >= 70%, and `test-audit` scores it — but until
-2026-08-09 this skill wrote nothing to disk at all. The report went to chat and vanished,
-so the only honest answers an auditor could give were a guess or `N/A`. A gate whose
-input nobody produces is not a gate.
-
-Q21's registry row now names this artifact as its input, so the two are no longer
-independent sentences free to drift apart: move this file, or rename `score_triaged` /
-`plan_completed` / `commit`, and the Q21 row must change with it. Nothing mechanical
-enforces that pairing — this paragraph is the reminder that it exists.
+**This is Q21's input.** `gate-registry.md` Q21 (changed production files reach a mutation score
+>= 70%) reads this artifact: move the file, or rename `score_triaged` / `plan_completed` /
+`commit`, and the Q21 row must change with it — nothing mechanical enforces the pairing.
 
 ```json
 {
@@ -1459,6 +1464,7 @@ enforces that pairing — this paragraph is the reminder that it exists.
     "llm":    { "score_triaged": 92,  "killed": 11, "survived_gap": 1, "survived_equivalent": 0 }
   },
   "tests_strengthened": ["__tests__/.../resync-units.test.ts"],
+  "commit_fix": "a1b2c3d",
   "totals": { "generated": 8, "killed": 6, "survived_gap": 0, "survived_equivalent": 1, "gap_unfixed": 0 },
   "files": [
     {
@@ -1539,8 +1545,8 @@ Field notes, each earning its place:
 - **`scores_by_engine`** — present ONLY under `engine: hybrid`, `null` otherwise. It exists because
   `score_triaged` is a single field and hybrid has two populations that must not be pooled (4.1):
   without somewhere else to put the second number, the schema itself would force the averaging
-  0.1d forbids. Under hybrid, `score_triaged` at the top level MIRRORS `scores_by_engine.native`
-  — the graded, reproducible half — and never a blend of the two.
+  0.1d forbids. Under hybrid, `score_triaged` at the top level MIRRORS the LOWER of the two halves
+  (4.1: both are graded) and never a blend of them.
 - **`break_threshold`** — `{value, source}` where source is `env` / `flag` / `default`. The value
   alone is not enough: an agent that sets its own bar and then clears it has proved nothing, and
   only the source makes that legible. `null` when no threshold was configured.
@@ -1555,7 +1561,9 @@ comparable with a score produced by any of them, and what lets an existing mutat
 viewer open our output.
 
 Required roots: `schemaVersion`, `thresholds{high,low}`, `files{}`. Also emit `framework`
-(`{name: "zuvo:mutation-test", version: <zuvo version>}`) and `performance`.
+(`{name: "zuvo:mutation-test", version: <zuvo version>}`) and `performance`. `<zuvo version>` is
+the contents of `$ZUVO_BASE/VERSION` (the `version` of the plugin's `package.json`) — never a
+branch name, a guess, or the native runner's own version. The report is AS FOUND (4.2b).
 
 ```json
 {
@@ -1570,7 +1578,7 @@ Required roots: `schemaVersion`, `thresholds{high,low}`, `files{}`. Also emit `f
       "mutants": [
         { "id": "MUT-004", "mutatorName": "zuvo:BOUNDARY", "replacement": "count >= bestCount",
           "location": { "start": { "line": 208, "column": 9 }, "end": { "line": 208, "column": 28 } },
-          "status": "Killed" }
+          "status": "Survived", "statusReason": "closed in this run by 'picks the first unit on a tie'" }
       ]
     }
   }
@@ -1586,11 +1594,12 @@ Three rules that make it honest rather than decorative:
    | This skill | Schema status | Why |
    |------------|---------------|-----|
    | killed / killed-indirect | `Killed` | — |
-   | survived (`gap`) | `Survived` | — |
-   | survived (`equivalent`) | `Ignored` | `Ignored` means excluded from scoring with a reason — which is what an equivalent-mutant triage IS. Never `Killed`. |
+   | survived (`gap`), also one closed by 4.2b | `Survived` | as found; a closed one carries `statusReason` |
+   | native `NoCoverage` | `NoCoverage` | kept; counts as undetected (4.1) |
+   | survived (`equivalent`) | `Survived` | as found; `statusReason` names the equivalence. The exclusion lives in the zuvo JSON's triaged score, never in this file. |
    | TIMEOUT | `Timeout` | counted as killed in 4.1, but the schema keeps it distinct |
-   | mutation did not compile | `CompileError` | — |
-   | mutation crashed the runner at test time | `RuntimeError` | distinct from `CompileError`; without this row an agent mis-files a crash as one of the other two |
+   | mutation did not compile | `CompileError` | not measured, outside the score (4.1) |
+   | mutation crashed the runner at test time (ERROR) | `RuntimeError` | not killed, not measured, outside the score (4.1); distinct from `CompileError` |
    | `not_run` from a truncated plan (3.3) | `Pending` | the honest status for a mutant the budget never reached — do NOT omit it, or the report silently shrinks the denominator |
 2. **`mutatorName` is namespaced by origin.** LLM mutants carry `zuvo:<CATEGORY>`; native
    mutants keep the runner's own name verbatim (`BooleanLiteral`, `ArithmeticOperator`, …). A
@@ -1605,7 +1614,7 @@ Three rules that make it honest rather than decorative:
 threshold is a run verdict, the schema thresholds are report colouring, and conflating them makes
 the report lie about the project's standard.
 
-### Retrospective (REQUIRED)
+### Retrospective (REQUIRED — skipped under `--dry-run`, which writes nothing)
 
 Follow the retrospective protocol from `retrospective.md`.
 Gate check → structured questions → TSV emit → markdown append.
@@ -1622,7 +1631,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 VERDICT: PASS (>= 80%), WARN (>= 60% and < 80%), FAIL (< 60%). A configured `--break N` that
 the run misses forces FAIL regardless of band (4.2c) — the threshold is a stricter bar someone
 chose, so it may only lower the verdict, never raise it.
-CQ_SCORE field: `<score>%` (the overall mutation score).
+CQ_SCORE field: `<score>%` (the overall mutation score — the final, after-fixes `score_triaged`, as the verdict is).
 Q_SCORE field: `<killed>/<total>` (killed count / total mutations).
 TASKS: `<N>` — the count of test files strengthened by the 4.2b fix loop; `-` under
 `--report-only` or when every survivor was equivalent. It used to be hardcoded `-`
@@ -1632,32 +1641,24 @@ NOTES: `mutation-test [scope] [grade]` (max 80 chars).
 
 ### 4.4 Dry-Run Report
 
-If `--dry-run` was specified, replace the execution sections with:
+`--dry-run` prints this and writes NOTHING — no `zuvo/` file, no `execution_policy.json`
+(`execution-policy.md`'s entry record is skipped too), no state, retro, run-log line or report, and
+no config file. Resolve the engine as usual (0.1d), then:
+
+- **native:** the scope, not mutants. Run `bash "$ZUVO_BASE/scripts/stryker-scoped-config.sh" --no-write`
+  (add `--files-from` for a path scope) and print its `scope_mode`, `diff_base`, files, line ranges,
+  `mutated_lines` vs `changed_lines` and `dropped_file=` lines. The mutant count is not known without a
+  Stryker run; say so (an estimate: ~2 mutants per mutated line, 3.2b.2). Never print an LLM plan.
+- **llm:** the 2.3 plan. **hybrid:** both. A non-Stryker native runner has no read-only scope helper: print the changed file list and line ranges from `git diff -U0` instead.
 
 ```
-MUTATION TEST PLAN (DRY RUN)
-===============================================
-Project: [name]
-Date: [ISO-8601 date]
-Files to test: [N]
-Mutations planned: [N]
-
-## Mutation Plan
-
-### [file_path] -- [N] mutations planned
-  MUT-001 [CATEGORY] line [N]: [original] -> [mutated]
-  MUT-002 [CATEGORY] line [N]: [original] -> [mutated]
-  ...
-
-## Category Distribution
-
-| Category | Count | % of Total |
-|----------|-------|------------|
-| BOUNDARY | [N] | [N]% |
-| ...
+MUTATION TEST PLAN (DRY RUN) — nothing was written
+Project: [name]   Engine: [native <name> | llm | hybrid]
+Scope: [changed lines vs <base> | ...]  [mutated] mutated / [changed] changed lines in [N] files
+[native: dropped files; mutant count estimate]
+[llm: each MUT-NNN with category, file:line, original -> mutated, rationale]
 
 To execute: zuvo:mutation-test [same args without --dry-run]
-===============================================
 ```
 
 ---
@@ -1677,8 +1678,8 @@ These are non-negotiable:
    production. Stating both halves because "never modify test files" read alone would
    forbid the step that closes the gaps this skill exists to find.
 3. **Always verify restoration.** After each mutation, confirm the original file is intact.
-4. **Timeout protection.** No single mutation test can run longer than 3x baseline per file.
-5. **Clean state on exit — files AND processes.** If the skill is interrupted, restore through the Phase 3.1 temp-copy path — `cp /tmp/zuvo-mutation-[hash]-[filename] [file]` for every file still mutated, then delete the temp copies. Do **not** reach for `git stash pop` or `git checkout -- [file]`: §3.1 forbids both (pop consumes the stash on the first iteration; a bare `checkout --` discards uncommitted work that is not this skill's to destroy). `git checkout HEAD -- [file]` is the last resort named in §3.2 error recovery, valid only because Phase 3.1 verified the tree was clean at start — and it needs the user's go-ahead, since it is a destructive git operation.
+4. **Timeout protection.** No single mutation test can run longer than the 1.3b per-file timeout, `max(10s, 3 * PER_RUN)`.
+5. **Clean state on exit — files AND processes.** If the skill is interrupted, restore through the Phase 3.1 temp-copy path — `cp /tmp/zuvo-mutation-[hash]-[filename] [file]` for every file still mutated, then delete the temp copies. Do **not** reach for `git stash pop` or `git checkout -- [file]`: §3.1 forbids both (pop consumes the stash on the first iteration; a bare `checkout --` discards uncommitted work that is not this skill's to destroy). `git checkout HEAD -- [file]` is the last resort named in §3.2 error recovery: the skill's own undo of its own mutant on a scoped file that Phase 3.1 verified clean at start, so it needs no consent. Touching anything of the user's (another file, an edit that is not our mutant) still does.
 
    **And reap every runner you started** — see `../../shared/includes/terminal-state.md`. This rule
    used to cover files only, and a Tier 2 full suite launched by an aborted run stayed alive for
@@ -1700,4 +1701,4 @@ These are non-negotiable:
 8. **A native runner mutates the tree itself, so the tree is verified after it.** The 3.1
    temp-copy protocol only covers mutations this skill wrote. Every scoped production file is
    sha256-compared against its pre-run hash after the native runner exits, on every path
-   including abort. A mismatch is `BLOCKED_DIRTY_TREE` — restore, report, do not score.
+   including abort. A mismatch is `BLOCKED_DIRTY_TREE` — report, do not score, do not restore (3.2b.4).

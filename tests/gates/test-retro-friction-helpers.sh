@@ -368,6 +368,105 @@ if command -v python3 >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
   nl_rc=$?
   [ "$nl_rc" -eq 0 ] && pass "reprobe: --original-file keeps the trailing newline (anchor matches)" \
                  || { bad "reprobe: newline-terminated --original-file anchor did not match (rc=$nl_rc)"; sed 's/^/      /' "$TMP/nl.out"; }
+
+  # ── batch mode (--plan): the local LLM-engine loop ──────────────────────────
+  # Fixture: `main` has add/sub; branch `feature` COMMITS a new `mul`. Only `mul` is a changed line.
+  BT="$TMP/batch"
+  mkdir -p "$BT"
+  (
+    cd "$BT" || exit 1
+    git init -q -b main .
+    printf 'def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b\n' > calc.py
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm base
+    git checkout -q -b feature
+    printf '\ndef mul(a, b):\n    return a * b\n' >> calc.py
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm "add mul"
+    # Counts every run of the suite: the baseline-once assertion needs a witness.
+    printf 'echo x >> runs.txt\npython3 -B -c "import calc; assert calc.mul(2,3)==6 and calc.add(2,3)==5"\n' > t.sh
+    printf '[{"id":"M1","file":"calc.py","original":"return a * b","mutated":"return a + b"},\n' > plan.json
+    printf ' {"id":"M2","file":"calc.py","original":"return a - b","mutated":"return a + b"}]\n' >> plan.json
+  ) || bad "reprobe batch: could not build the fixture repo"
+  BT_SHA="$(digest "$BT/calc.py")"
+
+  # M1 is a changed line and covered; M2 is an UNCHANGED line (and would SURVIVE: nothing tests sub).
+  # A loop that mutates unchanged lines measures the whole file — the 2026-10-02 33k-line campaign.
+  ( cd "$BT" && rm -f runs.txt && bash "$REPROBE" --plan plan.json --out res.json --test-cmd "bash t.sh" >"$TMP/batch.out" 2>"$TMP/batch.err" )
+  brc=$?
+  RES="$(python3 -I -c 'import json;d=json.load(open("'"$BT"'/res.json"));print(d["scope"],[(m["id"],m["verdict"]) for m in d["mutants"]],d["counts"]["killed"],d["score"],d["complete"])' 2>&1)"
+  [ "$brc" -eq 0 ] && [ "$RES" = "changed-lines [('M1', 'KILLED'), ('M2', 'SKIPPED')] 1 100.0 True" ] \
+    && pass "reprobe batch: changed-line mutant measured, unchanged-line mutant skipped (default scope)" \
+    || bad "reprobe batch: default scope wrong (rc=$brc, res=$RES)"
+  [ "$(wc -l < "$BT/runs.txt" | tr -d ' ')" = 2 ] \
+    && pass "reprobe batch: one baseline + one mutated run for the single in-scope mutant" \
+    || bad "reprobe batch: unexpected suite-run count ($(wc -l < "$BT/runs.txt" | tr -d ' '), want 2)"
+  [ -n "$BT_SHA" ] && [ "$(digest "$BT/calc.py")" = "$BT_SHA" ] \
+    && pass "reprobe batch: production file byte-identical after the batch" \
+    || bad "reprobe batch: production file NOT restored"
+
+  # --whole-files runs M2 too, and the baseline is paid ONCE for the shared command (3 runs, not 4).
+  ( cd "$BT" && rm -f runs.txt && bash "$REPROBE" --plan plan.json --out res2.json --test-cmd "bash t.sh" --whole-files >/dev/null 2>&1 )
+  brc=$?
+  RES="$(python3 -I -c 'import json;d=json.load(open("'"$BT"'/res2.json"));print([(m["id"],m["verdict"]) for m in d["mutants"]],d["score"])' 2>&1)"
+  [ "$brc" -eq 0 ] && [ "$RES" = "[('M1', 'KILLED'), ('M2', 'SURVIVED')] 50.0" ] \
+    && [ "$(wc -l < "$BT/runs.txt" | tr -d ' ')" = 3 ] \
+    && pass "reprobe batch: --whole-files measures both, baseline runs once per command" \
+    || bad "reprobe batch: --whole-files wrong (rc=$brc, res=$RES, runs=$(wc -l < "$BT/runs.txt" | tr -d ' '))"
+
+  # A failing baseline is no verdict for ANY mutant of that command (never KILLED).
+  ( cd "$BT" && bash "$REPROBE" --plan plan.json --out res3.json --test-cmd "exit 1" --whole-files >/dev/null 2>&1 )
+  brc=$?
+  RES="$(python3 -I -c 'import json;d=json.load(open("'"$BT"'/res3.json"));print([m["verdict"] for m in d["mutants"]],d["complete"])' 2>&1)"
+  [ "$brc" -eq 3 ] && [ "$RES" = "['ERROR', 'ERROR'] False" ] \
+    && pass "reprobe batch: failing baseline -> every mutant ERROR, batch incomplete (exit 3)" \
+    || bad "reprobe batch: failing baseline gave rc=$brc res=$RES"
+
+  # --out must never be a file the batch is mutating: the results JSON would replace the source.
+  ( cd "$BT" && bash "$REPROBE" --plan plan.json --out calc.py --test-cmd "bash t.sh" --whole-files >/dev/null 2>&1 )
+  brc=$?
+  [ "$brc" -eq 2 ] && [ "$(digest "$BT/calc.py")" = "$BT_SHA" ] \
+    && pass "reprobe batch: --out naming a mutated file is refused, file untouched" \
+    || bad "reprobe batch: --out over a production file was not refused (rc=$brc)"
+
+  # Tier 2: --test-cmd overrides a per-mutant "test_cmd" — else a survivor rerun repeats the weak suite.
+  printf '[{"id":"M1","file":"calc.py","original":"return a * b","mutated":"return a + b","test_cmd":"exit 0"}]\n' > "$BT/plan2.json"
+  ( cd "$BT" && bash "$REPROBE" --plan plan2.json --out res4.json --test-cmd "bash t.sh" >/dev/null 2>&1 )
+  RES="$(python3 -I -c 'import json;print(json.load(open("'"$BT"'/res4.json"))["mutants"][0]["verdict"])' 2>&1)"
+  [ "$RES" = "KILLED" ] \
+    && pass "reprobe batch: --test-cmd overrides the plan's per-mutant test_cmd" \
+    || bad "reprobe batch: per-mutant test_cmd beat --test-cmd (verdict=$RES)"
+
+  # A multi-line anchor that STARTS on an allowed line but edits a line outside it is out of scope.
+  printf 'calc.py:1-1\n' > "$BT/scope.txt"
+  printf '[{"id":"ML","file":"calc.py","original":"def add(a, b):\\n    return a + b","mutated":"def add(a, b):\\n    return a - b"},\n' > "$BT/plan3.json"
+  printf ' {"id":"ML2","file":"calc.py","original":"def add(a, b):\\n    return a + b","mutated":"def add2(a, b):\\n    return a - b"}]\n' >> "$BT/plan3.json"
+  ( cd "$BT" && bash "$REPROBE" --plan plan3.json --out res5.json --test-cmd "bash t.sh" --scope-file scope.txt >/dev/null 2>&1 )
+  RES="$(python3 -I -c 'import json;print([m["verdict"] for m in json.load(open("'"$BT"'/res5.json"))["mutants"]])' 2>&1)"
+  [ "$RES" = "['SKIPPED', 'SKIPPED']" ] \
+    && pass "reprobe batch: scope follows the lines the edit changes, not the anchor's first line" \
+    || bad "reprobe batch: multi-line anchor leaked past the scope (verdicts=$RES)"
+  # A renamed file with ONE edited line, run from a subdirectory: only that line is in scope (a
+  # rename read as a whole new file would measure every mutant; a cwd-relative pathspec would find none).
+  RN="$TMP/rename"
+  mkdir -p "$RN/src/sub"
+  (
+    cd "$RN" || exit 1
+    git init -q -b main .
+    printf 'def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b\n' > src/calc.py
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm base
+    git checkout -q -b feature
+    git mv src/calc.py src/calc2.py
+    sed -i.bak 's/return a - b/return a - b  # edited/' src/calc2.py && rm -f src/calc2.py.bak
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm "rename and edit sub"
+    printf 'cd "$(dirname "$0")" || exit 2\n' > t.sh
+    printf 'python3 -B -c "import sys; sys.path.insert(0, \\"src\\"); import calc2; assert calc2.add(2,3)==5 and calc2.sub(3,2)==1"\n' >> t.sh
+    printf '[{"id":"R1","file":"../calc2.py","original":"return a - b","mutated":"return a + b"},\n' > plan.json
+    printf ' {"id":"R2","file":"../calc2.py","original":"return a + b","mutated":"return a - b"}]\n' >> plan.json
+  ) || bad "reprobe rename: could not build the fixture repo"
+  ( cd "$RN/src/sub" && bash "$REPROBE" --plan ../../plan.json --out ../../res.json --test-cmd "bash ../../t.sh" >/dev/null 2>"$TMP/rename.err" )
+  RES="$(python3 -I -c 'import json;print([(m["id"],m["verdict"]) for m in json.load(open("'"$RN"'/res.json"))["mutants"]])' 2>&1)"
+  [ "$RES" = "[('R1', 'KILLED'), ('R2', 'SKIPPED')]" ] \
+    && pass "reprobe batch: a renamed file keeps only its edited line in scope, from a subdirectory" \
+    || bad "reprobe batch: rename scope wrong (verdicts=$RES; $(head -c 200 "$TMP/rename.err"))"
 else
   printf 'SKIP: reprobe cases (python3 or git missing)\n'
 fi

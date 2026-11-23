@@ -6,6 +6,7 @@ prohibition on delegation, local tests, indexing, committing or publishing.
 
 At entry, record `zuvo/context/execution_policy.json` with these fields and the instruction/tool
 that supports each decision. Resume the current policy; refresh changed capabilities or constraints.
+Under a `--dry-run` nothing is written (the skill's flag wins): keep the decisions in context only.
 
 | Field | Values / evidence |
 |-------|-------------------|

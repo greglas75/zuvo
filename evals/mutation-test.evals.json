@@ -1,0 +1,101 @@
+{
+  "skill_name": "mutation-test",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run zuvo:mutation-test on src/price.ts with the LLM engine (--runner llm). The suite in src/price.test.ts has a gap: it never tests the free-shipping boundary, so the mutation `total >= 50` to `total > 50` survives. Close the gap in this run and write the report, including the Stryker-schema report.json.",
+      "expected_output": "report.json is the AS-FOUND result: the surviving mutant keeps status Survived (with a statusReason saying the test was added in-run), and the headline mutation score is the as-found score with the post-fix score shown next to it. The post-fix state lives in a separate field of the zuvo JSON, never in report.json.",
+      "files": [
+        "src/price.ts",
+        "src/price.test.ts"
+      ],
+      "assertions": [
+        "The transcript writes report.json with the `>=` to `>` mutant as status Survived rather than Killed, even though a boundary test was added afterwards.",
+        "The final report prints the as-found mutation score as the headline and shows the after-fixes score next to it as a separate figure.",
+        "The transcript records the post-fix state in a field or file other than report.json, with the as-found score in score_triaged_before and the after-fixes score in score_triaged."
+      ],
+      "fixtures": [
+        {
+          "path": "src/price.ts",
+          "content": "export function shipping(total: number): number {\n  return total >= 50 ? 0 : 5;\n}\n"
+        },
+        {
+          "path": "src/price.test.ts",
+          "content": "import { shipping } from './price';\n\ntest('charges shipping on a small order', () => {\n  expect(shipping(10)).toBe(5);\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run zuvo:mutation-test src/price.ts --dry-run. I only want to see what it would do.",
+      "expected_output": "A dry run writes nothing: no execution_policy.json, no retro or run-log line, no report file, no scoped Stryker config on disk. It prints the plan only. git status after the run is identical to before it.",
+      "files": [
+        "src/price.ts",
+        "src/price.test.ts"
+      ],
+      "assertions": [
+        "The transcript creates no file under zuvo/ and no execution_policy.json, retro entry, run-log line or report during the dry run.",
+        "The transcript shows the plan with the scoped files and lines, or a mutant count estimate, and then stops without executing any mutant.",
+        "The transcript shows git status unchanged after the run, with no scoped Stryker config left in the repository."
+      ],
+      "fixtures": [
+        {
+          "path": "src/price.ts",
+          "content": "export function total(items: { price: number }[]): number {\n  if (items.length === 0) return 0;\n  return items.reduce((sum, item) => sum + item.price, 0);\n}\n"
+        },
+        {
+          "path": "src/price.test.ts",
+          "content": "import { total } from './price';\n\ntest('sums prices', () => {\n  expect(total([{ price: 2 }, { price: 3 }])).toBe(5);\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Run zuvo:mutation-test on src/price.ts, LLM engine. The suite never tests the free-shipping boundary, so `total >= 50` to `total > 50` survives; close it in the tests. This is a git repository on a feature branch and nothing is held back: commit the result the way the skill says.",
+      "expected_output": "After the test fixes the run makes exactly ONE commit that contains test files only, with the message `test: close mutation survivors in <scope>`, staged by explicit path. No production file is committed and the report records the commit sha.",
+      "files": [
+        "src/price.ts",
+        "src/price.test.ts"
+      ],
+      "assertions": [
+        "The transcript commits the test fixes exactly once, and the commit message starts with `test: close mutation survivors in`.",
+        "The transcript stages the commit by explicit test file path and the commit contains no production file such as src/price.ts.",
+        "The transcript records the new commit sha in the report's commit_fix field."
+      ],
+      "fixtures": [
+        {
+          "path": "src/price.ts",
+          "content": "export function shipping(total: number): number {\n  return total >= 50 ? 0 : 5;\n}\n"
+        },
+        {
+          "path": "src/price.test.ts",
+          "content": "import { shipping } from './price';\n\ntest('charges shipping on a small order', () => {\n  expect(shipping(10)).toBe(5);\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Mutation-test the whole of src/price.ts and src/cart.ts, every line of both files, not only what I changed on this branch. Only a few lines of src/price.ts differ from main.",
+      "expected_output": "Whole-file scope is an opt-in flag only. A prose request does not widen the scope: the run uses the default changed-lines scope, prints the size of both scopes, tells the user to rerun with --whole-files, and does not stop to ask.",
+      "files": [
+        "src/price.ts",
+        "src/cart.ts"
+      ],
+      "assertions": [
+        "The transcript runs the default changed-lines scope and does not pass --whole-files, because the user typed no such flag.",
+        "The transcript shows the changed-lines size next to the whole-files size and tells the user to rerun with --whole-files.",
+        "The transcript runs the mutation steps without asking the user any question about the scope."
+      ],
+      "fixtures": [
+        {
+          "path": "src/price.ts",
+          "content": "export function total(items: { price: number }[]): number {\n  if (items.length === 0) return 0;\n  return items.reduce((sum, item) => sum + item.price, 0);\n}\n\nexport function tax(amount: number): number {\n  return amount * 0.23;\n}\n"
+        },
+        {
+          "path": "src/cart.ts",
+          "content": "import { total } from './price';\n\nexport function cartTotal(lines: { price: number }[]): number {\n  return total(lines);\n}\n\nexport function isEmpty(lines: unknown[]): boolean {\n  return lines.length === 0;\n}\n"
+        }
+      ]
+    }
+  ]
+}
